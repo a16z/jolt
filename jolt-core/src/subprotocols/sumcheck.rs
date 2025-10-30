@@ -2,165 +2,17 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::field::MaybeAllocative;
-use crate::poly::opening_proof::OpeningAccumulator;
-use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
-};
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 
 use ark_serialize::*;
-use std::cell::RefCell;
 use std::marker::PhantomData;
-use std::rc::Rc;
-
-/// Trait for a sumcheck instance that can be batched with other instances.
-///
-/// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
-/// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait SumcheckInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllocative {
-    /// Returns the maximum degree of the sumcheck polynomial.
-    fn degree(&self) -> usize;
-
-    /// Returns the number of rounds/variables in this sumcheck instance.
-    fn num_rounds(&self) -> usize;
-
-    /// Returns the initial claim of this sumcheck instance, i.e.
-    /// input_claim = \sum_{x \in \{0, 1}^N} P(x)
-    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F;
-
-    /// Computes the prover's message for a specific round of the sumcheck protocol.
-    /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
-    /// The point evaluation at 1 can be interpolated using the previous round's claim.
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F>;
-
-    /// Binds this sumcheck instance to the verifier's challenge from a specific round.
-    /// This updates the internal state to prepare for the next round.
-    fn bind(&mut self, r_j: F::Challenge, round: usize);
-
-    /// Computes the expected output claim given the verifier's challenges.
-    /// This is used to verify the final result of the sumcheck protocol.
-    fn expected_output_claim(
-        &self,
-        opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F::Challenge],
-    ) -> F;
-
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F>;
-
-    /// Caches polynomial opening claims needed after the sumcheck protocol completes.
-    /// These openings will later be proven using either an opening proof or another sumcheck.
-    fn cache_openings_prover(
-        &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    );
-
-    fn cache_openings_verifier(
-        &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    );
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
-}
-
-pub enum SingleSumcheck {}
-impl SingleSumcheck {
-    /// Proves a single sumcheck instance.
-    pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        sumcheck_instance: &mut dyn SumcheckInstance<F, ProofTranscript>,
-        opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
-        let num_rounds = sumcheck_instance.num_rounds();
-        let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
-        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-
-        let acc_ref = opening_accumulator
-            .as_ref()
-            .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
-        let mut previous_claim = sumcheck_instance.input_claim(acc_ref);
-        transcript.append_scalar(&previous_claim); // Append input claim
-
-        for round in 0..num_rounds {
-            let mut univariate_poly_evals =
-                sumcheck_instance.compute_prover_message(round, previous_claim);
-            univariate_poly_evals.insert(1, previous_claim - univariate_poly_evals[0]);
-            let univariate_poly = UniPoly::from_evals(&univariate_poly_evals);
-
-            // append the prover's message to the transcript
-            let compressed_poly = univariate_poly.compress();
-            compressed_poly.append_to_transcript(transcript);
-            compressed_polys.push(compressed_poly);
-
-            let r_j: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-            r_sumcheck.push(r_j);
-
-            // Cache claim for this round
-            previous_claim = univariate_poly.evaluate(&r_j);
-
-            sumcheck_instance.bind(r_j, round);
-        }
-
-        if let Some(opening_accumulator) = opening_accumulator {
-            // Cache polynomial opening claims, to be proven using either an
-            // opening proof or sumcheck (in the case of virtual polynomials).
-            sumcheck_instance.cache_openings_prover(
-                opening_accumulator,
-                transcript,
-                sumcheck_instance.normalize_opening_point(&r_sumcheck),
-            );
-        }
-
-        (SumcheckInstanceProof::new(compressed_polys), r_sumcheck)
-    }
-
-    /// Verifies a single sumcheck instance.
-    pub fn verify<F: JoltField, ProofTranscript: Transcript>(
-        sumcheck_instance: &dyn SumcheckInstance<F, ProofTranscript>,
-        proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        let acc_ref = opening_accumulator
-            .as_ref()
-            .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
-        let input_claim = sumcheck_instance.input_claim(acc_ref);
-        transcript.append_scalar(&input_claim); // Append input claim
-        let (output_claim, r) = proof.verify(
-            input_claim,
-            sumcheck_instance.num_rounds(),
-            sumcheck_instance.degree(),
-            transcript,
-        )?;
-
-        if output_claim != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
-        {
-            return Err(ProofVerifyError::SumcheckVerificationError);
-        }
-
-        sumcheck_instance.cache_openings_verifier(
-            opening_accumulator.unwrap(),
-            transcript,
-            sumcheck_instance.normalize_opening_point(&r),
-        );
-
-        Ok(r)
-    }
-}
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
 /// verifier cost and proof size.
@@ -170,8 +22,8 @@ impl SingleSumcheck {
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        mut sumcheck_instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>>,
-        opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
+        mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
         let max_num_rounds = sumcheck_instances
@@ -195,10 +47,7 @@ impl BatchedSumcheck {
             .iter()
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
-                let acc_ref = opening_accumulator
-                    .as_ref()
-                    .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
-                let input_claim = sumcheck.input_claim(acc_ref);
+                let input_claim = sumcheck.input_claim(opening_accumulator);
                 transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
@@ -233,11 +82,8 @@ impl BatchedSumcheck {
                         // the univariate polynomial is just a constant equal to
                         // the input claim, scaled by a power of 2.
                         let num_rounds = sumcheck.num_rounds();
-                        let acc_ref = opening_accumulator
-                            .as_ref()
-                            .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
                         let scaled_input_claim = sumcheck
-                            .input_claim(acc_ref)
+                            .input_claim(opening_accumulator)
                             .mul_pow_2(remaining_rounds - num_rounds - 1);
                         // Constant polynomial
                         UniPoly::from_coeff(vec![scaled_input_claim])
@@ -300,29 +146,23 @@ impl BatchedSumcheck {
             compressed_polys.push(compressed_poly);
         }
 
-        if let Some(opening_accumulator) = opening_accumulator {
-            let max_num_rounds = sumcheck_instances
-                .iter()
-                .map(|sumcheck| sumcheck.num_rounds())
-                .max()
-                .unwrap();
+        let max_num_rounds = sumcheck_instances
+            .iter()
+            .map(|sumcheck| sumcheck.num_rounds())
+            .max()
+            .unwrap();
 
-            for sumcheck in sumcheck_instances.iter() {
-                // If a sumcheck instance has fewer than `max_num_rounds`,
-                // we wait until there are <= `sumcheck.num_rounds()` left
-                // before binding its variables.
-                // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
-                // values of `r_sumcheck`.
-                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+        for sumcheck in sumcheck_instances.iter() {
+            // If a sumcheck instance has fewer than `max_num_rounds`,
+            // we wait until there are <= `sumcheck.num_rounds()` left
+            // before binding its variables.
+            // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
+            // values of `r_sumcheck`.
+            let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
 
-                // Cache polynomial opening claims, to be proven using either an
-                // opening proof or sumcheck (in the case of virtual polynomials).
-                sumcheck.cache_openings_prover(
-                    opening_accumulator.clone(),
-                    transcript,
-                    sumcheck.normalize_opening_point(r_slice),
-                );
-            }
+            // Cache polynomial opening claims, to be proven using either an
+            // opening proof or sumcheck (in the case of virtual polynomials).
+            sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
         }
 
         (SumcheckInstanceProof::new(compressed_polys), r_sumcheck)
@@ -330,8 +170,8 @@ impl BatchedSumcheck {
 
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>>,
-        opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let max_degree = sumcheck_instances
@@ -361,10 +201,7 @@ impl BatchedSumcheck {
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
-                let acc_ref = opening_accumulator
-                    .as_ref()
-                    .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
-                let input_claim = sumcheck.input_claim(acc_ref);
+                let input_claim = sumcheck.input_claim(opening_accumulator);
                 transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
@@ -384,16 +221,10 @@ impl BatchedSumcheck {
                 // values of `r_sumcheck`.
                 let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
 
-                if let Some(opening_accumulator) = &opening_accumulator {
-                    // Cache polynomial opening claims, to be proven using either an
-                    // opening proof or sumcheck (in the case of virtual polynomials).
-                    sumcheck.cache_openings_verifier(
-                        opening_accumulator.clone(),
-                        transcript,
-                        sumcheck.normalize_opening_point(r_slice),
-                    );
-                }
-                let claim = sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice);
+                // Cache polynomial opening claims, to be proven using either an
+                // opening proof or sumcheck (in the case of virtual polynomials).
+                sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
+                let claim = sumcheck.expected_output_claim(opening_accumulator, r_slice);
 
                 claim * coeff
             })
@@ -470,37 +301,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         Ok((e, r))
     }
-}
-
-/// Trait for a single-round instance of univariate skip
-/// We make a number of assumptions for the usage of this trait currently:
-/// 1. There is only one univariate skip round, which happens at the beginning of a sumcheck stage
-/// 2. We do not bind anything after this round. Instead during the remaining sumcheck, we
-///    will stream from the trace again to initialize.
-/// 3. We assume that the domain is symmetric around zero, and the prover sends the entire
-///    (univariate) polynomial for this round
-pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>:
-    Send + Sync + MaybeAllocative
-{
-    /// The degree of the sum-check
-    const DEGREE_BOUND: usize;
-
-    /// The domain size of the sum-check. Canonically instantiated to the domain
-    /// [-floor(DOMAIN_SIZE/2), ceil(DOMAIN_SIZE)/2]
-    const DOMAIN_SIZE: usize;
-
-    /// Returns the initial claim of this univariate skip round, i.e.
-    /// input_claim = \sum_{-floor(S/2) <= z <= ceil(S/2)} \sum_{x \in \{0, 1}^n} P(z, x)
-    /// where S = DOMAIN_SIZE
-    fn input_claim(&self) -> F;
-
-    /// Computes the full univariate polynomial to be sent in the uni-skip round.
-    /// Returns a degree-bounded `UniPoly` with exactly `DEGREE_BOUND + 1` coefficients.
-    fn compute_poly(&mut self) -> UniPoly<F>;
-
-    // TODO: add flamegraph support
-    // #[cfg(feature = "allocative")]
-    // fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
 }
 
 /// The sumcheck proof for a univariate skip round

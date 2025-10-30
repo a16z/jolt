@@ -14,7 +14,7 @@ use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProo
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial};
-use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use crate::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
@@ -286,11 +286,31 @@ where
         }
     }
 
+    pub fn get_trace_len(&self) -> usize {
+        if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state.trace_length
+        } else if let Some(ref prover_state) = self.prover_state {
+            prover_state.trace.len()
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
     pub fn get_bytecode(&self) -> &[Instruction] {
         if let Some(ref verifier_state) = self.verifier_state {
             &verifier_state.preprocessing.shared.bytecode.bytecode
         } else if let Some(ref prover_state) = self.prover_state {
             &prover_state.preprocessing.shared.bytecode.bytecode
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
+    pub fn get_shared_preprocessing(&self) -> &JoltSharedPreprocessing {
+        if let Some(ref verifier_state) = self.verifier_state {
+            &verifier_state.preprocessing.shared
+        } else if let Some(ref prover_state) = self.prover_state {
+            &prover_state.preprocessing.shared
         } else {
             panic!("Neither prover nor verifier state initialized");
         }

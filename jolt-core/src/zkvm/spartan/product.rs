@@ -1,7 +1,5 @@
 use allocative::Allocative;
 use ark_std::Zero;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 use crate::field::{AccumulateInPlace, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -11,11 +9,14 @@ use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
+use crate::subprotocols::sumcheck_prover::{
+    SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
+};
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
@@ -80,25 +81,16 @@ pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
 pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS: usize =
     3 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
 
+/// Degree of the sumcheck round polynomials for [`ProductVirtualRemainderVerifier`].
+const PRODUCT_VIRTUAL_REMAINDER_DEGREE: usize = 3;
+
 /// Uni-skip instance for product virtualization, computing the first-round polynomial only.
 #[derive(Allocative)]
 pub struct ProductVirtualUniSkipInstance<F: JoltField> {
-    /// τ = [τ_low || τ_high]
-    /// - τ_low: the cycle-point r_cycle carried from Spartan outer (length = num_cycle_vars)
-    /// - τ_high: the univariate-skip binding point sampled for the size-5 domain (length = 1)
-    ///   Ordering matches outer: variables are MSB→LSB with τ_high last
-    tau: Vec<F::Challenge>,
-    /// Base evaluations (claims) for the five product terms at the base domain
-    /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
-    base_evals: [F; NUM_PRODUCT_VIRTUAL],
-    /// Prover-only state (None on verifier)
-    prover_state: Option<ProductVirtualUniSkipProverState<F>>,
-}
-
-#[derive(Allocative)]
-struct ProductVirtualUniSkipProverState<F: JoltField> {
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
+    #[allocative(skip)]
+    params: ProductVirtualUniSkipInstanceParams<F>,
 }
 
 impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
@@ -109,45 +101,21 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         tau: &[F::Challenge],
     ) -> Self {
-        let (_preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let params = ProductVirtualUniSkipInstanceParams::new(state_manager, tau);
 
-        // Get base evaluations from outer sumcheck claims
-        let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
-        for (i, vp) in PRODUCT_VIRTUAL_TERMS.iter().enumerate() {
-            let (_, eval) =
-                state_manager.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
-            base_evals[i] = eval;
-        }
+        let (_, _, trace, _, _) = state_manager.get_prover_data();
 
         let tau_low = &tau[..tau.len() - 1];
         let extended_evals = Self::compute_univariate_skip_extended_evals(trace, tau_low);
 
         let instance = Self {
-            tau: tau.to_vec(),
-            base_evals,
-            prover_state: Some(ProductVirtualUniSkipProverState { extended_evals }),
+            extended_evals,
+            params,
         };
 
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("ProductVirtualUniSkipInstance", &instance);
         instance
-    }
-
-    pub fn new_verifier(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        tau: &[F::Challenge],
-    ) -> Self {
-        let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
-        for (i, vp) in PRODUCT_VIRTUAL_TERMS.iter().enumerate() {
-            let (_, eval) =
-                state_manager.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
-            base_evals[i] = eval;
-        }
-        Self {
-            tau: tau.to_vec(),
-            base_evals,
-            prover_state: None,
-        }
     }
 
     /// Compute the extended-domain evaluations t1(z) for univariate-skip (outside base window).
@@ -329,13 +297,62 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
+impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
     for ProductVirtualUniSkipInstance<F>
 {
     const DEGREE_BOUND: usize = PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1;
     const DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 
     fn input_claim(&self) -> F {
+        self.params.input_claim()
+    }
+
+    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstanceProver::compute_poly")]
+    fn compute_poly(&mut self) -> UniPoly<F> {
+        // Load base evals from shared instance and extended from prover state
+        let base = self.params.base_evals;
+        let tau_high = self.params.tau[self.params.tau.len() - 1];
+
+        // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
+        build_uniskip_first_round_poly::<
+            F,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+        >(Some(&base), &self.extended_evals, tau_high)
+    }
+}
+
+pub struct ProductVirtualUniSkipInstanceParams<F: JoltField> {
+    /// τ = [τ_low || τ_high]
+    /// - τ_low: the cycle-point r_cycle carried from Spartan outer (length = num_cycle_vars)
+    /// - τ_high: the univariate-skip binding point sampled for the size-5 domain (length = 1)
+    ///   Ordering matches outer: variables are MSB→LSB with τ_high last
+    tau: Vec<F::Challenge>,
+    /// Base evaluations (claims) for the five product terms at the base domain
+    /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    base_evals: [F; NUM_PRODUCT_VIRTUAL],
+}
+
+impl<F: JoltField> ProductVirtualUniSkipInstanceParams<F> {
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        tau: &[F::Challenge],
+    ) -> Self {
+        let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
+        for (i, vp) in PRODUCT_VIRTUAL_TERMS.iter().enumerate() {
+            let (_, eval) =
+                state_manager.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
+            base_evals[i] = eval;
+        }
+        Self {
+            tau: tau.to_vec(),
+            base_evals,
+        }
+    }
+
+    pub fn input_claim(&self) -> F {
         // claim = \sum_i L_i(tau_high) * base_evals[i]
         let tau_high = self.tau[self.tau.len() - 1];
         let w = LagrangePolynomial::<F>::evals::<
@@ -347,28 +364,6 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
             acc += w[i] * self.base_evals[i];
         }
         acc
-    }
-
-    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstance::compute_poly")]
-    fn compute_poly(&mut self) -> UniPoly<F> {
-        // Load base evals from shared instance and extended from prover state
-        let base = self.base_evals;
-        let extended = if let Some(ps) = &self.prover_state {
-            ps.extended_evals
-        } else {
-            [F::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE]
-        };
-
-        let tau_high = self.tau[self.tau.len() - 1];
-
-        // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
-        build_uniskip_first_round_poly::<
-            F,
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
-            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
-        >(Some(&base), &extended, tau_high)
     }
 }
 
@@ -402,44 +397,22 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
 /// of the fully-bound fused left/right polynomials (used for openings); these are not the final
 /// claim themselves but are used to perform the subsequent opening checks.
 #[derive(Allocative)]
-pub struct ProductVirtualRemainder<F: JoltField> {
-    /// Number of cycle variables to bind in this remainder (equals log2(T))
-    pub num_cycle_vars: usize,
-    /// The univariate-skip first round challenge r0
-    pub r0_uniskip: F::Challenge,
-    /// Claim after the univariate-skip first round, updated every round
-    pub input_claim: F,
-    /// The tau vector (length 1 + num_cycle_vars), available to prover and verifier
-    pub tau: Vec<F::Challenge>,
-    /// Prover-only state (None on verifier)
-    pub prover_state: Option<ProductVirtualProverState<F>>,
-}
-
-#[derive(Allocative)]
-pub struct ProductVirtualStreamingCache<F: JoltField> {
-    pub t0: F,
-    pub t_inf: F,
-    pub left_lo: Vec<F>,
-    pub left_hi: Vec<F>,
-    pub right_lo: Vec<F>,
-    pub right_hi: Vec<F>,
-}
-
-#[derive(Allocative)]
-pub struct ProductVirtualProverState<F: JoltField> {
+pub struct ProductVirtualRemainderProver<F: JoltField> {
     #[allocative(skip)]
-    pub preprocess: Arc<JoltSharedPreprocessing>,
+    preprocess: Arc<JoltSharedPreprocessing>,
     #[allocative(skip)]
-    pub trace: Arc<Vec<Cycle>>,
-    pub split_eq_poly: GruenSplitEqPolynomial<F>,
-    pub left: DensePolynomial<F>,
-    pub right: DensePolynomial<F>,
-    pub streaming_cache: Option<ProductVirtualStreamingCache<F>>,
+    trace: Arc<Vec<Cycle>>,
+    split_eq_poly: GruenSplitEqPolynomial<F>,
+    left: DensePolynomial<F>,
+    right: DensePolynomial<F>,
+    streaming_cache: Option<ProductVirtualStreamingCache<F>>,
+    #[allocative(skip)]
+    params: ProductVirtualRemainderParams<F>,
 }
 
-impl<F: JoltField> ProductVirtualRemainder<F> {
-    #[tracing::instrument(skip_all, name = "ProductVirtualRemainder::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+impl<F: JoltField> ProductVirtualRemainderProver<F> {
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::gen")]
+    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         num_cycle_vars: usize,
         uni: &UniSkipState<F>,
@@ -470,28 +443,13 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
             Self::compute_streaming_round_cache(trace, &lagrange_evals_r, &split_eq_poly);
 
         Self {
-            num_cycle_vars,
-            r0_uniskip: uni.r0,
-            input_claim: uni.claim_after_first,
-            tau: uni.tau.clone(),
-            prover_state: Some(ProductVirtualProverState {
-                split_eq_poly,
-                preprocess: Arc::new(preprocessing.shared.clone()),
-                trace: Arc::new(trace.to_vec()),
-                left: DensePolynomial::default(),
-                right: DensePolynomial::default(),
-                streaming_cache: Some(streaming_cache),
-            }),
-        }
-    }
-
-    pub fn new_verifier(num_cycle_vars: usize, uni: UniSkipState<F>) -> Self {
-        Self {
-            num_cycle_vars,
-            r0_uniskip: uni.r0,
-            input_claim: uni.claim_after_first,
-            tau: uni.tau,
-            prover_state: None,
+            split_eq_poly,
+            preprocess: Arc::new(preprocessing.shared.clone()),
+            trace: Arc::new(trace.to_vec()),
+            left: DensePolynomial::default(),
+            right: DensePolynomial::default(),
+            streaming_cache: Some(streaming_cache),
+            params: ProductVirtualRemainderParams::new(num_cycle_vars, uni),
         }
     }
 
@@ -594,54 +552,48 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
     }
 
     fn bind_streaming_round(&mut self, r_0: F::Challenge) {
-        if let Some(ps) = self.prover_state.as_mut() {
-            if let Some(cache) = ps.streaming_cache.take() {
-                let groups = cache.left_lo.len();
-                let mut left_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-                let mut right_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-                let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
+        let cache = self.streaming_cache.take().unwrap();
+        let groups = cache.left_lo.len();
+        let mut left_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
+        let mut right_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
+        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
 
-                // Parallelize over x_out by chunking destination slices
-                left_bound
-                    .par_chunks_mut(num_x_in_vals)
-                    .zip(right_bound.par_chunks_mut(num_x_in_vals))
-                    .enumerate()
-                    .for_each(|(xo, (l_chunk, r_chunk))| {
-                        for xi in 0..num_x_in_vals {
-                            let idx = xo * num_x_in_vals + xi;
-                            let l0 = cache.left_lo[idx];
-                            let l1 = cache.left_hi[idx];
-                            let r0 = cache.right_lo[idx];
-                            let r1 = cache.right_hi[idx];
-                            l_chunk[xi] = l0 + r_0 * (l1 - l0);
-                            r_chunk[xi] = r0 + r_0 * (r1 - r0);
-                        }
-                    });
+        // Parallelize over x_out by chunking destination slices
+        left_bound
+            .par_chunks_mut(num_x_in_vals)
+            .zip(right_bound.par_chunks_mut(num_x_in_vals))
+            .enumerate()
+            .for_each(|(xo, (l_chunk, r_chunk))| {
+                for xi in 0..num_x_in_vals {
+                    let idx = xo * num_x_in_vals + xi;
+                    let l0 = cache.left_lo[idx];
+                    let l1 = cache.left_hi[idx];
+                    let r0 = cache.right_lo[idx];
+                    let r1 = cache.right_hi[idx];
+                    l_chunk[xi] = l0 + r_0 * (l1 - l0);
+                    r_chunk[xi] = r0 + r_0 * (r1 - r0);
+                }
+            });
 
-                ps.left = DensePolynomial::new(left_bound);
-                ps.right = DensePolynomial::new(right_bound);
-                return;
-            }
-        }
-        panic!("Streaming cache missing; cannot bind first round");
+        self.left = DensePolynomial::new(left_bound);
+        self.right = DensePolynomial::new(right_bound);
     }
 
     /// Compute the quadratic endpoints for remaining rounds.
     fn remaining_quadratic_evals(&self) -> (F, F) {
-        let ps = self.prover_state.as_ref().expect("prover state missing");
-        let eq_poly = &ps.split_eq_poly;
+        let eq_poly = &self.split_eq_poly;
 
-        let n = ps.left.len();
-        debug_assert_eq!(n, ps.right.len());
+        let n = self.left.len();
+        debug_assert_eq!(n, self.right.len());
         if eq_poly.E_in_current_len() == 1 {
             let groups = n / 2;
             let (t0_unr, tinf_unr) = (0..groups)
                 .into_par_iter()
                 .map(|g| {
-                    let l0 = ps.left[2 * g];
-                    let l1 = ps.left[2 * g + 1];
-                    let r0 = ps.right[2 * g];
-                    let r1 = ps.right[2 * g + 1];
+                    let l0 = self.left[2 * g];
+                    let l1 = self.left[2 * g + 1];
+                    let r0 = self.right[2 * g];
+                    let r1 = self.right[2 * g + 1];
                     let eq = eq_poly.E_out_current()[g];
                     let p0 = l0 * r0;
                     let slope = (l1 - l0) * (r1 - r0);
@@ -668,10 +620,10 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                     let mut inner_inf_unr = F::Unreduced::<9>::zero();
                     for x1 in 0..x1_len {
                         let g = (x2 << num_x1_bits) | x1;
-                        let l0 = ps.left[2 * g];
-                        let l1 = ps.left[2 * g + 1];
-                        let r0 = ps.right[2 * g];
-                        let r1 = ps.right[2 * g + 1];
+                        let l0 = self.left[2 * g];
+                        let l1 = self.left[2 * g + 1];
+                        let r0 = self.right[2 * g];
+                        let r1 = self.right[2 * g + 1];
                         let e_in = eq_poly.E_in_current()[x1];
                         let p0 = l0 * r0;
                         let slope = (l1 - l0) * (r1 - r0);
@@ -698,47 +650,42 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
 
     /// Returns final per-virtual-polynomial evaluations needed for openings.
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
-        let ps_opt = self.prover_state.as_ref();
-        let l0 = ps_opt
-            .and_then(|s| {
-                if !s.left.is_empty() {
-                    Some(s.left[0])
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(F::zero());
-        let r0 = ps_opt
-            .and_then(|s| {
-                if !s.right.is_empty() {
-                    Some(s.right[0])
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(F::zero());
+        let l0 = if !self.left.is_empty() {
+            self.left[0]
+        } else {
+            F::zero()
+        };
+        let r0 = if !self.right.is_empty() {
+            self.right[0]
+        } else {
+            F::zero()
+        };
         [l0, r0]
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemainder<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for ProductVirtualRemainderProver<F>
+{
     fn degree(&self) -> usize {
         3
     }
 
     fn num_rounds(&self) -> usize {
-        self.num_cycle_vars
+        self.params.num_rounds()
     }
 
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        self.input_claim
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "ProductVirtualRemainder::compute_prover_message")]
+    #[tracing::instrument(
+        skip_all,
+        name = "ProductVirtualRemainderProver::compute_prover_message"
+    )]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
-            let ps = self.prover_state.as_ref().expect("prover state missing");
-            let cache = ps
+            let cache = self
                 .streaming_cache
                 .as_ref()
                 .expect("streaming cache missing in round 0");
@@ -746,103 +693,52 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         } else {
             self.remaining_quadratic_evals()
         };
-        let eq_poly = &self
-            .prover_state
-            .as_ref()
-            .expect("prover state missing")
-            .split_eq_poly;
-        let evals = eq_poly.gruen_evals_deg_3(t0, t_inf, previous_claim);
+        let evals = self
+            .split_eq_poly
+            .gruen_evals_deg_3(t0, t_inf, previous_claim);
         vec![evals[0], evals[1], evals[2]]
     }
 
-    #[tracing::instrument(skip_all, name = "ProductVirtualRemainder::bind")]
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         if round == 0 {
             self.bind_streaming_round(r_j);
         } else {
-            let ps = self.prover_state.as_mut().expect("prover state missing");
             rayon::join(
-                || ps.left.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || ps.right.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || self.left.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || self.right.bind_parallel(r_j, BindingOrder::LowToHigh),
             );
         }
 
         // Bind eq_poly for next round
-        self.prover_state
-            .as_mut()
-            .expect("prover state missing")
-            .split_eq_poly
-            .bind(r_j);
+        self.split_eq_poly.bind(r_j);
     }
 
-    fn expected_output_claim(
+    fn cache_openings(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r_tail: &[F::Challenge],
-    ) -> F {
-        let acc = accumulator.as_ref().expect("accumulator required").borrow();
-
-        // Retrieve fused left/right product evaluations under ProductVirtualization
-        let (_, fused_left) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::FusedProductLeft,
-            SumcheckId::ProductVirtualization,
-        );
-        let (_, fused_right) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::FusedProductRight,
-            SumcheckId::ProductVirtualization,
-        );
-
-        // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev)
-        let tau_high = &self.tau[self.tau.len() - 1];
-        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
-            F::Challenge,
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(tau_high, &self.r0_uniskip);
-        let tau_low = &self.tau[..self.tau.len() - 1];
-        let r_tail_reversed: Vec<F::Challenge> = r_tail.iter().rev().copied().collect();
-        let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
-
-        tau_high_bound_r0 * tau_bound_r_tail_reversed * fused_left * fused_right
-    }
-
-    fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        // Construct full r = [r0 || r_tail] and reverse to match outer convention
-        let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
-        r_full.push(self.r0_uniskip);
-        r_full.extend_from_slice(r_tail);
-        let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
-        OpeningPoint::new(r_reversed)
-    }
-
-    fn cache_openings_prover(
-        &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        sumcheck_challenges: &[F::Challenge],
     ) {
+        let opening_point = self.params.get_opening_point(sumcheck_challenges);
         // Append fused left/right product claims and factor claims under fused ID at opening_point
-        debug_assert_eq!(opening_point.r.len(), self.num_cycle_vars + 1);
-
+        debug_assert_eq!(opening_point.len(), self.params.n_cycle_vars + 1);
         // Split opening_point.r into (r_cycle, r0) after reversal: first num_cycle_vars are r_cycle
-        let (r_cycle, _r0_slice) = opening_point.r.split_at(self.num_cycle_vars);
+        let (r_cycle, _r0_slice) = opening_point.r.split_at(self.params.n_cycle_vars);
 
         // Compute claimed unique factor evaluations at r_cycle in one pass
-        let claims = {
-            let ps = self.prover_state.as_ref().expect("prover state missing");
-            compute_claimed_product_factor_evals::<F>(&ps.trace, r_cycle)
-        };
+        let claims = compute_claimed_product_factor_evals::<F>(&self.trace, r_cycle);
 
         // Append fused left/right product openings akin to outer (SpartanAz/Bz)
         let lr = self.final_sumcheck_evals();
-        let mut acc = accumulator.borrow_mut();
-        acc.append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::FusedProductLeft,
             SumcheckId::ProductVirtualization,
             opening_point.clone(),
             lr[0],
         );
-        acc.append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::FusedProductRight,
             SumcheckId::ProductVirtualization,
@@ -852,7 +748,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
 
         // Append the 8 unique factor openings in canonical order
         for (i, vp) in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter().enumerate() {
-            acc.append_virtual(
+            accumulator.append_virtual(
                 transcript,
                 *vp,
                 SumcheckId::ProductVirtualization,
@@ -862,31 +758,101 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         }
     }
 
-    fn cache_openings_verifier(
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+#[derive(Allocative)]
+struct ProductVirtualStreamingCache<F: JoltField> {
+    pub t0: F,
+    pub t_inf: F,
+    pub left_lo: Vec<F>,
+    pub left_hi: Vec<F>,
+    pub right_lo: Vec<F>,
+    pub right_hi: Vec<F>,
+}
+
+pub struct ProductVirtualRemainderVerifier<F: JoltField> {
+    params: ProductVirtualRemainderParams<F>,
+}
+
+impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
+    pub fn new(n_cycle_vars: usize, uni: &UniSkipState<F>) -> Self {
+        let params = ProductVirtualRemainderParams::new(n_cycle_vars, uni);
+        Self { params }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for ProductVirtualRemainderVerifier<F>
+{
+    fn degree(&self) -> usize {
+        PRODUCT_VIRTUAL_REMAINDER_DEGREE
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.num_rounds()
+    }
+
+    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        self.params.input_claim
+    }
+
+    fn expected_output_claim(
         &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        // Retrieve fused left/right product evaluations under ProductVirtualization
+        let (_, fused_left) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::FusedProductLeft,
+            SumcheckId::ProductVirtualization,
+        );
+        let (_, fused_right) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::FusedProductRight,
+            SumcheckId::ProductVirtualization,
+        );
+
+        // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev)
+        let tau_high = &self.params.tau[self.params.tau.len() - 1];
+        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(tau_high, &self.params.r0_uniskip);
+        let tau_low = &self.params.tau[..self.params.tau.len() - 1];
+        let r_tail_reversed: Vec<F::Challenge> =
+            sumcheck_challenges.iter().rev().copied().collect();
+        let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
+
+        tau_high_bound_r0 * tau_bound_r_tail_reversed * fused_left * fused_right
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        // Append fused left/right product openings and the 8 factor openings (no claims)
-        let mut acc = accumulator.borrow_mut();
-        acc.append_virtual(
+        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::FusedProductLeft,
             SumcheckId::ProductVirtualization,
             opening_point.clone(),
         );
-        acc.append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::FusedProductRight,
             SumcheckId::ProductVirtualization,
             opening_point.clone(),
         );
         // Factors are opened at r_cycle (slice out r0), mirroring outer.rs
-        let (r_cycle, _r0_slice) = opening_point.r.split_at(self.num_cycle_vars);
+        let (r_cycle, _r0_slice) = opening_point.r.split_at(self.params.n_cycle_vars);
         let cycle_only_point = OpeningPoint::new(r_cycle.to_vec());
         for vp in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter() {
-            acc.append_virtual(
+            accumulator.append_virtual(
                 transcript,
                 *vp,
                 SumcheckId::ProductVirtualization,
@@ -894,10 +860,40 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
             );
         }
     }
+}
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
-        flamegraph.visit_root(self);
+struct ProductVirtualRemainderParams<F: JoltField> {
+    /// Number of cycle variables to bind in this remainder (equals log2(T))
+    n_cycle_vars: usize,
+    /// The univariate-skip first round challenge r0
+    r0_uniskip: F::Challenge,
+    /// Claim after the univariate-skip first round, updated every round
+    input_claim: F,
+    /// The tau vector (length 1 + n_cycle_vars), available to prover and verifier
+    tau: Vec<F::Challenge>,
+}
+
+impl<F: JoltField> ProductVirtualRemainderParams<F> {
+    fn new(n_cycle_vars: usize, uni: &UniSkipState<F>) -> Self {
+        Self {
+            n_cycle_vars,
+            r0_uniskip: uni.r0,
+            input_claim: uni.claim_after_first,
+            tau: uni.tau.clone(),
+        }
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.n_cycle_vars
+    }
+
+    fn get_opening_point(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let r_tail = sumcheck_challenges;
+        let r_full = [&[self.r0_uniskip], r_tail].concat();
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(r_full).match_endianness()
     }
 }
 
@@ -916,144 +912,138 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
 /// where the factor are determined according to the virtual polynomials
 /// (i.e. a single ShouldJump claimed eval participates in two (right) factor claim)
 #[derive(Allocative)]
-pub struct ProductVirtualInner<F: JoltField> {
-    claim: F,
-    r0_uniskip: F::Challenge,
-    gamma: F::Challenge,
+pub struct ProductVirtualInnerProver<F: JoltField> {
+    #[allocative(skip)]
+    params: ProductVirtualInnerParams<F>,
 }
 
-impl<F: JoltField> ProductVirtualInner<F> {
-    #[tracing::instrument(skip_all, name = "ProductVirtualInner::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+impl<F: JoltField> ProductVirtualInnerProver<F> {
+    #[tracing::instrument(skip_all, name = "ProductVirtualInnerProver::new")]
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        // Sample gamma like inner.rs
-        let gamma: F::Challenge = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_optimized::<F>();
-        // Fused product claims (their opening point includes r0)
-        let (pt_left, fused_left) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::FusedProductLeft,
-            SumcheckId::ProductVirtualization,
-        );
-        let (_, fused_right) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::FusedProductRight,
-            SumcheckId::ProductVirtualization,
-        );
-        let r0 = *pt_left
-            .r
-            .last()
-            .expect("ProductVirtualInner requires r0 in opening point");
-        let claim = fused_left + gamma * fused_right;
-        Self {
-            claim,
-            r0_uniskip: r0,
-            gamma,
-        }
-    }
-
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Self {
-        let gamma: F::Challenge = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_optimized::<F>();
-        let acc = state_manager.get_verifier_accumulator();
-        let acc_ref = acc.borrow();
-        let (pt_left, fused_left) = acc_ref.get_virtual_polynomial_opening(
-            VirtualPolynomial::FusedProductLeft,
-            SumcheckId::ProductVirtualization,
-        );
-        let (_, fused_right) = acc_ref.get_virtual_polynomial_opening(
-            VirtualPolynomial::FusedProductRight,
-            SumcheckId::ProductVirtualization,
-        );
-        let r0 = *pt_left
-            .r
-            .last()
-            .expect("ProductVirtualInner requires r0 in opening point");
-        let claim = fused_left + gamma * fused_right;
-        Self {
-            claim,
-            r0_uniskip: r0,
-            gamma,
-        }
+        let params = ProductVirtualInnerParams::new(state_manager);
+        Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualInner<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtualInnerProver<F> {
     // Trivial sum-check, no round, no computation of messages or binding, only verification
     fn degree(&self) -> usize {
         0
     }
+
     fn num_rounds(&self) -> usize {
         0
     }
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        self.claim
+
+    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
     }
+
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         Vec::new()
     }
+
     fn bind(&mut self, _r_j: F::Challenge, _round: usize) {}
+
+    fn cache_openings(
+        &self,
+        _accumulator: &mut ProverOpeningAccumulator<F>,
+        _transcript: &mut T,
+        _sumcheck_challenges: &[<F as JoltField>::Challenge],
+    ) {
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+pub struct ProductVirtualInnerVerifier<F: JoltField> {
+    params: ProductVirtualInnerParams<F>,
+}
+
+impl<F: JoltField> ProductVirtualInnerVerifier<F> {
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        let params = ProductVirtualInnerParams::new(state_manager);
+        Self { params }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for ProductVirtualInnerVerifier<F>
+{
+    fn degree(&self) -> usize {
+        0
+    }
+
+    fn num_rounds(&self) -> usize {
+        0
+    }
+
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
+    }
+
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F::Challenge],
+        accumulator: &VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let acc = accumulator.as_ref().expect("accumulator required").borrow();
         // Lagrange weights at r0
         let w = LagrangePolynomial::<F>::evals::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&self.r0_uniskip);
+        >(&self.params.r0_uniskip);
 
         // Fetch factor claims
-        let l_inst = acc
+        let l_inst = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LeftInstructionInput,
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let r_inst = acc
+        let r_inst = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RightInstructionInput,
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let is_rd_not_zero = acc
+        let is_rd_not_zero = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let wl_flag = acc
+        let wl_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let j_flag = acc
+        let j_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::Jump),
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let lookup_out = acc
+        let lookup_out = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let branch_flag = acc
+        let branch_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let next_is_noop = acc
+        let next_is_noop = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::NextIsNoop,
                 SumcheckId::ProductVirtualization,
@@ -1072,31 +1062,54 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualInner
             + w[3] * branch_flag
             + w[4] * (F::one() - next_is_noop);
 
-        left_sum + self.gamma * right_sum
+        left_sum + self.params.gamma * right_sum
     }
-    // No opening point or new openings
-    fn normalize_opening_point(
+
+    fn cache_openings(
         &self,
-        _opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(Vec::new())
-    }
-    fn cache_openings_prover(
-        &self,
-        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _accumulator: &mut VerifierOpeningAccumulator<F>,
         _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
     }
-    fn cache_openings_verifier(
-        &self,
-        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
+}
+
+struct ProductVirtualInnerParams<F: JoltField> {
+    r0_uniskip: F::Challenge,
+    gamma: F::Challenge,
+}
+
+impl<F: JoltField> ProductVirtualInnerParams<F> {
+    fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        let gamma = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_scalar_optimized::<F>();
+        let (pt_left, _) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::FusedProductLeft,
+            SumcheckId::ProductVirtualization,
+        );
+        let r0 = *pt_left
+            .r
+            .last()
+            .expect("ProductVirtualInner requires r0 in opening point");
+        Self {
+            r0_uniskip: r0,
+            gamma,
+        }
     }
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
-        flamegraph.visit_root(self);
+
+    pub fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, fused_left) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::FusedProductLeft,
+            SumcheckId::ProductVirtualization,
+        );
+        let (_, fused_right) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::FusedProductRight,
+            SumcheckId::ProductVirtualization,
+        );
+        fused_left + self.gamma * fused_right
     }
 }

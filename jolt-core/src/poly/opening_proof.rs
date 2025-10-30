@@ -14,7 +14,6 @@ use num_derive::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
@@ -32,7 +31,11 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
-    subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::{
+        sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::SumcheckInstanceVerifier,
+    },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
@@ -41,6 +44,9 @@ use crate::{
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
+
+/// Degree of the sumcheck round polynomials in [`OpeningProofReductionSumcheckVerifier`].
+const OPENING_SUMCHECK_DEGREE: usize = 2;
 
 #[derive(Clone, Debug, PartialEq, Default, Allocative)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
@@ -288,11 +294,11 @@ pub enum ProverOpening<F: JoltField> {
 }
 
 #[derive(Clone, Allocative)]
-pub struct OpeningProofReductionSumcheck<F>
+pub struct OpeningProofReductionSumcheckProver<F>
 where
     F: JoltField,
 {
-    prover_state: Option<ProverOpening<F>>,
+    prover_state: ProverOpening<F>,
     /// Represents the polynomial opened.
     polynomial: CommittedPolynomial,
     /// The ID of the sumcheck these openings originated from
@@ -302,11 +308,11 @@ where
     sumcheck_claim: Option<F>,
 }
 
-impl<F> OpeningProofReductionSumcheck<F>
+impl<F> OpeningProofReductionSumcheckProver<F>
 where
     F: JoltField,
 {
-    fn new_prover_instance_dense(
+    fn new_dense(
         polynomial: CommittedPolynomial,
         sumcheck_id: SumcheckId,
         eq_poly: Arc<RwLock<EqCycleState<F>>>,
@@ -321,13 +327,13 @@ where
             polynomial,
             sumcheck_id,
             input_claim: claim,
-            prover_state: Some(opening.into()),
+            prover_state: opening.into(),
             opening_point,
             sumcheck_claim: None,
         }
     }
 
-    fn new_prover_instance_one_hot(
+    fn new_one_hot(
         polynomial: CommittedPolynomial,
         sumcheck_id: SumcheckId,
         eq_address: Arc<RwLock<EqAddressState<F>>>,
@@ -340,23 +346,7 @@ where
             polynomial,
             sumcheck_id,
             input_claim: claim,
-            prover_state: Some(opening.into()),
-            opening_point,
-            sumcheck_claim: None,
-        }
-    }
-
-    fn new_verifier_instance(
-        polynomial: CommittedPolynomial,
-        sumcheck_id: SumcheckId,
-        opening_point: Vec<F::Challenge>,
-        claim: F,
-    ) -> Self {
-        Self {
-            polynomial,
-            sumcheck_id,
-            input_claim: claim,
-            prover_state: None,
+            prover_state: opening.into(),
             opening_point,
             sumcheck_claim: None,
         }
@@ -393,8 +383,7 @@ where
                     );
         }
 
-        let prover_state = self.prover_state.as_mut().unwrap();
-        match prover_state {
+        match &mut self.prover_state {
             ProverOpening::Dense(opening) => {
                 let poly = shared_dense_polynomials.get(&self.polynomial).unwrap();
                 opening.polynomial = Some(poly.clone());
@@ -412,12 +401,7 @@ where
 
     fn cache_sumcheck_claim(&mut self) {
         debug_assert!(self.sumcheck_claim.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let claim = match prover_state {
+        let claim = match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.final_sumcheck_claim(),
             ProverOpening::OneHot(opening) => opening.final_sumcheck_claim(),
         };
@@ -425,75 +409,108 @@ where
     }
 }
 
-impl<F, T: Transcript> SumcheckInstance<F, T> for OpeningProofReductionSumcheck<F>
+impl<F, T: Transcript> SumcheckInstanceProver<F, T> for OpeningProofReductionSumcheckProver<F>
 where
     F: JoltField,
 {
     fn degree(&self) -> usize {
-        2
+        OPENING_SUMCHECK_DEGREE
     }
 
     fn num_rounds(&self) -> usize {
         self.opening_point.len()
     }
 
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
         self.input_claim
     }
 
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        let prover_state = self.prover_state.as_mut().unwrap();
-        match prover_state {
+        match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.compute_prover_message(round, previous_claim),
             ProverOpening::OneHot(opening) => opening.compute_prover_message(round, previous_claim),
         }
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        let prover_state = self.prover_state.as_mut().unwrap();
-        match prover_state {
+        match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.bind(r_j, round),
             ProverOpening::OneHot(opening) => opening.bind(r_j, round),
         }
     }
 
-    fn expected_output_claim(
+    fn cache_openings(
         &self,
-        _: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F::Challenge],
-    ) -> F {
-        let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, r);
-        eq_eval * self.sumcheck_claim.unwrap()
-    }
-
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
-    }
-
-    fn cache_openings_prover(
-        &self,
-        _accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
+        _accumulator: &mut ProverOpeningAccumulator<F>,
         _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _sumcheck_challenges: &[F::Challenge],
     ) {
-        unimplemented!("Unused")
-    }
-
-    fn cache_openings_verifier(
-        &self,
-        _accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
-        _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        unimplemented!("Unused")
+        // Nothing to cache.
     }
 
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
+    }
+}
+
+struct OpeningProofReductionSumcheckVerifier<F>
+where
+    F: JoltField,
+{
+    /// Represents the polynomial opened.
+    polynomial: CommittedPolynomial,
+    input_claim: F,
+    opening_point: Vec<F::Challenge>,
+    sumcheck_claim: Option<F>,
+}
+
+impl<F: JoltField> OpeningProofReductionSumcheckVerifier<F> {
+    pub fn new(
+        polynomial: CommittedPolynomial,
+        opening_point: Vec<F::Challenge>,
+        input_claim: F,
+    ) -> Self {
+        Self {
+            polynomial,
+            input_claim,
+            opening_point,
+            sumcheck_claim: None,
+        }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for OpeningProofReductionSumcheckVerifier<F>
+{
+    fn degree(&self) -> usize {
+        OPENING_SUMCHECK_DEGREE
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.opening_point.len()
+    }
+
+    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        self.input_claim
+    }
+
+    fn expected_output_claim(
+        &self,
+        _accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, sumcheck_challenges);
+        eq_eval * self.sumcheck_claim.unwrap()
+    }
+
+    fn cache_openings(
+        &self,
+        _accumulator: &mut VerifierOpeningAccumulator<F>,
+        _transcript: &mut T,
+        _sumcheck_challenges: &[F::Challenge],
+    ) {
+        // Nothing to cache.
     }
 }
 
@@ -504,7 +521,7 @@ pub struct ProverOpeningAccumulator<F>
 where
     F: JoltField,
 {
-    pub sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
+    pub sumchecks: Vec<OpeningProofReductionSumcheckProver<F>>,
     pub openings: Openings<F>,
     dense_polynomial_map: HashMap<CommittedPolynomial, Arc<RwLock<SharedDensePolynomial<F>>>>,
     eq_cycle_map: HashMap<Vec<F::Challenge>, Arc<RwLock<EqCycleState<F>>>>,
@@ -518,7 +535,7 @@ pub struct VerifierOpeningAccumulator<F>
 where
     F: JoltField,
 {
-    sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
+    sumchecks: Vec<OpeningProofReductionSumcheckVerifier<F>>,
     pub openings: Openings<F>,
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
@@ -673,7 +690,7 @@ where
             ),
         );
 
-        let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_dense(
+        let sumcheck = OpeningProofReductionSumcheckProver::new_dense(
             polynomial,
             sumcheck,
             shared_eq.clone(),
@@ -713,7 +730,7 @@ where
         }
 
         for (label, claim) in polynomials.into_iter().zip(claims.into_iter()) {
-            let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_one_hot(
+            let sumcheck = OpeningProofReductionSumcheckProver::new_one_hot(
                 label,
                 sumcheck,
                 shared_eq_address.clone(),
@@ -800,8 +817,7 @@ where
 
         // Populate dense_polynomial_map
         for sumcheck in self.sumchecks.iter() {
-            let prover_state = sumcheck.prover_state.as_ref().unwrap();
-            if let ProverOpening::Dense(_) = prover_state {
+            if let ProverOpening::Dense(_) = &sumcheck.prover_state {
                 // If not already in `dense_polynomial_map`, create shared polynomial
                 // and insert it into the map.
                 self.dense_polynomial_map
@@ -911,16 +927,14 @@ where
             write_flamegraph_svg(flamegraph, "stage7_start_flamechart.svg");
         }
 
-        let instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> = self
+        let instances = self
             .sumchecks
             .iter_mut()
-            .map(|opening| {
-                let instance: &mut dyn SumcheckInstance<F, ProofTranscript> = opening;
-                instance
-            })
+            .map(|opening| opening as &mut _)
             .collect();
 
-        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, None, transcript);
+        let (sumcheck_proof, r_sumcheck) =
+            BatchedSumcheck::prove(instances, &mut ProverOpeningAccumulator::new(), transcript);
 
         #[cfg(feature = "allocative")]
         {
@@ -1045,9 +1059,8 @@ where
         transcript.append_scalar(&claim);
 
         self.sumchecks
-            .push(OpeningProofReductionSumcheck::new_verifier_instance(
+            .push(OpeningProofReductionSumcheckVerifier::new(
                 polynomial,
-                sumcheck,
                 opening_point,
                 claim,
             ));
@@ -1092,9 +1105,8 @@ where
             transcript.append_scalar(&claim);
 
             self.sumchecks
-                .push(OpeningProofReductionSumcheck::new_verifier_instance(
+                .push(OpeningProofReductionSumcheckVerifier::new(
                     label,
-                    sumcheck,
                     opening_point.clone(),
                     claim,
                 ));
@@ -1245,14 +1257,19 @@ where
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        let instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = self
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = self
             .sumchecks
             .iter()
             .map(|opening| {
-                let instance: &dyn SumcheckInstance<F, ProofTranscript> = opening;
+                let instance: &dyn SumcheckInstanceVerifier<F, ProofTranscript> = opening;
                 instance
             })
             .collect();
-        BatchedSumcheck::verify(sumcheck_proof, instances, None, transcript)
+        BatchedSumcheck::verify(
+            sumcheck_proof,
+            instances,
+            &mut VerifierOpeningAccumulator::new(),
+            transcript,
+        )
     }
 }
