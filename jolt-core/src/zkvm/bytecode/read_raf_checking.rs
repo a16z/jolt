@@ -110,8 +110,8 @@ struct ReadCheckingProverState<F: JoltField> {
     /// Chunked RA polynomials over address variables (one per dimension `d`), used to form
     /// the product ∏_i ra_i during the cycle-binding phase.
     ra: Vec<RaPolynomial<u8, F>>,
-    /// Expanding tables holding K_chunk-size prefix products for each address chunk.
-    v: Vec<ExpandingTable<F>>,
+    /// Binding challenges for the first log_K variables of the sumcheck
+    r_address_prime: Vec<F::Challenge>,
     /// Per-stage Gruen-split eq polynomials over cycle vars (low-to-high binding order).
     gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
     /// Previous-round claims s_i(0)+s_i(1) per stage, needed for degree-3 univariate recovery.
@@ -291,7 +291,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             prover_state: Some(ReadCheckingProverState {
                 F,
                 ra: Vec::with_capacity(d),
-                v,
+                r_address_prime: Vec::new(),
                 // eq_polys,
                 gruen_eq_polys,
                 prev_round_claims: claim_per_stage,
@@ -857,12 +857,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                 .into_par_iter()
                 .map(|i| {
                     let ra_evals = ps.F.each_ref().map(|poly| {
-                        poly.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow)
+                        poly.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh)
                     });
 
                     let int_evals =
                         self.int_poly
-                            .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                            .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
                     // We have a separate Val polynomial for each stage
                     // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
@@ -878,7 +878,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                         .val_polys
                         .iter()
                         // Val polynomials
-                        .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow))
+                        .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh))
                         // Here are the RAF polynomials and their powers
                         .zip([Some(&int_evals), None, Some(&int_evals), None, None])
                         .zip([Some(self.gamma_powers[5]), None, Some(self.gamma_powers[4]), None, None])
@@ -1009,18 +1009,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                 s.spawn(|_| {
                     self.val_polys
                         .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh))
                 });
                 s.spawn(|_| {
-                    self.int_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+                    self.int_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
                 });
                 s.spawn(|_| {
                     ps.F.par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
                 });
-                s.spawn(|_| {
-                    ps.v[round / self.log_K_chunk].update(r_j);
-                });
+                ps.r_address_prime.push(r_j);
             });
             if round == self.log_K - 1 {
                 self.init_log_t_rounds();
@@ -1040,6 +1038,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
     ) -> F {
         let accumulator = accumulator.as_ref().unwrap();
         let (r_address_prime, r_cycle_prime) = r.split_at(self.log_K);
+        let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         // r_cycle is bound LowToHigh, so reverse
         let r_cycle_prime = r_cycle_prime
             .iter()
@@ -1047,7 +1046,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             .copied()
             .collect::<Vec<F::Challenge>>();
 
-        let int_poly = self.int_poly.evaluate(r_address_prime);
+        let int_poly = self.int_poly.evaluate(&r_address_prime);
 
         let ra_claims = (0..self.d).map(|i| {
             accumulator
@@ -1083,7 +1082,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                 F::zero(),                       // There's no raf for Stage5
             ])
             .map(|(((val, r_cycle), gamma), int_poly)| {
-                (val.evaluate(r_address_prime) + int_poly)
+                (val.evaluate(&r_address_prime) + int_poly)
                     * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime)
                     * gamma
             })
@@ -1097,6 +1096,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut r = opening_point.to_vec();
+        r[0..self.log_K].reverse();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
     }
@@ -1184,9 +1184,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 .unwrap(),
         );
 
-        ps.v.par_iter()
+        ps.r_address_prime
+            .par_chunks_mut(self.log_K_chunk)
+            .rev()
             .enumerate()
-            .map(|(i, v)| {
+            .map(|(i, r_address_prime)| {
                 let ra_i: Vec<Option<u8>> = ps
                     .pc
                     .par_iter()
@@ -1195,7 +1197,8 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                         Some(k as u8)
                     })
                     .collect();
-                RaPolynomial::new(Arc::new(ra_i), v.clone_values())
+                r_address_prime.reverse();
+                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_prime))
             })
             .collect::<Vec<_>>()
             .into_iter()
