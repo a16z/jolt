@@ -577,7 +577,7 @@ where
         prover_accumulate_advice(state_manager);
         let K = state_manager.ram_K;
 
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let d = compute_d_parameter(K);
         let log_k_chunk = DTH_ROOT_OF_K.log_2();
@@ -730,7 +730,7 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let d = compute_d_parameter(state_manager.ram_K);
         let num_rounds = DTH_ROOT_OF_K.log_2();
