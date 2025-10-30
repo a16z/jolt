@@ -12,7 +12,7 @@ use crate::{
 // exprs...
 #[derive(Debug, Clone)]
 pub struct ZkLeanLookupTable<const WORD_SIZE: usize> {
-    lookup_table: LookupTables<WORD_SIZE>,
+    pub lookup_table: LookupTables<WORD_SIZE>,
 }
 
 impl<const WORD_SIZE: usize> From<LookupTables<WORD_SIZE>> for ZkLeanLookupTable<WORD_SIZE> {

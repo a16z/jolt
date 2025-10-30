@@ -16,6 +16,8 @@ mod r1cs;
 use crate::r1cs::*;
 //mod flags;
 //use crate::flags::*;
+mod lean_tests;
+use crate::lean_tests::*;
 mod modules;
 use crate::modules::*;
 
@@ -78,6 +80,7 @@ type ParameterSet = RV64IParameterSet;
 
 fn main() -> Result<(), FSError> {
     let args = Args::parse();
+    let mut rng = rand_core::OsRng;
 
     let modules: Vec<Box<dyn AsModule>> = vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
@@ -87,6 +90,11 @@ fn main() -> Result<(), FSError> {
             64 => Box::new(ZkLeanLookupTables::<64>::extract()),
             _ => panic!("Unsupported architecture size"),
         },
+        match ParameterSet::WORD_SIZE {
+            32 => Box::new(ZkLeanTests::<32>::extract(&mut rng)),
+            64 => Box::new(ZkLeanTests::<64>::extract(&mut rng)),
+            _ => panic!("Unsupported architecture size"),
+        }
         //Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
     ];
 
