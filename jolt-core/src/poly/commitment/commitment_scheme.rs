@@ -136,33 +136,37 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {
-    type State<'a>: Sync + Clone;
     type ChunkState: Send + Sync + Clone + PartialEq + Debug;
-    type SetupCache;
+    type CachedData: Sync;
 
-    fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache;
+    /// Prepare cached data that will be shared across all polynomial commitments
+    fn prepare_cached_data(setup: &Self::ProverSetup) -> Self::CachedData;
 
-    fn initialize<'a>(
-        onehot_k: Option<usize>,
-        size: usize,
-        setup: &'a Self::ProverSetup,
-        setup_cache: &'a Self::SetupCache,
-    ) -> Self::State<'a>;
+    // First `process_chunk` is a tier 1 commitment (MSM)
 
-    /// Process a chunk of small scalar values using optimized MSM
-    fn process_chunk<'a, T: SmallScalar>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState;
+    /// Process a chunk of small scalar values
+    fn process_chunk<T: SmallScalar>(
+        cached_data: &Self::CachedData,
+        chunk: &[T],
+    ) -> Self::ChunkState;
 
-    /// Process a chunk of field elements (for dense witness)
-    fn process_chunk_field<'a>(state: &Self::State<'a>, chunk: &[Self::Field]) -> Self::ChunkState;
+    /// Process a chunk of field elements
+    fn process_chunk_field(
+        cached_data: &Self::CachedData,
+        chunk: &[Self::Field],
+    ) -> Self::ChunkState;
 
     /// Process a chunk of one-hot values
-    fn process_chunk_onehot<'a>(
-        state: &Self::State<'a>,
+    fn process_chunk_onehot(
+        cached_data: &Self::CachedData,
+        onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState;
 
-    fn finalize<'a>(
-        state: &Self::State<'a>,
+    /// Tier 2 commitment (multi pairing)
+    fn finalize(
+        cached_data: &Self::CachedData,
+        onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint);
 }

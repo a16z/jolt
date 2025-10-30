@@ -1338,65 +1338,79 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct StreamingDoryCommitment<'a> {
-    bases: &'a Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>,
-    g2_cache: Option<&'a G2Cache>,
-    K: Option<usize>,
+pub struct DoryCachedData {
+    g1_bases: Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>,
+    g2_prepared: Option<Vec<BnG2Prepared<Config>>>,
 }
 
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
-    type State<'a> = StreamingDoryCommitment<'a>;
     type ChunkState = Vec<JoltG1Wrapper>; // A chunk's state is the commitment to the row.
-    type SetupCache = Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>;
+    type CachedData = DoryCachedData;
 
-    fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache {
-        setup
+    #[tracing::instrument(skip_all, name = "StreamingDory::prepare_cached_data")]
+    fn prepare_cached_data(setup: &Self::ProverSetup) -> Self::CachedData {
+        let _span = tracing::span!(tracing::Level::INFO, "cache_g1_bases").entered();
+        let g1_bases = setup
             .g1_vec()
             .par_iter()
             .map(|g| g.0.into_affine())
-            .collect::<Vec<_>>()
-    }
+            .collect::<Vec<_>>();
+        drop(_span);
 
-    fn initialize<'a>(
-        onehot_k: Option<usize>,
-        _size: usize,
-        setup: &'a Self::ProverSetup,
-        bases: &'a Self::SetupCache,
-    ) -> Self::State<'a> {
-        StreamingDoryCommitment {
-            bases,
-            g2_cache: setup.g2_cache.as_ref(),
-            K: onehot_k,
+        let g2_cache = setup.g2_cache.as_ref();
+
+        let _span = tracing::span!(tracing::Level::INFO, "cache_g2_prepared").entered();
+        let g2_prepared = g2_cache.map(|cache| {
+            let num_rows = DoryGlobals::get_max_num_rows();
+            (0..num_rows)
+                .into_par_iter()
+                .map(|i| {
+                    cache
+                        .get_prepared(i)
+                        .expect("Index out of bounds in G2 cache")
+                        .clone()
+                })
+                .collect()
+        });
+        drop(_span);
+
+        DoryCachedData {
+            g1_bases,
+            g2_prepared,
         }
     }
 
-    fn process_chunk<'a, T: SmallScalar>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState {
+    #[tracing::instrument(skip_all, name = "StreamingDory::process_chunk")]
+    fn process_chunk<T: SmallScalar>(
+        cached_data: &Self::CachedData,
+        chunk: &[T],
+    ) -> Self::ChunkState {
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         let row_commitment = JoltGroupWrapper(
-            T::msm(&state.bases[..chunk.len()], chunk).expect("MSM calculation failed."),
+            T::msm(&cached_data.g1_bases[..chunk.len()], chunk).expect("MSM calculation failed."),
         );
         vec![row_commitment]
     }
 
-    fn process_chunk_field<'a>(state: &Self::State<'a>, chunk: &[Fr]) -> Self::ChunkState {
+    #[tracing::instrument(skip_all, name = "StreamingDory::process_chunk_field")]
+    fn process_chunk_field(cached_data: &Self::CachedData, chunk: &[Fr]) -> Self::ChunkState {
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         let row_commitment = JoltGroupWrapper(
-            VariableBaseMSM::msm_field_elements(&state.bases[..chunk.len()], chunk)
+            VariableBaseMSM::msm_field_elements(&cached_data.g1_bases[..chunk.len()], chunk)
                 .expect("MSM calculation failed."),
         );
         vec![row_commitment]
     }
 
-    fn process_chunk_onehot<'a>(
-        state: &Self::State<'a>,
+    #[tracing::instrument(skip_all, name = "StreamingDory::process_chunk_onehot")]
+    fn process_chunk_onehot(
+        cached_data: &Self::CachedData,
+        onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState {
-        let Some(K) = state.K else {
-            panic!("K must be provided for OneHot polynomials.");
-        };
+        let K = onehot_k;
 
         let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); K];
         for (col_index, k) in chunk.iter().enumerate() {
@@ -1407,7 +1421,10 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             }
         }
 
-        let results = jolt_optimizations::batch_g1_additions_multi(state.bases, &indices_per_k);
+        let _span = tracing::span!(tracing::Level::INFO, "batch_g1_additions_multi").entered();
+        let results =
+            jolt_optimizations::batch_g1_additions_multi(&cached_data.g1_bases, &indices_per_k);
+        drop(_span);
 
         let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
         for (k, result) in results.into_iter().enumerate() {
@@ -1419,11 +1436,13 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         row_commitments
     }
 
-    fn finalize<'a>(
-        state: &Self::State<'a>,
+    #[tracing::instrument(skip_all, name = "StreamingDory::finalize")]
+    fn finalize(
+        cached_data: &Self::CachedData,
+        onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        if let Some(K) = state.K {
+        if let Some(K) = onehot_k {
             let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
             let rows_per_k = T / row_len;
@@ -1439,25 +1458,46 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
                     .for_each(|(dest, src)| *dest = *src);
             }
 
-            let commitment = JoltBn254::multi_pair_cached(
-                Some(&row_commitments),
-                None,
-                None,
-                None,
-                Some(row_commitments.len()),
-                state.g2_cache,
-            );
+            let g1_inner: &[G1Projective] = unsafe {
+                std::slice::from_raw_parts(
+                    row_commitments.as_ptr() as *const G1Projective,
+                    row_commitments.len(),
+                )
+            };
+            let g1_prepared = G1Projective::normalize_batch(g1_inner)
+                .par_iter()
+                .map(BnG1Prepared::<Config>::from)
+                .collect::<Vec<_>>();
+
+            let g2_prepared = cached_data
+                .g2_prepared
+                .as_ref()
+                .expect("G2 prepared elements should be cached");
+            let g2_prepared_subset = &g2_prepared[..row_commitments.len()];
+
+            let commitment = JoltBn254::multi_pair_prepared(&g1_prepared, g2_prepared_subset);
             (DoryCommitment(commitment), row_commitments)
         } else {
             let row_commitments: Vec<_> = chunks.into_par_iter().map(|r| r[0]).collect();
-            let commitment = JoltBn254::multi_pair_cached(
-                Some(&row_commitments),
-                None,
-                None,
-                None,
-                Some(row_commitments.len()),
-                state.g2_cache,
-            );
+
+            let g1_inner: &[G1Projective] = unsafe {
+                std::slice::from_raw_parts(
+                    row_commitments.as_ptr() as *const G1Projective,
+                    row_commitments.len(),
+                )
+            };
+            let g1_prepared = G1Projective::normalize_batch(g1_inner)
+                .par_iter()
+                .map(BnG1Prepared::<Config>::from)
+                .collect::<Vec<_>>();
+
+            let g2_prepared = cached_data
+                .g2_prepared
+                .as_ref()
+                .expect("G2 prepared elements should be cached");
+            let g2_prepared_subset = &g2_prepared[..row_commitments.len()];
+
+            let commitment = JoltBn254::multi_pair_prepared(&g1_prepared, g2_prepared_subset);
             (DoryCommitment(commitment), row_commitments)
         }
     }

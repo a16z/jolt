@@ -819,22 +819,9 @@ impl JoltDAG {
 
         let T = DoryGlobals::get_T();
 
+        let cached_data = PCS::prepare_cached_data(&preprocessing.generators);
+
         let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
-        let cached_setup = PCS::cache_setup(&preprocessing.generators);
-        let pcs_and_polys: Vec<_> = polys
-            .iter()
-            .map(|poly| {
-                (
-                    PCS::initialize(
-                        poly.get_onehot_k(preprocessing),
-                        T,
-                        &preprocessing.generators,
-                        &cached_setup,
-                    ),
-                    poly,
-                )
-            })
-            .collect();
         let row_len = DoryGlobals::get_num_columns();
         let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
             vec![vec![]; T / DoryGlobals::get_max_num_rows()];
@@ -849,11 +836,11 @@ impl JoltDAG {
             .zip(row_commitments.iter_mut())
             .par_bridge()
             .for_each(|(chunk, row_commitments)| {
-                let res: Vec<_> = pcs_and_polys
+                let res: Vec<_> = polys
                     .par_iter()
-                    .map(|(pcs, poly)| {
+                    .map(|poly| {
                         poly.generate_witness_and_commit_row::<_, PCS>(
-                            pcs,
+                            &cached_data,
                             preprocessing,
                             &chunk,
                             prover_state_manager.ram_d,
@@ -865,8 +852,8 @@ impl JoltDAG {
 
         let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
             .into_par_iter()
-            .zip(pcs_and_polys.into_par_iter())
-            .map(|(rc, (s, _))| PCS::finalize(s, &rc))
+            .zip(polys.into_par_iter())
+            .map(|(rc, poly)| PCS::finalize(&cached_data, poly.get_onehot_k(preprocessing), &rc))
             .unzip();
 
         let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());

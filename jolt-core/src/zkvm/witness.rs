@@ -497,10 +497,10 @@ impl CommittedPolynomial {
         }
     }
 
-    pub fn generate_witness_and_commit_row<'a, F: JoltField, PCS>(
+    pub fn generate_witness_and_commit_row<F: JoltField, PCS>(
         &self,
-        pcs: &PCS::State<'a>,
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        cached_data: &PCS::CachedData,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         row_cycles: &[Cycle],
         ram_d: usize,
     ) -> PCS::ChunkState
@@ -516,7 +516,7 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
-                PCS::process_chunk(pcs, &row)
+                PCS::process_chunk(cached_data, &row)
             }
             CommittedPolynomial::RamInc => {
                 let row: Vec<i128> = row_cycles
@@ -531,7 +531,7 @@ impl CommittedPolynomial {
                         }
                     })
                     .collect();
-                PCS::process_chunk(pcs, &row)
+                PCS::process_chunk(cached_data, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -545,7 +545,7 @@ impl CommittedPolynomial {
                         Some(k as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(pcs, &row)
+                PCS::process_chunk_onehot(cached_data, instruction_lookups::K_CHUNK, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let d = preprocessing.shared.bytecode.d;
@@ -560,7 +560,7 @@ impl CommittedPolynomial {
                         Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
                     })
                     .collect();
-                PCS::process_chunk_onehot(pcs, &row)
+                PCS::process_chunk_onehot(cached_data, K_chunk, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -576,7 +576,7 @@ impl CommittedPolynomial {
                         })
                     })
                     .collect();
-                PCS::process_chunk_onehot(pcs, &row)
+                PCS::process_chunk_onehot(cached_data, DTH_ROOT_OF_K, &row)
             }
         }
     }
