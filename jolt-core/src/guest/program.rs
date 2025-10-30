@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
+use tracer::LazyTraceIterator;
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]
@@ -39,7 +40,7 @@ impl Program {
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> (Vec<Cycle>, Memory, JoltDevice) {
+    ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         trace(
             &self.elf_contents,
             self.elf.as_ref(),
@@ -90,8 +91,8 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> (Vec<Cycle>, Memory, JoltDevice) {
-    let (trace, memory, io_device) = tracer::trace(
+) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    let (lazy_trace, trace, memory, io_device) = tracer::trace(
         elf_contents,
         elf_path,
         inputs,
@@ -99,7 +100,7 @@ pub fn trace(
         trusted_advice,
         memory_config,
     );
-    (trace, memory, io_device)
+    (lazy_trace, trace, memory, io_device)
 }
 
 pub fn trace_to_file(

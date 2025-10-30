@@ -516,7 +516,7 @@ fn run_recursion_proof(
         }
         RunConfig::Trace => {
             info!("  Trace-only mode: Skipping proof generation and verification.");
-            let (_, _, io_device) = recursion.trace(&input_bytes, &[], &[]);
+            let (_, _, _, io_device) = recursion.trace(&input_bytes, &[], &[]);
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
         }

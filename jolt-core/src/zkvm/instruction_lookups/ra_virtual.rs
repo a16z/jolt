@@ -53,7 +53,7 @@ impl<F: JoltField> RaSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (_preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
         let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,

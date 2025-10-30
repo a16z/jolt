@@ -48,7 +48,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let G = if let Some(G) = self.G.take() {
             G
         } else {
-            let (_, trace, _, _) = sm.get_prover_data();
+            let (_, _, trace, _, _) = sm.get_prover_data();
             let r_cycle = sm
                 .get_virtual_polynomial_opening(
                     VirtualPolynomial::LookupOutput,
@@ -146,7 +146,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_prover(sm);
-        let (_, trace, _, _) = sm.get_prover_data();
+        let (_, _, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,

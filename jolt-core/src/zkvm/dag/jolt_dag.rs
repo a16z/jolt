@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
@@ -13,6 +14,7 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::utils::thread::drop_in_background_thread;
+use crate::utils::transpose;
 use crate::zkvm::bytecode::BytecodeDag;
 use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStages;
@@ -21,13 +23,15 @@ use crate::zkvm::instruction_lookups::LookupsDag;
 use crate::zkvm::ram::RamDag;
 use crate::zkvm::registers::RegistersDag;
 use crate::zkvm::spartan::SpartanDag;
-use crate::zkvm::witness::{
-    compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
-};
+use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
 use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
+use itertools::Itertools;
+use rayon::prelude::*;
+use tracer::instruction::Cycle;
+use tracer::ChunksIterator;
 
 pub enum JoltDAG {}
 
@@ -38,7 +42,7 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: StreamingCommitmentScheme<Field = F>,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<
@@ -51,13 +55,12 @@ impl JoltDAG {
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
 
         tracing::info!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
 
-        let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
 
         // Commit to untrusted_advice
@@ -79,7 +82,7 @@ impl JoltDAG {
 
         let _guard = (
             DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
-            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
+            AllCommittedPolynomials::initialize(state_manager.ram_K, bytecode_d),
         );
 
         // Generate and commit to all witness polynomials
@@ -113,12 +116,12 @@ impl JoltDAG {
         let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
         let _guard = span.enter();
 
-        let (_, trace, _, _) = state_manager.get_prover_data();
+        let (_, _, trace, _, _) = state_manager.get_prover_data();
         let padded_trace_length = trace.len().next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
-        let mut ram_dag = RamDag::new_prover(&state_manager);
+        let mut ram_dag: RamDag = RamDag::new_prover(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
 
         tracing::info!("Stage 1 proving (univariate skip first round)");
@@ -429,7 +432,7 @@ impl JoltDAG {
         drop(span);
 
         // Batch-prove all openings (Stage 7)
-        let (_, trace, _, _) = state_manager.get_prover_data();
+        let (_, _, trace, _, _) = state_manager.get_prover_data();
 
         let all_polys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
@@ -529,7 +532,7 @@ impl JoltDAG {
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = state_manager.get_verifier_data().0.shared.bytecode.d;
-        let _guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
+        let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
 
         // Append commitments to transcript
         let commitments = state_manager.get_commitments();
@@ -783,11 +786,10 @@ impl JoltDAG {
         };
 
         let mut commitments_map = HashMap::new();
-        for polynomial in AllCommittedPolynomials::iter() {
-            commitments_map.insert(
-                *polynomial,
-                commitments.borrow()[polynomial.to_index()].clone(),
-            );
+        for (polynomial, commitment) in
+            AllCommittedPolynomials::iter().zip(commitments.borrow().iter())
+        {
+            commitments_map.insert(*polynomial, commitment.clone());
         }
         let accumulator = state_manager.get_verifier_accumulator();
         accumulator
@@ -808,11 +810,70 @@ impl JoltDAG {
     fn generate_and_commit_polynomials<
         F: JoltField,
         ProofTranscript: Transcript,
+        PCS: StreamingCommitmentScheme<Field = F>,
+    >(
+        prover_state_manager: &mut StateManager<F, ProofTranscript, PCS>,
+    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+        let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
+            prover_state_manager.get_prover_data();
+
+        let T = DoryGlobals::get_T();
+
+        let cached_data = PCS::prepare_cached_data(&preprocessing.generators);
+
+        let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
+        let row_len = DoryGlobals::get_num_columns();
+        let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
+            vec![vec![]; T / DoryGlobals::get_max_num_rows()];
+
+        lazy_trace
+            .as_ref()
+            .expect("Lazy trace not found!")
+            .clone()
+            .pad_using(T, |_| Cycle::NoOp)
+            .iter_chunks(row_len)
+            .zip(row_commitments.iter_mut())
+            .par_bridge()
+            .for_each(|(chunk, row_commitments)| {
+                let res: Vec<_> = polys
+                    .par_iter()
+                    .map(|poly| {
+                        poly.generate_witness_and_commit_row::<_, PCS>(
+                            &cached_data,
+                            preprocessing,
+                            &chunk,
+                            prover_state_manager.ram_d,
+                        )
+                    })
+                    .collect();
+                *row_commitments = res;
+            });
+
+        let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
+            .into_par_iter()
+            .zip(polys.into_par_iter())
+            .map(|(rc, poly)| PCS::finalize(&cached_data, poly.get_onehot_k(preprocessing), &rc))
+            .unzip();
+
+        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
+        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+            hint_map.insert(*poly, hint);
+        }
+
+        prover_state_manager.set_commitments(commitments);
+
+        Ok(hint_map)
+    }
+
+    #[allow(dead_code)]
+    fn generate_and_commit_polynomials_non_streaming<
+        F: JoltField,
+        ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<F, ProofTranscript, PCS>,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
-        let (preprocessing, trace, _program_io, _final_memory_state) =
+        let (preprocessing, _lazy_trace, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
         let polys = AllCommittedPolynomials::iter().copied().collect::<Vec<_>>();
@@ -852,7 +913,7 @@ impl JoltDAG {
     >(
         state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Option<PCS::OpeningProofHint> {
-        let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
+        let (preprocessing, _, _, program_io, _) = state_manager.get_prover_data();
 
         if program_io.untrusted_advice.is_empty() {
             return None;
@@ -891,7 +952,7 @@ impl JoltDAG {
     >(
         state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) {
-        let (_, _, program_io, _) = state_manager.get_prover_data();
+        let (_, _, _, program_io, _) = state_manager.get_prover_data();
 
         if program_io.trusted_advice.is_empty() {
             return;

@@ -199,7 +199,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
     pub fn new_prover(
         sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let trace = sm.get_prover_data().1;
+        let trace = sm.get_prover_data().2;
         let log_T = trace.len().log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let (r_branch, _) = sm.get_virtual_polynomial_opening(
@@ -1211,7 +1211,7 @@ mod tests {
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
     use tracer::instruction::Cycle;
-    use tracer::JoltDevice;
+    use tracer::{JoltDevice, LazyTraceIterator};
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
@@ -1323,8 +1323,10 @@ mod tests {
         };
         let final_memory_state = Memory::default();
 
+        let lazy_trace = LazyTraceIterator::new_for_test();
         let mut prover_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_prover(
             &prover_preprocessing,
+            lazy_trace,
             trace.clone(),
             program_io.clone(),
             None,

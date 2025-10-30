@@ -1,3 +1,4 @@
+use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::{JoltField, OptimizedMul};
 use crate::utils::math::Math;
 use crate::utils::small_scalar::SmallScalar;
@@ -7,8 +8,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::ops::Index;
-
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:

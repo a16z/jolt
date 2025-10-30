@@ -48,7 +48,7 @@ use std::path::Path;
 /// // Go!
 /// emulator.run();
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Emulator {
     /// addr2line instance for symbol lookups
     pub elf_path: Option<std::path::PathBuf>,

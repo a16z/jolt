@@ -3,6 +3,7 @@ use std::borrow::Borrow;
 use std::fmt::Debug;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::utils::small_scalar::SmallScalar;
 use crate::{
     field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
     utils::errors::ProofVerifyError,
@@ -26,7 +27,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of
     /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
     /// used as a hint for the opening proof.
-    type OpeningProofHint: Sync + Send + Clone + Debug;
+    type OpeningProofHint: Sync + Send + Clone + Debug + PartialEq;
 
     /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
     /// variables of any polynomial that will be committed using this setup.
@@ -135,9 +136,37 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {
-    type State<'a>; // : Clone + Debug;
+    type ChunkState: Send + Sync + Clone + PartialEq + Debug;
+    type CachedData: Sync;
 
-    fn initialize<'a>(size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a>;
-    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
-    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment;
+    /// Prepare cached data that will be shared across all polynomial commitments
+    fn prepare_cached_data(setup: &Self::ProverSetup) -> Self::CachedData;
+
+    // First `process_chunk` is a tier 1 commitment (MSM)
+
+    /// Process a chunk of small scalar values
+    fn process_chunk<T: SmallScalar>(
+        cached_data: &Self::CachedData,
+        chunk: &[T],
+    ) -> Self::ChunkState;
+
+    /// Process a chunk of field elements
+    fn process_chunk_field(
+        cached_data: &Self::CachedData,
+        chunk: &[Self::Field],
+    ) -> Self::ChunkState;
+
+    /// Process a chunk of one-hot values
+    fn process_chunk_onehot(
+        cached_data: &Self::CachedData,
+        onehot_k: usize,
+        chunk: &[Option<usize>],
+    ) -> Self::ChunkState;
+
+    /// Tier 2 commitment (multi pairing)
+    fn finalize(
+        cached_data: &Self::CachedData,
+        onehot_k: Option<usize>,
+        chunks: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint);
 }
