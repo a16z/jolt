@@ -1,8 +1,12 @@
 name = "Extracted Jolt circuits"
 defaultTargets = ["Jolt"]
+testDriver = "Tests"
 
 [[lean_lib]]
 name = "Jolt"
+
+[[lean_lib]]
+name = "Tests"
 
 [[require]]
 name = "zkLean"
