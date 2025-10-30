@@ -217,15 +217,14 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         let gruen_eq = &shared_eq.D;
 
         // Compute q(0) = sum of polynomial(i) * eq(r, i) for i in [0, mle_half)
-        let mle_half = polynomial.len() / 2;
-        let q_0 = if gruen_eq.E_in_current_len() <= 1 {
+        let q_0 = if gruen_eq.E_in_current_len() == 1 {
             // E_in is fully bound
-            let unreduced_q_0 = (0..mle_half)
+            let unreduced_q_0 = (0..gruen_eq.len() / 2)
                 .into_par_iter()
                 .map(|j| {
                     let eq_eval = gruen_eq.E_out_current()[j];
                     // TODO(quang): special case depending on the polynomial type?
-                    let poly_eval = polynomial.get_bound_coeff(j);
+                    let poly_eval = polynomial.get_bound_coeff(2 * j);
                     eq_eval.mul_unreduced::<9>(poly_eval)
                 })
                 .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
@@ -233,23 +232,23 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         } else {
             let num_x_out = gruen_eq.E_out_current_len();
             let num_x_in = gruen_eq.E_in_current_len();
-            let num_x_out_bits = num_x_out.log_2();
+            let num_x_in_bits = num_x_in.log_2();
             let d_e_in = gruen_eq.E_in_current();
             let d_e_out = gruen_eq.E_out_current();
 
-            (0..num_x_in)
+            (0..num_x_out)
                 .into_par_iter()
-                .map(|x_in| {
-                    let unreduced_inner_sum = (0..num_x_out)
+                .map(|x_out| {
+                    let unreduced_inner_sum = (0..num_x_in)
                         .into_par_iter()
-                        .map(|x_out| {
-                            let j = (x_in << num_x_out_bits) | x_out;
-                            let poly_eval = polynomial.get_bound_coeff(j);
-                            d_e_out[x_out].mul_unreduced::<9>(poly_eval)
+                        .map(|x_in| {
+                            let j = (x_out << num_x_in_bits) | x_in;
+                            let poly_eval = polynomial.get_bound_coeff(2 * j);
+                            d_e_in[x_in].mul_unreduced::<9>(poly_eval)
                         })
                         .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
                     let inner_sum = F::from_montgomery_reduce(unreduced_inner_sum);
-                    d_e_in[x_in] * inner_sum
+                    d_e_out[x_out] * inner_sum
                 })
                 .sum()
         };
@@ -270,7 +269,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         let shared_poly_ref = self.polynomial.as_mut().unwrap();
         let mut shared_poly = shared_poly_ref.write().unwrap();
         if shared_poly.num_variables_bound <= round {
-            shared_poly.poly.bind_parallel(r_j, BindingOrder::HighToLow);
+            shared_poly.poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             shared_poly.num_variables_bound += 1;
         }
     }
@@ -300,6 +299,7 @@ where
     input_claim: F,
     opening_point: Vec<F::Challenge>,
     sumcheck_claim: Option<F>,
+    log_T: usize,
 }
 
 impl<F> OpeningProofReductionSumcheck<F>
@@ -312,6 +312,7 @@ where
         eq_poly: Arc<RwLock<EqCycleState<F>>>,
         opening_point: Vec<F::Challenge>,
         claim: F,
+        log_T: usize,
     ) -> Self {
         let opening = DensePolynomialProverOpening {
             polynomial: None, // Defer initialization until opening proof reduction sumcheck
@@ -324,6 +325,7 @@ where
             prover_state: Some(opening.into()),
             opening_point,
             sumcheck_claim: None,
+            log_T,
         }
     }
 
@@ -334,6 +336,7 @@ where
         eq_cycle: Arc<RwLock<EqCycleState<F>>>,
         opening_point: Vec<F::Challenge>,
         claim: F,
+        log_T: usize,
     ) -> Self {
         let opening = OneHotPolynomialProverOpening::new(eq_address, eq_cycle);
         Self {
@@ -343,6 +346,7 @@ where
             prover_state: Some(opening.into()),
             opening_point,
             sumcheck_claim: None,
+            log_T,
         }
     }
 
@@ -351,6 +355,7 @@ where
         sumcheck_id: SumcheckId,
         opening_point: Vec<F::Challenge>,
         claim: F,
+        log_T: usize,
     ) -> Self {
         Self {
             polynomial,
@@ -359,6 +364,7 @@ where
             prover_state: None,
             opening_point,
             sumcheck_claim: None,
+            log_T,
         }
     }
 
@@ -462,7 +468,8 @@ where
         _: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F::Challenge],
     ) -> F {
-        let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, r);
+        let r = <Self as SumcheckInstance<F, T>>::normalize_opening_point(self, r);
+        let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r.r);
         eq_eval * self.sumcheck_claim.unwrap()
     }
 
@@ -470,6 +477,22 @@ where
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut opening_point = opening_point.to_vec();
+        match self.polynomial {
+            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => opening_point.reverse(),
+            CommittedPolynomial::InstructionRa(_)
+            | CommittedPolynomial::BytecodeRa(_)
+            | CommittedPolynomial::RamRa(_) => {
+                let log_K = opening_point.len() - self.log_T;
+                debug_assert!(
+                    log_K == 8,
+                    "Expected log_K to be 8 != {log_K}, poly: {:?}",
+                    self.polynomial
+                );
+                opening_point[log_K..].reverse();
+                opening_point[..log_K].reverse();
+            }
+        }
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -510,6 +533,7 @@ where
     eq_cycle_map: HashMap<Vec<F::Challenge>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
+    log_T: usize,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -524,6 +548,7 @@ where
     /// can detect any places where the openings don't match up.
     #[cfg(test)]
     prover_opening_accumulator: Option<ProverOpeningAccumulator<F>>,
+    log_T: usize,
 }
 
 pub trait OpeningAccumulator<F: JoltField> {
@@ -560,7 +585,7 @@ where
     F: JoltField,
 {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
@@ -604,7 +629,7 @@ impl<F> ProverOpeningAccumulator<F>
 where
     F: JoltField,
 {
-    pub fn new() -> Self {
+    pub fn new(log_T: usize) -> Self {
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
@@ -612,6 +637,7 @@ where
             dense_polynomial_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
+            log_T,
             // #[cfg(test)]
             // joint_commitment: None,
         }
@@ -679,6 +705,7 @@ where
             shared_eq.clone(),
             opening_point,
             claim,
+            self.log_T,
         );
         self.sumchecks.push(sumcheck);
     }
@@ -720,6 +747,7 @@ where
                 shared_eq_cycle.clone(),
                 r_concat.clone(),
                 claim,
+                self.log_T,
             );
             self.sumchecks.push(sumcheck);
         }
@@ -825,8 +853,11 @@ where
         drop(_enter);
 
         // Use sumcheck reduce many openings to one
-        let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
+        let (sumcheck_proof, mut r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(transcript);
+        let log_K = r_sumcheck.len() - self.log_T;
+        r_sumcheck[..log_K].reverse();
+        r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&sumcheck_claims);
 
@@ -947,7 +978,7 @@ where
     F: JoltField,
 {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
@@ -981,12 +1012,13 @@ impl<F> VerifierOpeningAccumulator<F>
 where
     F: JoltField,
 {
-    pub fn new() -> Self {
+    pub fn new(log_T: usize) -> Self {
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
             #[cfg(test)]
             prover_opening_accumulator: None,
+            log_T,
         }
     }
 
@@ -1050,6 +1082,7 @@ where
                 sumcheck,
                 opening_point,
                 claim,
+                self.log_T,
             ));
     }
 
@@ -1097,6 +1130,7 @@ where
                     sumcheck,
                     opening_point.clone(),
                     claim,
+                    self.log_T,
                 ));
         }
     }
@@ -1182,8 +1216,12 @@ where
             .for_each(|(opening, claim)| opening.sumcheck_claim = Some(*claim));
 
         // Verify the sumcheck
-        let r_sumcheck =
+        let mut r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
+        let log_K = r_sumcheck.len() - self.log_T;
+        debug_assert!(log_K == 8, "Expected log_K to be 8");
+        r_sumcheck[..log_K].reverse();
+        r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
@@ -1254,5 +1292,88 @@ where
             })
             .collect();
         BatchedSumcheck::verify(sumcheck_proof, instances, None, transcript)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
+    use ark_bn254::Fr;
+    use ark_std::{test_rng, Zero};
+    use rand_core::RngCore;
+
+    fn dense_polynomial_equivalence<const LOG_T: usize>() {
+        let T: usize = 1 << LOG_T;
+
+        let mut rng = test_rng();
+
+        // Create a random dense polynomial
+        let poly_coeffs: Vec<Fr> = (0..T).map(|_| Fr::from(rng.next_u64())).collect();
+        let mut dense_poly = DensePolynomial::new(poly_coeffs);
+
+        let r_cycle = std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+            .take(LOG_T)
+            .collect::<Vec<_>>();
+
+        let mut eq_cycle_state = EqCycleState::new(&r_cycle);
+        eq_cycle_state.merge_D();
+
+        let mut dense_opening = DensePolynomialProverOpening {
+            polynomial: Some(Arc::new(RwLock::new(SharedDensePolynomial {
+                poly: MultilinearPolynomial::from(dense_poly.Z.clone()),
+                num_variables_bound: 0,
+            }))),
+            eq_poly: Arc::new(RwLock::new(eq_cycle_state)),
+        };
+
+        let mut eq = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_cycle));
+
+        // Compute the initial input claim
+        let input_claim: Fr = (0..dense_poly.len()).map(|i| dense_poly[i] * eq[i]).sum();
+        let mut previous_claim = input_claim;
+
+        for round in 0..LOG_T {
+            let dense_message = dense_opening.compute_prover_message(round, previous_claim);
+            let mut expected_message = vec![Fr::zero(), Fr::zero()];
+            let mle_half = dense_poly.len() / 2;
+
+            expected_message[0] = (0..mle_half).map(|i| dense_poly[2 * i] * eq[2 * i]).sum();
+            expected_message[1] = (0..mle_half)
+                .map(|i| {
+                    let poly_bound_point =
+                        dense_poly[2 * i + 1] + dense_poly[2 * i + 1] - dense_poly[2 * i];
+                    let eq_bound_point = eq[2 * i + 1] + eq[2 * i + 1] - eq[2 * i];
+                    poly_bound_point * eq_bound_point
+                })
+                .sum();
+
+            assert_eq!(
+                dense_message, expected_message,
+                "round {round} prover message mismatch"
+            );
+
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
+
+            // Update previous_claim by evaluating the univariate polynomial at r
+            let eval_at_1 = previous_claim - expected_message[0];
+            let univariate_evals = vec![expected_message[0], eval_at_1, expected_message[1]];
+            let univariate_poly = UniPoly::from_evals(&univariate_evals);
+            previous_claim = univariate_poly.evaluate(&r);
+
+            dense_opening.bind(r, round);
+            dense_poly.bind_parallel(r, BindingOrder::LowToHigh);
+            eq.bind_parallel(r, BindingOrder::LowToHigh);
+        }
+        assert_eq!(
+            dense_opening.final_sumcheck_claim(),
+            dense_poly[0],
+            "final sumcheck claim"
+        );
+    }
+
+    #[test]
+    fn dense_opening_correctness() {
+        dense_polynomial_equivalence::<6>();
     }
 }

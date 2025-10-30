@@ -17,7 +17,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         dag::state_manager::StateManager,
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
 use allocative::Allocative;
@@ -41,7 +41,6 @@ pub struct HammingWeightProverState<F: JoltField> {
 #[derive(Allocative)]
 pub struct HammingWeightSumcheck<F: JoltField> {
     gamma: Vec<F>,
-    log_K_chunk: usize,
     d: usize,
     prover_state: Option<HammingWeightProverState<F>>,
 }
@@ -58,15 +57,12 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         for i in 1..d {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let log_K = sm.get_bytecode().len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
         let ra = F
             .into_iter()
             .map(MultilinearPolynomial::from)
             .collect::<Vec<_>>();
         Self {
             gamma: gamma_powers,
-            log_K_chunk,
             d,
             prover_state: Some(HammingWeightProverState { ra }),
         }
@@ -81,11 +77,8 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         for i in 1..d {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let log_K = sm.get_bytecode().len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
         Self {
             gamma: gamma_powers,
-            log_K_chunk,
             d,
             prover_state: None,
         }
@@ -98,7 +91,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
     }
 
     fn num_rounds(&self) -> usize {
-        self.log_K_chunk
+        DTH_ROOT_OF_K.log_2()
     }
 
     fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {

@@ -38,7 +38,7 @@ use crate::{
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
 use allocative::Allocative;
@@ -130,9 +130,6 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma_powers: Vec<F>,
     /// RLC of stage rv_claims and RAF claims (per Stage1/Stage3) used as the sumcheck LHS.
     rv_claim: F,
-    /// Address chunking parameters: split LOG_K into `d` chunks of size `log_K_chunk`.
-    log_K_chunk: usize,
-    K_chunk: usize,
     /// log2(K) and log2(T) used to determine round counts.
     log_K: usize,
     log_T: usize,
@@ -169,8 +166,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let log_K = K.log_2();
         let d = sm.get_prover_data().0.shared.bytecode.d;
         let log_T = sm.get_prover_data().1.len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
-        let K_chunk = 1 << log_K_chunk;
         let gamma_powers = sm.transcript.borrow_mut().challenge_scalar_powers(7);
 
         let (val_1, rv_claim_1) = Self::compute_val_rv(sm, ReadCheckingValType::Stage1);
@@ -272,7 +267,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             r_cycles.map(|r| GruenSplitEqPolynomial::new(&r, BindingOrder::LowToHigh));
 
         let mut v = (0..d)
-            .map(|_| ExpandingTable::new(K_chunk))
+            .map(|_| ExpandingTable::new(DTH_ROOT_OF_K))
             .collect::<Vec<_>>();
         v.par_iter_mut().for_each(|v| v.reset(F::one()));
 
@@ -284,8 +279,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         Self {
             rv_claim,
             log_K,
-            log_K_chunk,
-            K_chunk,
             d,
             log_T,
             prover_state: Some(ReadCheckingProverState {
@@ -318,7 +311,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let log_K = K.log_2();
         let d = sm.get_verifier_data().0.shared.bytecode.d;
         let log_T = sm.get_verifier_data().2.log_2();
-        let log_K_chunk = log_K.div_ceil(d);
         let gamma_base: F = sm.transcript.borrow_mut().challenge_scalar();
         let gamma_powers = std::iter::successors(Some(F::one()), |&prev| Some(prev * gamma_base))
             .take(7)
@@ -361,8 +353,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             gamma_powers,
             rv_claim,
             log_K,
-            log_K_chunk,
-            K_chunk: 1 << log_K_chunk,
             d,
             log_T,
             prover_state: None,
@@ -1114,7 +1104,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         let (r_address, r_cycle) = opening_point.clone().split_at(self.log_K);
 
         for i in 0..self.d {
-            let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
+            let r_address =
+                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
             accumulator.borrow_mut().append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -1134,7 +1125,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
     ) {
         let (r_address, r_cycle) = opening_point.split_at(self.log_K);
         (0..self.d).for_each(|i| {
-            let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
+            let r_address =
+                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
             accumulator.borrow_mut().append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -1185,7 +1177,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         );
 
         ps.r_address_prime
-            .par_chunks_mut(self.log_K_chunk)
+            .par_chunks_mut(DTH_ROOT_OF_K.log_2())
             .rev()
             .enumerate()
             .map(|(i, r_address_prime)| {
@@ -1193,7 +1185,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                     .pc
                     .par_iter()
                     .map(|k| {
-                        let k = (k >> (self.log_K_chunk * (self.d - i - 1))) % self.K_chunk;
+                        let k = (k >> (DTH_ROOT_OF_K.log_2() * (self.d - i - 1))) % DTH_ROOT_OF_K;
                         Some(k as u8)
                     })
                     .collect();

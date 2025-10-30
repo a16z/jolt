@@ -9,7 +9,7 @@ use crate::poly::opening_proof::{
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K};
 
 use crate::{
     field::JoltField,
@@ -71,8 +71,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
     d: usize,
     /// log_T: number of time/cycle variables.
     log_T: usize,
-    /// log_K_chunk: number of address-chunk variables per chunk.
-    log_K_chunk: usize,
     /// prover_state: prover-side working state for both phases.
     prover_state: Option<BooleanityProverState<F>>,
     /// r_address: address binding point (for endianness and output claim).
@@ -88,8 +86,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     ) -> Self {
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let d = preprocessing.shared.bytecode.d;
-        let log_K = preprocessing.shared.bytecode.bytecode.len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
         let gamma = sm
             .transcript
             .borrow_mut()
@@ -98,7 +94,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F::Challenge> = sm
             .transcript
             .borrow_mut()
-            .challenge_vector_optimized::<F>(log_K_chunk);
+            .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
         Self {
             gamma,
@@ -112,7 +108,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             )),
             d,
             log_T: trace.len().log_2(),
-            log_K_chunk,
             r_address,
         }
     }
@@ -122,8 +117,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     ) -> Self {
         let (_, _, T) = sm.get_verifier_data();
         let d = sm.get_verifier_data().0.shared.bytecode.d;
-        let log_K = sm.get_bytecode().len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
         let gamma = sm
             .transcript
             .borrow_mut()
@@ -131,13 +124,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F::Challenge> = sm
             .transcript
             .borrow_mut()
-            .challenge_vector_optimized::<F>(log_K_chunk);
+            .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
         Self {
             gamma,
             prover_state: None,
             log_T: T.log_2(),
             r_address,
-            log_K_chunk,
             d,
         }
     }
@@ -153,8 +145,6 @@ impl<F: JoltField> BooleanityProverState<F> {
         d: usize,
     ) -> Self {
         let log_K = preprocessing.code_size.log_2();
-        let log_K_chunk = log_K.div_ceil(d);
-        let K_chunk = 1 << log_K_chunk;
         let B = GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh);
 
         let mut F_vec: Vec<F> = unsafe_allocate_zero_vec(log_K.pow2());
@@ -167,7 +157,7 @@ impl<F: JoltField> BooleanityProverState<F> {
                     .par_iter()
                     .map(|cycle| {
                         let k = preprocessing.get_pc(cycle);
-                        Some(((k >> (log_K_chunk * (d - i - 1))) % K_chunk) as u8)
+                        Some(((k >> (DTH_ROOT_OF_K.log_2() * (d - i - 1))) % DTH_ROOT_OF_K) as u8)
                     })
                     .collect()
             })
@@ -192,7 +182,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
     }
 
     fn num_rounds(&self) -> usize {
-        self.log_K_chunk + self.log_T
+        DTH_ROOT_OF_K.log_2() + self.log_T
     }
 
     fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
@@ -201,7 +191,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
 
     #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        if round < self.log_K_chunk {
+        if round < DTH_ROOT_OF_K.log_2() {
             // Phase 1: First log(K_chunk) rounds
             self.compute_phase1_message(round, previous_claim)
         } else {
@@ -214,7 +204,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
 
-        if round < self.log_K_chunk {
+        if round < DTH_ROOT_OF_K.log_2() {
             // Phase 1: Bind B and update F
             ps.B.bind(r_j);
 
@@ -229,7 +219,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
                 });
 
             // Store eq_r_r at the end of phase 1
-            if round == self.log_K_chunk - 1 {
+            if round == DTH_ROOT_OF_K.log_2() - 1 {
                 ps.eq_r_r = ps.B.get_current_scalar();
                 // Initialize H polynomials using RaPolynomial
                 let F = std::mem::take(&mut ps.F);
@@ -294,8 +284,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut opening_point = opening_point.to_vec();
-        opening_point[..self.log_K_chunk].reverse();
-        opening_point[self.log_K_chunk..].reverse();
+        opening_point[..DTH_ROOT_OF_K.log_2()].reverse();
+        opening_point[DTH_ROOT_OF_K.log_2()..].reverse();
         opening_point.into()
     }
 
@@ -313,8 +303,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             transcript,
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeBooleanity,
-            opening_point.r[..self.log_K_chunk].to_vec(),
-            opening_point.r[self.log_K_chunk..].to_vec(),
+            opening_point.r[..DTH_ROOT_OF_K.log_2()].to_vec(),
+            opening_point.r[DTH_ROOT_OF_K.log_2()..].to_vec(),
             claims,
         );
     }

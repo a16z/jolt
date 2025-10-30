@@ -42,11 +42,14 @@ impl BytecodePreprocessing {
         bytecode.insert(0, Instruction::NoOp);
         let pc_map = BytecodePCMapper::new(&bytecode);
 
-        let d = compute_d_parameter(bytecode.len().next_power_of_two().max(2));
-        // Make log(code_size) a multiple of d
-        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d)
-            .pow2()
-            .max(DTH_ROOT_OF_K);
+        let code_size = (bytecode
+            .len()
+            .next_power_of_two()
+            .log_2()
+            .div_ceil(DTH_ROOT_OF_K.log_2())
+            * DTH_ROOT_OF_K.log_2())
+        .pow2();
+        let d = compute_d_parameter(code_size);
 
         // Bytecode: Pad to nearest power of 2
         bytecode.resize(code_size, Instruction::NoOp);
@@ -199,24 +202,22 @@ fn compute_ra_evals<F: JoltField>(
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
-    let log_K = preprocessing.code_size.log_2();
     let d = preprocessing.d;
-    let log_K_chunk = log_K.div_ceil(d);
-    let K_chunk = log_K_chunk.pow2();
 
     trace
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
-            let mut result: Vec<Vec<F>> =
-                (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+            let mut result: Vec<Vec<F>> = (0..d)
+                .map(|_| unsafe_allocate_zero_vec(DTH_ROOT_OF_K))
+                .collect();
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
                 let mut pc = preprocessing.get_pc(cycle);
                 for i in (0..d).rev() {
-                    let k = pc % K_chunk;
+                    let k = pc % DTH_ROOT_OF_K;
                     result[i][k] += eq_r_cycle[j];
-                    pc >>= log_K_chunk;
+                    pc >>= DTH_ROOT_OF_K.log_2();
                 }
                 j += 1;
             }
@@ -225,7 +226,7 @@ fn compute_ra_evals<F: JoltField>(
         .reduce(
             || {
                 (0..d)
-                    .map(|_| unsafe_allocate_zero_vec(K_chunk))
+                    .map(|_| unsafe_allocate_zero_vec(DTH_ROOT_OF_K))
                     .collect::<Vec<_>>()
             },
             |mut running, new| {
