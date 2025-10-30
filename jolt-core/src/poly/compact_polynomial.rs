@@ -287,6 +287,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
                     left.par_iter_mut()
                         .zip(right.par_iter())
+                        .with_min_len(4096)
                         .filter(|(a, b)| a != b)
                         .for_each(|(a, b)| {
                             *a += r * (*b - *a);
