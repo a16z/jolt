@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1761840727421,
+  "lastUpdate": 1761850155039,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -28018,6 +28018,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 1081368,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "90324bc8ecc4387b4ed82f64d4018cb603913786",
+          "message": "feat: streaming commitments (#1054)\n\n* Squash initial work on streaming Dory PCS\n\n* first pass over compilation errors.\n\n* added back RamRa in generate_streaming_witness.\n\n* Streaming PCS API refactor compiles\n\n* Streaming lambdas\n\n* Move ram_d\n\n* Work on streaming OneHot polynomials\n\n* Pass through K's for OneHot polynomials\n\n* debugging ALL_COMMITTED_POLYNOMIALS is uninitialized\n\n* passed ram_d as a parameter to make streaming work.\n\n* added debug prints\n\n* More debug\n\n* Potential fix for finalizing one hots\n\n* removed ram_d todo and modified debug prints\n\n* Print debugs for PCS hints\n\n* fixed hints for non-one-hot polynmomials.\n\n* Fix j computation in streaming Dory\n\n* Instruction one hot matches\n\n* PCS matches if we pad out lazy trace\n\n* Cleanup\n\n* WIP parallelize over row chunks\n\n* Scaffolding for parallelized streaming Dory\n\n* Refactor process_chunk\n\n* Streaming finalize\n\n* Added in implementations of transpose and ChunksWithPeek\n\n* Fixed chunking with peek. Debugging par_bridge issue.\n\n* removed comments\n\n* added debug, clone and partialEq constraints for debugging and assertions.\n\n* added debug, clone and partialEq constraints for debugging and assertions.\n\n* added debug, clone and partialEq constraints for debugging and assertions.\n\n* parallelized computing commitments.\n\n* parallellized process_chunk\n\n* process_chunk vectorized\n\n* moved ram_d into state_manager.\n\n* cleaned up debug prints and removed dead code.\n\n* Cleanup, warnings, and unwrap slices\n\n* Use bytemuck to peel newtype wrappers\n\n* Share affine G1's between polynomials\n\n* Compiles after rebase\n\n* Use bytemuck to unwrap_slice\n\n* Update streaming witness generation for rv64\n\n* Cleanup warnings\n\n* Format\n\n* Parallelize pairings\n\n* refactor: simplify streaming trait\n\n* refactor: simplify witness streaming for pcs\n\n* refactor: removed unused witness gen\n\n* refactor: rm Multilinear enum\n\n* Feature gate streaming\n\n* Merge fixes\n\n* refactor: remove chunk with peek\n\n* fix: proof serialization\n\n* style: comments\n\n* fix: clippy\n\n* fix: dont premature collect iterator\n\n* fix: clean up the serialization\n\n* fix: CI\n\n* fix: add back caching\n\n* restore par_bridge\n\n* fix: mem and perf on streaming commit\n\n* style: clippy\n\n* chore: merge\n\n---------\n\nCo-authored-by: James Parker <james@galois.com>\nCo-authored-by: Aditya Zutshi <aditya.zutshi@galois.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2025-10-30T13:52:05-04:00",
+          "tree_id": "6e9bda70e8f7714a9ad3c605a0016b1b4e4ed32b",
+          "url": "https://github.com/a16z/jolt/commit/90324bc8ecc4387b4ed82f64d4018cb603913786"
+        },
+        "date": 1761850154124,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 1101944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3967584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 1116868,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 1133584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 1320684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 1099696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 1217260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 1159588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 348236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 5439340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 1136044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 1121596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 1233012,
             "unit": "KB",
             "extra": ""
           }
