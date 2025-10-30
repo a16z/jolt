@@ -214,15 +214,12 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         ]
     }
 
-    /// Compute the quadratic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
+    /// Compute the quadratic sumcheck evaluations (i.e., the evaluations at {0, 2}) of a
     /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) Dao-Thaler eq polynomial and
     /// q(X) = c + dx
     /// - c, the constant term of q
     /// - the previous round claim, s(0) + s(1)
-    ///
-    /// important: This assumes `HighToLow` ordering (as used in the stage 5 batching sumcheck)
     pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
-        assert_eq!(self.binding_order, BindingOrder::HighToLow);
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is linear, at the points {0, 2}.
         //
@@ -234,8 +231,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // We have q(0) = c, and we need to compute q(1) and q(2).
 
         // Evaluations of the linear eq polynomial
-        // For high-to-low, we bind from index 0 upward, hence we take wi = self.w[self.current_index] here
-        let eq_eval_1 = self.current_scalar * self.w[self.current_index];
+        let eq_eval_1 = self.current_scalar
+            * match self.binding_order {
+                BindingOrder::LowToHigh => self.w[self.current_index - 1],
+                BindingOrder::HighToLow => self.w[self.current_index],
+            };
         let eq_eval_0 = self.current_scalar - eq_eval_1;
 
         // slope for eq
@@ -247,11 +247,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let quadratic_eval_0 = eq_eval_0 * linear_eval_0;
         let quadratic_eval_1 = previous_claim - quadratic_eval_0;
 
-        // get q(1) = c + d:
-        let linear_eval_1 = quadratic_eval_1 * eq_eval_1.inverse().unwrap();
+        // q(1) = c + d
+        let linear_eval_1 = quadratic_eval_1 / eq_eval_1;
 
         // q(2) = c + 2d = 2*q(1) - q(0)
-        let linear_eval_2 = (linear_eval_1 + linear_eval_1) - linear_eval_0;
+        let linear_eval_2 = linear_eval_1 + linear_eval_1 - linear_eval_0;
 
         [quadratic_eval_0, eq_eval_2 * linear_eval_2]
     }
