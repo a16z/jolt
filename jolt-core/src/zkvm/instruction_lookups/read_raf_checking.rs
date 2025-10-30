@@ -385,8 +385,8 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
 
             // State for last log(T) rounds
             ra: None,
-            eq_r_spartan: GruenSplitEqPolynomial::new(&r_spartan.r, BindingOrder::HighToLow),
-            eq_r_branch: GruenSplitEqPolynomial::new(&r_branch.r, BindingOrder::HighToLow),
+            eq_r_spartan: GruenSplitEqPolynomial::new(&r_spartan.r, BindingOrder::LowToHigh),
+            eq_r_branch: GruenSplitEqPolynomial::new(&r_branch.r, BindingOrder::LowToHigh),
             prev_claim_spartan: None,
             prev_claim_branch: None,
             prev_round_poly_spartan: None,
@@ -455,11 +455,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
 
             let out_len = out_evals_spartan.len();
             let in_len = in_evals_spartan.len();
-            let out_n_vars = out_len.ilog2();
-            let half_n = ps.ra.as_ref().unwrap().len() / 2;
+            let in_n_vars = in_len.ilog2();
 
             let [eval_at_0_spartan, eval_at_inf_spartan, eval_at_0_branch, eval_at_inf_branch] = (0
-                ..in_len)
+                ..out_len)
                 .into_par_iter()
                 .map(|j_hi| {
                     let mut eval_at_0_spartan = F::zero();
@@ -467,32 +466,32 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                     let mut eval_at_0_branch = F::zero();
                     let mut eval_at_inf_branch = F::zero();
 
-                    for j_lo in 0..out_len {
-                        let j = j_lo + (j_hi << out_n_vars);
+                    for j_lo in 0..in_len {
+                        let j = j_lo + (j_hi << in_n_vars);
 
-                        let ra_at_0_j = ra.get_bound_coeff(j);
-                        let ra_at_inf_j = ra.get_bound_coeff(j + half_n) - ra_at_0_j;
+                        let ra_at_0_j = ra.get_bound_coeff(2 * j);
+                        let ra_at_inf_j = ra.get_bound_coeff(2 * j + 1) - ra_at_0_j;
 
-                        let val_at_0_j = val.get_bound_coeff(j);
-                        let val_at_inf_j = val.get_bound_coeff(j + half_n) - val_at_0_j;
+                        let val_at_0_j = val.get_bound_coeff(2 * j);
+                        let val_at_inf_j = val.get_bound_coeff(2 * j + 1) - val_at_0_j;
 
-                        let raf_val_at_0_j = raf_val.get_bound_coeff(j);
-                        let raf_val_at_inf_j = raf_val.get_bound_coeff(j + half_n) - raf_val_at_0_j;
+                        let raf_val_at_0_j = raf_val.get_bound_coeff(2 * j);
+                        let raf_val_at_inf_j = raf_val.get_bound_coeff(2 * j + 1) - raf_val_at_0_j;
 
                         eval_at_0_spartan +=
-                            out_evals_spartan[j_lo] * ra_at_0_j * (val_at_0_j + raf_val_at_0_j);
-                        eval_at_inf_spartan += out_evals_spartan[j_lo]
+                            in_evals_spartan[j_lo] * ra_at_0_j * (val_at_0_j + raf_val_at_0_j);
+                        eval_at_inf_spartan += in_evals_spartan[j_lo]
                             * ra_at_inf_j
                             * (val_at_inf_j + raf_val_at_inf_j);
-                        eval_at_0_branch += out_evals_branch[j_lo] * ra_at_0_j * val_at_0_j;
-                        eval_at_inf_branch += out_evals_branch[j_lo] * ra_at_inf_j * val_at_inf_j;
+                        eval_at_0_branch += in_evals_branch[j_lo] * ra_at_0_j * val_at_0_j;
+                        eval_at_inf_branch += in_evals_branch[j_lo] * ra_at_inf_j * val_at_inf_j;
                     }
 
                     [
-                        in_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_0_spartan),
-                        in_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_inf_spartan),
-                        in_evals_branch[j_hi].mul_unreduced::<9>(eval_at_0_branch),
-                        in_evals_branch[j_hi].mul_unreduced::<9>(eval_at_inf_branch),
+                        out_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_0_spartan),
+                        out_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_inf_spartan),
+                        out_evals_branch[j_hi].mul_unreduced::<9>(eval_at_0_branch),
+                        out_evals_branch[j_hi].mul_unreduced::<9>(eval_at_inf_branch),
                     ]
                 })
                 .reduce(
@@ -589,7 +588,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             ]
             .par_iter_mut()
             .for_each(|poly| {
-                poly.bind_parallel(r_j, BindingOrder::HighToLow);
+                poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             });
 
             ps.prev_claim_spartan = Some(ps.prev_round_poly_spartan.take().unwrap().evaluate(&r_j));
@@ -608,6 +607,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         // for Spartan/Branch, multiplies by ra claim at r_sumcheck, and returns
         // the batched identity RHS to be matched against the LHS input claim.
         let (r_address_prime, r_cycle_prime) = r.split_at(LOG_K);
+        let r_cycle_prime = r_cycle_prime.iter().copied().rev().collect::<Vec<_>>();
         let left_operand_eval =
             OperandPolynomial::<F>::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
         let right_operand_eval =
@@ -635,8 +635,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             )
             .0
             .r;
-        let eq_eval_spartan = EqPolynomial::<F>::mle(&r_spartan, r_cycle_prime);
-        let eq_eval_branch = EqPolynomial::<F>::mle(&r_branch, r_cycle_prime);
+        let eq_eval_spartan = EqPolynomial::<F>::mle(&r_spartan, &r_cycle_prime);
+        let eq_eval_branch = EqPolynomial::<F>::mle(&r_branch, &r_cycle_prime);
 
         let ra_claim = accumulator
             .borrow()
@@ -685,7 +685,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        let (r_address_prime, r_cycle_prime) = opening_point.split_at(LOG_K);
+        let r_cycle_prime = r_cycle_prime.iter().copied().rev().collect::<Vec<_>>();
+
+        OpeningPoint::new([r_address_prime.to_vec(), r_cycle_prime].concat())
     }
 
     fn cache_openings_prover(
@@ -1010,12 +1013,12 @@ impl<F: JoltField> ReadRafProverState<F> {
         // We compute these two claims below.
         let prev_claim_spartan: F = self
             .eq_r_spartan
-            .par_iter_high_to_low()
+            .par_iter_low_to_high()
             .map(|(j, eq)| eq * ra[j] * (combined_val_poly[j] + combined_raf_val_poly[j]))
             .sum();
         let prev_claim_branch: F = self
             .eq_r_branch
-            .par_iter_high_to_low()
+            .par_iter_low_to_high()
             .map(|(j, eq)| eq * ra[j] * combined_val_poly[j])
             .sum();
 

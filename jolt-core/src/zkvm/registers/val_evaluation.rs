@@ -11,7 +11,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -135,21 +135,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
             .as_ref()
             .expect("Prover state not initialized");
 
-        let half_n = prover_state.inc.len() / 2;
-
         let [eval_at_1, eval_at_2, eval_at_inf] = (0..prover_state.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_at_1_j = prover_state.inc.get_bound_coeff(j + half_n);
-                let inc_at_inf_j = inc_at_1_j - prover_state.inc.get_bound_coeff(j);
+                let inc_at_1_j = prover_state.inc.get_bound_coeff(2 * j + 1);
+                let inc_at_inf_j = inc_at_1_j - prover_state.inc.get_bound_coeff(2 * j);
                 let inc_at_2_j = inc_at_1_j + inc_at_inf_j;
 
-                let wa_at_1_j = prover_state.wa.get_bound_coeff(j + half_n);
-                let wa_at_inf_j = wa_at_1_j - prover_state.wa.get_bound_coeff(j);
+                let wa_at_1_j = prover_state.wa.get_bound_coeff(2 * j + 1);
+                let wa_at_inf_j = wa_at_1_j - prover_state.wa.get_bound_coeff(2 * j);
                 let wa_at_2_j = wa_at_1_j + wa_at_inf_j;
 
-                let lt_at_1_j = prover_state.lt.get_bound_coeff(j + half_n);
-                let lt_at_inf_j = lt_at_1_j - prover_state.lt.get_bound_coeff(j);
+                let lt_at_1_j = prover_state.lt.get_bound_coeff(2 * j + 1);
+                let lt_at_inf_j = lt_at_1_j - prover_state.lt.get_bound_coeff(2 * j);
                 let lt_at_2_j = lt_at_1_j + lt_at_inf_j;
 
                 // Eval inc * wa * lt.
@@ -174,9 +172,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            prover_state.inc.bind_parallel(r_j, BindingOrder::HighToLow);
-            prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
-            prover_state.lt.bind(r_j, BindingOrder::HighToLow);
+            prover_state.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+            prover_state.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
+            prover_state.lt.bind(r_j, BindingOrder::LowToHigh);
         }
     }
 
@@ -196,7 +194,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
 
-        for (x, y) in r.iter().zip(r_cycle.r.iter()) {
+        for (x, y) in r.iter().rev().zip(r_cycle.r.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
@@ -218,7 +216,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
     }
 
     fn cache_openings_prover(

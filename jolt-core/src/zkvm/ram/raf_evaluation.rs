@@ -17,7 +17,7 @@ use crate::{
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
@@ -162,8 +162,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
             .map(|i| {
                 let ra_evals = ps
                     .ra
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let unmap_evals = ps.unmap.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                let unmap_evals = ps.unmap.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
                 // Compute the product evaluations
                 [
@@ -184,11 +184,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             rayon::join(
-                || prover_state.ra.bind_parallel(r_j, BindingOrder::HighToLow),
+                || prover_state.ra.bind_parallel(r_j, BindingOrder::LowToHigh),
                 || {
                     prover_state
                         .unmap
-                        .bind_parallel(r_j, BindingOrder::HighToLow)
+                        .bind_parallel(r_j, BindingOrder::LowToHigh)
                 },
             );
         }
@@ -199,9 +199,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
         _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F::Challenge],
     ) -> F {
+        let r = r.iter().cloned().rev().collect::<Vec<_>>();
         // Compute unmap evaluation at r
         let unmap_eval =
-            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
+            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(&r);
 
         // Return unmap(r) * ra(r)
         let ra_claim = self.cached_claim.expect("ra_claim not cached");
@@ -212,7 +213,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
     }
 
     fn cache_openings_prover(

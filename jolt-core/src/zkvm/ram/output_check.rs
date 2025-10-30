@@ -208,13 +208,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         (0..eq_poly.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let eq_evals = eq_poly.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let eq_evals = eq_poly.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                 let io_mask_evals =
-                    io_mask.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                    io_mask.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                 let val_final_evals =
-                    val_final.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                    val_final.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                 let val_io_evals =
-                    val_io.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                    val_io.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                 [
                     (eq_evals[0] * io_mask_evals[0])
                         .mul_unreduced::<9>(val_final_evals[0] - val_io_evals[0]),
@@ -256,7 +256,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         // because we'll need Val_init(r) in `ValFinalSumcheck`
         [val_init, val_final, val_io, eq_poly, io_mask]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         eq_table.update(r_j);
     }
 
@@ -276,7 +276,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
             .1;
 
         let r_address = self.r_address.as_ref().unwrap();
-        let r_address_prime = &r[..r_address.len()];
+        let r_address_prime = &r[..r_address.len()]
+            .iter()
+            .cloned()
+            .rev()
+            .collect::<Vec<_>>();
         let program_io = self.program_io.as_ref().unwrap();
 
         // let io_mask = RangeMaskPolynomial::new(
@@ -313,7 +317,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
     }
 
     fn cache_openings_prover(
