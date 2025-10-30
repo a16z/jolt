@@ -505,7 +505,7 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut chunk = Vec::with_capacity(self.chunk_size);
         chunk.extend(self.iter.by_ref().take(self.chunk_size));
-        if chunk.len() == 0 {
+        if chunk.is_empty() {
             return None;
         }
         Some(chunk)

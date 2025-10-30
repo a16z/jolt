@@ -832,7 +832,6 @@ impl JoltDAG {
             .clone()
             .pad_using(T, |_| Cycle::NoOp)
             .iter_chunks(row_len)
-            .into_iter()
             .zip(row_commitments.iter_mut())
             .par_bridge()
             .for_each(|(chunk, row_commitments)| {

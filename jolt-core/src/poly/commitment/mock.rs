@@ -117,42 +117,33 @@ impl<F> StreamingCommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
 {
-    type State<'a> = ();
-
     type ChunkState = ();
+    type CachedData = ();
 
-    type SetupCache = ();
+    fn prepare_cached_data(_setup: &Self::ProverSetup) -> Self::CachedData {}
 
-    fn cache_setup(_setup: &Self::ProverSetup) -> Self::SetupCache {}
-
-    fn initialize<'a>(
-        _onehot_k: Option<usize>,
-        _size: usize,
-        _setup: &'a Self::ProverSetup,
-        _setup_cache: &'a Self::SetupCache,
-    ) -> Self::State<'a> {
-    }
-
-    fn process_chunk<'a, T: SmallScalar>(
-        _state: &Self::State<'a>,
+    fn process_chunk<T: SmallScalar>(
+        _cached_data: &Self::CachedData,
         _chunk: &[T],
     ) -> Self::ChunkState {
     }
 
-    fn process_chunk_field<'a>(
-        _state: &Self::State<'a>,
+    fn process_chunk_field(
+        _cached_data: &Self::CachedData,
         _chunk: &[Self::Field],
     ) -> Self::ChunkState {
     }
 
-    fn process_chunk_onehot<'a>(
-        _state: &Self::State<'a>,
+    fn process_chunk_onehot(
+        _cached_data: &Self::CachedData,
+        _onehot_k: usize,
         _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
     }
 
-    fn finalize<'a>(
-        _state: &Self::State<'a>,
+    fn finalize(
+        _cached_data: &Self::CachedData,
+        _onehot_k: Option<usize>,
         _chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         (MockCommitment::default(), ())
