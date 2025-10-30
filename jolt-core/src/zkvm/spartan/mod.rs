@@ -318,8 +318,7 @@ where
             1. NextUnexpandedPC(r_cycle) = \sum_t UnexpandedPC(t) * eq_plus_one(r_cycle, t)
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
-        let key = self.key.clone();
-        let shift_sumcheck = ShiftSumcheck::<F>::new_prover(state_manager, key);
+        let shift_sumcheck = ShiftSumcheck::new_prover(state_manager);
         let instruction_input_sumcheck = InstructionInputSumcheck::new_prover(state_manager);
         let product_virtual_claim_check = ProductVirtualInner::new_prover(state_manager);
 

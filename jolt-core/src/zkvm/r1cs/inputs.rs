@@ -1,9 +1,6 @@
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
+use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U};
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
@@ -537,84 +534,6 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
             },
         )
         .map(|unr| F::from_montgomery_reduce::<9>(unr))
-}
-
-/// Generates witnesses for the shift sumcheck with a single pass over the trace.
-#[tracing::instrument(skip_all)]
-pub fn generate_shift_sumcheck_witnesses<F>(
-    preprocessing: &JoltSharedPreprocessing,
-    trace: &[Cycle],
-    gamma_powers: &[F],
-) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>)
-where
-    F: JoltField,
-{
-    let len = trace.len();
-    let mut combined_witness: Vec<F> = unsafe_allocate_zero_vec(len);
-    let mut is_noop_poly: Vec<bool> = vec![false; len];
-
-    (&mut combined_witness, &mut is_noop_poly, trace)
-        .into_par_iter()
-        .for_each(|(w, n, cycle)| {
-            let unexpanded_pc = cycle.instruction().normalize().address as u64;
-            *w += gamma_powers[0].mul_u64(unexpanded_pc);
-            let pc = preprocessing.bytecode.get_pc(cycle) as u64;
-            *w += gamma_powers[1].mul_u64(pc);
-            let is_virtual = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction];
-            if is_virtual {
-                *w += gamma_powers[2];
-            }
-            let is_first_in_sequence =
-                cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence];
-            if is_first_in_sequence {
-                *w += gamma_powers[3];
-            }
-            *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop];
-        });
-
-    (combined_witness.into(), is_noop_poly.into())
-}
-
-/// Generates witnesses for the shift sumcheck with a single pass over the trace.
-#[tracing::instrument(skip_all)]
-pub fn evaluate_shift_sumcheck_witnesses<F>(
-    preprocessing: &BytecodePreprocessing,
-    trace: &[Cycle],
-    opening_point: &OpeningPoint<BIG_ENDIAN, F>,
-) -> [F; 4]
-where
-    F: JoltField,
-{
-    let eq_evals = EqPolynomial::evals(&opening_point.r);
-    trace
-        .par_iter()
-        .zip(eq_evals.into_par_iter())
-        .map(|(cycle, eq_eval)| {
-            let mut result = [F::zero(); 4];
-            let unexpanded_pc = cycle.instruction().normalize().address as u64;
-            result[0] = eq_eval.mul_u64(unexpanded_pc);
-            let pc = preprocessing.get_pc(cycle) as u64;
-            result[1] = eq_eval.mul_u64(pc);
-            let is_virtual = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction];
-            if is_virtual {
-                result[2] = eq_eval;
-            }
-            let is_first_in_sequence =
-                cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence];
-            if is_first_in_sequence {
-                result[3] = eq_eval;
-            }
-            result
-        })
-        .reduce(
-            || [F::zero(); 4],
-            |mut running, new| {
-                for i in 0..4 {
-                    running[i] += new[i];
-                }
-                running
-            },
-        )
 }
 
 /// Canonical, de-duplicated list of product-virtual factor polynomials used by
