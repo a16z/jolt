@@ -32,7 +32,7 @@ use crate::{
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
 use allocative::Allocative;
@@ -259,8 +259,9 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .unwrap(),
         );
 
+        let log_K_chunk = DTH_ROOT_OF_K.log_2();
         self.r_address_prime
-            .par_chunks_mut(self.params.log_K_chunk)
+            .par_chunks_mut(log_K_chunk)
             .rev()
             .enumerate()
             .map(|(i, r_address_prime)| {
@@ -268,8 +269,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     .pc
                     .par_iter()
                     .map(|k| {
-                        let k = (k >> (self.params.log_K_chunk * (self.params.d - i - 1)))
-                            % self.params.K_chunk;
+                        let k = (k >> (log_K_chunk * (self.params.d - i - 1))) % DTH_ROOT_OF_K;
                         Some(k as u8)
                     })
                     .collect();
@@ -495,7 +495,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
 
         for i in 0..self.params.d {
             let r_address =
-                &r_address.r[self.params.log_K_chunk * i..self.params.log_K_chunk * (i + 1)];
+                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -603,7 +603,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
         (0..self.params.d).for_each(|i| {
             let r_address =
-                &r_address.r[self.params.log_K_chunk * i..self.params.log_K_chunk * (i + 1)];
+                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -621,9 +621,6 @@ struct ReadRafSumcheckParams<F: JoltField> {
     rv_claim: F,
     /// Bytecode length.
     K: usize,
-    /// Address chunking parameters: split LOG_K into `d` chunks of size `log_K_chunk`.
-    log_K_chunk: usize,
-    K_chunk: usize,
     /// log2(K) and log2(T) used to determine round counts.
     log_K: usize,
     log_T: usize,
@@ -649,7 +646,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let log_K = K.log_2();
         let d = preprocessing.bytecode.d;
         let log_T = state_manager.get_trace_len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
         let gamma_powers = state_manager.transcript.challenge_scalar_powers(7);
 
         let (val_1, rv_claim_1) = Self::compute_val_rv(state_manager, ReadCheckingValType::Stage1);
@@ -719,8 +715,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             rv_claim,
             K,
             log_K,
-            log_K_chunk,
-            K_chunk: 1 << log_K_chunk,
             d,
             log_T,
             val_polys,
