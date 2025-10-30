@@ -33,11 +33,11 @@ use rayon::prelude::*;
 // Register value evaluation sumcheck
 //
 // Proves the relation:
-//   Val(r) = Σ_{j=0}^{T-1} inc(r_address, j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
+//   Val(r) = Σ_{j=0}^{T-1} inc(j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
 // where:
 // - r = (r_address, r_cycle) is the evaluation point from the read-write checking sumcheck.
 // - Val(r) is the claimed value of register r_address at time r_cycle.
-// - inc is the MLE of the per-cycle increment at (r_address, j).
+// - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
 // - wa is the MLE of the write-indicator (1 on matching {0,1}-points).
 // - LT is the MLE of strict less-than on bitstrings; evaluated at (r_cycle, j) as field points.
 //
