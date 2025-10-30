@@ -26,14 +26,14 @@ use crate::{
     zkvm::{dag::state_manager::StateManager, ram::remap_address, witness::VirtualPolynomial},
 };
 
-// RAM RAF evaluation sumcheck
-//
-// Proves the relation:
-//   Σ_{k=0}^{K-1} ra(k) ⋅ unmap(k) = raf_claim,
-// where:
-// - ra(k) = Σ_j eq(r_cycle, j) ⋅ 1[address(j) = k] aggregates access counts per address k.
-// - unmap(k) converts the remapped address k back to its original address.
-// - raf_claim is the claimed sum of unmapped addresses over the trace from the Spartan outer sumcheck.
+/// RAM RAF evaluation sumcheck
+///
+/// Proves the relation:
+///   Σ_{k=0}^{K-1} ra(k) ⋅ unmap(k) = raf_claim,
+/// where:
+/// - ra(k) = Σ_j eq(r_cycle, j) ⋅ 1[address(j) = k] aggregates access counts per address k.
+/// - unmap(k) converts the remapped address k back to its original address.
+/// - raf_claim is the claimed sum of unmapped addresses over the trace from the Spartan outer sumcheck.
 
 #[derive(Allocative)]
 pub struct RafEvaluationProverState<F: JoltField> {
@@ -59,7 +59,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let K = state_manager.ram_K;
         let T = trace.len();

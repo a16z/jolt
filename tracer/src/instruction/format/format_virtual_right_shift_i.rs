@@ -13,19 +13,34 @@ pub struct FormatVirtualRightShiftI {
     pub imm: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatVirtualI {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
 }
 
+impl Default for RegisterStateFormatVirtualI {
+    fn default() -> Self {
+        Self { rd: (0, 0), rs1: 1 }
+    }
+}
+
 impl InstructionRegisterState for RegisterStateFormatVirtualI {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
+        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+
         Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64(),
+            rd: (
+                if operands.rd == operands.rs1 {
+                    rs1_value
+                } else {
+                    rng.next_u64()
+                },
+                rng.next_u64(),
+            ),
+            rs1: rs1_value,
         }
     }
 
@@ -56,11 +71,19 @@ impl InstructionFormat for FormatVirtualRightShiftI {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::RISCV_REGISTER_COUNT;
+        use common::constants::{RISCV_REGISTER_COUNT, XLEN};
         use rand::RngCore;
-        let shift = rng.next_u32() % 64;
-        let ones: u64 = (1 << shift) - 1;
-        let imm = ones.wrapping_shl(64 - shift);
+
+        let mut imm = rng.next_u64();
+
+        let (shift, len) = match XLEN {
+            32 => (imm & 0x1f, 32),
+            64 => (imm & 0x3f, 64),
+            _ => panic!(),
+        };
+        let ones = (1u128 << (len - shift)) - 1;
+        imm = (ones << shift) as u64;
+
         Self {
             imm,
             rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),

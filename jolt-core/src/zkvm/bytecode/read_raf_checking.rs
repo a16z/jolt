@@ -168,7 +168,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let K = sm.get_prover_data().0.shared.bytecode.code_size;
         let log_K = K.log_2();
         let d = sm.get_prover_data().0.shared.bytecode.d;
-        let log_T = sm.get_prover_data().1.len().log_2();
+        let log_T = sm.get_prover_data().2.len().log_2();
         let log_K_chunk = log_K.div_ceil(d);
         let K_chunk = 1 << log_K_chunk;
         let gamma_powers = sm.transcript.borrow_mut().challenge_scalar_powers(7);
@@ -184,7 +184,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (_, raf_shift_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         let int_poly = IdentityPolynomial::<F>::new(log_K);
-        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let (preprocessing, _, trace, _, _) = sm.get_prover_data();
 
         let claim_per_stage = [
             rv_claim_1 + gamma_powers[5] * raf_claim,
@@ -1069,7 +1069,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         // Stage 4: gamma^3 * (Val_4)
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
-        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^4 * raf_3
+        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
         let val = self
             .val_polys
             .iter()
@@ -1167,7 +1167,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         // Stage 4: gamma^3 * (Val_4)
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
-        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^4 * raf_3
+        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
         ps.bound_val_evals = Some(
             self.val_polys
                 .iter()

@@ -33,11 +33,11 @@ use rayon::prelude::*;
 // Register value evaluation sumcheck
 //
 // Proves the relation:
-//   Val(r) = Σ_{j=0}^{T-1} inc(r_address, j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
+//   Val(r) = Σ_{j=0}^{T-1} inc(j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
 // where:
 // - r = (r_address, r_cycle) is the evaluation point from the read-write checking sumcheck.
 // - Val(r) is the claimed value of register r_address at time r_cycle.
-// - inc is the MLE of the per-cycle increment at (r_address, j).
+// - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
 // - wa is the MLE of the write-indicator (1 on matching {0,1}-points).
 // - LT is the MLE of strict less-than on bitstrings; evaluated at (r_cycle, j) as field points.
 //
@@ -62,7 +62,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
         let (opening_point, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
@@ -73,7 +73,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let r_address_len = REGISTER_COUNT.ilog2() as usize;
         let (r_address, r_cycle) = opening_point.split_at(r_address_len);
 
-        let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
+        let inc =
+            CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
         let eq_r_address = EqPolynomial::evals(&r_address.r);
         let wa: Vec<Option<u8>> = trace

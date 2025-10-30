@@ -13,13 +13,13 @@ use crate::poly::opening_proof::{
 use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
-use tracer::JoltDevice;
+use tracer::{JoltDevice, LazyTraceIterator};
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
@@ -51,6 +51,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+    pub lazy_trace: Option<LazyTraceIterator>,
     pub trace: Arc<Vec<Cycle>>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
@@ -79,6 +80,7 @@ pub struct StateManager<
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
+    pub ram_d: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
     pub prover_state: Option<ProverState<'a, F, PCS>>,
@@ -143,6 +145,7 @@ where
 {
     pub fn new_prover(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        lazy_trace: LazyTraceIterator,
         trace: Vec<Cycle>,
         program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
@@ -176,6 +179,7 @@ where
             )
             .next_power_of_two() as usize;
 
+        let ram_d = compute_d_parameter(ram_K);
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
@@ -189,9 +193,11 @@ where
             trusted_advice_commitment,
             program_io,
             ram_K,
+            ram_d,
             twist_sumcheck_switch_index,
             prover_state: Some(ProverState {
                 preprocessing,
+                lazy_trace: Some(lazy_trace),
                 trace: Arc::new(trace),
                 final_memory_state,
                 accumulator: opening_accumulator,
@@ -217,6 +223,7 @@ where
         let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(BTreeMap::new()));
         let commitments = Rc::new(RefCell::new(vec![]));
+        let ram_d = compute_d_parameter(ram_K);
 
         StateManager {
             transcript,
@@ -226,6 +233,7 @@ where
             trusted_advice_commitment: None,
             program_io,
             ram_K,
+            ram_d,
             twist_sumcheck_switch_index,
             prover_state: None,
             verifier_state: Some(VerifierState {
@@ -240,6 +248,7 @@ where
         &self,
     ) -> (
         &'a JoltProverPreprocessing<F, PCS>,
+        &Option<LazyTraceIterator>,
         &Vec<Cycle>,
         &JoltDevice,
         &Memory,
@@ -247,6 +256,7 @@ where
         if let Some(ref prover_state) = self.prover_state {
             (
                 prover_state.preprocessing,
+                &prover_state.lazy_trace,
                 &prover_state.trace,
                 &self.program_io,
                 &prover_state.final_memory_state,

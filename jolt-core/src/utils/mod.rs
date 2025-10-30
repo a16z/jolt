@@ -14,66 +14,6 @@ pub mod monitor;
 pub mod profiling;
 pub mod small_scalar;
 pub mod thread;
-/// Macros that determine the optimal iterator type based on the feature flags.
-///
-/// For some cases (ex. offloading to GPU), we may not want to use a parallel iterator.
-/// Specifically when icicle is enabled we want to be careful to use serial iteration in the right places.
-/// Based on observations; multiple calls into icicle_msm functions can dramatically slow down GPU performance.
-#[macro_export]
-macro_rules! optimal_iter {
-    ($T:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            $T.iter()
-        }
-        #[cfg(not(feature = "icicle"))]
-        {
-            $T.par_iter()
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! into_optimal_iter {
-    ($T:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            $T.into_iter()
-        }
-        #[cfg(not(feature = "icicle"))]
-        {
-            $T.into_par_iter()
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_iter_mut {
-    ($T:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            $T.iter_mut()
-        }
-        #[cfg(not(feature = "icicle"))]
-        {
-            $T.par_iter_mut()
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! join_conditional {
-    ($f1:expr, $f2:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            ($f1(), $f2())
-        }
-        #[cfg(not(feature = "icicle"))]
-        {
-            rayon::join($f1, $f2)
-        }
-    }};
-}
 
 /// Converts an integer value to a bitvector (all values {0,1}) of field elements.
 /// Note: ordering has the MSB in the highest index. All of the following represent the integer 1:
@@ -181,6 +121,31 @@ pub fn uninterleave_bits(val: u128) -> (u64, u64) {
     y_bits = (y_bits | (y_bits >> 16)) & 0x0000_0000_FFFF_FFFF_0000_0000_FFFF_FFFF;
     y_bits = (y_bits | (y_bits >> 32)) & 0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF;
     (x_bits as u64, y_bits as u64)
+}
+
+/// Transposes a matrix represented as a vector of vectors.
+/// Assumes a regular matrix (all rows have the same number of elements).
+pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
+    if v.is_empty() {
+        return vec![];
+    }
+    let first_row_len = v[0].len();
+    assert!(
+        v.iter().all(|row| row.len() == first_row_len),
+        "Matrix must be regular (all rows must have the same length)."
+    );
+
+    let num_cols = first_row_len;
+    let mut mat_iter: Vec<_> = v.into_iter().map(|row| row.into_iter()).collect();
+
+    (0..num_cols)
+        .map(|_| {
+            mat_iter
+                .iter_mut()
+                .map(|iter| iter.next().unwrap())
+                .collect::<Vec<T>>()
+        })
+        .collect()
 }
 
 /// Combines two 64-bit values into a single 128-bit value by interleaving their bits.

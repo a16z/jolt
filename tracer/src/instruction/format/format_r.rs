@@ -22,12 +22,27 @@ pub struct RegisterStateFormatR {
 
 impl InstructionRegisterState for RegisterStateFormatR {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
+        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+
+        let rs2_value = match operands.rs2 {
+            0 => 0,
+            _ if operands.rs2 == operands.rs1 => rs1_value,
+            _ => rng.next_u64(),
+        };
+
         Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64(),
-            rs2: rng.next_u64(),
+            rd: (
+                match operands.rd {
+                    _ if operands.rd == operands.rs1 => rs1_value,
+                    _ if operands.rd == operands.rs2 => rs2_value,
+                    _ => rng.next_u64(),
+                },
+                rng.next_u64(),
+            ),
+            rs1: rs1_value,
+            rs2: rs2_value,
         }
     }
 

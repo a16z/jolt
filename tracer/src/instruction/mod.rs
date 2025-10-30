@@ -1501,6 +1501,7 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 rng,
+                &Into::<NormalizedInstruction>::into(instruction).operands,
             );
         Self {
             instruction,

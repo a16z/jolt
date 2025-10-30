@@ -9,7 +9,7 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
+    commitment_scheme::CommitmentScheme,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field::JoltField;
@@ -508,67 +508,6 @@ where
     }
 }
 
-// #[derive(Clone, Debug)]
-pub struct HyperKZGState<'a, P: Pairing> {
-    acc: P::G1,
-    prover_key: &'a KZGProverKey<P>,
-    current_chunk: Vec<P::ScalarField>,
-    row_count: usize,
-}
-
-const CHUNK_SIZE: usize = 256;
-
-impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
-where
-    <P as Pairing>::ScalarField: JoltField,
-{
-    type State<'a> = HyperKZGState<'a, P>;
-
-    fn initialize(size: usize, setup: &Self::ProverSetup) -> Self::State<'_> {
-        assert!(
-            setup.kzg_pk.g1_powers().len() >= size,
-            "COMMIT KEY LENGTH ERROR {}, {}",
-            setup.kzg_pk.g1_powers().len(),
-            size,
-        );
-        assert_eq!(
-            size % CHUNK_SIZE,
-            0,
-            "CHUNK_SIZE ({CHUNK_SIZE}) must evenly divide the size ({size})"
-        );
-
-        let current_chunk = Vec::with_capacity(CHUNK_SIZE);
-
-        HyperKZGState {
-            acc: P::G1::zero(),
-            prover_key: &setup.kzg_pk,
-            current_chunk,
-            row_count: 0,
-        }
-    }
-
-    fn process<'a>(mut state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
-        state.current_chunk.push(eval);
-
-        if state.current_chunk.len() == CHUNK_SIZE {
-            let offset = state.row_count * CHUNK_SIZE;
-            let c: P::G1 =
-                UnivariateKZG::commit_inner_helper(state.prover_key, &state.current_chunk, offset)
-                    .unwrap();
-
-            state.acc += c;
-            state.current_chunk.clear();
-            state.row_count += 1;
-        }
-
-        state
-    }
-
-    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
-        HyperKZGCommitment(state.acc.into())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -729,17 +668,6 @@ mod tests {
             let mut verifier_tr2 = Blake2bTranscript::new(b"TestEval");
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
-            );
-
-            // Test the streaming implementation
-            let mut state = HyperKZG::initialize(n, &pk);
-            for p in poly_raw {
-                state = HyperKZG::process(state, p);
-            }
-            let C2 = HyperKZG::finalize(state);
-            assert_eq!(
-                C, C2,
-                "Streaming commitment did not match non-streaming commitment"
             );
         }
     }

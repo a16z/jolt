@@ -33,15 +33,15 @@ use tracer::instruction::Cycle;
 // Register read-write checking sumcheck
 //
 // Proves the relation:
-//   Σ_{k,j} eq(r', (j,k)) ⋅ [ wa(k,j)⋅(inc(k,j)+Val(k,j)) + γ⋅ra1(k,j)⋅Val(k,j) + γ²⋅ra2(k,j)⋅Val(k,j) ]
+//   Σ_{k,j} eq(r', (j,k)) ⋅ [ wa(k,j)⋅(inc(j)+Val(k,j)) + γ⋅ra1(k,j)⋅Val(k,j) + γ²⋅ra2(k,j)⋅Val(k,j) ]
 //   = wv_claim + γ⋅rv1_claim + γ²⋅rv2_claim
 // where:
 // - r' are the fresh challenges for this sumcheck.
 // - wa(k,j) = 1 if register k is written at cycle j (rd=k), 0 otherwise.
 // - ra1(k,j) = 1 if register k is read at cycle j (rs1=k), 0 otherwise.
 // - ra2(k,j) = 1 if register k is read at cycle j (rs2=k), 0 otherwise.
-// - Val(k,j) is the value of register k before cycle j.
-// - inc(k,j) is the change in value if a write to rd=k occurs.
+// - Val(k,j) is the value of register k right before cycle j.
+// - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
 // - wv_claim, rv1_claim, rv2_claim are claimed write/read values from Spartan.
 //
 // This sumcheck ensures that the values read from and written to registers are consistent
@@ -113,6 +113,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         trace: &[Cycle],
         sample_stage_1: &(OpeningPoint<BIG_ENDIAN, F>, F),
         sample_stage_3: &(OpeningPoint<BIG_ENDIAN, F>, F),
+        ram_d: usize,
     ) -> Self {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -210,7 +211,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             GruenSplitEqPolynomial::<F>::new(&sample_stage_1.0.r, BindingOrder::LowToHigh);
         let gruen_eq_r_cycle_stage_3 =
             GruenSplitEqPolynomial::<F>::new(&sample_stage_3.0.r, BindingOrder::LowToHigh);
-        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
+        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, ram_d);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
@@ -286,7 +287,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let (r_cycle_stage_1, rs1_rv_claim_stage_1) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
         let (_, rs2_rv_claim_stage_1) = state_manager
@@ -319,6 +320,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             trace,
             &input_sample_stage_1,
             &input_sample_stage_3,
+            state_manager.ram_d,
         );
 
         Self {

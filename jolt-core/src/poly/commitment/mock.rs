@@ -5,9 +5,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
     field::JoltField,
-    poly::multilinear_polynomial::MultilinearPolynomial,
+    poly::{
+        commitment::commitment_scheme::StreamingCommitmentScheme,
+        multilinear_polynomial::MultilinearPolynomial,
+    },
     transcripts::{AppendToTranscript, Transcript},
-    utils::errors::ProofVerifyError,
+    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
 use super::commitment_scheme::CommitmentScheme;
@@ -108,5 +111,41 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"mock_commit"
+    }
+}
+impl<F> StreamingCommitmentScheme for MockCommitScheme<F>
+where
+    F: JoltField,
+{
+    type ChunkState = ();
+    type CachedData = ();
+
+    fn prepare_cached_data(_setup: &Self::ProverSetup) -> Self::CachedData {}
+
+    fn process_chunk<T: SmallScalar>(
+        _cached_data: &Self::CachedData,
+        _chunk: &[T],
+    ) -> Self::ChunkState {
+    }
+
+    fn process_chunk_field(
+        _cached_data: &Self::CachedData,
+        _chunk: &[Self::Field],
+    ) -> Self::ChunkState {
+    }
+
+    fn process_chunk_onehot(
+        _cached_data: &Self::CachedData,
+        _onehot_k: usize,
+        _chunk: &[Option<usize>],
+    ) -> Self::ChunkState {
+    }
+
+    fn finalize(
+        _cached_data: &Self::CachedData,
+        _onehot_k: Option<usize>,
+        _chunks: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        (MockCommitment::default(), ())
     }
 }

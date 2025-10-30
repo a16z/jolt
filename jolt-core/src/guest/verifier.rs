@@ -1,5 +1,6 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
@@ -30,7 +31,7 @@ pub fn preprocess(
     JoltVerifierPreprocessing::from(&prover_preprocessing)
 }
 
-pub fn verify<F, PCS, FS>(
+pub fn verify<F, PCS: StreamingCommitmentScheme<Field = F>, FS>(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
@@ -39,7 +40,6 @@ pub fn verify<F, PCS, FS>(
 ) -> Result<(), ProofVerifyError>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {

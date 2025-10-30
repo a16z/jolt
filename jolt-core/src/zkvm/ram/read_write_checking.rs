@@ -34,13 +34,13 @@ use tracer::instruction::RAMAccess;
 // RAM read-write checking sumcheck
 //
 // Proves the relation:
-//   Σ_{k,j} eq(r', (j, k)) ⋅ ra(k, j) ⋅ (Val(k, j) + γ ⋅ (inc(k, j) + Val(k, j)))
+//   Σ_{k,j} eq(r', (j, k)) ⋅ ra(k, j) ⋅ (Val(k, j) + γ ⋅ (inc(j) + Val(k, j)))
 //   = rv_claim + γ ⋅ wv_claim
 // where:
 // - r' are the fresh challenges for this sumcheck
 // - ra(k, j) = 1 if memory address k is accessed at cycle j, and 0 otherwise
-// - Val(k, j) is the value at memory address k before cycle j
-// - inc(k, j) is the change in value at (k, j) if a write occurs
+// - Val(k, j) is the value at memory address k right before cycle j
+// - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise
 // - rv_claim and wv_claim are the claimed read and write values from the Spartan outer sumcheck.
 //
 // This sumcheck ensures that the values read from and written to RAM are consistent
@@ -93,7 +93,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
 
         let r_prime = state_manager
             .get_virtual_polynomial_opening(
@@ -286,7 +286,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
 
-        let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
+        let inc_cycle =
+            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
@@ -339,7 +340,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let K = state_manager.ram_K;
-        let T = state_manager.get_prover_data().1.len();
+        let T = state_manager.get_prover_data().2.len();
+
         let prover_state =
             ReadWriteCheckingProverState::initialize(initial_memory_state, K, state_manager);
 

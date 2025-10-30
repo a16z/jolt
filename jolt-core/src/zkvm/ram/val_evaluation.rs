@@ -35,12 +35,12 @@ use rayon::prelude::*;
 // RAM value evaluation sumcheck
 //
 // Proves the relation:
-//   Val(r) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(r_address, j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
+//   Val(r) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
 // where:
 // - r = (r_address, r_cycle) is the evaluation point from the read-write checking sumcheck.
 // - Val(r) is the claimed value of memory at address r_address and time r_cycle.
 // - Val_init(r_address) is the initial value of memory at address r_address.
-// - inc(r_address, j) is the MLE of the per-cycle increment at (r_address, j).
+// - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
 // - wa is the MLE of the write-indicator (1 on matching {0,1}-points).
 // - LT is the MLE of strict less-than on bitstrings; evaluated at (r_cycle, j) as field points.
 //
@@ -73,7 +73,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let T = trace.len();
         let K = state_manager.ram_K;
@@ -108,7 +108,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         drop(_guard);
         drop(span);
 
-        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
+        let inc =
+            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
         let lt = LtPolynomial::new(&r_cycle);
 
         ValEvaluationSumcheck {

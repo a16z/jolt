@@ -49,53 +49,54 @@ use crate::{
 
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
-/// Instruction lookups: Read + RAF batched sumcheck
-///
-/// Notation:
-/// - Field F. Let K = 2^{LOG_K}, T = 2^{log_T}.
-/// - Address index k ∈ {0..K-1}, cycle index j ∈ {0..T-1}.
-/// - eq_addr(k; r_addr) := multilinear equality polynomial over LOG_K vars.
-/// - eq_sp(j; r_sp) and eq_br(j; r_br) := equality polynomials over LOG_T vars.
-/// - ra(k, j) ∈ F is the selector arising from prefix/suffix condensation; logically ra(k, j) = 1
-///   when the j-th cycle’s lookup key equals k, and 0 otherwise (implemented via ExpandingTable).
-/// - Val_j(k) ∈ F is the lookup-table value selected by (j, k); concretely Val_j(k) = table_j(k)
-///   if cycle j uses a table and 0 otherwise (materialized via prefix/suffix decomposition).
-/// - raf_flag(j) ∈ {0,1} is 1 iff the instruction at cycle j is NOT interleaved operands.
-/// - Let LeftPrefix_j, RightPrefix_j, IdentityPrefix_j ∈ F be the address-only (prefix) factors for
-///   the left/right operand and identity polynomials at cycle j (from `PrefixSuffixDecomposition`).
-///
-/// We introduce a batching challenge γ ∈ F. Define
-///   RafVal_j(k) := (1 - raf_flag(j)) · (LeftPrefix_j + γ · RightPrefix_j)
-///                  + raf_flag(j) · γ · IdentityPrefix_j.
-/// The overall γ-weights are arranged so that γ^2 multiplies RafVal_j(k) in the final identity.
-///
-/// Claims supplied by the accumulator (LHS):
-/// - rv_spartan := ⟦LookupOutput⟧ at SumcheckId::SpartanOuter
-/// - rv_branch  := ⟦LookupOutput⟧ at SumcheckId::ProductVirtualization
-/// - left_op    := ⟦LeftLookupOperand⟧ at SumcheckId::SpartanOuter
-/// - right_op   := ⟦RightLookupOperand⟧ at SumcheckId::SpartanOuter
-///   Combined as: rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
-///
-/// Statement proved by this sumcheck (RHS), for random challenges
-/// r_addr ∈ F^{LOG_K}, r_sp, r_br ∈ F^{log_T}:
-///
-///   rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
-///   = Σ_{j=0}^{T-1} Σ_{k=0}^{K-1} [ (eq_sp(j; r_sp) + γ·eq_br(j; r_br)) · ra(k, j) · Val_j(k)
-///                                   + γ^2 · eq_sp(j; r_sp) · ra(k, j) · RafVal_j(k) ].
-///
-/// Equivalent split (for GruenSplitEqPolynomial in the last log(T) rounds):
-///   (i)  rv_spartan(r_sp) + γ^2·raf(r_sp)
-///        = Σ_j eq_sp(j; r_sp) · Σ_k ra(k, j) · (Val_j(k) + γ^2·RafVal_j(k))
-///   (ii) rv_branch(r_br)
-///        = Σ_j eq_br(j; r_br) · Σ_k ra(k, j) · Val_j(k).
-///
-/// Prover structure:
-/// - First log(K) rounds bind address vars using prefix/suffix decomposition, accumulating:
-///   Σ_k ra(k, j)·Val_j(k)  and  Σ_k ra(k, j)·RafVal_j(k)
-///   for each j (via u_evals vectors and suffix polynomials).
-/// - Last log(T) rounds bind cycle vars using two GruenSplitEqPolynomial instances (for r_sp, r_br),
-///   producing degree-3 univariates with the required previous-round claims.
-/// - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
+// Instruction lookups: Read + RAF batched sumcheck
+//
+// Notation:
+// - Field F. Let K = 2^{LOG_K}, T = 2^{log_T}.
+// - Address index k ∈ {0..K-1}, cycle index j ∈ {0..T-1}.
+// - eq_addr(k; r_addr) := multilinear equality polynomial over LOG_K vars.
+// - eq_sp(j; r_sp) and eq_br(j; r_br) := equality polynomials over LOG_T vars.
+// - ra(k, j) ∈ F is the selector arising from prefix/suffix condensation; logically ra(k, j) = 1
+//   when the j-th cycle’s lookup key equals k, and 0 otherwise (implemented via ExpandingTable).
+// - Val_j(k) ∈ F is the lookup-table value selected by (j, k); concretely Val_j(k) = table_j(k)
+//   if cycle j uses a table and 0 otherwise (materialized via prefix/suffix decomposition).
+// - raf_flag(j) ∈ {0,1} is 1 iff the instruction at cycle j is NOT interleaved operands.
+// - Let LeftPrefix_j, RightPrefix_j, IdentityPrefix_j ∈ F be the address-only (prefix) factors for
+//   the left/right operand and identity polynomials at cycle j (from `PrefixSuffixDecomposition`).
+//
+// We introduce a batching challenge γ ∈ F. Define
+//   RafVal_j(k) := (1 - raf_flag(j)) · (LeftPrefix_j + γ · RightPrefix_j)
+//                  + raf_flag(j) · γ · IdentityPrefix_j.
+// The overall γ-weights are arranged so that γ^2 multiplies RafVal_j(k) in the final identity.
+//
+// Claims supplied by the accumulator (LHS):
+// - rv_spartan := ⟦LookupOutput⟧ at SumcheckId::SpartanOuter
+// - rv_branch  := ⟦LookupOutput⟧ at SumcheckId::ProductVirtualization
+// - left_op    := ⟦LeftLookupOperand⟧ at SumcheckId::SpartanOuter
+// - right_op   := ⟦RightLookupOperand⟧ at SumcheckId::SpartanOuter
+//   Combined as: rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+//
+// Statement proved by this sumcheck (RHS), for random challenges
+// r_addr ∈ F^{LOG_K}, r_sp, r_br ∈ F^{log_T}:
+//
+//   rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+//   = Σ_{j=0}^{T-1} Σ_{k=0}^{K-1} [ (eq_sp(j; r_sp) + γ·eq_br(j; r_br)) · ra(k, j) · Val_j(k)
+//                                   + γ^2 · eq_sp(j; r_sp) · ra(k, j) · RafVal_j(k) ].
+//
+// Equivalent split (for GruenSplitEqPolynomial in the last log(T) rounds):
+//   (i)  rv_spartan(r_sp) + γ^2·raf(r_sp)
+//        = Σ_j eq_sp(j; r_sp) · Σ_k ra(k, j) · (Val_j(k) + γ^2·RafVal_j(k))
+//   (ii) rv_branch(r_br)
+//        = Σ_j eq_br(j; r_br) · Σ_k ra(k, j) · Val_j(k).
+//
+// Prover structure:
+// - First log(K) rounds bind address vars using prefix/suffix decomposition, accumulating:
+//   Σ_k ra(k, j)·Val_j(k)  and  Σ_k ra(k, j)·RafVal_j(k)
+//   for each j (via u_evals vectors and suffix polynomials).
+// - Last log(T) rounds bind cycle vars using two GruenSplitEqPolynomial instances (for r_sp, r_br),
+//   producing degree-3 univariates with the required previous-round claims.
+// - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
+
 const DEGREE: usize = 3;
 
 /// Prover state for the instruction lookups Read+RAF sumcheck.
@@ -198,7 +199,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
     pub fn new_prover(
         sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let trace = sm.get_prover_data().1;
+        let trace = sm.get_prover_data().2;
         let log_T = trace.len().log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let (r_branch, _) = sm.get_virtual_polynomial_opening(
@@ -1210,7 +1211,7 @@ mod tests {
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
     use tracer::instruction::Cycle;
-    use tracer::JoltDevice;
+    use tracer::{JoltDevice, LazyTraceIterator};
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
@@ -1322,8 +1323,10 @@ mod tests {
         };
         let final_memory_state = Memory::default();
 
+        let lazy_trace = LazyTraceIterator::new_for_test();
         let mut prover_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_prover(
             &prover_preprocessing,
+            lazy_trace,
             trace.clone(),
             program_io.clone(),
             None,

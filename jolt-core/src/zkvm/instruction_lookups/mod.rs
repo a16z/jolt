@@ -1,7 +1,4 @@
-use common::constants::XLEN;
-use rayon::prelude::*;
-use tracer::instruction::Cycle;
-
+use crate::subprotocols::{booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -13,20 +10,17 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    utils::thread::unsafe_allocate_zero_vec,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
-        instruction_lookups::{
-            booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
-            ra_virtual::RaSumcheck, read_raf_checking::ReadRafSumcheck,
-        },
-        witness::VirtualPolynomial,
+        instruction_lookups::{ra_virtual::RaSumcheck, read_raf_checking::ReadRafSumcheck},
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-
-pub mod booleanity;
-pub mod hamming_weight;
+use common::constants::XLEN;
+use rayon::prelude::*;
+use tracer::instruction::Cycle;
 pub mod ra_virtual;
 pub mod read_raf_checking;
 
@@ -54,7 +48,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let G = if let Some(G) = self.G.take() {
             G
         } else {
-            let (_, trace, _, _) = sm.get_prover_data();
+            let (_, _, trace, _, _) = sm.get_prover_data();
             let r_cycle = sm
                 .get_virtual_polynomial_opening(
                     VirtualPolynomial::LookupOutput,
@@ -66,7 +60,26 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             let eq_r_cycle = EqPolynomial::evals(&r_cycle);
             compute_ra_evals(trace, &eq_r_cycle)
         };
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, G);
+
+        const D_CONST: usize = D;
+        const LOG_K_CHUNK_CONST: usize = LOG_K_CHUNK;
+
+        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> = (0..D_CONST)
+            .map(CommittedPolynomial::InstructionRa)
+            .collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_prover(
+            D_CONST,
+            LOG_K_CHUNK_CONST,
+            gamma,
+            G.into_iter().collect(),
+            polynomial_types,
+            SumcheckId::InstructionHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -83,7 +96,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
+        const D_CONST: usize = D;
+        const LOG_K_CHUNK_CONST: usize = LOG_K_CHUNK;
+
+        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> = (0..D_CONST)
+            .map(CommittedPolynomial::InstructionRa)
+            .collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_verifier(
+            D_CONST,
+            LOG_K_CHUNK_CONST,
+            gamma,
+            polynomial_types,
+            SumcheckId::InstructionHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
+        );
 
         vec![Box::new(hamming_weight)]
     }
@@ -116,7 +146,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_prover(sm);
-        let (_, trace, _, _) = sm.get_prover_data();
+        let (_, _, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
@@ -126,8 +156,39 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .r
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
-        let F = compute_ra_evals(trace, &eq_r_cycle);
-        let booleanity = BooleanitySumcheck::new_prover(sm, F);
+        let G = compute_ra_evals(trace, &eq_r_cycle);
+        let H_indices = compute_instruction_h_indices(trace);
+
+        const D_CONST: usize = D;
+        const LOG_K_CHUNK_CONST: usize = LOG_K_CHUNK;
+        let log_t = trace.len().log_2();
+
+        let gamma: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(D_CONST);
+
+        let r_address: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(LOG_K_CHUNK_CONST);
+        let polynomial_types: Vec<CommittedPolynomial> = (0..D_CONST)
+            .map(CommittedPolynomial::InstructionRa)
+            .collect();
+
+        let booleanity = BooleanitySumcheck::new_prover(
+            D_CONST,
+            LOG_K_CHUNK_CONST,
+            log_t,
+            r_cycle,
+            r_address,
+            gamma,
+            G.to_vec(),
+            H_indices,
+            polynomial_types,
+            SumcheckId::InstructionBooleanity,
+            Some(VirtualPolynomial::LookupOutput),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -149,12 +210,61 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_verifier(sm);
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
+
+        let (_, _, T_val) = sm.get_verifier_data();
+        const D_CONST: usize = D;
+        const LOG_K_CHUNK_CONST: usize = LOG_K_CHUNK;
+        let log_t = T_val.log_2();
+
+        let gamma: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(D_CONST);
+
+        let r_address: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(LOG_K_CHUNK_CONST);
+
+        let r_cycle = Vec::new();
+
+        let polynomial_types: Vec<CommittedPolynomial> = (0..D_CONST)
+            .map(CommittedPolynomial::InstructionRa)
+            .collect();
+
+        let booleanity = BooleanitySumcheck::new_verifier(
+            D_CONST,
+            LOG_K_CHUNK_CONST,
+            log_t,
+            r_cycle,
+            r_address,
+            gamma,
+            polynomial_types,
+            SumcheckId::InstructionBooleanity,
+            Some(VirtualPolynomial::LookupOutput),
+        );
+
         vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 }
 
+#[tracing::instrument(skip_all, name = "instruction_lookups::compute_instruction_h_indices")]
+fn compute_instruction_h_indices(trace: &[Cycle]) -> Vec<Vec<Option<u8>>> {
+    (0..D)
+        .map(|i| {
+            trace
+                .par_iter()
+                .map(|cycle| {
+                    let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as u8)
+                })
+                .collect()
+        })
+        .collect()
+}
+
 #[inline(always)]
+#[tracing::instrument(skip_all, name = "instruction_lookups::compute_ra_evals")]
 fn compute_ra_evals<F: JoltField>(trace: &[Cycle], eq_r_cycle: &[F]) -> [Vec<F>; D] {
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
