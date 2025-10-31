@@ -74,9 +74,9 @@ pub struct StateManager<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 > {
-    pub transcript: Rc<RefCell<ProofTranscript>>,
-    pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
-    pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
+    pub transcript: ProofTranscript,
+    pub proofs: Proofs<F, PCS, ProofTranscript>,
+    pub commitments: Vec<PCS::Commitment>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
@@ -153,9 +153,9 @@ where
     ) -> Self {
         let opening_accumulator = ProverOpeningAccumulator::new();
         let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
-        let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
-        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
-        let commitments = Rc::new(RefCell::new(vec![]));
+        let transcript = ProofTranscript::new(b"Jolt");
+        let proofs = BTreeMap::new();
+        let commitments = vec![];
 
         // Calculate K for DoryGlobals initialization
         let ram_K = trace
@@ -220,9 +220,9 @@ where
     ) -> Self {
         let opening_accumulator = VerifierOpeningAccumulator::new();
         let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
-        let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
-        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
-        let commitments = Rc::new(RefCell::new(vec![]));
+        let transcript = ProofTranscript::new(b"Jolt");
+        let proofs = BTreeMap::new();
+        let commitments = vec![];
         let ram_d = compute_d_parameter(ram_K);
 
         StateManager {
@@ -324,10 +324,6 @@ where
         }
     }
 
-    pub fn get_transcript(&self) -> Rc<RefCell<ProofTranscript>> {
-        self.transcript.clone()
-    }
-
     pub fn get_verifier_accumulator(&self) -> Rc<RefCell<VerifierOpeningAccumulator<F>>> {
         if let Some(ref verifier_state) = self.verifier_state {
             verifier_state.accumulator.clone()
@@ -336,44 +332,23 @@ where
         }
     }
 
-    pub fn get_commitments(&self) -> Rc<RefCell<Vec<PCS::Commitment>>> {
-        self.commitments.clone()
-    }
-
-    pub fn set_commitments(&self, commitments: Vec<PCS::Commitment>) {
-        *self.commitments.borrow_mut() = commitments;
-    }
-
     pub fn fiat_shamir_preamble(&mut self) {
-        let transcript = self.get_transcript();
-        transcript
-            .borrow_mut()
+        self.transcript
             .append_u64(self.program_io.memory_layout.max_input_size);
-        transcript
-            .borrow_mut()
+        self.transcript
             .append_u64(self.program_io.memory_layout.max_output_size);
-        transcript
-            .borrow_mut()
+        self.transcript
             .append_u64(self.program_io.memory_layout.memory_size);
-        transcript
-            .borrow_mut()
-            .append_bytes(&self.program_io.inputs);
-        transcript
-            .borrow_mut()
-            .append_bytes(&self.program_io.outputs);
-        transcript
-            .borrow_mut()
-            .append_u64(self.program_io.panic as u64);
-        transcript.borrow_mut().append_u64(self.ram_K as u64);
+        self.transcript.append_bytes(&self.program_io.inputs);
+        self.transcript.append_bytes(&self.program_io.outputs);
+        self.transcript.append_u64(self.program_io.panic as u64);
+        self.transcript.append_u64(self.ram_K as u64);
 
         if let Some(ref verifier_state) = self.verifier_state {
-            transcript
-                .borrow_mut()
+            self.transcript
                 .append_u64(verifier_state.trace_length as u64);
         } else if let Some(ref prover_state) = self.prover_state {
-            transcript
-                .borrow_mut()
-                .append_u64(prover_state.trace.len() as u64);
+            self.transcript.append_u64(prover_state.trace.len() as u64);
         } else {
             panic!("Neither prover nor verifier state initialized");
         }

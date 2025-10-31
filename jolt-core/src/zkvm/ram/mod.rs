@@ -280,7 +280,9 @@ pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
         .as_ref()
         .expect("prover_state must be present when accumulating advice");
 
-    let accumulate_closure = |advice_poly: &MultilinearPolynomial<F>, max_advice_size: usize| {
+    let accumulate_closure = |state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+                              advice_poly: &MultilinearPolynomial<F>,
+                              max_advice_size: usize| {
         let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
@@ -300,6 +302,7 @@ pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
 
     if let Some(untrusted_advice_poly) = &prover_state.untrusted_advice_polynomial {
         let (point, eval) = accumulate_closure(
+            state_manager,
             untrusted_advice_poly,
             state_manager
                 .program_io
@@ -310,15 +313,12 @@ pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
         prover_state
             .accumulator
             .borrow_mut()
-            .append_untrusted_advice(
-                &mut *state_manager.get_transcript().borrow_mut(),
-                point,
-                eval,
-            );
+            .append_untrusted_advice(&mut state_manager.transcript, point, eval);
     }
 
     if let Some(trusted_advice_poly) = &prover_state.trusted_advice_polynomial {
         let (point, eval) = accumulate_closure(
+            state_manager,
             trusted_advice_poly,
             state_manager
                 .program_io
@@ -327,7 +327,7 @@ pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
         );
 
         prover_state.accumulator.borrow_mut().append_trusted_advice(
-            &mut *state_manager.get_transcript().borrow_mut(),
+            &mut state_manager.transcript,
             point,
             eval,
         );
@@ -347,7 +347,8 @@ pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
         .as_ref()
         .expect("verifier_state must be present when accumulating advice");
 
-    let get_advice_point = |max_advice_size: usize| {
+    let get_advice_point = |state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+                            max_advice_size: usize| {
         let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
@@ -364,6 +365,7 @@ pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
 
     if state_manager.untrusted_advice_commitment.is_some() {
         let point = get_advice_point(
+            state_manager,
             state_manager
                 .program_io
                 .memory_layout
@@ -373,11 +375,12 @@ pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
         verifier_state
             .accumulator
             .borrow_mut()
-            .append_untrusted_advice(&mut *state_manager.transcript.borrow_mut(), point);
+            .append_untrusted_advice(&mut state_manager.transcript, point);
     }
 
     if state_manager.trusted_advice_commitment.is_some() {
         let point = get_advice_point(
+            state_manager,
             state_manager
                 .program_io
                 .memory_layout
@@ -387,7 +390,7 @@ pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
         verifier_state
             .accumulator
             .borrow_mut()
-            .append_trusted_advice(&mut *state_manager.transcript.borrow_mut(), point);
+            .append_trusted_advice(&mut state_manager.transcript, point);
     }
 }
 
@@ -680,34 +683,29 @@ fn gen_ra_booleanity_prover<F: JoltField>(
 ) -> BooleanitySumcheckProver<F> {
     let K = state_manager.ram_K;
 
-    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
-    let memory_layout = &program_io.memory_layout;
-    let d = compute_d_parameter(K);
     let log_k_chunk = DTH_ROOT_OF_K.log_2();
-    let log_t = trace.len().log_2();
+    let log_t = state_manager.get_trace_len().log_2();
 
     let r_cycle: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(log_t);
 
     let r_address: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(log_k_chunk);
 
-    let gammas: Vec<F::Challenge> = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_vector_optimized::<F>(d);
-
     // Compute G and H for RAM
+    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
+    let memory_layout = &program_io.memory_layout;
+    let d = compute_d_parameter(K);
     let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
     let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
     let H_indices = compute_ram_h_indices(trace, memory_layout, d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();
+
+    let gammas: Vec<F::Challenge> = state_manager.transcript.challenge_vector_optimized::<F>(d);
 
     let params = BooleanitySumcheckParams {
         d,
@@ -740,10 +738,7 @@ fn gen_ra_hamming_weight_prover<F: JoltField>(
 
     let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
 
-    let gamma_powers = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_scalar_powers(d);
+    let gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();
@@ -772,18 +767,13 @@ fn new_ra_booleanity_verifier<F: JoltField>(
 
     let r_cycle: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(log_t);
 
     let r_address: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(log_k_chunk);
 
-    let gammas: Vec<F::Challenge> = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_vector_optimized::<F>(d);
+    let gammas: Vec<F::Challenge> = state_manager.transcript.challenge_vector_optimized::<F>(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();
@@ -809,10 +799,7 @@ fn new_ra_hamming_weight_verifier<F: JoltField>(
     let d = compute_d_parameter(state_manager.ram_K);
     let num_rounds = DTH_ROOT_OF_K.log_2();
 
-    let gamma_powers = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_scalar_powers(d);
+    let gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();

@@ -564,7 +564,7 @@ impl<F: JoltField> InstructionInputParams<F> {
             VirtualPolynomial::LeftInstructionInput,
             SumcheckId::ProductVirtualization,
         );
-        let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
+        let gamma = state_manager.transcript.challenge_scalar();
         Self {
             r_cycle_stage_1,
             r_cycle_stage_2,

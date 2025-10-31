@@ -65,20 +65,19 @@ where
         let num_rounds_x: usize = self.state.key.num_rows_bits();
 
         // Transcript and tau
-        let transcript = state_manager.get_transcript();
-        let tau: Vec<F::Challenge> = transcript
-            .borrow_mut()
+        let tau: Vec<F::Challenge> = state_manager
+            .transcript
             .challenge_vector_optimized::<F>(num_rounds_x);
 
         // Prove uni-skip first round
         let mut uniskip_instance = OuterUniSkipInstanceProver::gen(state_manager, &tau);
         let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<F, ProofTranscript, _>(
             &mut uniskip_instance,
-            &mut *transcript.borrow_mut(),
+            &mut state_manager.transcript,
         );
 
         // Store proof and handoff state
-        state_manager.proofs.borrow_mut().insert(
+        state_manager.proofs.insert(
             ProofKeys::Stage1UniSkipFirstRound,
             ProofData::UniSkipFirstRoundProof(first_round_proof),
         );
@@ -112,7 +111,6 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         let num_cycle_vars: usize = self.state.key.num_cycle_vars();
-        let transcript = state_manager.get_transcript();
 
         // Reuse r_cycle from Stage 1 (outer) for τ_low, and sample τ_high
         let r_cycle: Vec<F::Challenge> = {
@@ -124,7 +122,7 @@ where
             outer_opening.r
         };
         debug_assert_eq!(r_cycle.len(), num_cycle_vars);
-        let tau_high: F::Challenge = transcript.borrow_mut().challenge_scalar_optimized::<F>();
+        let tau_high: F::Challenge = state_manager.transcript.challenge_scalar_optimized::<F>();
         let mut tau: Vec<F::Challenge> = r_cycle;
         tau.push(tau_high);
 
@@ -133,10 +131,10 @@ where
         let (first_round_proof, r0, claim_after_first) =
             prove_uniskip_round::<F, ProofTranscript, ProductVirtualUniSkipInstance<F>>(
                 &mut uniskip_instance,
-                &mut *transcript.borrow_mut(),
+                &mut state_manager.transcript,
             );
 
-        state_manager.proofs.borrow_mut().insert(
+        state_manager.proofs.insert(
             ProofKeys::Stage2UniSkipFirstRound,
             ProofData::UniSkipFirstRoundProof(first_round_proof),
         );
@@ -234,13 +232,12 @@ where
 
         let tau: Vec<F::Challenge> = state_manager
             .transcript
-            .borrow_mut()
             .challenge_vector_optimized::<F>(num_rounds_x);
 
         // Load and verify uni-skip first round proof
         let first_round = {
-            let proofs = state_manager.proofs.borrow();
-            match proofs
+            match state_manager
+                .proofs
                 .get(&ProofKeys::Stage1UniSkipFirstRound)
                 .expect("missing Stage1UniSkipFirstRound")
             {
@@ -254,7 +251,7 @@ where
             .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
                 FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
-                &mut *state_manager.transcript.borrow_mut(),
+                &mut state_manager.transcript,
             )
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
 
@@ -297,16 +294,13 @@ where
             outer_opening.r
         };
         debug_assert_eq!(r_cycle.len(), num_cycle_vars);
-        let tau_high: F::Challenge = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_optimized::<F>();
+        let tau_high: F::Challenge = state_manager.transcript.challenge_scalar_optimized::<F>();
         let mut tau: Vec<F::Challenge> = r_cycle;
         tau.push(tau_high);
 
         let first_round = {
-            let proofs = state_manager.proofs.borrow();
-            match proofs
+            match state_manager
+                .proofs
                 .get(&ProofKeys::Stage2UniSkipFirstRound)
                 .expect("missing Stage2UniSkipFirstRound")
             {
@@ -321,7 +315,7 @@ where
             .verify::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS>(
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
-                &mut *state_manager.transcript.borrow_mut(),
+                &mut state_manager.transcript,
             )
             .map_err(|_| anyhow::anyhow!("ProductVirtual uni-skip first-round verification failed"))?;
 

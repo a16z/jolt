@@ -1083,10 +1083,7 @@ impl<F: JoltField> ProductVirtualInnerParams<F> {
     fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let gamma = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_optimized::<F>();
+        let gamma = state_manager.transcript.challenge_scalar_optimized::<F>();
         let (pt_left, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::FusedProductLeft,
             SumcheckId::ProductVirtualization,

@@ -1506,10 +1506,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let gamma = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar::<F>();
+        let gamma = state_manager.transcript.challenge_scalar::<F>();
         let gamma_cub = gamma.square() * gamma;
         let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
         let n_cycle_vars = state_manager.get_trace_len().log_2();

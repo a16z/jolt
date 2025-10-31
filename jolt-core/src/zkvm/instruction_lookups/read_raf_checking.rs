@@ -1153,10 +1153,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let gamma = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar::<F>();
+        let gamma = state_manager.transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
         let log_T = state_manager.get_trace_len().log_2();
         Self {
@@ -1201,8 +1198,6 @@ fn get_opening_point<F: JoltField>(
 
 #[cfg(test)]
 mod tests {
-    use std::ops::DerefMut;
-
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
@@ -1349,23 +1344,17 @@ mod tests {
             prover_sm.twist_sumcheck_switch_index,
         );
 
-        let r_cycle: Vec<<Fr as JoltField>::Challenge> = prover_sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<Fr>(LOG_T);
+        let r_cycle: Vec<<Fr as JoltField>::Challenge> =
+            prover_sm.transcript.challenge_vector_optimized::<Fr>(LOG_T);
         let _r_cycle: Vec<<Fr as JoltField>::Challenge> = verifier_sm
             .transcript
-            .borrow_mut()
             .challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
-        let r_cycle_branch: Vec<<Fr as JoltField>::Challenge> = prover_sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<Fr>(LOG_T);
+        let r_cycle_branch: Vec<<Fr as JoltField>::Challenge> =
+            prover_sm.transcript.challenge_vector_optimized::<Fr>(LOG_T);
         let _r_cycle_branch: Vec<<Fr as JoltField>::Challenge> = verifier_sm
             .transcript
-            .borrow_mut()
             .challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle_branch = EqPolynomial::<Fr>::evals(&r_cycle_branch);
 
@@ -1395,28 +1384,28 @@ mod tests {
 
         let prover_accumulator = prover_sm.get_prover_accumulator();
         prover_accumulator.borrow_mut().append_virtual(
-            prover_sm.transcript.borrow_mut().deref_mut(),
+            &mut prover_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             rv_claim,
         );
         prover_accumulator.borrow_mut().append_virtual(
-            prover_sm.transcript.borrow_mut().deref_mut(),
+            &mut prover_sm.transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             left_operand_claim,
         );
         prover_accumulator.borrow_mut().append_virtual(
-            prover_sm.transcript.borrow_mut().deref_mut(),
+            &mut prover_sm.transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             right_operand_claim,
         );
         prover_accumulator.borrow_mut().append_virtual(
-            prover_sm.transcript.borrow_mut().deref_mut(),
+            &mut prover_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
@@ -1425,14 +1414,11 @@ mod tests {
 
         let mut prover_sumcheck = ReadRafSumcheckProver::gen(&mut prover_sm);
 
-        let mut prover_transcript_ref = prover_sm.transcript.borrow_mut();
-
         let (proof, r_sumcheck) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],
             &mut *prover_accumulator.borrow_mut(),
-            &mut *prover_transcript_ref,
+            &mut prover_sm.transcript,
         );
-        drop(prover_transcript_ref);
 
         // Take claims
         let prover_acc_borrow = prover_accumulator.borrow();
@@ -1449,25 +1435,25 @@ mod tests {
         drop(verifier_acc_borrow);
 
         verifier_accumulator.borrow_mut().append_virtual(
-            verifier_sm.transcript.borrow_mut().deref_mut(),
+            &mut verifier_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_accumulator.borrow_mut().append_virtual(
-            verifier_sm.transcript.borrow_mut().deref_mut(),
+            &mut verifier_sm.transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_accumulator.borrow_mut().append_virtual(
-            verifier_sm.transcript.borrow_mut().deref_mut(),
+            &mut verifier_sm.transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_accumulator.borrow_mut().append_virtual(
-            verifier_sm.transcript.borrow_mut().deref_mut(),
+            &mut verifier_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
@@ -1479,7 +1465,7 @@ mod tests {
             &proof,
             vec![&mut verifier_sumcheck],
             &mut *verifier_accumulator.borrow_mut(),
-            &mut *verifier_sm.transcript.borrow_mut(),
+            &mut verifier_sm.transcript,
         )
         .unwrap();
 

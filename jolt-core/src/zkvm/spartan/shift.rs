@@ -289,7 +289,6 @@ impl<F: JoltField> ShiftSumcheckParams<F> {
     ) -> Self {
         let gamma_powers = state_manager
             .transcript
-            .borrow_mut()
             .challenge_scalar_powers(5)
             .try_into()
             .unwrap();

@@ -1093,7 +1093,7 @@ impl<F: JoltField> ReadWriteCheckingParams<F> {
         let K = state_manager.ram_K;
         let T = state_manager.get_trace_len();
         let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
-        let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
+        let gamma = state_manager.transcript.challenge_scalar();
         let (r_cycle_stage_1, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamReadValue,
             SumcheckId::SpartanOuter,

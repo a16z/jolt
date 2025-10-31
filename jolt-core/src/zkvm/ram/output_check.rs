@@ -365,7 +365,6 @@ impl<F: JoltField> OutputSumcheckParams<F> {
         let K = state_manager.ram_K;
         let r_address = state_manager
             .transcript
-            .borrow_mut()
             .challenge_vector_optimized::<F>(K.log_2());
         Self {
             K,
