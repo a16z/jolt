@@ -52,6 +52,13 @@ impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
             HashMapOrVec::Vec(vec) => vec.shrink_to_fit(),
         };
     }
+
+    pub fn get(&self, index: usize) -> Option<T> {
+        match self {
+            HashMapOrVec::HashMap(map) => map.get(&index).cloned(),
+            HashMapOrVec::Vec(vec) => vec[index].clone(),
+        }
+    }
 }
 
 impl<T: Clone + Default + Send> Index<usize> for HashMapOrVec<T> {
