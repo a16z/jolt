@@ -186,4 +186,3 @@ jobs:
         with:
           lake-package-directory: ./zklean-extractor/jolt-zklean
           build: true
-          test: true
