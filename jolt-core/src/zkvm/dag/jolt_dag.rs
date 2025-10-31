@@ -91,24 +91,21 @@ pub fn prove_jolt_dag<
     let opening_proof_hints = generate_and_commit_polynomials(&mut state_manager)?;
 
     // Append commitments to transcript
-    let commitments = state_manager.get_commitments();
-    let transcript = state_manager.get_transcript();
-    for commitment in commitments.borrow().iter() {
-        transcript.borrow_mut().append_serializable(commitment);
+    for commitment in &state_manager.commitments {
+        state_manager.transcript.append_serializable(commitment);
     }
-    drop(commitments);
 
     // Append untrusted_advice commitment to transcript if it exists
     if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
-        transcript
-            .borrow_mut()
+        state_manager
+            .transcript
             .append_serializable(untrusted_advice_commitment);
     }
 
     if !state_manager.program_io.trusted_advice.is_empty() {
         compute_trusted_advice_poly(&mut state_manager);
-        transcript
-            .borrow_mut()
+        state_manager
+            .transcript
             .append_serializable(state_manager.trusted_advice_commitment.as_ref().unwrap());
     }
 
@@ -141,16 +138,15 @@ pub fn prove_jolt_dag<
         .map(|instance| &mut **instance as _)
         .collect();
 
-    let transcript = state_manager.get_transcript();
     let accumulator = state_manager.get_prover_accumulator();
     tracing::info!("Stage 1 proving (remainder batch)");
     let (stage1_remainder_proof, _r_stage1) = BatchedSumcheck::prove(
         remainder_instances_mut,
         &mut *accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     );
 
-    state_manager.proofs.borrow_mut().insert(
+    state_manager.proofs.insert(
         ProofKeys::Stage1Sumcheck,
         ProofData::SumcheckProof(stage1_remainder_proof),
     );
@@ -191,16 +187,15 @@ pub fn prove_jolt_dag<
         .map(|instance| &mut **instance as _)
         .collect();
 
-    let transcript = state_manager.get_transcript();
     let accumulator = state_manager.get_prover_accumulator();
     tracing::info!("Stage 2 proving");
     let (stage2_proof, _r_stage2) = BatchedSumcheck::prove(
         stage2_instances_mut,
         &mut *accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     );
 
-    state_manager.proofs.borrow_mut().insert(
+    state_manager.proofs.insert(
         ProofKeys::Stage2Sumcheck,
         ProofData::SumcheckProof(stage2_proof),
     );
@@ -250,10 +245,10 @@ pub fn prove_jolt_dag<
     let (stage3_proof, _r_stage3) = BatchedSumcheck::prove(
         stage3_instances_mut,
         &mut accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     );
 
-    state_manager.proofs.borrow_mut().insert(
+    state_manager.proofs.insert(
         ProofKeys::Stage3Sumcheck,
         ProofData::SumcheckProof(stage3_proof),
     );
@@ -301,10 +296,10 @@ pub fn prove_jolt_dag<
     let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
         stage4_instances_mut,
         &mut accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     );
 
-    state_manager.proofs.borrow_mut().insert(
+    state_manager.proofs.insert(
         ProofKeys::Stage4Sumcheck,
         ProofData::SumcheckProof(stage4_proof),
     );
@@ -353,10 +348,10 @@ pub fn prove_jolt_dag<
     let (stage5_proof, _r_stage5) = BatchedSumcheck::prove(
         stage5_instances_mut,
         &mut accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     );
 
-    state_manager.proofs.borrow_mut().insert(
+    state_manager.proofs.insert(
         ProofKeys::Stage5Sumcheck,
         ProofData::SumcheckProof(stage5_proof),
     );
@@ -405,10 +400,10 @@ pub fn prove_jolt_dag<
     let (stage6_proof, _r_stage6) = BatchedSumcheck::prove(
         stage6_instances_mut,
         &mut *accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     );
 
-    state_manager.proofs.borrow_mut().insert(
+    state_manager.proofs.insert(
         ProofKeys::Stage6Sumcheck,
         ProofData::SumcheckProof(stage6_proof),
     );
@@ -444,12 +439,8 @@ pub fn prove_jolt_dag<
 
     // Generate trusted_advice opening proofs
     if !state_manager.program_io.trusted_advice.is_empty() {
-        let proof = generate_trusted_advice_proof(
-            &mut state_manager,
-            &preprocessing.generators,
-            &mut *transcript.borrow_mut(),
-        );
-        state_manager.proofs.borrow_mut().insert(
+        let proof = generate_trusted_advice_proof(&mut state_manager, &preprocessing.generators);
+        state_manager.proofs.insert(
             ProofKeys::TrustedAdviceProof,
             ProofData::OpeningProof(proof),
         );
@@ -457,12 +448,8 @@ pub fn prove_jolt_dag<
 
     // Generate untrusted_advice opening proofs
     if !state_manager.program_io.untrusted_advice.is_empty() {
-        let proof = generate_untrusted_advice_proof(
-            &mut state_manager,
-            &preprocessing.generators,
-            &mut *transcript.borrow_mut(),
-        );
-        state_manager.proofs.borrow_mut().insert(
+        let proof = generate_untrusted_advice_proof(&mut state_manager, &preprocessing.generators);
+        state_manager.proofs.insert(
             ProofKeys::UntrustedAdviceProof,
             ProofData::OpeningProof(proof),
         );
@@ -472,10 +459,10 @@ pub fn prove_jolt_dag<
         polynomials_map,
         opening_proof_hints,
         &preprocessing.generators,
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     );
 
-    state_manager.proofs.borrow_mut().insert(
+    state_manager.proofs.insert(
         ProofKeys::ReducedOpeningProof,
         ProofData::ReducedOpeningProof(opening_proof),
     );
@@ -498,7 +485,7 @@ pub fn prove_jolt_dag<
 
     #[cfg(test)]
     let debug_info = {
-        let transcript = state_manager.transcript.take();
+        let transcript = state_manager.transcript.clone();
         let opening_accumulator = state_manager.get_prover_accumulator().borrow().clone();
         Some(ProverDebugInfo {
             transcript,
@@ -530,22 +517,20 @@ pub fn verify_jolt_dag<
     let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
 
     // Append commitments to transcript
-    let commitments = state_manager.get_commitments();
-    let transcript = state_manager.get_transcript();
-    for commitment in commitments.borrow().iter() {
-        transcript.borrow_mut().append_serializable(commitment);
+    for commitment in &state_manager.commitments {
+        state_manager.transcript.append_serializable(commitment);
     }
 
     // Append untrusted advice commitment to transcript
     if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
-        transcript
-            .borrow_mut()
+        state_manager
+            .transcript
             .append_serializable(untrusted_advice_commitment);
     }
     // Append trusted advice commitment to transcript
     if let Some(ref trusted_advice_commitment) = state_manager.trusted_advice_commitment {
-        transcript
-            .borrow_mut()
+        state_manager
+            .transcript
             .append_serializable(trusted_advice_commitment);
     }
 
@@ -572,8 +557,8 @@ pub fn verify_jolt_dag<
         .map(|instance| &**instance as _)
         .collect();
 
-    let proofs = state_manager.proofs.borrow();
-    let stage1_remainder_proof = proofs
+    let stage1_remainder_proof = state_manager
+        .proofs
         .get(&ProofKeys::Stage1Sumcheck)
         .expect("Stage 1 remainder proof not found");
     let stage1_remainder_proof = match stage1_remainder_proof {
@@ -581,18 +566,14 @@ pub fn verify_jolt_dag<
         _ => panic!("Invalid proof type for stage 1 remainder"),
     };
 
-    let transcript = state_manager.get_transcript();
     let opening_accumulator = state_manager.get_verifier_accumulator();
     let _r_stage1 = BatchedSumcheck::verify(
         stage1_remainder_proof,
         stage1_remainder_instances_ref,
         &mut *opening_accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     )
     .context("Stage 1 remainder")?;
-
-    // Release immutable borrow of proofs before taking &mut state_manager below
-    drop(proofs);
 
     // Stage 2:
     // Stage 2a: Verify univariate-skip first round for product virtualization
@@ -609,8 +590,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage2_instances_ref = stage2_instances.iter().map(|inst| &**inst as _).collect();
 
-    let proofs = state_manager.proofs.borrow();
-    let stage2_proof_data = proofs
+    let stage2_proof_data = state_manager
+        .proofs
         .get(&ProofKeys::Stage2Sumcheck)
         .expect("Stage 2 sumcheck proof not found");
     let stage2_proof = match stage2_proof_data {
@@ -618,17 +599,14 @@ pub fn verify_jolt_dag<
         _ => panic!("Invalid proof type for stage 2"),
     };
 
-    let transcript = state_manager.get_transcript();
     let opening_accumulator = state_manager.get_verifier_accumulator();
     let _r_stage2 = BatchedSumcheck::verify(
         stage2_proof,
         stage2_instances_ref,
         &mut *opening_accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     )
     .context("Stage 2")?;
-
-    drop(proofs);
 
     // Stage 3:
     let stage3_instances: Vec<_> = std::iter::empty()
@@ -638,8 +616,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage3_instances_ref = stage3_instances.iter().map(|inst| &**inst as _).collect();
 
-    let proofs = state_manager.proofs.borrow();
-    let stage3_proof_data = proofs
+    let stage3_proof_data = state_manager
+        .proofs
         .get(&ProofKeys::Stage3Sumcheck)
         .expect("Stage 3 sumcheck proof not found");
     let stage3_proof = match stage3_proof_data {
@@ -651,11 +629,9 @@ pub fn verify_jolt_dag<
         stage3_proof,
         stage3_instances_ref,
         &mut *opening_accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     )
     .context("Stage 3")?;
-
-    drop(proofs);
 
     // Stage 4:
     let stage4_instances: Vec<_> = std::iter::empty()
@@ -667,8 +643,8 @@ pub fn verify_jolt_dag<
         .map(|instance| &**instance as _)
         .collect();
 
-    let proofs = state_manager.proofs.borrow();
-    let stage4_proof_data = proofs
+    let stage4_proof_data = state_manager
+        .proofs
         .get(&ProofKeys::Stage4Sumcheck)
         .expect("Stage 4 sumcheck proof not found");
     let stage4_proof = match stage4_proof_data {
@@ -680,11 +656,9 @@ pub fn verify_jolt_dag<
         stage4_proof,
         stage4_instances_ref,
         &mut *opening_accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     )
     .context("Stage 4")?;
-
-    drop(proofs);
 
     // Stage 5:
     let stage5_instances: Vec<_> = std::iter::empty()
@@ -694,8 +668,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage5_instances_ref = stage5_instances.iter().map(|inst| &**inst as _).collect();
 
-    let proofs = state_manager.proofs.borrow();
-    let stage5_proof_data = proofs
+    let stage5_proof_data = state_manager
+        .proofs
         .get(&ProofKeys::Stage5Sumcheck)
         .expect("Stage 5 sumcheck proof not found");
     let stage5_proof = match stage5_proof_data {
@@ -707,11 +681,9 @@ pub fn verify_jolt_dag<
         stage5_proof,
         stage5_instances_ref,
         &mut *opening_accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     )
     .context("Stage 5")?;
-
-    drop(proofs);
 
     // Stage 6:
     let stage6_instances: Vec<_> = std::iter::empty()
@@ -721,8 +693,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage6_instances_ref = stage6_instances.iter().map(|inst| &**inst as _).collect();
 
-    let proofs = state_manager.proofs.borrow();
-    let stage6_proof_data = proofs
+    let stage6_proof_data = state_manager
+        .proofs
         .get(&ProofKeys::Stage6Sumcheck)
         .expect("Stage 6 sumcheck proof not found");
     let stage6_proof = match stage6_proof_data {
@@ -734,32 +706,25 @@ pub fn verify_jolt_dag<
         stage6_proof,
         stage6_instances_ref,
         &mut *opening_accumulator.borrow_mut(),
-        &mut *transcript.borrow_mut(),
+        &mut state_manager.transcript,
     )
     .context("Stage 6")?;
 
     // Verify trusted_advice opening proofs
     if state_manager.trusted_advice_commitment.is_some() {
-        verify_trusted_advice_proofs(
-            &state_manager,
-            &preprocessing.generators,
-            &mut *transcript.borrow_mut(),
-        )
-        .context("Trusted advice proofs")?;
+        verify_trusted_advice_proofs(&mut state_manager, &preprocessing.generators)
+            .context("Trusted advice proofs")?;
     }
 
     // Verify untrusted_advice opening proofs
     if state_manager.untrusted_advice_commitment.is_some() {
-        verify_untrusted_advice_proofs(
-            &state_manager,
-            &preprocessing.generators,
-            &mut *transcript.borrow_mut(),
-        )
-        .context("Untrusted advice proofs")?;
+        verify_untrusted_advice_proofs(&mut state_manager, &preprocessing.generators)
+            .context("Untrusted advice proofs")?;
     }
 
     // Batch-prove all openings (Stage 7)
-    let batched_opening_proof = proofs
+    let batched_opening_proof = state_manager
+        .proofs
         .get(&ProofKeys::ReducedOpeningProof)
         .expect("Reduced opening proof not found");
     let batched_opening_proof = match batched_opening_proof {
@@ -768,7 +733,7 @@ pub fn verify_jolt_dag<
     };
 
     let mut commitments_map = HashMap::new();
-    for (polynomial, commitment) in AllCommittedPolynomials::iter().zip(commitments.borrow().iter())
+    for (polynomial, commitment) in AllCommittedPolynomials::iter().zip(&state_manager.commitments)
     {
         commitments_map.insert(*polynomial, commitment.clone());
     }
@@ -779,7 +744,7 @@ pub fn verify_jolt_dag<
             &preprocessing.generators,
             &mut commitments_map,
             batched_opening_proof,
-            &mut *transcript.borrow_mut(),
+            &mut state_manager.transcript,
         )
         .context("Stage 7")?;
 
@@ -841,7 +806,7 @@ fn generate_and_commit_polynomials<
         hint_map.insert(*poly, hint);
     }
 
-    prover_state_manager.set_commitments(commitments);
+    prover_state_manager.commitments = commitments;
 
     Ok(hint_map)
 }
@@ -927,13 +892,17 @@ fn generate_trusted_advice_proof<
 >(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     generators: &PCS::ProverSetup,
-    transcript: &mut ProofTranscript,
 ) -> PCS::Proof {
     let prover_state = state_manager.prover_state.as_ref().unwrap();
     let trusted_advice_poly = prover_state.trusted_advice_polynomial.as_ref().unwrap();
     let accumulator = state_manager.get_prover_accumulator();
     let (point, _) = accumulator.borrow().get_trusted_advice_opening().unwrap();
-    PCS::prove_without_hint(generators, trusted_advice_poly, &point.r, transcript)
+    PCS::prove_without_hint(
+        generators,
+        trusted_advice_poly,
+        &point.r,
+        &mut state_manager.transcript,
+    )
 }
 
 fn generate_untrusted_advice_proof<
@@ -943,13 +912,17 @@ fn generate_untrusted_advice_proof<
 >(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     generators: &PCS::ProverSetup,
-    transcript: &mut ProofTranscript,
 ) -> PCS::Proof {
     let prover_state = state_manager.prover_state.as_ref().unwrap();
     let untrusted_advice_poly = prover_state.untrusted_advice_polynomial.as_ref().unwrap();
     let accumulator = state_manager.get_prover_accumulator();
     let (point, _) = accumulator.borrow().get_untrusted_advice_opening().unwrap();
-    PCS::prove_without_hint(generators, untrusted_advice_poly, &point.r, transcript)
+    PCS::prove_without_hint(
+        generators,
+        untrusted_advice_poly,
+        &point.r,
+        &mut state_manager.transcript,
+    )
 }
 
 fn verify_trusted_advice_proofs<
@@ -957,19 +930,14 @@ fn verify_trusted_advice_proofs<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 >(
-    state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     verifier_setup: &PCS::VerifierSetup,
-    transcript: &mut ProofTranscript,
 ) -> Result<(), anyhow::Error> {
     let trusted_advice_commitment = state_manager.trusted_advice_commitment.as_ref().unwrap();
     let accumulator = state_manager.get_verifier_accumulator();
 
     let (point, eval) = accumulator.borrow().get_trusted_advice_opening().unwrap();
-    let proof = match state_manager
-        .proofs
-        .borrow()
-        .get(&ProofKeys::TrustedAdviceProof)
-    {
+    let proof = match state_manager.proofs.get(&ProofKeys::TrustedAdviceProof) {
         Some(ProofData::OpeningProof(proof)) => proof.clone(),
         _ => return Err(anyhow::anyhow!("Trusted advice proof not found")),
     };
@@ -977,7 +945,7 @@ fn verify_trusted_advice_proofs<
     PCS::verify(
         &proof,
         verifier_setup,
-        transcript,
+        &mut state_manager.transcript,
         &point.r,
         &eval,
         trusted_advice_commitment,
@@ -992,19 +960,14 @@ fn verify_untrusted_advice_proofs<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 >(
-    state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     verifier_setup: &PCS::VerifierSetup,
-    transcript: &mut ProofTranscript,
 ) -> Result<(), anyhow::Error> {
     let untrusted_advice_commitment = state_manager.untrusted_advice_commitment.as_ref().unwrap();
     let accumulator = state_manager.get_verifier_accumulator();
 
     let (point, eval) = accumulator.borrow().get_untrusted_advice_opening().unwrap();
-    let proof = match state_manager
-        .proofs
-        .borrow()
-        .get(&ProofKeys::UntrustedAdviceProof)
-    {
+    let proof = match state_manager.proofs.get(&ProofKeys::UntrustedAdviceProof) {
         Some(ProofData::OpeningProof(proof)) => proof.clone(),
         _ => return Err(anyhow::anyhow!("Untrusted advice proof not found")),
     };
@@ -1012,7 +975,7 @@ fn verify_untrusted_advice_proofs<
     PCS::verify(
         &proof,
         verifier_setup,
-        transcript,
+        &mut state_manager.transcript,
         &point.r,
         &eval,
         untrusted_advice_commitment,

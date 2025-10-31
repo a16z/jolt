@@ -397,8 +397,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         #[cfg(test)]
         {
             if let Some(debug_info) = _debug_info {
-                let mut transcript = state_manager.transcript.borrow_mut();
-                transcript.compare_to(debug_info.transcript);
+                state_manager.transcript.compare_to(debug_info.transcript);
                 let opening_accumulator = state_manager.get_verifier_accumulator();
                 opening_accumulator
                     .borrow_mut()

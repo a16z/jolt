@@ -163,14 +163,10 @@ fn gen_ra_booleanity_prover<F: JoltField>(
 
     let log_t = trace.len().log_2();
 
-    let gammas = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_vector_optimized::<F>(D);
+    let gammas = state_manager.transcript.challenge_vector_optimized::<F>(D);
 
     let r_address: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(LOG_K_CHUNK);
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..D).map(CommittedPolynomial::InstructionRa).collect();
@@ -194,10 +190,7 @@ fn gen_ra_hamming_weight_prover<F: JoltField>(
     state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ra_evals: &[Vec<F>; D],
 ) -> HammingWeightSumcheckProver<F> {
-    let gamma_powers = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_scalar_powers(D);
+    let gamma_powers = state_manager.transcript.challenge_scalar_powers(D);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..D).map(CommittedPolynomial::InstructionRa).collect();
@@ -221,14 +214,10 @@ fn new_ra_booleanity_verifier<F: JoltField>(
     let (_, _, T_val) = state_manager.get_verifier_data();
     let log_t = T_val.log_2();
 
-    let gammas: Vec<F::Challenge> = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_vector_optimized::<F>(D);
+    let gammas: Vec<F::Challenge> = state_manager.transcript.challenge_vector_optimized::<F>(D);
 
     let r_address: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(LOG_K_CHUNK);
 
     let r_cycle = Vec::new();
@@ -254,10 +243,7 @@ fn new_ra_booleanity_verifier<F: JoltField>(
 fn new_ra_hamming_weight_verifier<F: JoltField>(
     state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
 ) -> HammingWeightSumcheckVerifier<F> {
-    let gamma_powers = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_scalar_powers(D);
+    let gamma_powers = state_manager.transcript.challenge_scalar_powers(D);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..D).map(CommittedPolynomial::InstructionRa).collect();

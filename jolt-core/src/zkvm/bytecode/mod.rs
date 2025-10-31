@@ -199,10 +199,7 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     let log_k_chunk = log_K.div_ceil(d);
     let log_t = trace.len().log_2();
 
-    let hamming_weight_gamma_powers = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_scalar_powers::<F>(d);
+    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers::<F>(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
@@ -217,14 +214,10 @@ fn gen_ra_one_hot_provers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_vector_optimized::<F>(d);
+    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
 
     let r_address: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(log_k_chunk);
 
     let booleanity_params = BooleanitySumcheckParams {
@@ -259,10 +252,7 @@ fn new_ra_one_hot_verifiers<F: JoltField>(
     let log_t = T_val.log_2();
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
-    let hamming_weight_gamma_powers = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_scalar_powers(d);
+    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
 
     let hamming_weight_params = HammingWeightSumcheckParams {
         d,
@@ -274,13 +264,9 @@ fn new_ra_one_hot_verifiers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager
-        .transcript
-        .borrow_mut()
-        .challenge_vector_optimized::<F>(d);
+    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
     let r_address: Vec<F::Challenge> = state_manager
         .transcript
-        .borrow_mut()
         .challenge_vector_optimized::<F>(log_k_chunk);
 
     let booleanity_params = BooleanitySumcheckParams {

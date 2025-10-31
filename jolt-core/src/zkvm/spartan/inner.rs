@@ -275,10 +275,7 @@ impl<F: JoltField> InnerSumcheckParams<F> {
     fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let gamma = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_optimized::<F>();
+        let gamma = state_manager.transcript.challenge_scalar_optimized::<F>();
         Self { gamma }
     }
 
