@@ -662,10 +662,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let d = preprocessing.bytecode.d;
         let log_T = state_manager.get_trace_len().log_2();
         let log_K_chunk = log_K.div_ceil(d);
-        let gamma_powers = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_powers(7);
+        let gamma_powers = state_manager.transcript.challenge_scalar_powers(7);
 
         let (val_1, rv_claim_1) = Self::compute_val_rv(state_manager, ReadCheckingValType::Stage1);
         let (val_2, rv_claim_2) = Self::compute_val_rv(state_manager, ReadCheckingValType::Stage2);
@@ -753,41 +750,35 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ) -> (Vec<F>, F) {
         match val_type {
             ReadCheckingValType::Stage1 => {
-                let gamma_powers = sm
-                    .transcript
-                    .borrow_mut()
-                    .challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
                 (
                     Self::compute_val_1(sm, &gamma_powers),
                     Self::compute_rv_claim_1(sm, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage2 => {
-                let gamma_powers = sm.transcript.borrow_mut().challenge_scalar_powers(4);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(4);
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage3 => {
-                let gamma_powers = sm.transcript.borrow_mut().challenge_scalar_powers(9);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(9);
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(sm, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage4 => {
-                let gamma_powers = sm.transcript.borrow_mut().challenge_scalar_powers(3);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(3);
                 (
                     Self::compute_val_4(sm, &gamma_powers),
                     Self::compute_rv_claim_4(sm, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage5 => {
-                let gamma_powers = sm
-                    .transcript
-                    .borrow_mut()
-                    .challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
                 (
                     Self::compute_val_5(sm, &gamma_powers),
                     Self::compute_rv_claim_5(sm, &gamma_powers),

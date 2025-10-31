@@ -352,8 +352,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         ];
 
         let gamma_powers = state_manager
-            .get_transcript()
-            .borrow_mut()
+            .transcript
             .challenge_scalar_powers(3)
             .try_into()
             .unwrap();
