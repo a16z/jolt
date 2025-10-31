@@ -184,6 +184,6 @@ jobs:
       - name: Run lake build on the extracted model
         uses: leanprover/lean-action@v1
         with:
-          lake-package-directory: ./zklean-extractor/jolt-zklean/src
+          lake-package-directory: ./zklean-extractor/jolt-zklean
           build: true
           test: true
