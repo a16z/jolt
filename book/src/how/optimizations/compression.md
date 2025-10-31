@@ -149,3 +149,7 @@ pub fn compressible_fq12_to_fq12(value: CompressibleFq12) -> Fq12 {
     }
 }
 ```
+
+## Switching order of exponentiation
+
+In the case of compression, one needs to first raise to a power of $\Phi_6(q^2)$ before then raising to a power of $\Psi_6(q^2)$ (recall that the compression method amounts to using two elements in $\mathbb{F}_{q^2}$ to represent a $\Psi_6(q^2)$-power). However, the final exponentiation is significantly faster if we switch the order and first raise to the power of $\Psi_6(q^2)$ instead, as in the uncompressed case. This is because elements of $\Psi_6(q^2)$-powers have the special properties that they are in a cyclotomic subgroup, so optimized squaring and inversion are much cheaper. Fortunately, the overhead in practice is insignificant for multi-pairing computation, which is the use case for Dory, because the overhead in the final exponentiation step is amortized across the multi-Miller loop computations.  
