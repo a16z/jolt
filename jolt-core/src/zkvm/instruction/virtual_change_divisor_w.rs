@@ -15,20 +15,20 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualChangeDivisorW {
 impl Flags for VirtualChangeDivisorW {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::VirtualInstruction as usize] =
-            self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
+        flags[CircuitFlags::WriteLookupOutputToRD] = true;
+        flags[CircuitFlags::VirtualInstruction] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
-        flags[CircuitFlags::IsFirstInSequence as usize] = self.is_first_in_sequence;
-        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
+        flags[CircuitFlags::IsCompressed] = self.is_compressed;
         flags
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
-        flags[InstructionFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[InstructionFlags::RightOperandIsRs2Value as usize] = true;
+        flags[InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[InstructionFlags::RightOperandIsRs2Value] = true;
+        flags[InstructionFlags::IsRdNotZero] = self.operands.rd != 0;
         flags
     }
 }
@@ -38,16 +38,16 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> 
         // Always treat as 32-bit values for W instructions
         (
             self.register_state.rs1 as u32 as u64,
-            self.register_state.rs2 as i32 as i128,
+            self.register_state.rs2 as i128,
         )
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (remainder, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let remainder = remainder as i32;
+        let (dividend, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let dividend = dividend as i32;
         let divisor = divisor as i32;
 
-        if remainder == i32::MIN && divisor == -1 {
+        if dividend == i32::MIN && divisor == -1 {
             1
         } else {
             // Sign-extend the 32-bit result to 64 bits
@@ -58,7 +58,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> 
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use crate::zkvm::instruction::test::{
+        lookup_output_matches_trace_test, materialize_entry_test,
+    };
 
     use super::*;
     use ark_bn254::Fr;
@@ -66,5 +68,10 @@ mod test {
     #[test]
     fn materialize_entry() {
         materialize_entry_test::<Fr, VirtualChangeDivisorW>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace() {
+        lookup_output_matches_trace_test::<VirtualChangeDivisorW>();
     }
 }

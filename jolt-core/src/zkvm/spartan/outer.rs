@@ -2,7 +2,6 @@ use allocative::Allocative;
 use ark_ff::biginteger::S64;
 use ark_std::Zero;
 use rayon::prelude::*;
-use std::cell::RefCell;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
@@ -14,11 +13,14 @@ use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
+use crate::subprotocols::sumcheck_prover::{
+    SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
+};
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
@@ -29,6 +31,7 @@ use crate::utils::math::Math;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
+use crate::zkvm::r1cs::constraints::FIRST_ROUND_POLY_DEGREE_BOUND;
 use crate::zkvm::r1cs::{
     constraints::{
         FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -46,6 +49,9 @@ use allocative::FlameGraphBuilder;
 use crate::zkvm::r1cs::constraints::{UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP};
 #[cfg(test)]
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
+
+/// Degree bound of the sumcheck round polynomials for [`OuterRemainingSumcheckVerifier`].
+const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
 
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
@@ -77,25 +83,19 @@ use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
 /// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
 #[derive(Allocative)]
-pub struct OuterUniSkipInstance<F: JoltField> {
+pub struct OuterUniSkipInstanceProver<F: JoltField> {
     tau: Vec<F::Challenge>,
-    /// Prover-only state (None on verifier)
-    prover_state: Option<OuterUniSkipProverState<F>>,
-}
-
-#[derive(Allocative)]
-struct OuterUniSkipProverState<F: JoltField> {
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; UNIVARIATE_SKIP_DEGREE],
 }
 
-impl<F: JoltField> OuterUniSkipInstance<F> {
-    #[tracing::instrument(skip_all, name = "OuterUniSkipInstance::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+impl<F: JoltField> OuterUniSkipInstanceProver<F> {
+    #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::gen")]
+    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         tau: &[F::Challenge],
     ) -> Self {
-        let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         let tau_low = &tau[0..tau.len() - 1];
 
@@ -104,21 +104,12 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
 
         let instance = Self {
             tau: tau.to_vec(),
-            prover_state: Some(OuterUniSkipProverState {
-                extended_evals: extended,
-            }),
+            extended_evals: extended,
         };
 
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("OuterUniSkipInstance", &instance);
         instance
-    }
-
-    pub fn new_verifier(tau: &[F::Challenge]) -> Self {
-        Self {
-            tau: tau.to_vec(),
-            prover_state: None,
-        }
     }
 
     /// Compute the extended evaluations of the univariate skip polynomial, i.e.
@@ -252,18 +243,20 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSkipInstance<F> {
-    const DEGREE_BOUND: usize = FIRST_ROUND_POLY_NUM_COEFFS - 1;
+impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
+    for OuterUniSkipInstanceProver<F>
+{
+    const DEGREE_BOUND: usize = FIRST_ROUND_POLY_DEGREE_BOUND;
     const DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DOMAIN_SIZE;
 
     fn input_claim(&self) -> F {
-        F::zero()
+        outer_uni_skip_input_claim()
     }
 
-    #[tracing::instrument(skip_all, name = "OuterUniSkipInstance::compute_poly")]
+    #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::compute_poly")]
     fn compute_poly(&mut self) -> UniPoly<F> {
         // Load extended univariate-skip evaluations from prover state
-        let extended = self.prover_state.as_ref().unwrap().extended_evals;
+        let extended_evals = &self.extended_evals;
 
         let tau_high = self.tau[self.tau.len() - 1];
 
@@ -274,8 +267,12 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
             UNIVARIATE_SKIP_DEGREE,
             UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
             FIRST_ROUND_POLY_NUM_COEFFS,
-        >(None, &extended, tau_high)
+        >(None, extended_evals, tau_high)
     }
+}
+
+pub fn outer_uni_skip_input_claim<F: JoltField>() -> F {
+    F::zero()
 }
 
 #[derive(Clone, Debug, Allocative)]
@@ -289,44 +286,31 @@ pub struct StreamingRoundCache<F: JoltField> {
     pub bz_hi: Vec<F>,
 }
 
-#[derive(Allocative)]
-pub struct OuterProverState<F: JoltField> {
-    #[allocative(skip)]
-    pub preprocess: Arc<JoltSharedPreprocessing>,
-    #[allocative(skip)]
-    pub trace: Arc<Vec<Cycle>>,
-    pub split_eq_poly: GruenSplitEqPolynomial<F>,
-    pub az: DensePolynomial<F>,
-    pub bz: DensePolynomial<F>,
-    pub streaming_cache: Option<StreamingRoundCache<F>>,
-}
-
 /// SumcheckInstance for Spartan outer rounds after the univariate-skip first round.
 /// Round 0 in this instance corresponds to the "streaming" round; subsequent rounds
 /// use the remaining linear-time algorithm over cycle variables.
 #[derive(Allocative)]
-pub struct OuterRemainingSumcheck<F: JoltField> {
-    /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
-    /// Total number of rounds is `1 + num_cycles_bits`
-    pub num_cycles_bits: usize,
-    /// The tau vector (length `2 + num_cycles_bits`, sampled at the beginning for Lagrange + eq poly)
-    pub tau: Vec<F::Challenge>,
-    /// The univariate-skip first round challenge
-    pub r0_uniskip: F::Challenge,
-    /// Claim after the univariate-skip first round, updated every round
-    pub input_claim: F,
-    /// Prover-only state (None on verifier)
-    pub prover_state: Option<OuterProverState<F>>,
+pub struct OuterRemainingSumcheckProver<F: JoltField> {
+    #[allocative(skip)]
+    preprocess: Arc<JoltSharedPreprocessing>,
+    #[allocative(skip)]
+    trace: Arc<Vec<Cycle>>,
+    split_eq_poly: GruenSplitEqPolynomial<F>,
+    az: DensePolynomial<F>,
+    bz: DensePolynomial<F>,
+    streaming_cache: Option<StreamingRoundCache<F>>,
+    #[allocative(skip)]
+    params: OuterRemainingSumcheckParams<F>,
 }
 
-impl<F: JoltField> OuterRemainingSumcheck<F> {
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheck::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+impl<F: JoltField> OuterRemainingSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
+    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         num_cycles_bits: usize,
         uni: &UniSkipState<F>,
     ) -> Self {
-        let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         let lagrange_evals_r =
             LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&uni.r0);
@@ -354,28 +338,13 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         );
 
         Self {
-            num_cycles_bits,
-            tau: uni.tau.clone(),
-            r0_uniskip: uni.r0,
-            input_claim: uni.claim_after_first,
-            prover_state: Some(OuterProverState {
-                split_eq_poly,
-                preprocess: Arc::new(preprocessing.shared.clone()),
-                trace: Arc::new(trace.to_vec()),
-                az: DensePolynomial::default(),
-                bz: DensePolynomial::default(),
-                streaming_cache: Some(streaming_cache),
-            }),
-        }
-    }
-
-    pub fn new_verifier(num_cycles_bits: usize, uni: UniSkipState<F>) -> Self {
-        Self {
-            num_cycles_bits,
-            tau: uni.tau,
-            r0_uniskip: uni.r0,
-            input_claim: uni.claim_after_first,
-            prover_state: None,
+            split_eq_poly,
+            preprocess: Arc::new(preprocessing.shared.clone()),
+            trace: Arc::new(trace.to_vec()),
+            az: DensePolynomial::default(),
+            bz: DensePolynomial::default(),
+            streaming_cache: Some(streaming_cache),
+            params: OuterRemainingSumcheckParams::new(num_cycles_bits, uni),
         }
     }
 
@@ -490,36 +459,31 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     /// store them in `bound_coeffs` in sparse format (the eval at 1 will be eval
     /// at 0 + eval at ∞). We then bind these bound coeffs with r_i for the next round.
     fn bind_streaming_round(&mut self, r_0: F::Challenge) {
-        if let Some(ps) = self.prover_state.as_mut() {
-            if let Some(cache) = ps.streaming_cache.take() {
-                let groups = cache.az_lo.len();
-                let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-                let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-                let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
-                let iter_num_x_in_vars = num_x_in_vals.log_2();
+        let cache = self.streaming_cache.take().unwrap();
+        let groups = cache.az_lo.len();
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
+        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
+        let iter_num_x_in_vars = num_x_in_vals.log_2();
 
-                // Parallelize over x_out by chunking destination slices
-                az_bound
-                    .par_chunks_mut(num_x_in_vals)
-                    .zip(bz_bound.par_chunks_mut(num_x_in_vals))
-                    .enumerate()
-                    .for_each(|(xo, (az_chunk, bz_chunk))| {
-                        for xi in 0..num_x_in_vals {
-                            let idx = xo << iter_num_x_in_vars | xi;
-                            let az0 = cache.az_lo[idx];
-                            let az1 = cache.az_hi[idx];
-                            let bz0 = cache.bz_lo[idx];
-                            let bz1 = cache.bz_hi[idx];
-                            az_chunk[xi] = az0 + r_0 * (az1 - az0);
-                            bz_chunk[xi] = bz0 + r_0 * (bz1 - bz0);
-                        }
-                    });
-                ps.az = DensePolynomial::new(az_bound);
-                ps.bz = DensePolynomial::new(bz_bound);
-                return;
-            }
-        }
-        panic!("Streaming cache missing");
+        // Parallelize over x_out by chunking destination slices
+        az_bound
+            .par_chunks_mut(num_x_in_vals)
+            .zip(bz_bound.par_chunks_mut(num_x_in_vals))
+            .enumerate()
+            .for_each(|(xo, (az_chunk, bz_chunk))| {
+                for xi in 0..num_x_in_vals {
+                    let idx = xo << iter_num_x_in_vars | xi;
+                    let az0 = cache.az_lo[idx];
+                    let az1 = cache.az_hi[idx];
+                    let bz0 = cache.bz_lo[idx];
+                    let bz1 = cache.bz_hi[idx];
+                    az_chunk[xi] = az0 + r_0 * (az1 - az0);
+                    bz_chunk[xi] = bz0 + r_0 * (bz1 - bz0);
+                }
+            });
+        self.az = DensePolynomial::new(az_bound);
+        self.bz = DensePolynomial::new(bz_bound);
     }
 
     /// Compute the polynomial for each of the remaining rounds, using the
@@ -539,24 +503,20 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     /// (ordering of indices is MSB to LSB, so x_out is the MSB and x_in is the LSB)
     #[inline]
     fn remaining_quadratic_evals(&self) -> (F, F) {
-        let ps = self
-            .prover_state
-            .as_ref()
-            .expect("prover state missing for remaining_quadratic_evals");
-        let eq_poly = &ps.split_eq_poly;
+        let eq_poly = &self.split_eq_poly;
 
-        let n = ps.az.len();
-        debug_assert_eq!(n, ps.bz.len());
+        let n = self.az.len();
+        debug_assert_eq!(n, self.bz.len());
         if eq_poly.E_in_current_len() == 1 {
             // groups are pairs (0,1)
             let groups = n / 2;
             let (t0_unr, tinf_unr) = (0..groups)
                 .into_par_iter()
                 .map(|g| {
-                    let az0 = ps.az[2 * g];
-                    let az1 = ps.az[2 * g + 1];
-                    let bz0 = ps.bz[2 * g];
-                    let bz1 = ps.bz[2 * g + 1];
+                    let az0 = self.az[2 * g];
+                    let az1 = self.az[2 * g + 1];
+                    let bz0 = self.bz[2 * g];
+                    let bz1 = self.bz[2 * g + 1];
                     let eq = eq_poly.E_out_current()[g];
                     let p0 = az0 * bz0;
                     let slope = (az1 - az0) * (bz1 - bz0);
@@ -583,10 +543,10 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     let mut inner_inf_unr = F::Unreduced::<9>::zero();
                     for x1 in 0..x1_len {
                         let g = (x2 << num_x1_bits) | x1;
-                        let az0 = ps.az[2 * g];
-                        let az1 = ps.az[2 * g + 1];
-                        let bz0 = ps.bz[2 * g];
-                        let bz1 = ps.bz[2 * g + 1];
+                        let az0 = self.az[2 * g];
+                        let az1 = self.az[2 * g + 1];
+                        let bz0 = self.bz[2 * g];
+                        let bz1 = self.bz[2 * g + 1];
                         let e_in = eq_poly.E_in_current()[x1];
                         let p0 = az0 * bz0;
                         let slope = (az1 - az0) * (bz1 - bz0);
@@ -612,47 +572,40 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     }
 
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
-        let ps = self.prover_state.as_ref();
-        let az0 = ps
-            .and_then(|s| {
-                if !s.az.is_empty() {
-                    Some(s.az[0])
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(F::zero());
-        let bz0 = ps
-            .and_then(|s| {
-                if !s.bz.is_empty() {
-                    Some(s.bz[0])
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(F::zero());
+        let az0 = if !self.az.is_empty() {
+            self.az[0]
+        } else {
+            F::zero()
+        };
+        let bz0 = if !self.bz.is_empty() {
+            self.bz[0]
+        } else {
+            F::zero()
+        };
         [az0, bz0]
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainingSumcheckProver<F> {
     fn degree(&self) -> usize {
-        3
+        OUTER_REMAINING_DEGREE_BOUND
     }
 
     fn num_rounds(&self) -> usize {
-        1 + self.num_cycles_bits
+        self.params.num_rounds()
     }
 
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        self.input_claim
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheck::compute_prover_message")]
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::compute_prover_message"
+    )]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
-            let ps = self.prover_state.as_ref().expect("prover state missing");
-            let cache = ps
+            let cache = self
                 .streaming_cache
                 .as_ref()
                 .expect("streaming cache missing in round 0");
@@ -660,86 +613,45 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         } else {
             self.remaining_quadratic_evals()
         };
-        let eq_poly = &self
-            .prover_state
-            .as_ref()
-            .expect("prover state missing")
-            .split_eq_poly;
-        let evals = eq_poly.gruen_evals_deg_3(t0, t_inf, previous_claim);
+        let evals = self
+            .split_eq_poly
+            .gruen_evals_deg_3(t0, t_inf, previous_claim);
         vec![evals[0], evals[1], evals[2]]
     }
 
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheck::bind")]
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         if round == 0 {
             self.bind_streaming_round(r_j);
         } else {
-            let ps = self.prover_state.as_mut().expect("prover state missing");
             rayon::join(
-                || ps.az.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || ps.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
             );
         }
 
         // Bind eq_poly for next round
-        self.prover_state
-            .as_mut()
-            .expect("prover state missing")
-            .split_eq_poly
-            .bind(r_j);
+        self.split_eq_poly.bind(r_j);
     }
 
-    fn expected_output_claim(
+    fn cache_openings(
         &self,
-        accumulator: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
-        r_tail: &[F::Challenge],
-    ) -> F {
-        let acc_cell = accumulator.as_ref().expect("accumulator required");
-        let acc_ref = acc_cell.borrow();
-        let (_, claim_Az) = acc_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let (_, claim_Bz) = acc_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-
-        let tau_high = &self.tau[self.tau.len() - 1];
-        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
-            F::Challenge,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(tau_high, &self.r0_uniskip);
-
-        let tau_low = &self.tau[..self.tau.len() - 1];
-        let r_tail_reversed: Vec<F::Challenge> = r_tail.iter().rev().copied().collect();
-        let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
-
-        tau_high_bound_r0 * tau_bound_r_tail_reversed * claim_Az * claim_Bz
-    }
-
-    fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        // Construct full r and reverse to match outer convention
-        let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
-        r_full.push(self.r0_uniskip);
-        r_full.extend_from_slice(r_tail);
-        let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
-        OpeningPoint::new(r_reversed)
-    }
-
-    fn cache_openings_prover(
-        &self,
-        accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
+        accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        sumcheck_challenges: &[F::Challenge],
     ) {
+        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+
         // Append Az, Bz claims and corresponding opening point
         let claims = self.final_sumcheck_evals();
-        let mut acc = accumulator.borrow_mut();
-        acc.append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::SpartanAz,
             SumcheckId::SpartanOuter,
             opening_point.clone(),
             claims[0],
         );
-        acc.append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::SpartanBz,
             SumcheckId::SpartanOuter,
@@ -748,12 +660,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         );
 
         // Handle witness openings at r_cycle (use consistent split length)
-        let (r_cycle, _rx_var) = opening_point.r.split_at(self.num_cycles_bits);
+        let (r_cycle, _rx_var) = opening_point.r.split_at(self.params.num_cycles_bits);
 
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
-        let ps = self.prover_state.as_ref().expect("prover state missing");
         let claimed_witness_evals =
-            compute_claimed_r1cs_input_evals::<F>(&ps.preprocess, &ps.trace, r_cycle);
+            compute_claimed_r1cs_input_evals::<F>(&self.preprocess, &self.trace, r_cycle);
 
         #[cfg(test)]
         {
@@ -765,7 +676,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             let claims = self.final_sumcheck_evals();
 
             // Extract streaming-round challenge r_stream from the opening point tail (after r_cycle)
-            let (_, rx_tail) = opening_point.r.split_at(self.num_cycles_bits);
+            let (_, rx_tail) = opening_point.r.split_at(self.params.num_cycles_bits);
             let r_stream = rx_tail[0];
 
             // Build z(r_cycle) vector extended with a trailing 1 for the constant column
@@ -775,7 +686,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
 
             // Lagrange weights over the univariate-skip base domain at r0
             let w = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
-                &self.r0_uniskip,
+                &self.params.r0_uniskip,
             );
 
             // Group 0 fused Az,Bz via dot product of LC with z(r_cycle)
@@ -817,7 +728,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         }
 
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
-            acc.append_virtual(
+            accumulator.append_virtual(
                 transcript,
                 VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
@@ -827,21 +738,77 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         }
     }
 
-    fn cache_openings_verifier(
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+pub struct OuterRemainingSumcheckVerifier<F: JoltField> {
+    params: OuterRemainingSumcheckParams<F>,
+}
+
+impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
+    pub fn new(num_cycles_bits: usize, uni: &UniSkipState<F>) -> Self {
+        let params = OuterRemainingSumcheckParams::new(num_cycles_bits, uni);
+        Self { params }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for OuterRemainingSumcheckVerifier<F>
+{
+    fn degree(&self) -> usize {
+        OUTER_REMAINING_DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.num_rounds()
+    }
+
+    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        self.params.input_claim
+    }
+
+    fn expected_output_claim(
         &self,
-        accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        let (_, claim_Az) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+
+        let tau = &self.params.tau;
+        let tau_high = &tau[tau.len() - 1];
+        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(tau_high, &self.params.r0_uniskip);
+        let tau_low = &tau[..tau.len() - 1];
+        let r_tail_reversed: Vec<F::Challenge> =
+            sumcheck_challenges.iter().rev().copied().collect();
+        let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
+        tau_high_bound_r0 * tau_bound_r_tail_reversed * claim_Az * claim_Bz
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        sumcheck_challenges: &[F::Challenge],
     ) {
-        let mut acc = accumulator.borrow_mut();
+        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+
         // Populate Az, Bz openings at the full outer opening point
-        acc.append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::SpartanAz,
             SumcheckId::SpartanOuter,
             opening_point.clone(),
         );
-        acc.append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::SpartanBz,
             SumcheckId::SpartanOuter,
@@ -849,9 +816,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         );
 
         // Append witness openings at r_cycle (no claims at verifier) for all R1CS inputs
-        let (r_cycle, _rx_var) = opening_point.r.split_at(self.num_cycles_bits);
+        let (r_cycle, _rx_var) = opening_point.r.split_at(self.params.num_cycles_bits);
         ALL_R1CS_INPUTS.iter().for_each(|input| {
-            acc.append_virtual(
+            accumulator.append_virtual(
                 transcript,
                 VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
@@ -859,9 +826,40 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             );
         });
     }
+}
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
+struct OuterRemainingSumcheckParams<F: JoltField> {
+    /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
+    /// Total number of rounds is `1 + num_cycles_bits`
+    num_cycles_bits: usize,
+    /// The tau vector (length `2 + num_cycles_bits`, sampled at the beginning for Lagrange + eq poly)
+    tau: Vec<F::Challenge>,
+    /// The univariate-skip first round challenge
+    r0_uniskip: F::Challenge,
+    /// Claim after the univariate-skip first round, updated every round
+    input_claim: F,
+}
+
+impl<F: JoltField> OuterRemainingSumcheckParams<F> {
+    fn new(num_cycles_bits: usize, uni: &UniSkipState<F>) -> Self {
+        Self {
+            num_cycles_bits,
+            tau: uni.tau.clone(),
+            r0_uniskip: uni.r0,
+            input_claim: uni.claim_after_first,
+        }
+    }
+
+    fn num_rounds(&self) -> usize {
+        1 + self.num_cycles_bits
+    }
+
+    fn get_opening_point(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let r_tail = sumcheck_challenges;
+        let r_full = [&[self.r0_uniskip], r_tail].concat();
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(r_full).match_endianness()
     }
 }

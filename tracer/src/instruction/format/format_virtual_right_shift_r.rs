@@ -6,11 +6,21 @@ use super::{
     normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
 };
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatVirtualRightShiftR {
     pub rd: u8,
     pub rs1: u8,
     pub rs2: u8,
+}
+
+impl Default for FormatVirtualRightShiftR {
+    fn default() -> Self {
+        Self {
+            rd: 0,
+            rs1: 1,
+            rs2: 2,
+        }
+    }
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -22,15 +32,35 @@ pub struct RegisterStateVirtualRightShift {
 
 impl InstructionRegisterState for RegisterStateVirtualRightShift {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
-        let shift = rng.next_u32() % 64;
-        let ones: u64 = (1 << shift) - 1;
-        let rs2 = ones.wrapping_shl(64 - shift);
+        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+
+        let shift = rng.next_u64() & 0x3F;
+        let ones = (1u128 << (64 - shift)) - 1;
+
+        debug_assert_ne!(
+            operands.rs2, 0,
+            "rs2 cannot be 0 in VirtualRightShift instruction"
+        );
+        debug_assert_ne!(
+            operands.rs2, operands.rs1,
+            "rs2 cannot equal rs1 in VirtualRightShift instruction"
+        );
+
+        let rs2_value = (ones << shift) as u64;
+
         Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64(),
-            rs2,
+            rd: (
+                match operands.rd {
+                    _ if operands.rd == operands.rs1 => rs1_value,
+                    _ if operands.rd == operands.rs2 => rs2_value,
+                    _ => rng.next_u64(),
+                },
+                rng.next_u64(),
+            ),
+            rs1: rs1_value,
+            rs2: rs2_value,
         }
     }
 
@@ -68,11 +98,20 @@ impl InstructionFormat for FormatVirtualRightShiftR {
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
-        Self {
-            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+        let rd = rng.next_u64() as u8 % RISCV_REGISTER_COUNT;
+        let rs1 = rng.next_u64() as u8 % RISCV_REGISTER_COUNT;
+
+        // Ensure rs2 is non-zero and different from rs1
+        let mut rs2 = 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1));
+        if rs2 == rs1 {
+            rs2 = if rs2 == RISCV_REGISTER_COUNT - 1 {
+                1
+            } else {
+                rs2 + 1
+            };
         }
+
+        Self { rd, rs1, rs2 }
     }
 }
 

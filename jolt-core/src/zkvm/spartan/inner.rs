@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -13,7 +11,8 @@ use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::subprotocols::sumcheck::SumcheckInstance;
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -23,60 +22,29 @@ use crate::zkvm::witness::VirtualPolynomial;
 
 use rayon::prelude::*;
 
-/// Inner Spartan sumcheck
-///
-/// This instance proves, for a fixed row opening point `rx_constr = [r_stream, r0]` supplied by the
-/// outer stage, the column product identity over the uniform variables
-/// `u` of length `log2(num_vars_uniform_padded)`.
-///
-/// Initial claim (start of sumcheck):
-///
-///   Σ_u ( A_small(rx_constr, u) + γ·B_small(rx_constr, u) ) · z(u)
-///   = Az_claim + γ·Bz_claim.
-///
-/// where z(u) = u-th-R1CS-input-MLE(r_cycle_stage_1) (with a possible final u for constant term).
-/// After `m = log2(num_vars_uniform_padded)` rounds with bound point `r ∈ F^m`, the
-/// sumcheck output claim must equal
-///
-///   ( A_small(rx_constr, r) + γ·B_small(rx_constr, r) ) · z(r).
-///
-/// Final check (verifier): compute
-///   - eval_a = evaluate_uniform_a_at_point(rx_constr, r),
-///   - eval_b = evaluate_uniform_b_at_point(rx_constr, r),
-///   - eval_z = evaluate_z_mle_with_segment_evals(segment_evals, r, true),
-///     where `segment_evals` are the cached witness openings at `r_cycle` from the outer stage.
-///
-/// Then `expected = (eval_a + γ·eval_b) · eval_z`, and accept iff output_claim == expected.
+/// Degree bound of the sumcheck round polynomials in [`InnerSumcheckVerifier`].
+const DEGREE_BOUND: usize = 2;
 
+/// Sumcheck prover for [`InnerSumcheckVerifier`].
 #[derive(Allocative)]
-struct InnerSumcheckProverState<F: JoltField> {
+pub struct InnerSumcheckProver<F: JoltField> {
     poly_abc_small: MultilinearPolynomial<F>,
     poly_z: MultilinearPolynomial<F>,
-}
-
-#[derive(Allocative)]
-pub struct InnerSumcheck<F: JoltField> {
-    prover_state: Option<InnerSumcheckProverState<F>>,
     #[allocative(skip)]
-    key: Option<Arc<UniformSpartanKey<F>>>,
-    gamma: F::Challenge,
+    params: InnerSumcheckParams<F>,
 }
 
-impl<F: JoltField> InnerSumcheck<F> {
-    #[tracing::instrument(skip_all, name = "InnerSumcheck::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+impl<F: JoltField> InnerSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "InnerSumcheckProver::gen")]
+    pub fn gen(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         key: Arc<UniformSpartanKey<F>>,
     ) -> Self {
         let num_vars_uniform = key.num_vars_uniform_padded();
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        // Get gamma challenge for batching
-        let gamma: F::Challenge = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_optimized::<F>();
+        let params = InnerSumcheckParams::new(state_manager);
 
         // Get opening_point and claims from accumulator (Az, Bz all have the same point)
         let (outer_sumcheck_r, _) = state_manager
@@ -85,7 +53,8 @@ impl<F: JoltField> InnerSumcheck<F> {
         let (_r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
 
         // Evaluate A_small, B_small combined with RLC at point rx_var
-        let poly_abc_small = DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, gamma));
+        let poly_abc_small =
+            DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, params.gamma));
 
         let span = span!(Level::INFO, "binding_z_second_sumcheck");
         let _guard = span.enter();
@@ -120,74 +89,37 @@ impl<F: JoltField> InnerSumcheck<F> {
         assert_eq!(poly_z.len(), poly_abc_small.len());
 
         Self {
-            prover_state: Some(InnerSumcheckProverState {
-                poly_abc_small: MultilinearPolynomial::LargeScalars(poly_abc_small),
-                poly_z: MultilinearPolynomial::LargeScalars(poly_z),
-            }),
-            key: None,
-            gamma,
-        }
-    }
-
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        key: Arc<UniformSpartanKey<F>>,
-    ) -> Self {
-        // Get gamma challenge for batching
-        let gamma: F::Challenge = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_scalar_optimized::<F>();
-
-        Self {
-            prover_state: None,
-            key: Some(key),
-            gamma,
+            poly_abc_small: MultilinearPolynomial::LargeScalars(poly_abc_small),
+            poly_z: MultilinearPolynomial::LargeScalars(poly_z),
+            params,
         }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InnerSumcheckProver<F> {
     fn degree(&self) -> usize {
-        2
+        DEGREE_BOUND
     }
 
     fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.poly_abc_small.original_len().log_2()
-        } else if let Some(key) = &self.key {
-            key.num_vars_uniform_padded().log_2()
-        } else {
-            panic!("Neither prover state nor key is initialized");
-        }
+        self.poly_abc_small.original_len().log_2()
     }
 
-    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        let acc = acc.unwrap().borrow();
-        let (_, claim_Az) = acc
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let (_, claim_Bz) = acc
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        claim_Az + self.gamma * claim_Bz
+    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "InnerSumcheck::compute_prover_message")]
+    #[tracing::instrument(skip_all, name = "InnerSumcheckProver::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-        const DEGREE: usize = 2;
-
-        let univariate_poly_evals: [F; DEGREE] = (0..prover_state.poly_abc_small.len() / 2)
+        let univariate_poly_evals: [F; DEGREE_BOUND] = (0..self.poly_abc_small.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let abc_evals = prover_state
+                let abc_evals = self
                     .poly_abc_small
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let z_evals = prover_state
+                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::HighToLow);
+                let z_evals = self
                     .poly_z
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::HighToLow);
 
                 [
                     abc_evals[0] * z_evals[0], // eval at 0
@@ -195,9 +127,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
                 ]
             })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::zero(); DEGREE_BOUND],
                 |mut running, new| {
-                    for i in 0..DEGREE {
+                    for i in 0..DEGREE_BOUND {
                         running[i] += new[i];
                     }
                     running
@@ -207,41 +139,90 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         univariate_poly_evals.into()
     }
 
-    #[tracing::instrument(skip_all, name = "InnerSumcheck::bind")]
+    #[tracing::instrument(skip_all, name = "InnerSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        let prover_state = self
-            .prover_state
-            .as_mut()
-            .expect("Prover state not initialized");
-
         // Bind both polynomials in parallel
-        rayon::join(
-            || {
-                prover_state
-                    .poly_abc_small
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            },
-            || {
-                prover_state
-                    .poly_z
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            },
-        );
+        self.poly_abc_small
+            .bind_parallel(r_j, BindingOrder::HighToLow);
+        self.poly_z.bind_parallel(r_j, BindingOrder::HighToLow);
+    }
+
+    fn cache_openings(
+        &self,
+        _accumulator: &mut ProverOpeningAccumulator<F>,
+        _transcript: &mut T,
+        _sumcheck_challenges: &[F::Challenge],
+    ) {
+        // Nothing to cache
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+/// Inner Spartan sumcheck
+///
+/// This instance proves, for a fixed row opening point `rx_constr = [r_stream, r0]` supplied by the
+/// outer stage, the column product identity over the uniform variables
+/// `u` of length `log2(num_vars_uniform_padded)`.
+///
+/// Initial claim (start of sumcheck):
+///
+///   Σ_u ( A_small(rx_constr, u) + γ·B_small(rx_constr, u) ) · z(u)
+///   = Az_claim + γ·Bz_claim.
+///
+/// where z(u) = u-th-R1CS-input-MLE(r_cycle_stage_1) (with a possible final u for constant term).
+/// After `m = log2(num_vars_uniform_padded)` rounds with bound point `r ∈ F^m`, the
+/// sumcheck output claim must equal
+///
+///   ( A_small(rx_constr, r) + γ·B_small(rx_constr, r) ) · z(r).
+///
+/// Final check (verifier): compute
+///   - eval_a = evaluate_uniform_a_at_point(rx_constr, r),
+///   - eval_b = evaluate_uniform_b_at_point(rx_constr, r),
+///   - eval_z = evaluate_z_mle_with_segment_evals(segment_evals, r, true),
+///     where `segment_evals` are the cached witness openings at `r_cycle` from the outer stage.
+///
+/// Then `expected = (eval_a + γ·eval_b) · eval_z`, and accept iff output_claim == expected.
+pub struct InnerSumcheckVerifier<F: JoltField> {
+    params: InnerSumcheckParams<F>,
+    key: Arc<UniformSpartanKey<F>>,
+}
+
+impl<F: JoltField> InnerSumcheckVerifier<F> {
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        key: Arc<UniformSpartanKey<F>>,
+    ) -> Self {
+        let params = InnerSumcheckParams::new(state_manager);
+        Self { params, key }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for InnerSumcheckVerifier<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.key.num_vars_uniform_padded().log_2()
+    }
+
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
     }
 
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F::Challenge],
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let key = self.key.as_ref().expect("Key not initialized");
-
-        let accumulator = accumulator.as_ref().unwrap().borrow();
-
         // Get rx_var from the outer sumcheck opening point in accumulator
         let (outer_sumcheck_opening, _) = accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let num_cycles_bits = key.num_steps.log_2();
+        let num_cycles_bits = self.key.num_steps.log_2();
         let (_r_cycle, rx_var) = outer_sumcheck_opening.r.split_at(num_cycles_bits);
 
         // assert rx var is of length 2
@@ -263,43 +244,52 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         // (A_small(rx_var, r) + gamma * B_small(rx_var, r)) * z(r)
 
         // Evaluate uniform matrices A_small and B_small at point (rx_var, r)
-        let eval_a = key.evaluate_uniform_a_at_point(rx_var, r);
-        let eval_b = key.evaluate_uniform_b_at_point(rx_var, r);
+        let r = get_opening_point::<F>(sumcheck_challenges);
+        let eval_a = self.key.evaluate_uniform_a_at_point(rx_var, &r.r);
+        let eval_b = self.key.evaluate_uniform_b_at_point(rx_var, &r.r);
 
-        let left_expected = eval_a + self.gamma * eval_b;
+        let left_expected = eval_a + self.params.gamma * eval_b;
 
         // Evaluate z(ry)
-        let eval_z = key.evaluate_z_mle_with_segment_evals(&claimed_witness_evals, r, true);
+        let eval_z = self
+            .key
+            .evaluate_z_mle_with_segment_evals(&claimed_witness_evals, &r.r, true);
         left_expected * eval_z
     }
 
-    fn normalize_opening_point(
+    fn cache_openings(
         &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
-    }
-
-    fn cache_openings_prover(
-        &self,
-        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _accumulator: &mut VerifierOpeningAccumulator<F>,
         _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         // Nothing to cache
     }
+}
 
-    fn cache_openings_verifier(
-        &self,
-        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        // Nothing to cache
+struct InnerSumcheckParams<F: JoltField> {
+    gamma: F::Challenge,
+}
+
+impl<F: JoltField> InnerSumcheckParams<F> {
+    fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        let gamma = state_manager.transcript.challenge_scalar_optimized::<F>();
+        Self { gamma }
     }
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
-        flamegraph.visit_root(self);
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, claim_Az) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        claim_Az + self.gamma * claim_Bz
     }
+}
+
+fn get_opening_point<F: JoltField>(
+    sumcheck_challenges: &[F::Challenge],
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    OpeningPoint::new(sumcheck_challenges.to_vec())
 }

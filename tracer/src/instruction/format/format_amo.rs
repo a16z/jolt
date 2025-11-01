@@ -25,7 +25,7 @@ pub struct RegisterStateFormatRAMO {
 
 impl InstructionRegisterState for RegisterStateFormatRAMO {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         use rand::RngCore;
 
@@ -38,10 +38,25 @@ impl InstructionRegisterState for RegisterStateFormatRAMO {
         let offset = (rng.next_u64() % (max_offset / alignment)) * alignment;
         let address = DRAM_BASE + offset;
 
+        debug_assert_ne!(operands.rs1, 0);
+
+        let rs2_value = match operands.rs2 {
+            0 => 0,
+            _ if operands.rs2 == operands.rs1 => address,
+            _ => rng.next_u64(),
+        };
+
         Self {
-            rd: (rng.next_u64(), rng.next_u64()),
+            rd: (
+                match operands.rd {
+                    _ if operands.rd == operands.rs1 => address,
+                    _ if operands.rd == operands.rs2 => rs2_value,
+                    _ => rng.next_u64(),
+                },
+                rng.next_u64(),
+            ),
             rs1: address,
-            rs2: rng.next_u64(),
+            rs2: rs2_value,
         }
     }
 

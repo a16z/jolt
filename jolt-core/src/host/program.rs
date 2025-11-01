@@ -19,6 +19,7 @@ use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
+use tracer::LazyTraceIterator;
 use tracing::info;
 
 impl Program {
@@ -251,7 +252,7 @@ impl Program {
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> (Vec<Cycle>, Memory, JoltDevice) {
+    ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -325,7 +326,7 @@ impl Program {
         trusted_advice: &[u8],
     ) -> ProgramSummary {
         let (bytecode, init_memory_state, _) = self.decode();
-        let (trace, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
+        let (_, trace, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
 
         ProgramSummary {
             trace,

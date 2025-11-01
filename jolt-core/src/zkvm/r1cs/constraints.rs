@@ -315,6 +315,9 @@ pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGR
 /// Number of coefficients in the first-round polynomial, defined to be `3 * UNIVARIATE_SKIP_DEGREE + 1`.
 pub const FIRST_ROUND_POLY_NUM_COEFFS: usize = 3 * UNIVARIATE_SKIP_DEGREE + 1;
 
+/// Degree of the first-round polynomial.
+pub const FIRST_ROUND_POLY_DEGREE_BOUND: usize = FIRST_ROUND_POLY_NUM_COEFFS - 1;
+
 /// Number of remaining R1CS constraints in the second group, defined to be
 /// `NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE`.
 pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =

@@ -1,7 +1,8 @@
 use crate::field::JoltField;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck::{UniSkipFirstRoundInstance, UniSkipFirstRoundProof};
+use crate::subprotocols::sumcheck::UniSkipFirstRoundProof;
+use crate::subprotocols::sumcheck_prover::UniSkipFirstRoundInstanceProver;
 use crate::transcripts::{AppendToTranscript, Transcript};
 
 /// Shared handoff state from a univariate-skip first round.
@@ -133,7 +134,7 @@ pub fn build_uniskip_first_round_poly<
 pub fn prove_uniskip_round<
     F: JoltField,
     ProofTranscript: Transcript,
-    I: UniSkipFirstRoundInstance<F, ProofTranscript>,
+    I: UniSkipFirstRoundInstanceProver<F, ProofTranscript>,
 >(
     instance: &mut I,
     transcript: &mut ProofTranscript,

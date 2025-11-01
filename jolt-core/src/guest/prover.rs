@@ -1,6 +1,7 @@
 use super::program::Program;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::zkvm::dag::proof_serialization::JoltProof;
@@ -25,7 +26,7 @@ pub fn preprocess(
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
-pub fn prove<F, PCS, FS>(
+pub fn prove<F, PCS: StreamingCommitmentScheme<Field = F>, FS>(
     guest: &Program,
     inputs_bytes: &[u8],
     untrusted_advice_bytes: &[u8],
@@ -40,7 +41,6 @@ pub fn prove<F, PCS, FS>(
 )
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {

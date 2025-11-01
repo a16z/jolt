@@ -76,7 +76,7 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> (Vec<Cycle>, Memory, JoltDevice) {
+) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
     let mut lazy_trace_iter = LazyTraceIterator::new(setup_emulator_with_backtraces(
         elf_contents,
         elf_path,
@@ -85,9 +85,15 @@ pub fn trace(
         trusted_advice,
         memory_config,
     ));
+    let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
-    (trace, final_memory_state, lazy_trace_iter.get_jolt_device())
+    (
+        lazy_trace_iter_,
+        trace,
+        final_memory_state,
+        lazy_trace_iter.get_jolt_device(),
+    )
 }
 
 use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterConfig};
@@ -246,7 +252,7 @@ fn setup_emulator_with_backtraces(
 /// * `emulator` - Clone of the checkpoint emulator state to execute from
 /// * `prev_pc` - Previous program counter value, used for termination detection
 /// * `current_traces` - Buffer of trace entries from the most recent emulator tick
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LazyTraceIterator {
     emulator_state: EmulatorState,
     prev_pc: u64,
@@ -255,6 +261,9 @@ pub struct LazyTraceIterator {
     finished: bool,
     pub(crate) final_memory_state: Option<Memory>,
 }
+
+// SAFETY: LazyTraceIterator contains only owned data and can be safely sent between threads
+unsafe impl Send for LazyTraceIterator {}
 
 impl LazyTraceIterator {
     pub fn new(emulator_state: EmulatorState) -> Self {
@@ -265,6 +274,33 @@ impl LazyTraceIterator {
             count: 0,
             finished: false,
             final_memory_state: None,
+        }
+    }
+
+    pub fn new_for_test() -> Self {
+        let minimal_elf = vec![
+            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        use crate::MemoryConfig;
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+
+        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
+
+        LazyTraceIterator {
+            emulator_state,
+            prev_pc: 0,
+            current_traces: vec![],
+            count: 0,
+            finished: true,
+            final_memory_state: Some(emulator::memory::Memory::default()),
         }
     }
 
@@ -314,12 +350,10 @@ impl Iterator for LazyTraceIterator {
     /// 4. Buffers new traces in FIFO order
     /// 5. Returns the next trace or None if execution is complete
     fn next(&mut self) -> Option<Self::Item> {
-        //Iterate over t returning in FIFO order before calling tick() again.
         if !self.current_traces.is_empty() {
             return self.current_traces.pop();
         }
 
-        // Step the emulator to execute the next instruction till the program ends.
         self.count += 1;
         assert!(self.current_traces.is_empty());
         step_emulator(
@@ -329,20 +363,15 @@ impl Iterator for LazyTraceIterator {
         );
         if self.current_traces.is_empty() {
             self.finished = true;
-            // TODO(moodlezoup): Can we take instead of clone?
-            self.final_memory_state = Some(self.emulator_state.get_cpu().mmu.memory.memory.clone());
-            if self
-                .emulator_state
-                .get_cpu()
-                .mmu
-                .jolt_device
-                .as_ref()
-                .unwrap()
-                .panic
-            {
+            let emulator = get_mut_emulator(&mut self.emulator_state);
+            let cpu = emulator.get_mut_cpu();
+            let memory = std::mem::take(&mut cpu.mmu.memory.memory);
+            self.final_memory_state = Some(memory);
+
+            if cpu.mmu.jolt_device.as_ref().unwrap().panic {
                 error!(
                     "Guest program terminated due to panic after {} cycles.",
-                    self.emulator_state.get_cpu().trace_len
+                    cpu.trace_len
                 );
                 utils::panic::display_panic_backtrace(&self.emulator_state);
             }
@@ -450,6 +479,36 @@ fn get_xlen() -> Xlen {
         32 => cpu::Xlen::Bit32,
         64 => cpu::Xlen::Bit64,
         _ => panic!("Emulator only supports 32 / 64 bit registers."),
+    }
+}
+
+pub struct IterChunks<I: Iterator> {
+    chunk_size: usize,
+    iter: I,
+}
+
+pub trait ChunksIterator: Iterator + Sized {
+    fn iter_chunks(self, size: usize) -> IterChunks<Self> {
+        assert!(size != 0, "chunk size must be non-zero");
+        IterChunks {
+            chunk_size: size,
+            iter: self,
+        }
+    }
+}
+
+impl<I: Iterator + Sized> ChunksIterator for I {}
+
+impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
+    type Item = Vec<I::Item>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut chunk = Vec::with_capacity(self.chunk_size);
+        chunk.extend(self.iter.by_ref().take(self.chunk_size));
+        if chunk.is_empty() {
+            return None;
+        }
+        Some(chunk)
     }
 }
 
@@ -902,7 +961,7 @@ mod test {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
         let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &[], &[], &memory_config, n);
         assert_eq!(execution_trace.len(), expected_trace_length);
         assert_eq!(checkpoints.len(), 10);
@@ -926,7 +985,7 @@ mod test {
             ..Default::default()
         };
 
-        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
         let mut emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];

@@ -1,9 +1,6 @@
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
+use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U};
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
@@ -44,8 +41,6 @@ pub struct R1CSCycleInputs {
     /// Instruction lookup output (u64) for this cycle.
     pub lookup_output: u64,
 
-    /// Destination register index (Rd).
-    pub rd_addr: u8,
     /// Value read from Rs1 in this cycle.
     pub rs1_read_value: u64,
     /// Value read from Rs2 in this cycle.
@@ -82,10 +77,10 @@ pub struct R1CSCycleInputs {
     /// Derived: `Branch && (LookupOutput == 1)`.
     pub should_branch: bool,
 
-    /// Rd index if `WriteLookupOutputToRD`, else 0 (u8 domain used as selector).
-    pub write_lookup_output_to_rd_addr: u8,
-    /// Rd index if `Jump`, else 0 (u8 domain used as selector).
-    pub write_pc_to_rd_addr: u8,
+    /// `IsRdNotZero` && ` `WriteLookupOutputToRD`
+    pub write_lookup_output_to_rd_addr: bool,
+    /// `IsRdNotZero` && `Jump`
+    pub write_pc_to_rd_addr: bool,
 
     /// `VirtualInstruction` flag for the next cycle (false for last cycle).
     pub next_is_virtual: bool,
@@ -131,7 +126,6 @@ impl R1CSCycleInputs {
         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
         // Registers
-        let rd_addr = cycle.rd_write().0;
         let rs1_read_value = cycle.rs1_read().1;
         let rs2_read_value = cycle.rs2_read().1;
         let rd_write_value = cycle.rd_write().2;
@@ -181,16 +175,10 @@ impl R1CSCycleInputs {
         let should_branch = instruction_flags[InstructionFlags::Branch] && (lookup_output == 1);
 
         // Write-to-Rd selectors (masked by flags)
-        let write_lookup_output_to_rd_addr = if flags_view[CircuitFlags::WriteLookupOutputToRD] {
-            rd_addr
-        } else {
-            0
-        };
-        let write_pc_to_rd_addr = if flags_view[CircuitFlags::Jump] {
-            rd_addr
-        } else {
-            0
-        };
+        let write_lookup_output_to_rd_addr = flags_view[CircuitFlags::WriteLookupOutputToRD]
+            && instruction_flags[InstructionFlags::IsRdNotZero];
+        let write_pc_to_rd_addr =
+            flags_view[CircuitFlags::Jump] && instruction_flags[InstructionFlags::IsRdNotZero];
 
         let (next_is_virtual, next_is_first_in_sequence) = if let Some(nc) = next_cycle {
             let flags = nc.instruction().circuit_flags();
@@ -209,7 +197,6 @@ impl R1CSCycleInputs {
             left_lookup,
             right_lookup,
             lookup_output,
-            rd_addr,
             rs1_read_value,
             rs2_read_value,
             rd_write_value,
@@ -551,94 +538,21 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
         .map(|unr| F::from_montgomery_reduce::<9>(unr))
 }
 
-/// Generates witnesses for the shift sumcheck with a single pass over the trace.
-#[tracing::instrument(skip_all)]
-pub fn generate_shift_sumcheck_witnesses<F>(
-    preprocessing: &JoltSharedPreprocessing,
-    trace: &[Cycle],
-    gamma_powers: &[F],
-) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>)
-where
-    F: JoltField,
-{
-    let len = trace.len();
-    let mut combined_witness: Vec<F> = unsafe_allocate_zero_vec(len);
-    let mut is_noop_poly: Vec<bool> = vec![false; len];
-
-    (&mut combined_witness, &mut is_noop_poly, trace)
-        .into_par_iter()
-        .for_each(|(w, n, cycle)| {
-            let unexpanded_pc = cycle.instruction().normalize().address as u64;
-            *w += gamma_powers[0].mul_u64(unexpanded_pc);
-            let pc = preprocessing.bytecode.get_pc(cycle) as u64;
-            *w += gamma_powers[1].mul_u64(pc);
-            let is_virtual = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction];
-            if is_virtual {
-                *w += gamma_powers[2];
-            }
-            let is_first_in_sequence =
-                cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence];
-            if is_first_in_sequence {
-                *w += gamma_powers[3];
-            }
-            *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop];
-        });
-
-    (combined_witness.into(), is_noop_poly.into())
-}
-
-/// Generates witnesses for the shift sumcheck with a single pass over the trace.
-#[tracing::instrument(skip_all)]
-pub fn evaluate_shift_sumcheck_witnesses<F>(
-    preprocessing: &BytecodePreprocessing,
-    trace: &[Cycle],
-    opening_point: &OpeningPoint<BIG_ENDIAN, F>,
-) -> [F; 4]
-where
-    F: JoltField,
-{
-    let eq_evals = EqPolynomial::evals(&opening_point.r);
-    trace
-        .par_iter()
-        .zip(eq_evals.into_par_iter())
-        .map(|(cycle, eq_eval)| {
-            let mut result = [F::zero(); 4];
-            let unexpanded_pc = cycle.instruction().normalize().address as u64;
-            result[0] = eq_eval.mul_u64(unexpanded_pc);
-            let pc = preprocessing.get_pc(cycle) as u64;
-            result[1] = eq_eval.mul_u64(pc);
-            let is_virtual = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction];
-            if is_virtual {
-                result[2] = eq_eval;
-            }
-            let is_first_in_sequence =
-                cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence];
-            if is_first_in_sequence {
-                result[3] = eq_eval;
-            }
-            result
-        })
-        .reduce(
-            || [F::zero(); 4],
-            |mut running, new| {
-                for i in 0..4 {
-                    running[i] += new[i];
-                }
-                running
-            },
-        )
-}
-
 /// Canonical, de-duplicated list of product-virtual factor polynomials used by
 /// the Product Virtualization stage (in stable order).
 /// Order:
-/// 0: LeftInstructionInput, 1: RightInstructionInput,
-/// 2: RdWa, 3: OpFlags(WriteLookupOutputToRD), 4: OpFlags(Jump),
-/// 5: LookupOutput, 6: InstructionFlags(Branch), 7: NextIsNoop
+/// 0: LeftInstructionInput
+/// 1: RightInstructionInput
+/// 2: InstructionFlags(IsRdNotZero)
+/// 3: OpFlags(WriteLookupOutputToRD)
+/// 4: OpFlags(Jump)
+/// 5: LookupOutput
+/// 6: InstructionFlags(Branch)
+/// 7: NextIsNoop
 pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 8] = [
     VirtualPolynomial::LeftInstructionInput,
     VirtualPolynomial::RightInstructionInput,
-    VirtualPolynomial::RdWa,
+    VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
     VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
     VirtualPolynomial::OpFlags(CircuitFlags::Jump),
     VirtualPolynomial::LookupOutput,
@@ -661,9 +575,6 @@ pub struct ProductCycleInputs {
     pub should_branch_lookup_output: u64,
 
     // 1-byte fields
-    /// Rd address used by both WriteLookupOutputToRD and WritePCtoRD left factors
-    pub rd_addr: u8,
-
     /// WriteLookupOutputToRD right flag (boolean)
     pub write_lookup_output_to_rd_flag: bool,
     /// Jump flag used by both WritePCtoRD (right) and ShouldJump (left)
@@ -672,6 +583,8 @@ pub struct ProductCycleInputs {
     pub should_branch_flag: bool,
     /// ShouldJump right flag (1 - NextIsNoop)
     pub not_next_noop: bool,
+    /// IsRdNotZero instruction flag (boolean)
+    pub is_rd_not_zero: bool,
 }
 
 impl ProductCycleInputs {
@@ -693,9 +606,6 @@ impl ProductCycleInputs {
         // Lookup output
         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
-        // Rd address
-        let rd_addr = cycle.rd_write().0;
-
         // Jump and Branch flags
         let jump_flag = flags_view[CircuitFlags::Jump];
         let branch_flag = instruction_flags[InstructionFlags::Branch];
@@ -711,18 +621,20 @@ impl ProductCycleInputs {
             }
         };
 
+        let is_rd_not_zero = instruction_flags[InstructionFlags::IsRdNotZero];
+
         // WriteLookupOutputToRD flag
         let write_lookup_output_to_rd_flag = flags_view[CircuitFlags::WriteLookupOutputToRD];
 
         Self {
             instruction_left_input: left_input,
             instruction_right_input: right_input,
-            rd_addr,
             write_lookup_output_to_rd_flag,
             should_branch_lookup_output: lookup_output,
             should_branch_flag: branch_flag,
             jump_flag,
             not_next_noop,
+            is_rd_not_zero,
         }
     }
 
@@ -734,8 +646,8 @@ impl ProductCycleInputs {
         // Left: u64/u8/bool
         let mut left_acc: Acc6U<F> = Acc6U::default();
         left_acc.fmadd(&weights_at_r0[0], &self.instruction_left_input);
-        left_acc.fmadd(&weights_at_r0[1], &self.rd_addr);
-        left_acc.fmadd(&weights_at_r0[2], &self.rd_addr);
+        left_acc.fmadd(&weights_at_r0[1], &self.is_rd_not_zero);
+        left_acc.fmadd(&weights_at_r0[2], &self.is_rd_not_zero);
         left_acc.fmadd(&weights_at_r0[3], &self.should_branch_lookup_output);
         left_acc.fmadd(&weights_at_r0[4], &self.jump_flag);
 
@@ -755,7 +667,7 @@ impl ProductCycleInputs {
 /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
 /// 0: LeftInstructionInput (u64)
 /// 1: RightInstructionInput (i128)
-/// 2: RdWa (u8)
+/// 2: IsRdNotZero (bool)
 /// 3: OpFlags(WriteLookupOutputToRD) (bool)
 /// 4: OpFlags(Jump) (bool)
 /// 5: LookupOutput (u64)
@@ -780,7 +692,7 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
             // Accumulators for 8 outputs
             let mut acc_left_u64: Acc6U<F> = Acc6U::default();
             let mut acc_right_i128: Acc6S<F> = Acc6S::default();
-            let mut acc_rd_u8: Acc5U<F> = Acc5U::default();
+            let mut acc_rd_zero_flag: Acc5U<F> = Acc5U::default();
             let mut acc_wl_flag: Acc5U<F> = Acc5U::default();
             let mut acc_jump_flag: Acc5U<F> = Acc5U::default();
             let mut acc_lookup_output: Acc6U<F> = Acc6U::default();
@@ -796,8 +708,8 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
                 acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
                 // 1: RightInstructionInput (i128)
                 acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
-                // 2: RdWa (u8)
-                acc_rd_u8.fmadd(&e_in, &(row.rd_addr as u64));
+                // 2: IsRdZero (bool)
+                acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
                 // 3: OpFlags(WriteLookupOutputToRD) (bool)
                 acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
                 // 4: OpFlags(Jump) (bool)
@@ -813,7 +725,7 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
             let mut out_unr = [F::Unreduced::<9>::zero(); 8];
             out_unr[0] = eq1_val.mul_unreduced::<9>(acc_left_u64.barrett_reduce());
             out_unr[1] = eq1_val.mul_unreduced::<9>(acc_right_i128.barrett_reduce());
-            out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_u8.barrett_reduce());
+            out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_zero_flag.barrett_reduce());
             out_unr[3] = eq1_val.mul_unreduced::<9>(acc_wl_flag.barrett_reduce());
             out_unr[4] = eq1_val.mul_unreduced::<9>(acc_jump_flag.barrett_reduce());
             out_unr[5] = eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());

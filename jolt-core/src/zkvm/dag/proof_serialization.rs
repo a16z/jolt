@@ -136,8 +136,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
     pub fn from_prover_state_manager(mut state_manager: StateManager<'_, F, FS, PCS>) -> Self {
         let prover_state = state_manager.prover_state.as_mut().unwrap();
         let openings = std::mem::take(&mut prover_state.accumulator.borrow_mut().openings);
-        let commitments = state_manager.commitments.take();
-        let proofs = state_manager.proofs.take();
+        let commitments = state_manager.commitments;
+        let proofs = state_manager.proofs;
         let trace_length = prover_state.trace.len();
         let ram_K = state_manager.ram_K;
         let twist_sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
@@ -168,11 +168,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
                 .insert(*key, (OpeningPoint::default(), *claim));
         }
 
-        let proofs = Rc::new(RefCell::new(self.proofs));
+        let proofs = self.proofs;
 
-        let commitments = Rc::new(RefCell::new(self.commitments));
+        let commitments = self.commitments;
 
-        let transcript = Rc::new(RefCell::new(FS::new(b"Jolt")));
+        let transcript = FS::new(b"Jolt");
 
         StateManager {
             transcript,
@@ -182,6 +182,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             trusted_advice_commitment: None,
             program_io,
             ram_K: self.ram_K,
+            ram_d: AllCommittedPolynomials::ram_d_from_K(self.ram_K),
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
             prover_state: None,
             verifier_state: Some(VerifierState {

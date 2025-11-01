@@ -13,23 +13,23 @@ pub struct VirtualChangeDivisorWTable<const XLEN: usize>;
 
 impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        let (remainder, divisor) = uninterleave_bits(index);
+        let (dividend, divisor) = uninterleave_bits(index);
         match XLEN {
             8 => {
-                let remainder = ((remainder & 0xF) as i8) << 4 >> 4;
+                let dividend = ((dividend & 0xF) as i8) << 4 >> 4;
                 let divisor = ((divisor & 0xF) as i8) << 4 >> 4;
 
-                if remainder == -8 && divisor == -1 {
+                if dividend == -8 && divisor == -1 {
                     1
                 } else {
                     divisor as u8 as u64
                 }
             }
             64 => {
-                let remainder = remainder as u32 as i32;
+                let dividend = dividend as u32 as i32;
                 let divisor = divisor as u32 as i32;
 
-                if remainder == i32::MIN && divisor == -1 {
+                if dividend == i32::MIN && divisor == -1 {
                     1
                 } else {
                     divisor as i64 as u64
@@ -51,11 +51,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
         for i in XLEN / 2..XLEN {
             let bit_value = r[2 * i + 1];
             let shift = XLEN - 1 - i;
-            if shift >= 64 {
-                divisor_value += F::from_u128(1u128 << shift) * bit_value;
-            } else {
-                divisor_value += F::from_u64(1u64 << shift) * bit_value;
-            }
+            divisor_value += F::from_u64(1u64 << shift) * bit_value;
         }
 
         let mut x_product = r[XLEN].into();

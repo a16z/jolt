@@ -19,18 +19,18 @@ impl VirtualChangeDivisor {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualChangeDivisor as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => {
-                let remainder = cpu.x[self.operands.rs1 as usize] as i32;
+                let dividend = cpu.x[self.operands.rs1 as usize] as i32;
                 let divisor = cpu.x[self.operands.rs2 as usize] as i32;
-                if remainder == i32::MIN && divisor == -1 {
+                if dividend == i32::MIN && divisor == -1 {
                     cpu.x[self.operands.rd as usize] = 1;
                 } else {
                     cpu.x[self.operands.rd as usize] = divisor as i64;
                 }
             }
             Xlen::Bit64 => {
-                let remainder = cpu.x[self.operands.rs1 as usize];
+                let dividend = cpu.x[self.operands.rs1 as usize];
                 let divisor = cpu.x[self.operands.rs2 as usize];
-                if remainder == i64::MIN && divisor == -1 {
+                if dividend == i64::MIN && divisor == -1 {
                     cpu.x[self.operands.rd as usize] = 1;
                 } else {
                     cpu.x[self.operands.rd as usize] = divisor;

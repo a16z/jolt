@@ -20,6 +20,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidDiv0Table<XLEN> {
             match XLEN {
                 8 => (quotient == u8::MAX as u64).into(),
                 32 => (quotient == u32::MAX as u64).into(),
+                64 => (quotient == u64::MAX).into(),
                 _ => panic!("{XLEN}-bit word size is unsupported"),
             }
         } else {
