@@ -57,9 +57,9 @@ use super::inputs::{JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
 #[inline(always)]
 fn s64_from_diff_u64s(a: u64, b: u64) -> S64 {
     if a < b {
-        return S64::new([b - a], false);
+        S64::new([b - a], false)
     } else {
-        return S64::new([a - b], true);
+        S64::new([a - b], true)
     }
 }
 

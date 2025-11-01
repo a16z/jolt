@@ -572,47 +572,48 @@ impl LagrangeHelper {
     ///
     /// Supports N ≤ 12 for now (only used in univariate-skip)
     #[inline]
+    #[allow(dead_code)]
     fn extrapolate_next<C, const N: usize>(evals: &[C; N]) -> C
     where
         C: Copy + Send + Sync + Add<C, Output = C> + Sub<C, Output = C> + Mul<i32, Output = C>,
     {
         match N {
             // a(n + 1) = a(n) (constant)
-            1 => return evals[0],
+            1 => evals[0],
             // a(n + 2) = 2 * a(n + 1) - a(n)
             2 => {
                 let a1 = evals[1] * 2;
                 let a0 = evals[0];
-                return a1 - a0;
+                a1 - a0
             }
             // a(n + 3) = 3 * a(n + 2) - 3 * a(n + 1) + a(n)
             3 => {
                 let a2_minus_a1 = evals[2] - evals[1];
-                return a2_minus_a1 * 3 + evals[0];
+                a2_minus_a1 * 3 + evals[0]
             }
             // a(n + 4) = 4 * a(n + 3) - 6 * a(n + 2) + 4 * a(n + 1) - a(n)
             4 => {
                 let a3_plus_a1 = evals[3] + evals[1];
-                return a3_plus_a1 * 4 - evals[2] * 6 - evals[0];
+                a3_plus_a1 * 4 - evals[2] * 6 - evals[0]
             }
             // a(n + 5) = 5 * a(n + 4) - 10 * a(n + 3) + 10 * a(n + 2) - 5 * a(n + 1) + a(n)
             5 => {
                 let a4_minus_a1 = evals[4] - evals[1];
                 let a2_minus_a3 = evals[2] - evals[3];
-                return a4_minus_a1 * 5 + a2_minus_a3 * 10 + evals[0];
+                a4_minus_a1 * 5 + a2_minus_a3 * 10 + evals[0]
             }
             // a(n + 6) = 6 * a(n + 5) - 15 * a(n + 4) + 20 * a(n + 3) - 15 * a(n + 2) + 6 * a(n + 1) - a(n)
             6 => {
                 let a5_plus_a1 = evals[5] + evals[1];
                 let a4_plus_a2 = evals[4] + evals[2];
-                return a5_plus_a1 * 6 - a4_plus_a2 * 15 + evals[3] * 20 - evals[0];
+                a5_plus_a1 * 6 - a4_plus_a2 * 15 + evals[3] * 20 - evals[0]
             }
             // a(n + 7) = 7 * a(n + 6) - 21 * a(n + 5) + 35 * a(n + 4) - 35 * a(n + 3) + 21 * a(n + 2) - 7 * a(n + 1) + a(n)
             7 => {
                 let a6_minus_a1 = evals[6] - evals[1];
                 let a2_minus_a5 = evals[2] - evals[5];
                 let a4_minus_a3 = evals[4] - evals[3];
-                return a6_minus_a1 * 7 + a2_minus_a5 * 21 + a4_minus_a3 * 35 + evals[0];
+                a6_minus_a1 * 7 + a2_minus_a5 * 21 + a4_minus_a3 * 35 + evals[0]
             }
             // a(n + 8) = 8 * a(n + 7) - 28 * a(n + 6) + 56 * a(n + 5) - 70 * a(n + 4)
             //          + 56 * a(n + 3) - 28 * a(n + 2) + 8 * a(n + 1) - a(n)
@@ -620,9 +621,9 @@ impl LagrangeHelper {
                 let a7_plus_a1 = evals[7] + evals[1];
                 let a6_plus_a2 = evals[6] + evals[2];
                 let a5_plus_a3 = evals[5] + evals[3];
-                return a7_plus_a1 * 8 - a6_plus_a2 * 28 + a5_plus_a3 * 56
+                a7_plus_a1 * 8 - a6_plus_a2 * 28 + a5_plus_a3 * 56
                     - evals[4] * 70
-                    - evals[0];
+                    - evals[0]
             }
             // a(n + 9) = 9 * a(n + 8) - 36 * a(n + 7) + 84 * a(n + 6) - 126 * a(n + 5)
             //          + 126 * a(n + 4) - 84 * a(n + 3) + 36 * a(n + 2) - 9 * a(n + 1) + a(n)
@@ -631,11 +632,11 @@ impl LagrangeHelper {
                 let a2_minus_a7 = evals[2] - evals[7];
                 let a6_minus_a3 = evals[6] - evals[3];
                 let a4_minus_a5 = evals[4] - evals[5];
-                return a8_minus_a1 * 9
+                a8_minus_a1 * 9
                     + a2_minus_a7 * 36
                     + a6_minus_a3 * 84
                     + a4_minus_a5 * 126
-                    + evals[0];
+                    + evals[0]
             }
             // a(n + 10) = -a(n) + 10*a(n + 1) - 45*a(n + 2) + 120*a(n + 3)
             //          - 210*a(n + 4) + 252*a(n + 5) - 210*a(n + 6)
@@ -645,9 +646,9 @@ impl LagrangeHelper {
                 let a8_plus_a2 = evals[8] + evals[2];
                 let a7_plus_a3 = evals[7] + evals[3];
                 let a6_plus_a4 = evals[6] + evals[4];
-                return a9_plus_a1 * 10 - a8_plus_a2 * 45 + a7_plus_a3 * 120 - a6_plus_a4 * 210
+                a9_plus_a1 * 10 - a8_plus_a2 * 45 + a7_plus_a3 * 120 - a6_plus_a4 * 210
                     + evals[5] * 252
-                    - evals[0];
+                    - evals[0]
             }
             // a(n + 11) = a(n) - 11*a(n + 1) + 55*a(n + 2) - 165*a(n + 3)
             //          + 330*a(n + 4) - 462*a(n + 5) + 462*a(n + 6)
@@ -658,12 +659,12 @@ impl LagrangeHelper {
                 let a8_minus_a3 = evals[8] - evals[3];
                 let a4_minus_a7 = evals[4] - evals[7];
                 let a6_minus_a5 = evals[6] - evals[5];
-                return a10_minus_a1 * 11
+                a10_minus_a1 * 11
                     + a2_minus_a9 * 55
                     + a8_minus_a3 * 165
                     + a4_minus_a7 * 330
                     + a6_minus_a5 * 462
-                    + evals[0];
+                    + evals[0]
             }
             // a(n + 12) = -a(n) + 12*a(n + 1) - 66*a(n + 2) + 220*a(n + 3)
             //          - 495*a(n + 4) + 792*a(n + 5) - 924*a(n + 6)
@@ -675,10 +676,10 @@ impl LagrangeHelper {
                 let a9_plus_a3 = evals[9] + evals[3];
                 let a8_plus_a4 = evals[8] + evals[4];
                 let a7_plus_a5 = evals[7] + evals[5];
-                return a11_plus_a1 * 12 - a10_plus_a2 * 66 + a9_plus_a3 * 220 - a8_plus_a4 * 495
+                a11_plus_a1 * 12 - a10_plus_a2 * 66 + a9_plus_a3 * 220 - a8_plus_a4 * 495
                     + a7_plus_a5 * 792
                     - evals[6] * 924
-                    - evals[0];
+                    - evals[0]
             }
             _ => panic!("Extrapolation for N > 12 is not implemented"),
         }
