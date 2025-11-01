@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use std::marker::PhantomData;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Mul, Sub};
 
 /// Lagrange polynomials over zero-centered, symmetric, consecutive-integer domain, i.e.
 /// grids like [-6, -5, ..., 6, 7].
@@ -560,124 +560,7 @@ impl LagrangeHelper {
             j += 1;
         }
         sums
-    }
-
-    /// Extrapolate from the previous N consecutive values [a(n), ..., a(n + N - 1)]
-    /// to the next value a(n + N). Hand-written code per N for maximum efficiency.
-    ///
-    /// Identity used (forward differences of order N vanish for degree < N):
-    ///   Σ_{j=0}^{N} (-1)^{N-j} C(N, j) · a(n + j) = 0,
-    /// which implies
-    ///   a(n + N) = Σ_{j=0}^{N-1} (-1)^{N-1-j} C(N, j) · a(n + j)
-    ///
-    /// Supports N ≤ 12 for now (only used in univariate-skip)
-    #[inline]
-    #[allow(dead_code)]
-    fn extrapolate_next<C, const N: usize>(evals: &[C; N]) -> C
-    where
-        C: Copy + Send + Sync + Add<C, Output = C> + Sub<C, Output = C> + Mul<i32, Output = C>,
-    {
-        match N {
-            // a(n + 1) = a(n) (constant)
-            1 => evals[0],
-            // a(n + 2) = 2 * a(n + 1) - a(n)
-            2 => {
-                let a1 = evals[1] * 2;
-                let a0 = evals[0];
-                a1 - a0
-            }
-            // a(n + 3) = 3 * a(n + 2) - 3 * a(n + 1) + a(n)
-            3 => {
-                let a2_minus_a1 = evals[2] - evals[1];
-                a2_minus_a1 * 3 + evals[0]
-            }
-            // a(n + 4) = 4 * a(n + 3) - 6 * a(n + 2) + 4 * a(n + 1) - a(n)
-            4 => {
-                let a3_plus_a1 = evals[3] + evals[1];
-                a3_plus_a1 * 4 - evals[2] * 6 - evals[0]
-            }
-            // a(n + 5) = 5 * a(n + 4) - 10 * a(n + 3) + 10 * a(n + 2) - 5 * a(n + 1) + a(n)
-            5 => {
-                let a4_minus_a1 = evals[4] - evals[1];
-                let a2_minus_a3 = evals[2] - evals[3];
-                a4_minus_a1 * 5 + a2_minus_a3 * 10 + evals[0]
-            }
-            // a(n + 6) = 6 * a(n + 5) - 15 * a(n + 4) + 20 * a(n + 3) - 15 * a(n + 2) + 6 * a(n + 1) - a(n)
-            6 => {
-                let a5_plus_a1 = evals[5] + evals[1];
-                let a4_plus_a2 = evals[4] + evals[2];
-                a5_plus_a1 * 6 - a4_plus_a2 * 15 + evals[3] * 20 - evals[0]
-            }
-            // a(n + 7) = 7 * a(n + 6) - 21 * a(n + 5) + 35 * a(n + 4) - 35 * a(n + 3) + 21 * a(n + 2) - 7 * a(n + 1) + a(n)
-            7 => {
-                let a6_minus_a1 = evals[6] - evals[1];
-                let a2_minus_a5 = evals[2] - evals[5];
-                let a4_minus_a3 = evals[4] - evals[3];
-                a6_minus_a1 * 7 + a2_minus_a5 * 21 + a4_minus_a3 * 35 + evals[0]
-            }
-            // a(n + 8) = 8 * a(n + 7) - 28 * a(n + 6) + 56 * a(n + 5) - 70 * a(n + 4)
-            //          + 56 * a(n + 3) - 28 * a(n + 2) + 8 * a(n + 1) - a(n)
-            8 => {
-                let a7_plus_a1 = evals[7] + evals[1];
-                let a6_plus_a2 = evals[6] + evals[2];
-                let a5_plus_a3 = evals[5] + evals[3];
-                a7_plus_a1 * 8 - a6_plus_a2 * 28 + a5_plus_a3 * 56 - evals[4] * 70 - evals[0]
-            }
-            // a(n + 9) = 9 * a(n + 8) - 36 * a(n + 7) + 84 * a(n + 6) - 126 * a(n + 5)
-            //          + 126 * a(n + 4) - 84 * a(n + 3) + 36 * a(n + 2) - 9 * a(n + 1) + a(n)
-            9 => {
-                let a8_minus_a1 = evals[8] - evals[1];
-                let a2_minus_a7 = evals[2] - evals[7];
-                let a6_minus_a3 = evals[6] - evals[3];
-                let a4_minus_a5 = evals[4] - evals[5];
-                a8_minus_a1 * 9 + a2_minus_a7 * 36 + a6_minus_a3 * 84 + a4_minus_a5 * 126 + evals[0]
-            }
-            // a(n + 10) = -a(n) + 10*a(n + 1) - 45*a(n + 2) + 120*a(n + 3)
-            //          - 210*a(n + 4) + 252*a(n + 5) - 210*a(n + 6)
-            //          + 120*a(n + 7) - 45*a(n + 8) + 10*a(n + 9)
-            10 => {
-                let a9_plus_a1 = evals[9] + evals[1];
-                let a8_plus_a2 = evals[8] + evals[2];
-                let a7_plus_a3 = evals[7] + evals[3];
-                let a6_plus_a4 = evals[6] + evals[4];
-                a9_plus_a1 * 10 - a8_plus_a2 * 45 + a7_plus_a3 * 120 - a6_plus_a4 * 210
-                    + evals[5] * 252
-                    - evals[0]
-            }
-            // a(n + 11) = a(n) - 11*a(n + 1) + 55*a(n + 2) - 165*a(n + 3)
-            //          + 330*a(n + 4) - 462*a(n + 5) + 462*a(n + 6)
-            //          - 330*a(n + 7) + 165*a(n + 8) - 55*a(n + 9) + 11*a(n + 10)
-            11 => {
-                let a10_minus_a1 = evals[10] - evals[1];
-                let a2_minus_a9 = evals[2] - evals[9];
-                let a8_minus_a3 = evals[8] - evals[3];
-                let a4_minus_a7 = evals[4] - evals[7];
-                let a6_minus_a5 = evals[6] - evals[5];
-                a10_minus_a1 * 11
-                    + a2_minus_a9 * 55
-                    + a8_minus_a3 * 165
-                    + a4_minus_a7 * 330
-                    + a6_minus_a5 * 462
-                    + evals[0]
-            }
-            // a(n + 12) = -a(n) + 12*a(n + 1) - 66*a(n + 2) + 220*a(n + 3)
-            //          - 495*a(n + 4) + 792*a(n + 5) - 924*a(n + 6)
-            //          + 792*a(n + 7) - 495*a(n + 8) + 220*a(n + 9)
-            //          - 66*a(n + 10) + 12*a(n + 11)
-            12 => {
-                let a11_plus_a1 = evals[11] + evals[1];
-                let a10_plus_a2 = evals[10] + evals[2];
-                let a9_plus_a3 = evals[9] + evals[3];
-                let a8_plus_a4 = evals[8] + evals[4];
-                let a7_plus_a5 = evals[7] + evals[5];
-                a11_plus_a1 * 12 - a10_plus_a2 * 66 + a9_plus_a3 * 220 - a8_plus_a4 * 495
-                    + a7_plus_a5 * 792
-                    - evals[6] * 924
-                    - evals[0]
-            }
-            _ => panic!("Extrapolation for N > 12 is not implemented"),
-        }
-    }
+    }    
 }
 
 #[cfg(test)]
@@ -685,8 +568,6 @@ mod tests {
     use super::{LagrangeHelper, LagrangePolynomial};
     use crate::ark_bn254::Fr as F;
     use crate::field::JoltField;
-    use rand::{Rng, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
 
     fn grid_nodes<const N: usize>() -> [F; N] {
         let d = N - 1;
@@ -1074,67 +955,6 @@ mod tests {
             let rhs = eval_poly(&coeffs, F::from_i64(z));
             assert_eq!(lhs, rhs);
         }
-    }
-
-    #[test]
-    fn extrapolate_next_matches_shift_coeffs_shift_eq_n() {
-        // For each supported N, the hand-written extrapolation to a(n+N)
-        // must equal the value obtained by applying Lagrange shift coefficients at shift=N.
-        macro_rules! check {
-            ($N:expr) => {{
-                const N: usize = $N;
-                // Wrapper type with Mul<i32> to satisfy extrapolate_next's bound; uses i128 internally
-                #[derive(Copy, Clone)]
-                struct W(i128);
-                impl core::ops::Add for W { type Output = W; fn add(self, rhs: W) -> W { W(self.0 + rhs.0) } }
-                impl core::ops::Sub for W { type Output = W; fn sub(self, rhs: W) -> W { W(self.0 - rhs.0) } }
-                impl core::ops::Mul<i32> for W { type Output = W; fn mul(self, rhs: i32) -> W { W(self.0 * (rhs as i128)) } }
-
-                // Deterministic sequence; small magnitudes
-                let evals: [W; N] = core::array::from_fn(|i| {
-                    let x = i as i128;
-                    W(x * x * x - 5 * x + 9)
-                });
-
-                let hand = super::LagrangeHelper::extrapolate_next::<W, N>(&evals);
-                let coeffs = super::LagrangeHelper::shift_coeffs_i32::<N>(N as i64);
-                let via: W = (0..N).map(|i| evals[i] * coeffs[i]).fold(W(0), |acc, t| acc + t);
-                assert_eq!(hand.0, via.0);
-
-                // Also test with random degree-<N polynomials evaluated at x=0..N-1
-                // (the identity holds for all such polynomials)
-                let mut rng = ChaCha8Rng::seed_from_u64(0xC0FFEE_u64 ^ (N as u64));
-                for _trial in 0..64 {
-                    // Random integer coefficients in a small range to keep values bounded
-                    let coeffs: [i64; N] = core::array::from_fn(|_| rng.gen_range(-50i64..=50i64));
-                    let eval_poly_i128 = |x: i64| -> i128 {
-                        let mut acc: i128 = 0;
-                        for &c in coeffs.iter().rev() {
-                            acc = acc * (x as i128) + (c as i128);
-                        }
-                        acc
-                    };
-                    let evals: [W; N] = core::array::from_fn(|i| W(eval_poly_i128(i as i64)));
-                    let hand = super::LagrangeHelper::extrapolate_next::<W, N>(&evals);
-                    let coeffs_shift = super::LagrangeHelper::shift_coeffs_i32::<N>(N as i64);
-                    let via: W = (0..N).map(|i| evals[i] * coeffs_shift[i]).fold(W(0), |acc, t| acc + t);
-                    assert_eq!(hand.0, via.0);
-                }
-            }};
-        }
-
-        check!(1);
-        check!(2);
-        check!(3);
-        check!(4);
-        check!(5);
-        check!(6);
-        check!(7);
-        check!(8);
-        check!(9);
-        check!(10);
-        check!(11);
-        check!(12);
     }
 
     #[test]
