@@ -459,11 +459,12 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                 |a, b| (a.0 + b.0, a.1 + b.1),
             );
 
-        (F::from_montgomery_reduce::<9>(t0_acc_unr),
-        F::from_montgomery_reduce::<9>(t_inf_acc_unr),
-        DensePolynomial::new(left_bound),
-        DensePolynomial::new(right_bound),
-    )
+        (
+            F::from_montgomery_reduce::<9>(t0_acc_unr),
+            F::from_montgomery_reduce::<9>(t_inf_acc_unr),
+            DensePolynomial::new(left_bound),
+            DensePolynomial::new(right_bound),
+        )
     }
 
     /// Compute the quadratic endpoints for remaining rounds.
