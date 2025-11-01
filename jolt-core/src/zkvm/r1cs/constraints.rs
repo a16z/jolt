@@ -1,51 +1,40 @@
-//! Compile-time constant R1CS constraints and grouping metadata
+//! Uniform R1CS constraints and product virtualization
 //!
-//! This module defines the static, compile-time representation of all uniform
-//! R1CS constraints used by the zkVM, along with constants and tables that split
-//! the constraints into two groups optimized for the univariate-skip protocol.
+//! This module contains only compile-time data and helpers that describe the
+//! zkVM's uniform R1CS constraints and how they are grouped for the
+//! univariate‑skip protocol, plus the constraints used by the product virtualization sumcheck.
 //!
-//! Evaluation logic (how `Az`/`Bz` are computed and folded) now lives in
-//! `r1cs::evaluation`. Use the typed evaluators `R1CSFirstGroup` and
-//! `R1CSSecondGroup` in that module to compute guards/magnitudes and to fold
-//! them against window weights.
+//! What lives here (compile-time only):
+//! - The uniform equality-conditional constraints:
+//!   - `R1CSConstraint`, `NamedR1CSConstraint`, and the `r1cs_eq_conditional!` macro
+//!   - The canonical table `UNIFORM_R1CS` and its name enum `R1CSConstraintName`
+//! - The univariate‑skip split of the uniform constraints into two groups:
+//!   - Constants `UNIVARIATE_SKIP_*` describing degree/domain sizes
+//!   - The first-group selector `UNIFORM_R1CS_FIRST_GROUP_NAMES` and its
+//!     order-preserving filtered view `UNIFORM_R1CS_FIRST_GROUP`
+//!   - The compile-time complement `UNIFORM_R1CS_SECOND_GROUP_NAMES` and view
+//!     `UNIFORM_R1CS_SECOND_GROUP`
+//!   - Invariants: the first group has size `UNIVARIATE_SKIP_DOMAIN_SIZE` and is
+//!     never smaller than the second; order matches `UNIFORM_R1CS`
+//! - The product virtualization constraints:
+//!   - `ProductFactorExpr`, `ProductConstraint`, and the ordered list
+//!     `PRODUCT_CONSTRAINTS`
+//!   - Each row describes a factorization `Az · Bz = z'`, where `z'` names a
+//!     `VirtualPolynomial` opening provided by Spartan outer; the order matches the
+//!     product virtualization stage
 //!
-//! Grouping overview:
-//! - Group 0 (first group) contains `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(N/2)`
-//!   constraints with boolean `Az` and small-width `Bz`.
-//! - Group 1 (second group) is the complement with nonnegative `Az` (e.g. `u8`)
-//!   and wider `Bz` arithmetic.
+//! What does not live here:
+//! - Runtime evaluation of any constraint (see `r1cs::evaluation` for typed
+//!   Az/Bz evaluators, folding helpers, and product-virtualization evaluators)
 //!
-//! ## Adding a new constraint
-//!
-//! 1. Add a new variant to `R1CSConstraintName` (keep the same order as `UNIFORM_R1CS`).
-//! 2. Add the constraint to `UNIFORM_R1CS` using the `r1cs_eq_conditional!` macro.
-//! 3. Assign the constraint to a group:
-//!    - Put its name in `UNIFORM_R1CS_FIRST_GROUP_NAMES` if it matches Group 0
-//!      characteristics (boolean guards, ~64-bit `Bz`).
-//!    - Otherwise it will appear in Group 1 automatically as the complement.
-//! 4. Maintain the grouping invariant: `UNIFORM_R1CS_FIRST_GROUP_NAMES.len()` must equal
-//!    `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(NUM_R1CS_CONSTRAINTS/2)`; the first group is
-//!    never smaller than the second.
-//! 5. If the new constraint changes the shapes of guards/magnitudes, update the
-//!    evaluators in `r1cs::evaluation` accordingly (`Az*/Bz*` structs and methods).
-//!
-//! ## Removing a constraint
-//!
-//! 1. Remove it from `UNIFORM_R1CS`.
-//! 2. Remove the corresponding variant from `R1CSConstraintName`.
-//! 3. If present, remove its name from `UNIFORM_R1CS_FIRST_GROUP_NAMES`.
-//! 4. Re-check that `UNIFORM_R1CS_FIRST_GROUP_NAMES.len()` equals
-//!    `UNIVARIATE_SKIP_DOMAIN_SIZE` after the change; adjust the first group
-//!    selection to preserve the invariant that the first group is never smaller
-//!    than the second.
-//! 5. If evaluation shapes are affected, update `r1cs::evaluation`.
-//!
-//! ## Grouping guidance
-//!
-//! - Prefer Group 0 for boolean `Az` and `Bz` that can be represented in ~64 bits.
-//! - Prefer Group 1 when `Az` are small nonnegative integers and `Bz` require
-//!   wider arithmetic.
-//! - This split minimizes conversions and maximizes accumulator efficiency.
+//! Notes for maintainers:
+//! - When adding/removing a uniform constraint, keep `R1CSConstraintName`,
+//!   `UNIFORM_R1CS`, and the first-group name list in sync. The second group is
+//!   computed as a complement at compile time.
+//! - The first group is optimized for boolean guards and ~64-bit magnitudes;
+//!   the second group is the remainder (e.g., wider Bz arithmetic).
+//! - If you change guard/magnitude shapes, also update the typed evaluators in
+//!   `r1cs::evaluation`.
 
 use super::inputs::JoltR1CSInputs;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};

@@ -1,22 +1,41 @@
-//! R1CS evaluation utilities: grouped Az/Bz evaluators and Lagrange-folded helpers
+//! Runtime evaluators for uniform R1CS and product virtualization
 //!
-//! This module contains the runtime evaluation semantics for the uniform R1CS
-//! constraints declared in `r1cs::constraints`.
+//! This module implements the runtime evaluation semantics for the compile-time
+//! constraints declared in `r1cs::constraints`:
 //!
-//! What lives here:
-//! - Typed guard/magnitude structs for each group: `AzFirstGroup`, `BzFirstGroup`,
-//!   `AzSecondGroup`, `BzSecondGroup`.
-//! - Typed evaluator wrappers: `R1CSFirstGroup` and `R1CSSecondGroup` with
-//!   `eval_az`, `eval_bz`, `az_at_r`, `bz_at_r`, and helper fold functions for
-//!   Lagrange-window accumulation.
+//! - Grouped evaluators for the uniform R1CS constraints used by the
+//!   univariate‑skip first round of Spartan outer sumcheck:
+//!   - Typed guard/magnitude structs: `AzFirstGroup`, `BzFirstGroup`,
+//!     `AzSecondGroup`, `BzSecondGroup`
+//!   - Wrappers `R1CSFirstGroup` and `R1CSSecondGroup` expose `eval_az`,
+//!     `eval_bz`, and window-weighted evaluators `az_at_r`, `bz_at_r`
+//!   - Specialized `product_of_sums_shifted` helpers implement the folded
+//!     accumulation pattern used by the first-round polynomial
+//!   - Shapes (boolean vs. wider signed magnitudes) match the grouping
+//!     described in `r1cs::constraints`
+//! 
+//! - Input claim computation (at the end of Spartan outer sumcheck):
+//!   - `R1CSEval::compute_claimed_inputs` accumulates all `JoltR1CSInputs`
+//!     values at a random point without materializing per-input polynomials,
+//!     using split `EqPolynomial` and fixed-limb accumulators
 //!
-//! What does NOT live here:
-//! - The definition of constraints and grouping metadata (see `r1cs::constraints`).
+//! - Evaluation helpers for the product virtualization sumcheck:
+//!   - `ProductVirtualEval::fused_left_right_at_r` computes the fused left and
+//!     right factor values at the r0 window for a single cycle row
+//!   - `ProductVirtualEval::compute_claimed_factors` computes z(r) for the 8
+//!     de-duplicated factor polynomials consumed by Spartan outer
 //!
-//! When adding/removing constraints:
-//! - Update `r1cs::constraints` for the new constraint and its group assignment.
-//! - If guard/magnitude shapes change for either group, update the corresponding
-//!   `Az*/Bz*` structs and evaluator logic here to remain consistent.
+//! What does not live here:
+//! - The definition of any constraint or grouping metadata (see
+//!   `r1cs::constraints` for uniform constraints, grouping constants, and the
+//!   product-virtualization catalog)
+//!
+//! Implementation notes:
+//! - Accumulator limb widths are chosen to match the value ranges of each type
+//!   (bool/u8/u64/i128/S128/S160), minimizing conversions while keeping fast
+//!   Barrett reductions.
+//! - Test-only `assert_constraints` methods validate that Az guards imply zero
+//!   Bz magnitudes for both groups.
 
 use ark_ff::biginteger::{S128, S160, S192, S64};
 use ark_std::Zero;
@@ -647,121 +666,6 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     }
 }
 
-/// Struct for storing with impl fn for evaluation, to be replacing inline logic in product.rs
-#[derive(Clone, Copy, Debug)]
-pub struct ProductVirtualEval;
-
-impl ProductVirtualEval {
-    /// Compute both fused left and right factors at r0 weights for a single cycle row.
-    /// Expected order of weights: [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
-    #[inline]
-    pub fn fused_left_right_at_r<F: JoltField>(
-        row: &ProductCycleInputs,
-        weights_at_r0: &[F],
-    ) -> (F, F) {
-        // Left: u64/u8/bool
-        let mut left_acc: Acc6U<F> = Acc6U::default();
-        left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
-        left_acc.fmadd(&weights_at_r0[1], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[2], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[3], &row.should_branch_lookup_output);
-        left_acc.fmadd(&weights_at_r0[4], &row.jump_flag);
-
-        // Right: i128/bool
-        let mut right_acc: Acc6S<F> = Acc6S::default();
-        right_acc.fmadd(&weights_at_r0[0], &row.instruction_right_input);
-        right_acc.fmadd(&weights_at_r0[1], &row.write_lookup_output_to_rd_flag);
-        right_acc.fmadd(&weights_at_r0[2], &row.jump_flag);
-        right_acc.fmadd(&weights_at_r0[3], &row.should_branch_flag);
-        right_acc.fmadd(&weights_at_r0[4], &row.not_next_noop);
-
-        (left_acc.barrett_reduce(), right_acc.barrett_reduce())
-    }
-
-    /// Compute z(r_cycle) for the 8 de-duplicated factor polynomials used by Product Virtualization.
-    /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
-    /// 0: LeftInstructionInput (u64)
-    /// 1: RightInstructionInput (i128)
-    /// 2: IsRdNotZero (bool)
-    /// 3: OpFlags(WriteLookupOutputToRD) (bool)
-    /// 4: OpFlags(Jump) (bool)
-    /// 5: LookupOutput (u64)
-    /// 6: InstructionFlags(Branch) (bool)
-    /// 7: NextIsNoop (bool)
-    #[inline]
-    pub fn compute_claimed_factors<F: JoltField>(
-        trace: &[tracer::instruction::Cycle],
-        r_cycle: &[<F as JoltField>::Challenge],
-    ) -> [F; 8] {
-        let m = r_cycle.len() / 2;
-        let (r2, r1) = r_cycle.split_at(m);
-        let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-        let eq_two_len = eq_two.len();
-
-        let totals_unr: [F::Unreduced<9>; 8] = (0..eq_one.len())
-            .into_par_iter()
-            .map(|x1| {
-                let eq1_val = eq_one[x1];
-
-                // Accumulators for 8 outputs
-                let mut acc_left_u64: Acc6U<F> = Acc6U::default();
-                let mut acc_right_i128: Acc6S<F> = Acc6S::default();
-                let mut acc_rd_zero_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_wl_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_jump_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_lookup_output: Acc6U<F> = Acc6U::default();
-                let mut acc_branch_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_next_is_noop: Acc5U<F> = Acc5U::default();
-
-                for x2 in 0..eq_two_len {
-                    let e_in = eq_two[x2];
-                    let idx = x1 * eq_two_len + x2;
-                    let row = ProductCycleInputs::from_trace::<F>(trace, idx);
-
-                    // 0: LeftInstructionInput (u64)
-                    acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
-                    // 1: RightInstructionInput (i128)
-                    acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
-                    // 2: IsRdNotZero (bool)
-                    acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
-                    // 3: OpFlags(WriteLookupOutputToRD) (bool)
-                    acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
-                    // 4: OpFlags(Jump) (bool)
-                    acc_jump_flag.fmadd(&e_in, &row.jump_flag);
-                    // 5: LookupOutput (u64)
-                    acc_lookup_output.fmadd(&e_in, &row.should_branch_lookup_output);
-                    // 6: InstructionFlags(Branch) (bool)
-                    acc_branch_flag.fmadd(&e_in, &row.should_branch_flag);
-                    // 7: NextIsNoop (bool) = !not_next_noop
-                    acc_next_is_noop.fmadd(&e_in, &(!row.not_next_noop));
-                }
-
-                let mut out_unr = [F::Unreduced::<9>::zero(); 8];
-                out_unr[0] = eq1_val.mul_unreduced::<9>(acc_left_u64.barrett_reduce());
-                out_unr[1] = eq1_val.mul_unreduced::<9>(acc_right_i128.barrett_reduce());
-                out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_zero_flag.barrett_reduce());
-                out_unr[3] = eq1_val.mul_unreduced::<9>(acc_wl_flag.barrett_reduce());
-                out_unr[4] = eq1_val.mul_unreduced::<9>(acc_jump_flag.barrett_reduce());
-                out_unr[5] = eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());
-                out_unr[6] = eq1_val.mul_unreduced::<9>(acc_branch_flag.barrett_reduce());
-                out_unr[7] = eq1_val.mul_unreduced::<9>(acc_next_is_noop.barrett_reduce());
-                out_unr
-            })
-            .reduce(
-                || [F::Unreduced::<9>::zero(); 8],
-                |mut acc, item| {
-                    for i in 0..8 {
-                        acc[i] += item[i];
-                    }
-                    acc
-                },
-            );
-
-        core::array::from_fn(|i| F::from_montgomery_reduce::<9>(totals_unr[i]))
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct R1CSEval;
 
@@ -915,5 +819,120 @@ impl R1CSEval {
                 },
             )
             .map(|unr| F::from_montgomery_reduce::<9>(unr))
+    }
+}
+
+/// Struct for implementation of evaluation logic for product virtualization
+#[derive(Clone, Copy, Debug)]
+pub struct ProductVirtualEval;
+
+impl ProductVirtualEval {
+    /// Compute both fused left and right factors at r0 weights for a single cycle row.
+    /// Expected order of weights: [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    #[inline]
+    pub fn fused_left_right_at_r<F: JoltField>(
+        row: &ProductCycleInputs,
+        weights_at_r0: &[F],
+    ) -> (F, F) {
+        // Left: u64/u8/bool
+        let mut left_acc: Acc6U<F> = Acc6U::default();
+        left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
+        left_acc.fmadd(&weights_at_r0[1], &row.is_rd_not_zero);
+        left_acc.fmadd(&weights_at_r0[2], &row.is_rd_not_zero);
+        left_acc.fmadd(&weights_at_r0[3], &row.should_branch_lookup_output);
+        left_acc.fmadd(&weights_at_r0[4], &row.jump_flag);
+
+        // Right: i128/bool
+        let mut right_acc: Acc6S<F> = Acc6S::default();
+        right_acc.fmadd(&weights_at_r0[0], &row.instruction_right_input);
+        right_acc.fmadd(&weights_at_r0[1], &row.write_lookup_output_to_rd_flag);
+        right_acc.fmadd(&weights_at_r0[2], &row.jump_flag);
+        right_acc.fmadd(&weights_at_r0[3], &row.should_branch_flag);
+        right_acc.fmadd(&weights_at_r0[4], &row.not_next_noop);
+
+        (left_acc.barrett_reduce(), right_acc.barrett_reduce())
+    }
+
+    /// Compute z(r_cycle) for the 8 de-duplicated factor polynomials used by Product Virtualization.
+    /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
+    /// 0: LeftInstructionInput (u64)
+    /// 1: RightInstructionInput (i128)
+    /// 2: IsRdNotZero (bool)
+    /// 3: OpFlags(WriteLookupOutputToRD) (bool)
+    /// 4: OpFlags(Jump) (bool)
+    /// 5: LookupOutput (u64)
+    /// 6: InstructionFlags(Branch) (bool)
+    /// 7: NextIsNoop (bool)
+    #[inline]
+    pub fn compute_claimed_factors<F: JoltField>(
+        trace: &[tracer::instruction::Cycle],
+        r_cycle: &[<F as JoltField>::Challenge],
+    ) -> [F; 8] {
+        let m = r_cycle.len() / 2;
+        let (r2, r1) = r_cycle.split_at(m);
+        let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+        let eq_two_len = eq_two.len();
+
+        let totals_unr: [F::Unreduced<9>; 8] = (0..eq_one.len())
+            .into_par_iter()
+            .map(|x1| {
+                let eq1_val = eq_one[x1];
+
+                // Accumulators for 8 outputs
+                let mut acc_left_u64: Acc6U<F> = Acc6U::default();
+                let mut acc_right_i128: Acc6S<F> = Acc6S::default();
+                let mut acc_rd_zero_flag: Acc5U<F> = Acc5U::default();
+                let mut acc_wl_flag: Acc5U<F> = Acc5U::default();
+                let mut acc_jump_flag: Acc5U<F> = Acc5U::default();
+                let mut acc_lookup_output: Acc6U<F> = Acc6U::default();
+                let mut acc_branch_flag: Acc5U<F> = Acc5U::default();
+                let mut acc_next_is_noop: Acc5U<F> = Acc5U::default();
+
+                for x2 in 0..eq_two_len {
+                    let e_in = eq_two[x2];
+                    let idx = x1 * eq_two_len + x2;
+                    let row = ProductCycleInputs::from_trace::<F>(trace, idx);
+
+                    // 0: LeftInstructionInput (u64)
+                    acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
+                    // 1: RightInstructionInput (i128)
+                    acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
+                    // 2: IsRdNotZero (bool)
+                    acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
+                    // 3: OpFlags(WriteLookupOutputToRD) (bool)
+                    acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
+                    // 4: OpFlags(Jump) (bool)
+                    acc_jump_flag.fmadd(&e_in, &row.jump_flag);
+                    // 5: LookupOutput (u64)
+                    acc_lookup_output.fmadd(&e_in, &row.should_branch_lookup_output);
+                    // 6: InstructionFlags(Branch) (bool)
+                    acc_branch_flag.fmadd(&e_in, &row.should_branch_flag);
+                    // 7: NextIsNoop (bool) = !not_next_noop
+                    acc_next_is_noop.fmadd(&e_in, &(!row.not_next_noop));
+                }
+
+                let mut out_unr = [F::Unreduced::<9>::zero(); 8];
+                out_unr[0] = eq1_val.mul_unreduced::<9>(acc_left_u64.barrett_reduce());
+                out_unr[1] = eq1_val.mul_unreduced::<9>(acc_right_i128.barrett_reduce());
+                out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_zero_flag.barrett_reduce());
+                out_unr[3] = eq1_val.mul_unreduced::<9>(acc_wl_flag.barrett_reduce());
+                out_unr[4] = eq1_val.mul_unreduced::<9>(acc_jump_flag.barrett_reduce());
+                out_unr[5] = eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());
+                out_unr[6] = eq1_val.mul_unreduced::<9>(acc_branch_flag.barrett_reduce());
+                out_unr[7] = eq1_val.mul_unreduced::<9>(acc_next_is_noop.barrett_reduce());
+                out_unr
+            })
+            .reduce(
+                || [F::Unreduced::<9>::zero(); 8],
+                |mut acc, item| {
+                    for i in 0..8 {
+                        acc[i] += item[i];
+                    }
+                    acc
+                },
+            );
+
+        core::array::from_fn(|i| F::from_montgomery_reduce::<9>(totals_unr[i]))
     }
 }

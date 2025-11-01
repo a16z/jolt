@@ -1,3 +1,16 @@
+//! Uniform Spartan key and row-split evaluators
+//!
+//! - `UniformSpartanKey` encapsulates sizes, a stable shape digest, and helpers
+//!   to evaluate the uniform R1CS along the univariate-skip row split used by
+//!   Spartan outer:
+//!   - `evaluate_small_matrix_rlc` (row-axis: `[r_stream, r0]` with Lagrange on
+//!     the first-group domain and linear blend by `r_stream`),
+//!   - `evaluate_uniform_a/b_at_point`, and
+//!   - `evaluate_z_mle_with_segment_evals` for the variable MLE z.
+//! - Column variables are ordered by `JoltR1CSInputs`; row grouping follows
+//!   `UNIFORM_R1CS_FIRST_GROUP`/`UNIFORM_R1CS_SECOND_GROUP` from
+//!   `r1cs::constraints`.
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
@@ -26,60 +39,6 @@ pub struct UniformSpartanKey<F: JoltField> {
 
     /// Digest of verifier key
     pub(crate) vk_digest: F,
-}
-
-/// (row, col, value)
-pub type Coeff<F> = (usize, usize, F);
-
-/// (Deprecated) Sparse representation of a single R1CS matrix.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseConstraints<F: JoltField> {
-    /// Non-zero, non-constant coefficients
-    pub vars: Vec<Coeff<F>>,
-
-    /// Non-zero constant coefficients stored as (uniform_row_index, coeff)
-    pub consts: Vec<(usize, F)>,
-}
-
-impl<F: JoltField> SparseConstraints<F> {
-    pub fn empty_with_capacity(vars: usize, consts: usize) -> Self {
-        Self {
-            vars: Vec::with_capacity(vars),
-            consts: Vec::with_capacity(consts),
-        }
-    }
-}
-
-/// (Deprecated) Sparse representation of all 3 uniform R1CS matrices.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformR1CS<F: JoltField> {
-    pub a: SparseConstraints<F>,
-    pub b: SparseConstraints<F>,
-    pub c: SparseConstraints<F>,
-
-    /// Unpadded number of variables in uniform instance.
-    pub num_vars: usize,
-
-    /// Unpadded number of rows in uniform instance.
-    pub num_rows: usize,
-}
-
-/// (Optional legacy) Represents a single constraint row with possible offsets.
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, PartialEq)]
-pub struct SparseEqualityItem<F: JoltField> {
-    /// (uniform_col, offset, val)
-    pub offset_vars: Vec<(usize, bool, F)>,
-
-    pub constant: F,
-}
-
-impl<F: JoltField> SparseEqualityItem<F> {
-    pub fn empty() -> Self {
-        Self {
-            offset_vars: vec![],
-            constant: F::zero(),
-        }
-    }
 }
 
 impl<F: JoltField> UniformSpartanKey<F> {

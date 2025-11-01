@@ -1,3 +1,18 @@
+//! R1CS input catalog and per-cycle typed views
+//!
+//! - Canonical enumeration and ordering of all virtual inputs consumed by the
+//!   Spartan outer sumcheck: `JoltR1CSInputs` and `ALL_R1CS_INPUTS`. Provides
+//!   indices and conversions to `VirtualPolynomial` and to `OpeningId`.
+//! - Materialized, single-cycle views sourced from the execution trace:
+//!   - `R1CSCycleInputs`: full row used by uniform R1CS and shift constraints;
+//!     built via `from_trace` with exact integer semantics.
+//!   - `ProductCycleInputs`: minimal tuple for the product virtualization sumcheck;
+//!     the de-duplicated factor list is `PRODUCT_UNIQUE_FACTOR_VIRTUALS`.
+//!
+//! Maintainers: keep the enum order, `ALL_R1CS_INPUTS`, and `to_index` in sync.
+//! Changes here affect `r1cs::constraints` (row shapes) and `r1cs::evaluation`
+//! (typed evaluators and claim computation).
+
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
@@ -483,6 +498,8 @@ impl ProductCycleInputs {
         }
     }
 }
+
+// TODO(Quang): move the shift sumcheck inputs to here as well
 
 #[cfg(test)]
 mod tests {

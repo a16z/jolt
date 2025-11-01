@@ -1,8 +1,6 @@
 //! Const-friendly R1CS linear combination operations
 //!
 //! This module provides compile-time constant operations for building R1CS constraints.
-//! Unlike the legacy dynamic operations, these are designed to work with const contexts
-//! and provide better performance in the prover's hot path.
 
 use super::inputs::JoltR1CSInputs;
 use crate::field::JoltField;
