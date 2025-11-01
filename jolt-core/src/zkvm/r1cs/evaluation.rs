@@ -627,7 +627,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
     /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "R1CSEval::compute_claimed_inputs")]
     pub fn compute_claimed_inputs(
         preprocessing: &JoltSharedPreprocessing,
         trace: &[Cycle],
@@ -871,6 +871,7 @@ impl ProductVirtualEval {
     /// 5: LookupOutput (u64)
     /// 6: InstructionFlags(Branch) (bool)
     /// 7: NextIsNoop (bool)
+    #[tracing::instrument(skip_all, name = "ProductVirtualEval::compute_claimed_factors")]
     #[inline]
     pub fn compute_claimed_factors<F: JoltField>(
         trace: &[tracer::instruction::Cycle],

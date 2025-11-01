@@ -79,8 +79,8 @@ pub struct ProductVirtualUniSkipInstance<F: JoltField> {
 impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
     /// Initialize a new prover for the univariate skip round
     /// The 5 base evaluations are the claimed evaluations of the 5 product terms from Spartan outer
-    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstance::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstance::gen")]
+    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         tau: &[F::Challenge],
     ) -> Self {
