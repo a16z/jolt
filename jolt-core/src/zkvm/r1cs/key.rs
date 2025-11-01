@@ -8,7 +8,7 @@
 //!   - `evaluate_uniform_a/b_at_point`, and
 //!   - `evaluate_z_mle_with_segment_evals` for the variable MLE z.
 //! - Column variables are ordered by `JoltR1CSInputs`; row grouping follows
-//!   `UNIFORM_R1CS_FIRST_GROUP`/`UNIFORM_R1CS_SECOND_GROUP` from
+//!   `R1CS_CONSTRAINTS_FIRST_GROUP`/`R1CS_CONSTRAINTS_SECOND_GROUP` from
 //!   `r1cs::constraints`.
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -23,8 +23,8 @@ use crate::{
 use sha3::Digest;
 
 use super::constraints::{
-    R1CSConstraint, LC, UNIFORM_R1CS, UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP,
-    UNIVARIATE_SKIP_DOMAIN_SIZE,
+    R1CSConstraint, LC, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, R1CS_CONSTRAINTS,
+    R1CS_CONSTRAINTS_FIRST_GROUP, R1CS_CONSTRAINTS_SECOND_GROUP,
 };
 use crate::utils::math::Math;
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
@@ -61,7 +61,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
     #[inline]
     fn num_rows_per_step() -> usize {
-        UNIFORM_R1CS.len()
+        R1CS_CONSTRAINTS.len()
     }
 
     pub fn num_vars_uniform_padded(&self) -> usize {
@@ -94,9 +94,10 @@ impl<F: JoltField> UniformSpartanKey<F> {
         assert_eq!(r_constr.len(), 2);
 
         let r_stream = r_constr[0];
-        let lag_evals = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
-            &r_constr[1],
-        );
+        let lag_evals = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&r_constr[1]);
         let w_group0 = F::one() - r_stream; // weight for first group
         let w_group1 = r_stream; // weight for second group
 
@@ -108,7 +109,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         // Accumulate using explicit FIRST and SECOND groups
         // First group weighted by (1 - r_stream)
-        for (i, row_named) in UNIFORM_R1CS_FIRST_GROUP.iter().enumerate() {
+        for (i, row_named) in R1CS_CONSTRAINTS_FIRST_GROUP.iter().enumerate() {
             let row = &row_named.cons;
             let wr = w_group0 * lag_evals[i];
             row.a.accumulate_evaluations(&mut evals, wr, num_vars);
@@ -116,7 +117,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 .accumulate_evaluations(&mut evals, wr * r_rlc, num_vars);
         }
         // Second group weighted by r_stream
-        for (i, row_named) in UNIFORM_R1CS_SECOND_GROUP.iter().enumerate() {
+        for (i, row_named) in R1CS_CONSTRAINTS_SECOND_GROUP.iter().enumerate() {
             let row = &row_named.cons;
             let wr = w_group1 * lag_evals[i];
             row.a.accumulate_evaluations(&mut evals, wr, num_vars);
@@ -183,7 +184,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// Helper function to evaluate a uniform matrix at a specific point
     /// Uses univariate-skip semantics on the row axis: split rows into two groups,
     /// weight them by (1 - r_stream) and r_stream respectively, and use Lagrange basis
-    /// for the first-round (size-UNIVARIATE_SKIP_DOMAIN_SIZE) row domain.
+    /// for the first-round (size-OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE) row domain.
     fn evaluate_uniform_matrix_at_point(
         &self,
         select: impl Fn(&R1CSConstraint) -> &LC,
@@ -199,7 +200,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         // Lagrange basis over symmetric domain for first-round rows
         let lag_basis =
-            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
+            LagrangePolynomial::<F>::evals::<F::Challenge, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
 
         // Column axis: standard eq basis over variables
         let eq_ry = EqPolynomial::<F>::evals(ry_var);
@@ -209,7 +210,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         let mut acc_first_group = F::zero();
         // First group: 14 rows evaluated with Lagrange basis in group order
-        for (i, row_named) in UNIFORM_R1CS_FIRST_GROUP.iter().enumerate() {
+        for (i, row_named) in R1CS_CONSTRAINTS_FIRST_GROUP.iter().enumerate() {
             let row = &row_named.cons;
             let lc = select(row);
             let col_contrib = lc.dot_eq_ry::<F>(&eq_ry, num_vars);
@@ -218,7 +219,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         let mut acc_second_group = F::zero();
         // Second group: remaining 13 rows, uniformly weighted by r_stream in group order
-        for (i, row_named) in UNIFORM_R1CS_SECOND_GROUP.iter().enumerate() {
+        for (i, row_named) in R1CS_CONSTRAINTS_SECOND_GROUP.iter().enumerate() {
             let row = &row_named.cons;
             let lc = select(row);
             let col_contrib = lc.dot_eq_ry::<F>(&eq_ry, num_vars);
@@ -233,18 +234,18 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// - domain tag
     /// - num_steps (u64 BE)
     /// - num_vars (u32 BE)
-    /// - for each row in UNIFORM_R1CS:
+    /// - for each row in R1CS_CONSTRAINTS:
     ///   - tag 'A' | row.a terms (sorted by input_index asc) + const term
     ///   - tag 'B' | row.b terms (sorted by input_index asc) + const term
     fn digest(num_steps: usize) -> F {
         let mut bytes: Vec<u8> = Vec::new();
-        bytes.extend_from_slice(b"JOLT_UNIFORM_R1CS");
+        bytes.extend_from_slice(b"JOLT_R1CS_CONSTRAINTS");
         bytes.extend_from_slice(&num_steps.to_be_bytes());
 
         let num_vars: u32 = JoltR1CSInputs::num_inputs() as u32;
         bytes.extend_from_slice(&num_vars.to_be_bytes());
 
-        for row_named in UNIFORM_R1CS.iter() {
+        for row_named in R1CS_CONSTRAINTS.iter() {
             let row = &row_named.cons;
             row.a.serialize_canonical(b'A', &mut bytes);
             row.b.serialize_canonical(b'B', &mut bytes);

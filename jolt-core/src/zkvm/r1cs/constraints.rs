@@ -7,15 +7,15 @@
 //! What lives here (compile-time only):
 //! - The uniform equality-conditional constraints:
 //!   - `R1CSConstraint`, `NamedR1CSConstraint`, and the `r1cs_eq_conditional!` macro
-//!   - The canonical table `UNIFORM_R1CS` and its name enum `R1CSConstraintName`
+//!   - The canonical table `R1CS_CONSTRAINTS` and its name enum `R1CSConstraintName`
 //! - The univariate‑skip split of the uniform constraints into two groups:
 //!   - Constants `UNIVARIATE_SKIP_*` describing degree/domain sizes
-//!   - The first-group selector `UNIFORM_R1CS_FIRST_GROUP_NAMES` and its
-//!     order-preserving filtered view `UNIFORM_R1CS_FIRST_GROUP`
-//!   - The compile-time complement `UNIFORM_R1CS_SECOND_GROUP_NAMES` and view
-//!     `UNIFORM_R1CS_SECOND_GROUP`
+//!   - The first-group selector `R1CS_CONSTRAINTS_FIRST_GROUP_NAMES` and its
+//!     order-preserving filtered view `R1CS_CONSTRAINTS_FIRST_GROUP`
+//!   - The compile-time complement `R1CS_CONSTRAINTS_SECOND_GROUP_NAMES` and view
+//!     `R1CS_CONSTRAINTS_SECOND_GROUP`
 //!   - Invariants: the first group has size `UNIVARIATE_SKIP_DOMAIN_SIZE` and is
-//!     never smaller than the second; order matches `UNIFORM_R1CS`
+//!     never smaller than the second; order matches `R1CS_CONSTRAINTS`
 //! - The product virtualization constraints:
 //!   - `ProductFactorExpr`, `ProductConstraint`, and the ordered list
 //!     `PRODUCT_CONSTRAINTS`
@@ -29,7 +29,7 @@
 //!
 //! Notes for maintainers:
 //! - When adding/removing a uniform constraint, keep `R1CSConstraintName`,
-//!   `UNIFORM_R1CS`, and the first-group name list in sync. The second group is
+//!   `R1CS_CONSTRAINTS`, and the first-group name list in sync. The second group is
 //!   computed as a complement at compile time.
 //! - The first group is optimized for boolean guards and ~64-bit magnitudes;
 //!   the second group is the remainder (e.g., wider Bz arithmetic).
@@ -119,8 +119,8 @@ macro_rules! r1cs_eq_conditional {
 /// Number of uniform R1CS constraints
 pub const NUM_R1CS_CONSTRAINTS: usize = R1CSConstraintName::COUNT;
 
-/// Static table of all R1CS uniform constraints.
-pub static UNIFORM_R1CS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
+/// Static table of all R1CS uniform constraints, to be proven in Spartan outer sumcheck
+pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Load || Store {
     //     assert!(RamAddress == Rs1Value + Imm)
     // } else {
@@ -290,30 +290,30 @@ pub static UNIFORM_R1CS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
 ];
 
 // =============================================================================
-// Univariate skip constants and grouped views
+// Univariate skip constants for Spartan outer sumcheck and grouped views
 // =============================================================================
 
 /// Degree of univariate skip, defined to be `(NUM_R1CS_CONSTRAINTS - 1) / 2`
-pub const UNIVARIATE_SKIP_DEGREE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2;
+pub const OUTER_UNIVARIATE_SKIP_DEGREE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2;
 
-/// Domain size of univariate skip, defined to be `UNIVARIATE_SKIP_DEGREE + 1`.
-pub const UNIVARIATE_SKIP_DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DEGREE + 1;
+/// Domain size of univariate skip, defined to be `OUTER_UNIVARIATE_SKIP_DEGREE + 1`.
+pub const OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = OUTER_UNIVARIATE_SKIP_DEGREE + 1;
 
-/// Extended domain size of univariate skip, defined to be `2 * UNIVARIATE_SKIP_DEGREE + 1`.
-pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGREE + 1;
+/// Extended domain size of univariate skip, defined to be `2 * OUTER_UNIVARIATE_SKIP_DEGREE + 1`.
+pub const OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * OUTER_UNIVARIATE_SKIP_DEGREE + 1;
 
-/// Number of coefficients in the first-round polynomial, defined to be `3 * UNIVARIATE_SKIP_DEGREE + 1`.
-pub const FIRST_ROUND_POLY_NUM_COEFFS: usize = 3 * UNIVARIATE_SKIP_DEGREE + 1;
+/// Number of coefficients in the first-round polynomial, defined to be `3 * OUTER_UNIVARIATE_SKIP_DEGREE + 1`.
+pub const OUTER_FIRST_ROUND_POLY_NUM_COEFFS: usize = 3 * OUTER_UNIVARIATE_SKIP_DEGREE + 1;
 
 /// Degree of the first-round polynomial.
-pub const FIRST_ROUND_POLY_DEGREE_BOUND: usize = FIRST_ROUND_POLY_NUM_COEFFS - 1;
+pub const OUTER_FIRST_ROUND_POLY_DEGREE_BOUND: usize = OUTER_FIRST_ROUND_POLY_NUM_COEFFS - 1;
 
 /// Number of remaining R1CS constraints in the second group, defined to be
-/// `NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE`.
+/// `NUM_R1CS_CONSTRAINTS - OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE`.
 pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =
-    NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE;
+    NUM_R1CS_CONSTRAINTS - OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE;
 
-/// Order-preserving, compile-time filter over `UNIFORM_R1CS` by constraint names.
+/// Order-preserving, compile-time filter over `R1CS_CONSTRAINTS` by constraint names.
 const fn contains_name<const N: usize>(
     names: &[R1CSConstraintName; N],
     name: R1CSConstraintName,
@@ -328,8 +328,8 @@ const fn contains_name<const N: usize>(
     false
 }
 
-/// Select constraints from `UNIFORM_R1CS` whose names appear in `names`, preserving order.
-pub const fn filter_uniform_r1cs<const N: usize>(
+/// Select constraints from `R1CS_CONSTRAINTS` whose names appear in `names`, preserving order.
+pub const fn filter_R1CS_CONSTRAINTS<const N: usize>(
     names: &[R1CSConstraintName; N],
 ) -> [NamedR1CSConstraint; N] {
     let dummy = NamedR1CSConstraint {
@@ -341,7 +341,7 @@ pub const fn filter_uniform_r1cs<const N: usize>(
     let mut o = 0;
     let mut i = 0;
     while i < NUM_R1CS_CONSTRAINTS {
-        let cand = UNIFORM_R1CS[i];
+        let cand = R1CS_CONSTRAINTS[i];
         if contains_name(names, cand.name) {
             out[o] = cand;
             o += 1;
@@ -353,20 +353,22 @@ pub const fn filter_uniform_r1cs<const N: usize>(
     }
 
     if o != N {
-        panic!("filter_uniform_r1cs: not all requested constraints were found in UNIFORM_R1CS");
+        panic!(
+            "filter_R1CS_CONSTRAINTS: not all requested constraints were found in R1CS_CONSTRAINTS"
+        );
     }
     out
 }
 
-/// Compute the complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES` within `UNIFORM_R1CS`.
+/// Compute the complement of `R1CS_CONSTRAINTS_FIRST_GROUP_NAMES` within `R1CS_CONSTRAINTS`.
 const fn complement_first_group_names() -> [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] {
     let mut out: [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
         [R1CSConstraintName::RamReadEqRamWriteIfLoad; NUM_REMAINING_R1CS_CONSTRAINTS];
     let mut o = 0;
     let mut i = 0;
     while i < NUM_R1CS_CONSTRAINTS {
-        let cand = UNIFORM_R1CS[i].name;
-        if !contains_name(&UNIFORM_R1CS_FIRST_GROUP_NAMES, cand) {
+        let cand = R1CS_CONSTRAINTS[i].name;
+        if !contains_name(&R1CS_CONSTRAINTS_FIRST_GROUP_NAMES, cand) {
             out[o] = cand;
             o += 1;
             if o == NUM_REMAINING_R1CS_CONSTRAINTS {
@@ -383,7 +385,8 @@ const fn complement_first_group_names() -> [R1CSConstraintName; NUM_REMAINING_R1
 }
 
 /// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
-pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [R1CSConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
+pub const R1CS_CONSTRAINTS_FIRST_GROUP_NAMES: [R1CSConstraintName;
+    OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = [
     R1CSConstraintName::RamAddrEqZeroIfNotLoadStore,
     R1CSConstraintName::RamReadEqRamWriteIfLoad,
     R1CSConstraintName::RamReadEqRdWriteIfLoad,
@@ -396,22 +399,31 @@ pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [R1CSConstraintName; UNIVARIATE_SKIP_D
     R1CSConstraintName::MustStartSequenceFromBeginning,
 ];
 
-/// Second group: complement of first within UNIFORM_R1CS
+/// Second group: complement of first within R1CS_CONSTRAINTS
 /// Here, Az may be u8, and Bz may be around 128 bits
-pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
-    complement_first_group_names();
+pub const R1CS_CONSTRAINTS_SECOND_GROUP_NAMES: [R1CSConstraintName;
+    NUM_REMAINING_R1CS_CONSTRAINTS] = complement_first_group_names();
 
 /// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
-pub static UNIFORM_R1CS_FIRST_GROUP: [NamedR1CSConstraint; UNIVARIATE_SKIP_DOMAIN_SIZE] =
-    filter_uniform_r1cs(&UNIFORM_R1CS_FIRST_GROUP_NAMES);
+pub static R1CS_CONSTRAINTS_FIRST_GROUP: [NamedR1CSConstraint; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] =
+    filter_R1CS_CONSTRAINTS(&R1CS_CONSTRAINTS_FIRST_GROUP_NAMES);
 
-/// Second group: complement of first within UNIFORM_R1CS, where Az may be u8 and Bz may be around 128 bits
-pub static UNIFORM_R1CS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
-    filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
+/// Second group: complement of first within R1CS_CONSTRAINTS, where Az may be u8 and Bz may be around 128 bits
+pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
+    filter_R1CS_CONSTRAINTS(&R1CS_CONSTRAINTS_SECOND_GROUP_NAMES);
 
 // ===========================================
 // Product virtualization constraints
 // ===========================================
+
+/// Domain sizing for product-virtualization univariate-skip (size-5 window)
+pub const NUM_PRODUCT_VIRTUAL: usize = 5;
+pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
+pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
+pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
+    2 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
+pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS: usize =
+    3 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum ProductConstraintName {
@@ -498,9 +510,10 @@ mod tests {
 
     /// Test that the constraint name enum matches the uniform R1CS order.
     #[test]
-    fn constraint_enum_matches_uniform_r1cs_order() {
+    fn constraint_enum_matches_R1CS_CONSTRAINTS_order() {
         let enum_order: Vec<R1CSConstraintName> = R1CSConstraintName::iter().collect();
-        let array_order: Vec<R1CSConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
+        let array_order: Vec<R1CSConstraintName> =
+            R1CS_CONSTRAINTS.iter().map(|nc| nc.name).collect();
         assert_eq!(array_order.len(), NUM_R1CS_CONSTRAINTS);
         assert_eq!(enum_order, array_order);
     }

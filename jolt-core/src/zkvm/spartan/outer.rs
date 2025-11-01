@@ -28,11 +28,10 @@ use crate::utils::math::Math;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::r1cs::constraints::FIRST_ROUND_POLY_DEGREE_BOUND;
 use crate::zkvm::r1cs::{
     constraints::{
-        FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
-        UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+        OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DEGREE,
+        OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     evaluation::R1CSEval,
     inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
@@ -43,7 +42,7 @@ use crate::zkvm::JoltSharedPreprocessing;
 use allocative::FlameGraphBuilder;
 
 #[cfg(test)]
-use crate::zkvm::r1cs::constraints::{UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP};
+use crate::zkvm::r1cs::constraints::{R1CS_CONSTRAINTS_FIRST_GROUP, R1CS_CONSTRAINTS_SECOND_GROUP};
 #[cfg(test)]
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
@@ -83,7 +82,7 @@ const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
 pub struct OuterUniSkipInstanceProver<F: JoltField> {
     tau: Vec<F::Challenge>,
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
-    extended_evals: [F; UNIVARIATE_SKIP_DEGREE],
+    extended_evals: [F; OUTER_UNIVARIATE_SKIP_DEGREE],
 }
 
 impl<F: JoltField> OuterUniSkipInstanceProver<F> {
@@ -127,7 +126,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
         tau_low: &[F::Challenge],
-    ) -> [F; UNIVARIATE_SKIP_DEGREE] {
+    ) -> [F; OUTER_UNIVARIATE_SKIP_DEGREE] {
         let m = tau_low.len() / 2;
         let (tau_out, tau_in) = tau_low.split_at(m);
         // Compute the split eq polynomial, one scaled by R^2 in order to balance against
@@ -164,12 +163,12 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
             .map(|chunk_idx| {
                 let x_out_start = chunk_idx * x_out_chunk_size;
                 let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let mut acc_unreduced: [F::Unreduced<9>; UNIVARIATE_SKIP_DEGREE] =
-                    [F::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE];
+                let mut acc_unreduced: [F::Unreduced<9>; OUTER_UNIVARIATE_SKIP_DEGREE] =
+                    [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [Acc8S<F>; UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::default(); UNIVARIATE_SKIP_DEGREE];
+                    let mut inner_acc: [Acc8S<F>; OUTER_UNIVARIATE_SKIP_DEGREE] =
+                        [Acc8S::<F>::default(); OUTER_UNIVARIATE_SKIP_DEGREE];
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
@@ -181,7 +180,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                         let e_in_even = E_in[x_in_even];
 
                         let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        for j in 0..UNIVARIATE_SKIP_DEGREE {
+                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                             let prod_s192 = eval.extended_azbz_product_first_group(j);
                             inner_acc[j].fmadd(&e_in_even, &prod_s192);
                         }
@@ -190,13 +189,13 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                         let x_in_odd = x_in_even + 1;
                         let e_in_odd = E_in[x_in_odd];
 
-                        for j in 0..UNIVARIATE_SKIP_DEGREE {
+                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                             let prod_s192 = eval.extended_azbz_product_second_group(j);
                             inner_acc[j].fmadd(&e_in_odd, &prod_s192);
                         }
                     }
                     let e_out = E_out[x_out_val];
-                    for j in 0..UNIVARIATE_SKIP_DEGREE {
+                    for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                         let reduced = inner_acc[j].montgomery_reduce();
                         acc_unreduced[j] += e_out.mul_unreduced::<9>(reduced);
                     }
@@ -204,9 +203,9 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                 acc_unreduced
             })
             .reduce(
-                || [F::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE],
+                || [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
                 |mut a, b| {
-                    for j in 0..UNIVARIATE_SKIP_DEGREE {
+                    for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                         a[j] += b[j];
                     }
                     a
@@ -219,11 +218,8 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
 impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
     for OuterUniSkipInstanceProver<F>
 {
-    const DEGREE_BOUND: usize = FIRST_ROUND_POLY_DEGREE_BOUND;
-    const DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DOMAIN_SIZE;
-
     fn input_claim(&self) -> F {
-        outer_uni_skip_input_claim()
+        F::zero()
     }
 
     #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::compute_poly")]
@@ -236,16 +232,12 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
         // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
         build_uniskip_first_round_poly::<
             F,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
-            UNIVARIATE_SKIP_DEGREE,
-            UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
-            FIRST_ROUND_POLY_NUM_COEFFS,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            OUTER_UNIVARIATE_SKIP_DEGREE,
+            OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+            OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
         >(None, extended_evals, tau_high)
     }
-}
-
-pub fn outer_uni_skip_input_claim<F: JoltField>() -> F {
-    F::zero()
 }
 
 #[derive(Clone, Debug, Allocative)]
@@ -285,15 +277,17 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     ) -> Self {
         let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
-        let lagrange_evals_r =
-            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&uni.r0);
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&uni.r0);
 
         let tau_high = uni.tau[uni.tau.len() - 1];
         let tau_low = &uni.tau[..uni.tau.len() - 1];
 
         let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
         >(&uni.r0, &tau_high);
 
         let split_eq_poly: GruenSplitEqPolynomial<F> =
@@ -350,7 +344,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     fn compute_streaming_round_cache(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
-        lagrange_evals_r: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE],
+        lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
     ) -> StreamingRoundCache<F> {
         let num_x_out_vals = split_eq_poly.E_out_current_len();
@@ -657,16 +651,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
             z_cycle_ext.push(F::one());
 
             // Lagrange weights over the univariate-skip base domain at r0
-            let w = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
+            let w = LagrangePolynomial::<F>::evals::<F::Challenge, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(
                 &self.params.r0_uniskip,
             );
 
             // Group 0 fused Az,Bz via dot product of LC with z(r_cycle)
             let mut az_g0 = F::zero();
             let mut bz_g0 = F::zero();
-            for i in 0..UNIFORM_R1CS_FIRST_GROUP.len() {
-                let lc_a = &UNIFORM_R1CS_FIRST_GROUP[i].cons.a;
-                let lc_b = &UNIFORM_R1CS_FIRST_GROUP[i].cons.b;
+            for i in 0..R1CS_CONSTRAINTS_FIRST_GROUP.len() {
+                let lc_a = &R1CS_CONSTRAINTS_FIRST_GROUP[i].cons.a;
+                let lc_b = &R1CS_CONSTRAINTS_FIRST_GROUP[i].cons.b;
                 az_g0 += w[i] * lc_a.dot_eq_ry::<F>(&z_cycle_ext, const_col);
                 bz_g0 += w[i] * lc_b.dot_eq_ry::<F>(&z_cycle_ext, const_col);
             }
@@ -674,11 +668,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
             // Group 1 fused Az,Bz (use same Lagrange weights order as construction)
             let mut az_g1 = F::zero();
             let mut bz_g1 = F::zero();
-            let g2_len =
-                core::cmp::min(UNIFORM_R1CS_SECOND_GROUP.len(), UNIVARIATE_SKIP_DOMAIN_SIZE);
+            let g2_len = core::cmp::min(
+                R1CS_CONSTRAINTS_SECOND_GROUP.len(),
+                OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            );
             for i in 0..g2_len {
-                let lc_a = &UNIFORM_R1CS_SECOND_GROUP[i].cons.a;
-                let lc_b = &UNIFORM_R1CS_SECOND_GROUP[i].cons.b;
+                let lc_a = &R1CS_CONSTRAINTS_SECOND_GROUP[i].cons.a;
+                let lc_b = &R1CS_CONSTRAINTS_SECOND_GROUP[i].cons.b;
                 az_g1 += w[i] * lc_a.dot_eq_ry::<F>(&z_cycle_ext, const_col);
                 bz_g1 += w[i] * lc_b.dot_eq_ry::<F>(&z_cycle_ext, const_col);
             }
@@ -756,7 +752,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let tau_high = &tau[tau.len() - 1];
         let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
         >(tau_high, &self.params.r0_uniskip);
         let tau_low = &tau[..tau.len() - 1];
         let r_tail_reversed: Vec<F::Challenge> =

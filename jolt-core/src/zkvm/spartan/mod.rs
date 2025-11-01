@@ -11,15 +11,17 @@ use crate::transcripts::Transcript;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::{SumcheckStagesProver, SumcheckStagesVerifier};
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
+use crate::zkvm::r1cs::constraints::{
+    OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::{InnerSumcheckProver, InnerSumcheckVerifier};
 use crate::zkvm::spartan::instruction_input::{
     InstructionInputSumcheckProver, InstructionInputSumcheckVerifier,
 };
 use crate::zkvm::spartan::outer::{
-    outer_uni_skip_input_claim, OuterRemainingSumcheckProver, OuterRemainingSumcheckVerifier,
-    OuterUniSkipInstanceProver,
+    OuterRemainingSumcheckProver, OuterRemainingSumcheckVerifier, OuterUniSkipInstanceProver,
 };
 use crate::zkvm::spartan::product::{
     ProductVirtualInnerProver, ProductVirtualInnerVerifier, ProductVirtualRemainderProver,
@@ -28,10 +30,7 @@ use crate::zkvm::spartan::product::{
 use crate::zkvm::spartan::shift::{ShiftSumcheckProver, ShiftSumcheckVerifier};
 use crate::zkvm::witness::VirtualPolynomial;
 
-use product::{
-    ProductVirtualUniSkipInstance, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
-    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-};
+use product::ProductVirtualUniSkipInstance;
 
 pub mod inner;
 pub mod instruction_input;
@@ -246,10 +245,11 @@ where
             }
         };
 
-        let input_claim = outer_uni_skip_input_claim();
+        // Spartan outer sumcheck starts with input claim equals zero (e.g. a batched zero-check)
+        let input_claim = F::zero();
         let (r0, claim_after_first) = first_round
-            .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
-                FIRST_ROUND_POLY_NUM_COEFFS - 1,
+            .verify::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_FIRST_ROUND_POLY_NUM_COEFFS>(
+                OUTER_FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
                 &mut state_manager.transcript,
             )

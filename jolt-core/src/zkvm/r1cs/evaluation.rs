@@ -9,7 +9,7 @@
 //!     `AzSecondGroup`, `BzSecondGroup`
 //!   - Wrappers `R1CSFirstGroup` and `R1CSSecondGroup` expose `eval_az`,
 //!     `eval_bz`, and window-weighted evaluators `az_at_r`, `bz_at_r`
-//!   - Specialized `product_of_sums_shifted` helpers implement the folded
+//!   - Specialized `extended_azbz_product` helpers implement the folded
 //!     accumulation pattern used by the first-round polynomial
 //!   - Shapes (boolean vs. wider signed magnitudes) match the grouping
 //!     described in `r1cs::constraints`
@@ -37,7 +37,7 @@
 //! - Test-only `assert_constraints` methods validate that Az guards imply zero
 //!   Bz magnitudes for both groups.
 
-use ark_ff::biginteger::{S160, S192, S64};
+use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::Zero;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
@@ -52,7 +52,10 @@ use crate::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use crate::zkvm::r1cs::inputs::ProductCycleInputs;
 use crate::zkvm::JoltSharedPreprocessing;
 
-use super::constraints::{UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE};
+use super::constraints::{
+    NUM_PRODUCT_VIRTUAL, OUTER_UNIVARIATE_SKIP_DEGREE, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+};
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
 
 // TODO: put this into arkworks
@@ -65,27 +68,66 @@ fn s64_from_diff_u64s(a: u64, b: u64) -> S64 {
     }
 }
 
-// ===== Univariate-skip constants (module-level; visible to outer) =====
-pub(crate) const UNISKIP_TARGETS: [i64; UNIVARIATE_SKIP_DEGREE] =
-    uniskip_targets::<UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_DEGREE>();
+// ===== Univariate-skip constants (module-level; visible to outer only) =====
 
-pub(crate) const BASE_LEFT: i64 = -((UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
+pub(crate) const UNISKIP_TARGETS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] =
+    uniskip_targets::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_DEGREE>();
 
-pub(crate) const TARGET_SHIFTS: [i64; UNIVARIATE_SKIP_DEGREE] = {
-    let mut out = [0i64; UNIVARIATE_SKIP_DEGREE];
+pub(crate) const BASE_LEFT: i64 = -((OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
+
+pub(crate) const TARGET_SHIFTS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] = {
+    let mut out = [0i64; OUTER_UNIVARIATE_SKIP_DEGREE];
     let mut j: usize = 0;
-    while j < UNIVARIATE_SKIP_DEGREE {
+    while j < OUTER_UNIVARIATE_SKIP_DEGREE {
         out[j] = UNISKIP_TARGETS[j] - BASE_LEFT;
         j += 1;
     }
     out
 };
 
-pub(crate) const COEFFS_PER_J: [[i32; UNIVARIATE_SKIP_DOMAIN_SIZE]; UNIVARIATE_SKIP_DEGREE] = {
-    let mut out = [[0i32; UNIVARIATE_SKIP_DOMAIN_SIZE]; UNIVARIATE_SKIP_DEGREE];
+pub(crate) const COEFFS_PER_J: [[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+    OUTER_UNIVARIATE_SKIP_DEGREE] = {
+    let mut out = [[0i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; OUTER_UNIVARIATE_SKIP_DEGREE];
     let mut j: usize = 0;
-    while j < UNIVARIATE_SKIP_DEGREE {
-        out[j] = LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(TARGET_SHIFTS[j]);
+    while j < OUTER_UNIVARIATE_SKIP_DEGREE {
+        out[j] =
+            LagrangeHelper::shift_coeffs_i32::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(TARGET_SHIFTS[j]);
+        j += 1;
+    }
+    out
+};
+
+// ===== Product-virtual univariate-skip constants (size-5 window) =====
+
+pub(crate) const PRODUCT_VIRTUAL_UNISKIP_TARGETS: [i64; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
+    uniskip_targets::<
+        PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
+    >();
+
+pub(crate) const PRODUCT_VIRTUAL_BASE_LEFT: i64 =
+    -((PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
+
+pub(crate) const PRODUCT_VIRTUAL_TARGET_SHIFTS: [i64; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] = {
+    let mut out = [0i64; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+    let mut j: usize = 0;
+    while j < PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
+        out[j] = PRODUCT_VIRTUAL_UNISKIP_TARGETS[j] - PRODUCT_VIRTUAL_BASE_LEFT;
+        j += 1;
+    }
+    out
+};
+
+pub(crate) const PRODUCT_VIRTUAL_COEFFS_PER_J: [[i32;
+    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE];
+    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] = {
+    let mut out = [[0i32; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE];
+        PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+    let mut j: usize = 0;
+    while j < PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
+        out[j] = LagrangeHelper::shift_coeffs_i32::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(
+            PRODUCT_VIRTUAL_TARGET_SHIFTS[j],
+        );
         j += 1;
     }
     out
@@ -228,7 +270,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[inline]
-    pub fn az_at_r_first_group(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+    pub fn az_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let az = self.eval_az_first_group();
         let mut acc: Acc5U<F> = Acc5U::default();
         acc.fmadd(&w[0], &az.not_load_store);
@@ -245,7 +287,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[inline]
-    pub fn bz_at_r_first_group(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+    pub fn bz_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let bz = self.eval_bz_first_group();
         let mut acc: Acc6S<F> = Acc6S::default();
         acc.fmadd(&w[0], &bz.ram_addr);
@@ -264,7 +306,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     /// Product Az·Bz at the j-th extended uniskip target for the first group (uses precomputed weights).
     #[inline]
     pub fn extended_azbz_product_first_group(&self, j: usize) -> S192 {
-        let coeffs_i32: &[i32; UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
+        let coeffs_i32: &[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
 
@@ -455,7 +497,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[inline]
-    pub fn az_at_r_second_group(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+    pub fn az_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let az = self.eval_az_second_group();
         let mut acc: Acc5U<F> = Acc5U::default();
@@ -472,7 +514,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[inline]
-    pub fn bz_at_r_second_group(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+    pub fn bz_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let bz = self.eval_bz_second_group();
         let mut acc: Acc7S<F> = Acc7S::default();
@@ -494,7 +536,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         #[cfg(test)]
         self.assert_constraints_second_group();
 
-        let coeffs_i32: &[i32; UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
+        let coeffs_i32: &[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
         let az = self.eval_az_second_group();
         let bz = self.eval_bz_second_group();
 
@@ -764,6 +806,59 @@ impl ProductVirtualEval {
         right_acc.fmadd(&weights_at_r0[4], &row.not_next_noop);
 
         (left_acc.barrett_reduce(), right_acc.barrett_reduce())
+    }
+
+    /// Compute the fused left·right product at the j-th extended uniskip target for product virtualization.
+    /// Uses precomputed integer Lagrange coefficients over the size-5 base window and returns an S256 product.
+    #[inline]
+    pub fn extended_fused_product_at_j<F: JoltField>(row: &ProductCycleInputs, j: usize) -> S256 {
+        let c: &[i32; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE] =
+            &PRODUCT_VIRTUAL_COEFFS_PER_J[j];
+
+        // Weighted components lifted to i128
+        let mut left_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
+        let mut right_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
+
+        // 0: Instruction (LeftInstructionInput × RightInstructionInput)
+        left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
+        right_w[0] = (c[0] as i128) * row.instruction_right_input;
+
+        // 1: WriteLookupOutputToRD (IsRdNotZero × WriteLookupOutputToRD_flag)
+        left_w[1] = if row.is_rd_not_zero { c[1] as i128 } else { 0 };
+        right_w[1] = if row.write_lookup_output_to_rd_flag {
+            c[1] as i128
+        } else {
+            0
+        };
+
+        // 2: WritePCtoRD (IsRdNotZero × Jump_flag)
+        left_w[2] = if row.is_rd_not_zero { c[2] as i128 } else { 0 };
+        right_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
+
+        // 3: ShouldBranch (LookupOutput × Branch_flag)
+        left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
+        right_w[3] = if row.should_branch_flag {
+            c[3] as i128
+        } else {
+            0
+        };
+
+        // 4: ShouldJump (Jump_flag × (1 − NextIsNoop))
+        left_w[4] = if row.jump_flag { c[4] as i128 } else { 0 };
+        right_w[4] = if row.not_next_noop { c[4] as i128 } else { 0 };
+
+        // Fuse in i128, then multiply as S128×S128 → S256
+        let mut left_sum: i128 = 0;
+        let mut right_sum: i128 = 0;
+        let mut i = 0;
+        while i < NUM_PRODUCT_VIRTUAL {
+            left_sum += left_w[i];
+            right_sum += right_w[i];
+            i += 1;
+        }
+        let left_s128 = S128::from_i128(left_sum);
+        let right_s128 = S128::from_i128(right_sum);
+        left_s128.mul_trunc::<2, 4>(&right_s128)
     }
 
     /// Compute z(r_cycle) for the 8 de-duplicated factor polynomials used by Product Virtualization.
