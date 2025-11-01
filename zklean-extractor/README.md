@@ -15,6 +15,7 @@ This will generate a Lean package in `./jolt-zk-lean`, creating this directory i
 cd ./jolt-zk-lean/src
 lake build
 ```
+In addition to the `Jolt` module, the generated lean will contain a `Tests` module that checks to ensure that the extracted lookup-table MLEs evaluate in the same way as the corresponding Rust functions. To run these, you can run `lake test` in the same directory as above.
 
 For additional tool options, you can view the tool's help message by running the following from the root directory of the Jolt repo:
 ```sh

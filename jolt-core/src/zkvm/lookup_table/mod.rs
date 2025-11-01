@@ -19,7 +19,7 @@ use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
 use std::marker::Sync;
 use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 use suffixes::{SuffixEval, Suffixes};
 use unsigned_greater_than_equal::UnsignedGreaterThanEqualTable;
 use unsigned_less_than::UnsignedLessThanTable;
@@ -117,7 +117,9 @@ pub mod test;
 
 pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 
-#[derive(Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro)]
+#[derive(
+    Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro, IntoStaticStr,
+)]
 #[repr(u8)]
 pub enum LookupTables<const XLEN: usize> {
     RangeCheck(RangeCheckTable<XLEN>),
