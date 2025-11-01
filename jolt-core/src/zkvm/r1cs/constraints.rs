@@ -281,7 +281,7 @@ pub static UNIFORM_R1CS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if NextIsVirtual && !NextIsFirstInSequence {
     //     assert!(1 == DoNotUpdateUnexpandedPC)
     // }
-    // (note: we write the constraint in this form to keep Bz boolean)
+    // (note: we put 1 on LHS to keep Bz boolean)
     r1cs_eq_conditional!(
         name: R1CSConstraintName::MustStartSequenceFromBeginning,
         if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }

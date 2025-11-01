@@ -1,5 +1,4 @@
 use allocative::Allocative;
-use ark_ff::biginteger::S64;
 use ark_std::Zero;
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -9,7 +8,7 @@ use crate::field::{FMAdd, JoltField, MontgomeryReduce};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
+use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -21,9 +20,7 @@ use crate::subprotocols::sumcheck_prover::{
     SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
 };
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::subprotocols::univariate_skip::{
-    build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
-};
+use crate::subprotocols::univariate_skip::{build_uniskip_first_round_poly, UniSkipState};
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc8S;
 use crate::utils::math::Math;
@@ -131,25 +128,6 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
         trace: &[Cycle],
         tau_low: &[F::Challenge],
     ) -> [F; UNIVARIATE_SKIP_DEGREE] {
-        // Precompute Lagrange coefficient vectors for target Z values outside the base window
-        let base_left: i64 = -((UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
-        let targets: [i64; UNIVARIATE_SKIP_DEGREE] =
-            uniskip_targets::<UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_DEGREE>();
-
-        let target_shifts: [i64; UNIVARIATE_SKIP_DEGREE] =
-            core::array::from_fn(|j| targets[j] - base_left);
-        let coeffs_per_j: [[i32; UNIVARIATE_SKIP_DOMAIN_SIZE]; UNIVARIATE_SKIP_DEGREE] =
-            core::array::from_fn(|j| {
-                LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(target_shifts[j])
-            });
-
-        // Precompute S64 view of coeffs once per j
-        let coeffs_per_j_s64: [[S64; UNIVARIATE_SKIP_DOMAIN_SIZE]; UNIVARIATE_SKIP_DEGREE] =
-            core::array::from_fn(|j| {
-                let c = &coeffs_per_j[j];
-                core::array::from_fn(|k| S64::from_i64(c[k] as i64))
-            });
-
         let m = tau_low.len() / 2;
         let (tau_out, tau_in) = tau_low.split_at(m);
         // Compute the split eq polynomial, one scaled by R^2 in order to balance against
@@ -204,10 +182,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
 
                         let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
-                            let coeffs_i32 = &coeffs_per_j[j];
-                            let coeffs_s64 = &coeffs_per_j_s64[j];
-                            let prod_s192 =
-                                eval.product_of_sums_shifted_first_group(coeffs_i32, coeffs_s64);
+                            let prod_s192 = eval.extended_azbz_product_first_group(j);
                             inner_acc[j].fmadd(&e_in_even, &prod_s192);
                         }
 
@@ -216,10 +191,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                         let e_in_odd = E_in[x_in_odd];
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
-                            let coeffs_i32 = &coeffs_per_j[j];
-                            let coeffs_s64 = &coeffs_per_j_s64[j];
-                            let prod_s192 =
-                                eval.product_of_sums_shifted_second_group(coeffs_i32, coeffs_s64);
+                            let prod_s192 = eval.extended_azbz_product_second_group(j);
                             inner_acc[j].fmadd(&e_in_odd, &prod_s192);
                         }
                     }

@@ -592,30 +592,83 @@ impl S128Sum {
     }
 }
 
-impl FMAdd<S128, S64> for S128Sum {
+// Accumulate c (i32) when the boolean is true; add nothing when false
+impl FMAdd<i32, bool> for S128Sum {
     #[inline(always)]
-    fn fmadd(&mut self, field: &S128, other: &S64) {
-        if other.is_zero() {
+    fn fmadd(&mut self, left: &i32, right: &bool) {
+        if !*right {
             return;
         }
-        // Compute signed product: (cz as i128) * (sign(other) * |other|)
-        let cz_i128 = field.magnitude_as_u128() as i128 * if field.is_positive { 1 } else { -1 };
-        let v_mag = other.magnitude_as_u64() as i128;
-        let v_signed = if other.is_positive { v_mag } else { -v_mag };
-        let prod = cz_i128 * v_signed;
-        self.sum += S128::from_i128(prod);
+        self.sum += S128::from(*left as i64);
     }
 }
 
-impl FMAdd<S128, u64> for S128Sum {
+impl FMAdd<i32, u64> for S128Sum {
     #[inline(always)]
-    fn fmadd(&mut self, field: &S128, other: &u64) {
-        if *other == 0 {
+    fn fmadd(&mut self, left: &i32, right: &u64) {
+        if *right == 0 {
             return;
         }
-        let cz_i128 = field.magnitude_as_u128() as i128 * if field.is_positive { 1 } else { -1 };
-        let v_i128 = *other as i128; // non-negative
-        let prod = cz_i128 * v_i128;
-        self.sum += S128::from_i128(prod);
+        let cz_s64 = S64::from(*left as i64);
+        let v_s64 = S64::from(*right);
+        self.sum += cz_s64.mul_trunc::<1, 2>(&v_s64);
+    }
+}
+
+impl FMAdd<i32, S64> for S128Sum {
+    #[inline(always)]
+    fn fmadd(&mut self, left: &i32, right: &S64) {
+        if right.is_zero() {
+            return;
+        }
+        let cz_s64 = S64::from(*left as i64);
+        self.sum += cz_s64.mul_trunc::<1, 2>(right);
+    }
+}
+
+// ------------------------------
+// Pure-trait accumulator for S192 sums driven by c (S192) and S160 terms
+// ------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct S192Sum {
+    pub sum: S192,
+}
+
+// Accumulate c (i32) * term (S64) into an S192 running sum
+impl FMAdd<i32, S64> for S192Sum {
+    #[inline(always)]
+    fn fmadd(&mut self, c: &i32, term: &S64) {
+        if term.is_zero() {
+            return;
+        }
+        let c_s64 = S64::from(*c as i64);
+        self.sum += c_s64.mul_trunc::<1, 3>(term);
+    }
+}
+
+// Accumulate c (i32) * term (i128) into an S192 running sum
+impl FMAdd<i32, i128> for S192Sum {
+    #[inline(always)]
+    fn fmadd(&mut self, c: &i32, term: &i128) {
+        if *term == 0 {
+            return;
+        }
+        let c_s64 = S64::from(*c as i64);
+        let term_s128 = S128::from(*term);
+        self.sum += c_s64.mul_trunc::<2, 3>(&term_s128);
+    }
+}
+
+// Accumulate c (i32) * term (S160) into an S192 running sum
+impl FMAdd<i32, S160> for S192Sum {
+    #[inline(always)]
+    fn fmadd(&mut self, c: &i32, term: &S160) {
+        if term.is_zero() {
+            return;
+        }
+        let c_s64 = S64::from(*c as i64);
+        let term_s192 = term.to_signed_bigint_nplus1::<3>();
+        self.sum += c_s64.mul_trunc::<3, 3>(&term_s192);
     }
 }
