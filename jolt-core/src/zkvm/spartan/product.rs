@@ -324,7 +324,8 @@ pub struct ProductVirtualRemainderProver<F: JoltField> {
     split_eq_poly: GruenSplitEqPolynomial<F>,
     left: DensePolynomial<F>,
     right: DensePolynomial<F>,
-    streaming_cache: Option<ProductVirtualStreamingCache<F>>,
+    /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
+    first_round_evals: (F, F),
     #[allocative(skip)]
     params: ProductVirtualRemainderParams<F>,
 }
@@ -358,16 +359,16 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                 Some(lagrange_tau_r0),
             );
 
-        let streaming_cache =
-            Self::compute_streaming_round_cache(trace, &lagrange_evals_r, &split_eq_poly);
+        let (t0, t_inf, left_bound, right_bound) =
+            Self::compute_data_from_trace(trace, &lagrange_evals_r, &split_eq_poly);
 
         Self {
             split_eq_poly,
             preprocess: Arc::new(preprocessing.shared.clone()),
             trace: Arc::new(trace.to_vec()),
-            left: DensePolynomial::default(),
-            right: DensePolynomial::default(),
-            streaming_cache: Some(streaming_cache),
+            left: left_bound,
+            right: right_bound,
+            first_round_evals: (t0, t_inf),
             params: ProductVirtualRemainderParams::new(num_cycle_vars, uni),
         }
     }
@@ -386,11 +387,11 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
     ///   weights w_i = L_i(r0) over the size-5 domain.
     /// - For ShouldJump, the effective right factor is (1 − NextIsNoop).
     /// - We follow outer’s delayed-reduction pattern across x_in to reduce modular reductions.
-    fn compute_streaming_round_cache(
+    fn compute_data_from_trace(
         trace: &[Cycle],
         weights_at_r0: &[F; NUM_PRODUCT_VIRTUAL],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
-    ) -> ProductVirtualStreamingCache<F> {
+    ) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {
         let num_x_out_vals = split_eq_poly.E_out_current_len();
         let num_x_in_vals = split_eq_poly.E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
@@ -398,24 +399,18 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
             .checked_mul(num_x_in_vals)
             .expect("overflow computing groups_exact");
 
-        // Preallocate global buffers once
-        let mut left_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut left_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut right_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut right_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        // Preallocate global buffers once (interleaved layout: [lo, hi] per entry)
+        let mut left_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+        let mut right_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
 
-        // Parallel over x_out by chunking in lockstep; each chunk has size num_x_in_vals
-        let (t0_acc_unr, t_inf_acc_unr) = left_lo
-            .par_chunks_mut(num_x_in_vals)
-            .zip(left_hi.par_chunks_mut(num_x_in_vals))
-            .zip(right_lo.par_chunks_mut(num_x_in_vals))
-            .zip(right_hi.par_chunks_mut(num_x_in_vals))
+        // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
+        let (t0_acc_unr, t_inf_acc_unr) = left_bound
+            .par_chunks_exact_mut(2 * num_x_in_vals)
+            .zip(right_bound.par_chunks_exact_mut(2 * num_x_in_vals))
             .enumerate()
-            .map(
-                |(
-                    x_out_val,
-                    (((left_lo_chunk, left_hi_chunk), right_lo_chunk), right_hi_chunk),
-                )| {
+            .fold(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |(mut acc0, mut acc_inf), (x_out_val, (l_chunk, r_chunk))| {
                     let mut inner0 = F::Unreduced::<9>::zero();
                     let mut inner_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
@@ -445,18 +440,18 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                         let slope = (left1 - left0) * (right1 - right0);
                         inner0 += e_in.mul_unreduced::<9>(p0);
                         inner_inf += e_in.mul_unreduced::<9>(slope);
-                        left_lo_chunk[x_in_val] = left0;
-                        right_lo_chunk[x_in_val] = right0;
-                        left_hi_chunk[x_in_val] = left1;
-                        right_hi_chunk[x_in_val] = right1;
+                        let off = 2 * x_in_val;
+                        l_chunk[off] = left0;
+                        l_chunk[off + 1] = left1;
+                        r_chunk[off] = right0;
+                        r_chunk[off + 1] = right1;
                     }
                     let e_out = split_eq_poly.E_out_current()[x_out_val];
                     let reduced0 = F::from_montgomery_reduce::<9>(inner0);
                     let reduced_inf = F::from_montgomery_reduce::<9>(inner_inf);
-                    (
-                        e_out.mul_unreduced::<9>(reduced0),
-                        e_out.mul_unreduced::<9>(reduced_inf),
-                    )
+                    acc0 += e_out.mul_unreduced::<9>(reduced0);
+                    acc_inf += e_out.mul_unreduced::<9>(reduced_inf);
+                    (acc0, acc_inf)
                 },
             )
             .reduce(
@@ -464,42 +459,11 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                 |a, b| (a.0 + b.0, a.1 + b.1),
             );
 
-        ProductVirtualStreamingCache {
-            t0: F::from_montgomery_reduce::<9>(t0_acc_unr),
-            t_inf: F::from_montgomery_reduce::<9>(t_inf_acc_unr),
-            left_lo,
-            left_hi,
-            right_lo,
-            right_hi,
-        }
-    }
-
-    fn bind_streaming_round(&mut self, r_0: F::Challenge) {
-        let cache = self.streaming_cache.take().unwrap();
-        let groups = cache.left_lo.len();
-        let mut left_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-        let mut right_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
-
-        // Parallelize over x_out by chunking destination slices
-        left_bound
-            .par_chunks_mut(num_x_in_vals)
-            .zip(right_bound.par_chunks_mut(num_x_in_vals))
-            .enumerate()
-            .for_each(|(xo, (l_chunk, r_chunk))| {
-                for xi in 0..num_x_in_vals {
-                    let idx = xo * num_x_in_vals + xi;
-                    let l0 = cache.left_lo[idx];
-                    let l1 = cache.left_hi[idx];
-                    let r0 = cache.right_lo[idx];
-                    let r1 = cache.right_hi[idx];
-                    l_chunk[xi] = l0 + r_0 * (l1 - l0);
-                    r_chunk[xi] = r0 + r_0 * (r1 - r0);
-                }
-            });
-
-        self.left = DensePolynomial::new(left_bound);
-        self.right = DensePolynomial::new(right_bound);
+        (F::from_montgomery_reduce::<9>(t0_acc_unr),
+        F::from_montgomery_reduce::<9>(t_inf_acc_unr),
+        DensePolynomial::new(left_bound),
+        DensePolynomial::new(right_bound),
+    )
     }
 
     /// Compute the quadratic endpoints for remaining rounds.
@@ -608,11 +572,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     )]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
-            let cache = self
-                .streaming_cache
-                .as_ref()
-                .expect("streaming cache missing in round 0");
-            (cache.t0, cache.t_inf)
+            self.first_round_evals
         } else {
             self.remaining_quadratic_evals()
         };
@@ -623,16 +583,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        if round == 0 {
-            self.bind_streaming_round(r_j);
-        } else {
-            rayon::join(
-                || self.left.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || self.right.bind_parallel(r_j, BindingOrder::LowToHigh),
-            );
-        }
-
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+        rayon::join(
+            || self.left.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || self.right.bind_parallel(r_j, BindingOrder::LowToHigh),
+        );
         // Bind eq_poly for next round
         self.split_eq_poly.bind(r_j);
     }
@@ -685,16 +640,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
-}
-
-#[derive(Allocative)]
-struct ProductVirtualStreamingCache<F: JoltField> {
-    pub t0: F,
-    pub t_inf: F,
-    pub left_lo: Vec<F>,
-    pub left_hi: Vec<F>,
-    pub right_lo: Vec<F>,
-    pub right_hi: Vec<F>,
 }
 
 pub struct ProductVirtualRemainderVerifier<F: JoltField> {

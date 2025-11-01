@@ -240,17 +240,6 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
     }
 }
 
-#[derive(Clone, Debug, Allocative)]
-pub struct StreamingRoundCache<F: JoltField> {
-    pub t0: F,
-    pub t_inf: F,
-    /// Per (x_out, x_in) block values at y=r0 (lo := x_next=0, hi := x_next=1)
-    pub az_lo: Vec<F>,
-    pub az_hi: Vec<F>,
-    pub bz_lo: Vec<F>,
-    pub bz_hi: Vec<F>,
-}
-
 /// SumcheckInstance for Spartan outer rounds after the univariate-skip first round.
 /// Round 0 in this instance corresponds to the "streaming" round; subsequent rounds
 /// use the remaining linear-time algorithm over cycle variables.
@@ -263,7 +252,8 @@ pub struct OuterRemainingSumcheckProver<F: JoltField> {
     split_eq_poly: GruenSplitEqPolynomial<F>,
     az: DensePolynomial<F>,
     bz: DensePolynomial<F>,
-    streaming_cache: Option<StreamingRoundCache<F>>,
+    /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
+    first_round_evals: (F, F),
     #[allocative(skip)]
     params: OuterRemainingSumcheckParams<F>,
 }
@@ -297,7 +287,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                 Some(lagrange_tau_r0),
             );
 
-        let streaming_cache = Self::compute_streaming_round_cache(
+        let (t0, t_inf, az_bound, bz_bound) = Self::compute_data_from_trace(
             &preprocessing.shared,
             trace,
             &lagrange_evals_r,
@@ -308,9 +298,9 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
             split_eq_poly,
             preprocess: Arc::new(preprocessing.shared.clone()),
             trace: Arc::new(trace.to_vec()),
-            az: DensePolynomial::default(),
-            bz: DensePolynomial::default(),
-            streaming_cache: Some(streaming_cache),
+            az: az_bound,
+            bz: bz_bound,
+            first_round_evals: (t0, t_inf),
             params: OuterRemainingSumcheckParams::new(num_cycles_bits, uni),
         }
     }
@@ -341,39 +331,32 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     #[inline]
-    fn compute_streaming_round_cache(
+    fn compute_data_from_trace(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
         lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
-    ) -> StreamingRoundCache<F> {
+    ) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {
         let num_x_out_vals = split_eq_poly.E_out_current_len();
         let num_x_in_vals = split_eq_poly.E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
-        debug_assert!(
-            num_x_out_vals > 0,
-            "E_out_current_len() must be > 0 for outer streaming cache"
-        );
 
         let groups_exact = num_x_out_vals
             .checked_mul(num_x_in_vals)
             .expect("overflow computing groups_exact");
 
-        // Preallocate global buffers once
-        let mut az_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut az_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut bz_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut bz_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        // Preallocate interleaved buffers once ([lo, hi] per entry)
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
 
-        // Parallel over x_out groups by mut-chunking all four buffers in lockstep
-        let (t0_acc_unr, t_inf_acc_unr) = az_lo
-            .par_chunks_mut(num_x_in_vals)
-            .zip(az_hi.par_chunks_mut(num_x_in_vals))
-            .zip(bz_lo.par_chunks_mut(num_x_in_vals))
-            .zip(bz_hi.par_chunks_mut(num_x_in_vals))
+        // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
+        let (t0_acc_unr, t_inf_acc_unr) = az_bound
+            .par_chunks_exact_mut(2 * num_x_in_vals)
+            .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
             .enumerate()
-            .map(
-                |(x_out_val, (((az_lo_chunk, az_hi_chunk), bz_lo_chunk), bz_hi_chunk))| {
+            .fold(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
                     let mut inner_sum0 = F::Unreduced::<9>::zero();
                     let mut inner_sum_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
@@ -390,18 +373,18 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                         let e_in = split_eq_poly.E_in_current()[x_in_val];
                         inner_sum0 += e_in.mul_unreduced::<9>(p0);
                         inner_sum_inf += e_in.mul_unreduced::<9>(slope);
-                        az_lo_chunk[x_in_val] = az0;
-                        bz_lo_chunk[x_in_val] = bz0;
-                        az_hi_chunk[x_in_val] = az1;
-                        bz_hi_chunk[x_in_val] = bz1;
+                        let off = 2 * x_in_val;
+                        az_chunk[off] = az0;
+                        az_chunk[off + 1] = az1;
+                        bz_chunk[off] = bz0;
+                        bz_chunk[off + 1] = bz1;
                     }
                     let e_out = split_eq_poly.E_out_current()[x_out_val];
                     let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
                     let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-                    (
-                        e_out.mul_unreduced::<9>(reduced0),
-                        e_out.mul_unreduced::<9>(reduced_inf),
-                    )
+                    acc0 += e_out.mul_unreduced::<9>(reduced0);
+                    acci += e_out.mul_unreduced::<9>(reduced_inf);
+                    (acc0, acci)
                 },
             )
             .reduce(
@@ -409,48 +392,15 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                 |a, b| (a.0 + b.0, a.1 + b.1),
             );
 
-        StreamingRoundCache {
-            t0: F::from_montgomery_reduce::<9>(t0_acc_unr),
-            t_inf: F::from_montgomery_reduce::<9>(t_inf_acc_unr),
-            az_lo,
-            az_hi,
-            bz_lo,
-            bz_hi,
-        }
+        (
+            F::from_montgomery_reduce::<9>(t0_acc_unr),
+            F::from_montgomery_reduce::<9>(t_inf_acc_unr),
+            DensePolynomial::new(az_bound),
+            DensePolynomial::new(bz_bound),
+        )
     }
 
-    /// Bind the streaming round after deriving the first challenge r_0.
-    ///
-    /// As we compute each `{a/b/c}(x_out, x_in, {0,∞}, r)`, we will
-    /// store them in `bound_coeffs` in sparse format (the eval at 1 will be eval
-    /// at 0 + eval at ∞). We then bind these bound coeffs with r_i for the next round.
-    fn bind_streaming_round(&mut self, r_0: F::Challenge) {
-        let cache = self.streaming_cache.take().unwrap();
-        let groups = cache.az_lo.len();
-        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
-        let iter_num_x_in_vars = num_x_in_vals.log_2();
-
-        // Parallelize over x_out by chunking destination slices
-        az_bound
-            .par_chunks_mut(num_x_in_vals)
-            .zip(bz_bound.par_chunks_mut(num_x_in_vals))
-            .enumerate()
-            .for_each(|(xo, (az_chunk, bz_chunk))| {
-                for xi in 0..num_x_in_vals {
-                    let idx = xo << iter_num_x_in_vars | xi;
-                    let az0 = cache.az_lo[idx];
-                    let az1 = cache.az_hi[idx];
-                    let bz0 = cache.bz_lo[idx];
-                    let bz1 = cache.bz_hi[idx];
-                    az_chunk[xi] = az0 + r_0 * (az1 - az0);
-                    bz_chunk[xi] = bz0 + r_0 * (bz1 - bz0);
-                }
-            });
-        self.az = DensePolynomial::new(az_bound);
-        self.bz = DensePolynomial::new(bz_bound);
-    }
+    // No special binding path needed; az/bz hold interleaved [lo,hi] ready for binding
 
     /// Compute the polynomial for each of the remaining rounds, using the
     /// linear-time algorithm with split-eq optimizations.
@@ -571,11 +521,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
     )]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
-            let cache = self
-                .streaming_cache
-                .as_ref()
-                .expect("streaming cache missing in round 0");
-            (cache.t0, cache.t_inf)
+            self.first_round_evals
         } else {
             self.remaining_quadratic_evals()
         };
@@ -586,15 +532,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
     }
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        if round == 0 {
-            self.bind_streaming_round(r_j);
-        } else {
-            rayon::join(
-                || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
-            );
-        }
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+        rayon::join(
+            || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+        );
 
         // Bind eq_poly for next round
         self.split_eq_poly.bind(r_j);
