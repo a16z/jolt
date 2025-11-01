@@ -37,7 +37,7 @@ use crate::zkvm::r1cs::{
         FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
         UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
-    evaluation::{R1CSEval, R1CSFirstGroup, R1CSSecondGroup},
+    evaluation::R1CSEval,
     inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
@@ -202,11 +202,12 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                         let x_in_even = x_in_prime << 1;
                         let e_in_even = E_in[x_in_even];
 
-                        let g0 = R1CSFirstGroup::<F>::from_cycle_inputs(&row_inputs);
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs_i32 = &coeffs_per_j[j];
                             let coeffs_s64 = &coeffs_per_j_s64[j];
-                            let prod_s192 = g0.product_of_sums_shifted(coeffs_i32, coeffs_s64);
+                            let prod_s192 =
+                                eval.product_of_sums_shifted_first_group(coeffs_i32, coeffs_s64);
                             inner_acc[j].fmadd(&e_in_even, &prod_s192);
                         }
 
@@ -214,11 +215,11 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                         let x_in_odd = x_in_even + 1;
                         let e_in_odd = E_in[x_in_odd];
 
-                        let g1 = R1CSSecondGroup::<F>::from_cycle_inputs(&row_inputs);
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs_i32 = &coeffs_per_j[j];
                             let coeffs_s64 = &coeffs_per_j_s64[j];
-                            let prod_s192 = g1.product_of_sums_shifted(coeffs_i32, coeffs_s64);
+                            let prod_s192 =
+                                eval.product_of_sums_shifted_second_group(coeffs_i32, coeffs_s64);
                             inner_acc[j].fmadd(&e_in_odd, &prod_s192);
                         }
                     }
@@ -413,12 +414,11 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
                         let row_inputs =
                             R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                        let g0 = R1CSFirstGroup::<F>::from_cycle_inputs(&row_inputs);
-                        let g1 = R1CSSecondGroup::<F>::from_cycle_inputs(&row_inputs);
-                        let az0 = g0.az_at_r(lagrange_evals_r);
-                        let bz0 = g0.bz_at_r(lagrange_evals_r);
-                        let az1 = g1.az_at_r(lagrange_evals_r);
-                        let bz1 = g1.bz_at_r(lagrange_evals_r);
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        let az0 = eval.az_at_r_first_group(lagrange_evals_r);
+                        let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
+                        let az1 = eval.az_at_r_second_group(lagrange_evals_r);
+                        let bz1 = eval.bz_at_r_second_group(lagrange_evals_r);
                         let p0 = az0 * bz0;
                         let slope = (az1 - az0) * (bz1 - bz0);
                         let e_in = split_eq_poly.E_in_current()[x_in_val];
@@ -664,7 +664,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
 
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let claimed_witness_evals =
-            R1CSEval::compute_claimed_inputs::<F>(&self.preprocess, &self.trace, r_cycle);
+            R1CSEval::compute_claimed_inputs(&self.preprocess, &self.trace, r_cycle);
 
         #[cfg(test)]
         {

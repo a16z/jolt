@@ -560,7 +560,7 @@ impl LagrangeHelper {
             j += 1;
         }
         sums
-    }    
+    }
 }
 
 #[cfg(test)]

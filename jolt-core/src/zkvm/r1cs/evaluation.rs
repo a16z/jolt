@@ -90,7 +90,7 @@ pub struct BzFirstGroup {
     pub lookup_output_minus_one: S64,                // LookupOutput - 1
     pub next_unexp_pc_minus_lookup_output: S64,      // NextUnexpandedPC - LookupOutput
     pub next_pc_minus_pc_plus_one: S64,              // NextPC - (PC + 1)
-    pub do_not_update_unexpanded_pc_minus_one: bool, // 1 - DoNotUpdateUnexpandedPC
+    pub one_minus_do_not_update_unexpanded_pc: bool, // 1 - DoNotUpdateUnexpandedPC
 }
 
 /// Guards for the second group (all booleans except two u8 flags)
@@ -121,14 +121,14 @@ pub struct BzSecondGroup {
     pub next_unexp_pc_minus_expected: i128, // NextUnexpandedPC - (UnexpandedPC + const)
 }
 
-/// First-group evaluator wrapper with typed accessors
+/// Unified evaluator wrapper with typed accessors for both groups
 #[derive(Clone, Copy, Debug)]
-pub struct R1CSFirstGroup<'a, F: JoltField> {
+pub struct R1CSEval<'a, F: JoltField> {
     row: &'a R1CSCycleInputs,
     _m: core::marker::PhantomData<F>,
 }
 
-impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
+impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[inline]
     pub fn from_cycle_inputs(row: &'a R1CSCycleInputs) -> Self {
         Self {
@@ -137,8 +137,10 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
         }
     }
 
+    // ---------- First group ----------
+
     #[inline]
-    pub fn eval_az(&self) -> AzFirstGroup {
+    pub fn eval_az_first_group(&self) -> AzFirstGroup {
         let flags = &self.row.flags;
         let ld = flags[CircuitFlags::Load];
         let st = flags[CircuitFlags::Store];
@@ -164,7 +166,7 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
     }
 
     #[inline]
-    pub fn eval_bz(&self) -> BzFirstGroup {
+    pub fn eval_bz_first_group(&self) -> BzFirstGroup {
         BzFirstGroup {
             ram_addr: self.row.ram_addr,
             ram_read_minus_ram_write: s64_from_diff_u64s(
@@ -193,14 +195,14 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
                 self.row.next_pc,
                 self.row.pc.wrapping_add(1),
             ),
-            do_not_update_unexpanded_pc_minus_one: !self.row.flags
+            one_minus_do_not_update_unexpanded_pc: !self.row.flags
                 [CircuitFlags::DoNotUpdateUnexpandedPC],
         }
     }
 
     #[inline]
-    pub fn az_at_r(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
-        let az = self.eval_az();
+    pub fn az_at_r_first_group(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+        let az = self.eval_az_first_group();
         let mut acc: Acc5U<F> = Acc5U::default();
         acc.fmadd(&w[0], &az.ram_addr_eq_zero_if_not_load_store);
         acc.fmadd(&w[1], &az.ram_read_eq_ram_write_if_load);
@@ -216,8 +218,8 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
     }
 
     #[inline]
-    pub fn bz_at_r(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
-        let bz = self.eval_bz();
+    pub fn bz_at_r_first_group(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+        let bz = self.eval_bz_first_group();
         let mut acc: Acc6S<F> = Acc6S::default();
         acc.fmadd(&w[0], &bz.ram_addr);
         acc.fmadd(&w[1], &bz.ram_read_minus_ram_write);
@@ -228,18 +230,18 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
         acc.fmadd(&w[6], &bz.lookup_output_minus_one);
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_lookup_output);
         acc.fmadd(&w[8], &bz.next_pc_minus_pc_plus_one);
-        acc.fmadd(&w[9], &bz.do_not_update_unexpanded_pc_minus_one);
+        acc.fmadd(&w[9], &bz.one_minus_do_not_update_unexpanded_pc);
         acc.barrett_reduce()
     }
 
     #[inline]
-    pub fn product_of_sums_shifted(
+    pub fn product_of_sums_shifted_first_group(
         &self,
         coeffs_i32: &[i32; UNIVARIATE_SKIP_DOMAIN_SIZE],
         _coeffs_s64: &[S64; UNIVARIATE_SKIP_DOMAIN_SIZE],
     ) -> S192 {
-        let az = self.eval_az();
-        let bz = self.eval_bz();
+        let az = self.eval_az_first_group();
+        let bz = self.eval_bz_first_group();
 
         let mut sum_c_az_i32: i32 = 0;
         let mut sum_bz: S128Sum = S128Sum::default();
@@ -331,7 +333,7 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
             sum_c_az_i32 += c9_i32;
         } else {
             // Bz = DoNotUpdateUnexpandedPC - 1 = -(1 - DoNotUpdateUnexpandedPC)
-            if bz.do_not_update_unexpanded_pc_minus_one {
+            if bz.one_minus_do_not_update_unexpanded_pc {
                 sum_bz.sum -= S128::from_i128(c9_i32 as i128);
             }
         }
@@ -341,9 +343,9 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
     }
 
     #[cfg(test)]
-    pub fn assert_constraints(&self) {
-        let az = self.eval_az();
-        let bz = self.eval_bz();
+    pub fn assert_constraints_first_group(&self) {
+        let az = self.eval_az_first_group();
+        let bz = self.eval_bz_first_group();
         debug_assert!((!az.ram_addr_eq_zero_if_not_load_store) || bz.ram_addr == 0);
         debug_assert!(
             (!az.ram_read_eq_ram_write_if_load) || bz.ram_read_minus_ram_write.to_i128() == 0
@@ -366,29 +368,13 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
             (!az.next_pc_eq_pc_plus_one_if_inline) || bz.next_pc_minus_pc_plus_one.to_i128() == 0
         );
         debug_assert!(
-            (!az.must_start_sequence_from_beginning) || bz.do_not_update_unexpanded_pc_minus_one
+            (!az.must_start_sequence_from_beginning) || bz.one_minus_do_not_update_unexpanded_pc
         );
     }
-}
-
-/// Second-group evaluator wrapper with typed accessors
-#[derive(Clone, Copy, Debug)]
-pub struct R1CSSecondGroup<'a, F: JoltField> {
-    row: &'a R1CSCycleInputs,
-    _m: core::marker::PhantomData<F>,
-}
-
-impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
-    #[inline]
-    pub fn from_cycle_inputs(row: &'a R1CSCycleInputs) -> Self {
-        Self {
-            row,
-            _m: core::marker::PhantomData,
-        }
-    }
+    // ---------- Second group ----------
 
     #[inline]
-    pub fn eval_az(&self) -> AzSecondGroup {
+    pub fn eval_az_second_group(&self) -> AzSecondGroup {
         let flags = &self.row.flags;
         let not_add_sub_mul_advice = !(flags[CircuitFlags::AddOperands]
             || flags[CircuitFlags::SubtractOperands]
@@ -415,7 +401,7 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     }
 
     #[inline]
-    pub fn eval_bz(&self) -> BzSecondGroup {
+    pub fn eval_bz_second_group(&self) -> BzSecondGroup {
         // RamAddrEqRs1PlusImmIfLoadStore
         let expected_addr: i128 = if self.row.imm.is_positive {
             (self.row.rs1_read_value as u128 + self.row.imm.magnitude_as_u64() as u128) as i128
@@ -479,9 +465,9 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     }
 
     #[inline]
-    pub fn az_at_r(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+    pub fn az_at_r_second_group(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
-        let az = self.eval_az();
+        let az = self.eval_az_second_group();
         let mut acc: Acc5U<F> = Acc5U::default();
         acc.fmadd(&w[0], &az.ram_addr_eq_rs1_plus_imm_if_load_store);
         acc.fmadd(&w[1], &az.right_lookup_add);
@@ -496,9 +482,9 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     }
 
     #[inline]
-    pub fn bz_at_r(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
+    pub fn bz_at_r_second_group(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
-        let bz = self.eval_bz();
+        let bz = self.eval_bz_second_group();
         let mut acc: Acc7S<F> = Acc7S::default();
         acc.fmadd(&w[0], &bz.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &bz.right_lookup_minus_add_result);
@@ -513,17 +499,17 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     }
 
     #[inline]
-    pub fn product_of_sums_shifted(
+    pub fn product_of_sums_shifted_second_group(
         &self,
         _coeffs_i32: &[i32; UNIVARIATE_SKIP_DOMAIN_SIZE],
         _coeffs_s64: &[S64; UNIVARIATE_SKIP_DOMAIN_SIZE],
     ) -> S192 {
         #[cfg(test)]
-        self.assert_constraints();
+        self.assert_constraints_second_group();
 
         let coeffs_i32 = _coeffs_i32;
-        let az = self.eval_az();
-        let bz = self.eval_bz();
+        let az = self.eval_az_second_group();
+        let bz = self.eval_bz_second_group();
 
         let mut sum_c_az_i64: i64 = 0;
         let mut sum_bz_s160 = S160::from(0i128);
@@ -635,9 +621,9 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     }
 
     #[cfg(test)]
-    pub fn assert_constraints(&self) {
-        let az = self.eval_az();
-        let bz = self.eval_bz();
+    pub fn assert_constraints_second_group(&self) {
+        let az = self.eval_az_second_group();
+        let bz = self.eval_bz_second_group();
         debug_assert!(
             (!az.ram_addr_eq_rs1_plus_imm_if_load_store) || bz.ram_addr_minus_rs1_plus_imm == 0i128
         );
@@ -664,16 +650,11 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         );
         debug_assert!((!az.next_unexp_pc_update_otherwise) || bz.next_unexp_pc_minus_expected == 0);
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-pub struct R1CSEval;
-
-impl R1CSEval {
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
     /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
     #[tracing::instrument(skip_all)]
-    pub fn compute_claimed_inputs<F: JoltField>(
+    pub fn compute_claimed_inputs(
         preprocessing: &JoltSharedPreprocessing,
         trace: &[Cycle],
         r_cycle: &[F::Challenge],
