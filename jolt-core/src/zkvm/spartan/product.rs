@@ -1,7 +1,7 @@
 use allocative::Allocative;
 use ark_std::Zero;
 
-use crate::field::{AccumulateInPlace, JoltField};
+use crate::field::{FMAdd, JoltField, MontgomeryReduce};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -28,9 +28,8 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::{
-    compute_claimed_product_factor_evals, ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS,
-};
+use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
+use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 use ark_ff::biginteger::S128;
@@ -196,7 +195,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                     let e_out = E_out[x_out_val];
                     // Accumulate across x_in using 8-limb signed accumulators per j
                     let mut inner_acc: [Acc8S<F>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::new(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                        [Acc8S::<F>::default(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
                     for x_in_val in 0..num_x_in_vals {
                         let e_in = if num_x_in_vals == 1 {
                             E_in[0]
@@ -221,35 +220,33 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                             left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
                             right_w[0] = (c[0] as i128) * row.instruction_right_input;
 
-                            // WriteLookupOutputToRD: is_rd_zero × WriteLookupOutputToRD_flag
-                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[1] = (c[1] as i128)
-                                * (if row.is_rd_not_zero { 1i32 } else { 0i32 } as i128);
-                            right_w[1] = (c[1] as i128)
-                                * (if row.write_lookup_output_to_rd_flag {
-                                    1i32
-                                } else {
-                                    0i32
-                                } as i128);
+                            // WriteLookupOutputToRD: is_rd_not_zero × WriteLookupOutputToRD_flag
+                            // left: bool/u8 -> i128; right: bool/u8 -> i128
+                            left_w[1] = if row.is_rd_not_zero { c[1] as i128 } else { 0 };
+                            right_w[1] = if row.write_lookup_output_to_rd_flag {
+                                c[1] as i128
+                            } else {
+                                0
+                            };
 
-                            // WritePCtoRD: is_rd_zero × Jump_flag
-                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[2] = (c[2] as i128) * (row.is_rd_not_zero as i32 as i128);
-                            right_w[2] =
-                                (c[2] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
+                            // WritePCtoRD: is_rd_not_zero × Jump_flag
+                            // left: bool/u8 -> i128; right: bool/u8 -> i128
+                            left_w[2] = if row.is_rd_not_zero { c[2] as i128 } else { 0 };
+                            right_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
 
                             // ShouldBranch: lookup_output × Branch_flag
                             // left: u64 -> i128; right: bool/u8 -> i32 -> i128
                             left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
-                            right_w[3] = (c[3] as i128)
-                                * (if row.should_branch_flag { 1i32 } else { 0i32 } as i128);
+                            right_w[3] = if row.should_branch_flag {
+                                c[3] as i128
+                            } else {
+                                0
+                            };
 
                             // ShouldJump: Jump_flag × (1 − NextIsNoop)
                             // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[4] =
-                                (c[4] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
-                            right_w[4] = (c[4] as i128)
-                                * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
+                            left_w[4] = if row.jump_flag { c[4] as i128 } else { 0 };
+                            right_w[4] = if row.not_next_noop { c[4] as i128 } else { 0 };
 
                             // Fuse by summing over i in i128 and multiply in bigints first
                             let mut left_sum_i128: i128 = 0;
@@ -270,7 +267,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                     // Reduce inner accumulators (pos-neg Montgomery) and multiply by E_out
                     // NOTE: needs a R^2 correction factor, applied when initializing E_out
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner_acc[j].reduce();
+                        let reduced = inner_acc[j].montgomery_reduce();
                         local_acc_unr[j] += e_out.mul_unreduced::<9>(reduced);
                     }
                 }
@@ -508,10 +505,14 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                         let row_lo = ProductCycleInputs::from_trace::<F>(trace, idx_lo);
                         let row_hi = ProductCycleInputs::from_trace::<F>(trace, idx_hi);
 
-                        let (left0, right0) =
-                            row_lo.compute_left_right_at_r::<F>(&weights_at_r0[..]);
-                        let (left1, right1) =
-                            row_hi.compute_left_right_at_r::<F>(&weights_at_r0[..]);
+                        let (left0, right0) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_lo,
+                            &weights_at_r0[..],
+                        );
+                        let (left1, right1) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_hi,
+                            &weights_at_r0[..],
+                        );
 
                         let e_in = if num_x_in_vals == 1 {
                             split_eq_poly.E_in_current()[0]
@@ -727,7 +728,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let (r_cycle, _r0_slice) = opening_point.r.split_at(self.params.n_cycle_vars);
 
         // Compute claimed unique factor evaluations at r_cycle in one pass
-        let claims = compute_claimed_product_factor_evals::<F>(&self.trace, r_cycle);
+        let claims = ProductVirtualEval::compute_claimed_factors::<F>(&self.trace, r_cycle);
 
         // Append fused left/right product openings akin to outer (SpartanAz/Bz)
         let lr = self.final_sumcheck_evals();

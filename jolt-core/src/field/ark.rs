@@ -1,4 +1,4 @@
-use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
+use super::{FieldOps, JoltField, MulU64WithCarry};
 #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
 use crate::field::challenge::MontU128Challenge;
@@ -261,19 +261,6 @@ impl JoltField for ark_bn254::Fr {
     #[inline]
     fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
         ark_bn254::Fr::from_barrett_reduce::<L, 5>(unreduced)
-    }
-}
-
-impl<const N: usize> FmaddTrunc for BigInt<N> {
-    type Other<const M: usize> = BigInt<M>;
-    type Acc<const P: usize> = BigInt<P>;
-
-    fn fmadd_trunc<const M: usize, const P: usize>(
-        &self,
-        other: &Self::Other<M>,
-        acc: &mut Self::Acc<P>,
-    ) {
-        self.fmadd_trunc(other, acc)
     }
 }
 
