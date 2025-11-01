@@ -126,7 +126,7 @@ where
         tau.push(tau_high);
 
         let mut uniskip_instance =
-            ProductVirtualUniSkipInstance::<F>::new_prover(state_manager, &tau);
+            ProductVirtualUniSkipInstance::<F>::gen(state_manager, &tau);
         let (first_round_proof, r0, claim_after_first) =
             prove_uniskip_round::<F, ProofTranscript, ProductVirtualUniSkipInstance<F>>(
                 &mut uniskip_instance,
