@@ -369,7 +369,7 @@ impl<F: JoltField> BarrettReduce<F> for Acc7S<F> {
         let result = if self.pos >= self.neg {
             F::from_barrett_reduce::<7>(self.pos - self.neg)
         } else {
-            F::from_barrett_reduce::<7>(self.neg - self.pos)
+            -F::from_barrett_reduce::<7>(self.neg - self.pos)
         };
         #[cfg(test)]
         {
@@ -531,7 +531,7 @@ impl<F: JoltField> MontgomeryReduce<F> for Acc8S<F> {
         let result = if self.pos >= self.neg {
             F::from_montgomery_reduce::<8>(self.pos - self.neg)
         } else {
-            F::from_montgomery_reduce::<8>(self.neg - self.pos)
+            -F::from_montgomery_reduce::<8>(self.neg - self.pos)
         };
         #[cfg(test)]
         {
