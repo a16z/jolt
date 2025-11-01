@@ -13,7 +13,7 @@
 //!     accumulation pattern used by the first-round polynomial
 //!   - Shapes (boolean vs. wider signed magnitudes) match the grouping
 //!     described in `r1cs::constraints`
-//! 
+//!
 //! - Input claim computation (at the end of Spartan outer sumcheck):
 //!   - `R1CSEval::compute_claimed_inputs` accumulates all `JoltR1CSInputs`
 //!     values at a random point without materializing per-input polynomials,
@@ -874,7 +874,7 @@ impl ProductVirtualEval {
 
         let eq_two_len = eq_two.len();
 
-        let totals_unr: [F::Unreduced<9>; 8] = (0..eq_one.len())
+        (0..eq_one.len())
             .into_par_iter()
             .map(|x1| {
                 let eq1_val = eq_one[x1];
@@ -931,8 +931,7 @@ impl ProductVirtualEval {
                     }
                     acc
                 },
-            );
-
-        core::array::from_fn(|i| F::from_montgomery_reduce::<9>(totals_unr[i]))
+            )
+            .map(|unr| F::from_montgomery_reduce::<9>(unr))
     }
 }

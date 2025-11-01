@@ -621,9 +621,7 @@ impl LagrangeHelper {
                 let a7_plus_a1 = evals[7] + evals[1];
                 let a6_plus_a2 = evals[6] + evals[2];
                 let a5_plus_a3 = evals[5] + evals[3];
-                a7_plus_a1 * 8 - a6_plus_a2 * 28 + a5_plus_a3 * 56
-                    - evals[4] * 70
-                    - evals[0]
+                a7_plus_a1 * 8 - a6_plus_a2 * 28 + a5_plus_a3 * 56 - evals[4] * 70 - evals[0]
             }
             // a(n + 9) = 9 * a(n + 8) - 36 * a(n + 7) + 84 * a(n + 6) - 126 * a(n + 5)
             //          + 126 * a(n + 4) - 84 * a(n + 3) + 36 * a(n + 2) - 9 * a(n + 1) + a(n)
@@ -632,11 +630,7 @@ impl LagrangeHelper {
                 let a2_minus_a7 = evals[2] - evals[7];
                 let a6_minus_a3 = evals[6] - evals[3];
                 let a4_minus_a5 = evals[4] - evals[5];
-                a8_minus_a1 * 9
-                    + a2_minus_a7 * 36
-                    + a6_minus_a3 * 84
-                    + a4_minus_a5 * 126
-                    + evals[0]
+                a8_minus_a1 * 9 + a2_minus_a7 * 36 + a6_minus_a3 * 84 + a4_minus_a5 * 126 + evals[0]
             }
             // a(n + 10) = -a(n) + 10*a(n + 1) - 45*a(n + 2) + 120*a(n + 3)
             //          - 210*a(n + 4) + 252*a(n + 5) - 210*a(n + 6)
