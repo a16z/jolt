@@ -71,8 +71,8 @@ pub struct AzSecondGroup {
     pub right_lookup_sub: bool,                       // Sub
     pub right_lookup_eq_product_if_mul: bool,         // Mul
     pub right_lookup_eq_right_input_otherwise: bool,  // !(Add || Sub || Mul || Advice)
-    pub rd_write_eq_lookup_if_write_lookup_to_rd: u8, // write_lookup_output_to_rd_addr (Rd != 0)
-    pub rd_write_eq_pc_plus_const_if_write_pc_to_rd: u8, // write_pc_to_rd_addr (Rd != 0)
+    pub rd_write_eq_lookup_if_write_lookup_to_rd: bool, // write_lookup_output_to_rd_addr (Rd != 0)
+    pub rd_write_eq_pc_plus_const_if_write_pc_to_rd: bool, // write_pc_to_rd_addr (Rd != 0)
     pub next_unexp_pc_eq_pc_plus_imm_if_should_branch: bool, // ShouldBranch
     pub next_unexp_pc_update_otherwise: bool,         // !(Jump || ShouldBranch)
 }
@@ -623,11 +623,11 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
                 || bz.right_lookup_minus_right_input.is_zero()
         );
         debug_assert!(
-            (az.rd_write_eq_lookup_if_write_lookup_to_rd == 0)
+            (!az.rd_write_eq_lookup_if_write_lookup_to_rd)
                 || bz.rd_write_minus_lookup_output.to_i128() == 0
         );
         debug_assert!(
-            (az.rd_write_eq_pc_plus_const_if_write_pc_to_rd == 0)
+            (!az.rd_write_eq_pc_plus_const_if_write_pc_to_rd)
                 || bz.rd_write_minus_pc_plus_const == 0
         );
         debug_assert!(
