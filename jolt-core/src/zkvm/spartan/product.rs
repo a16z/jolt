@@ -28,9 +28,8 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::{
-    compute_claimed_product_factor_evals, ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS,
-};
+use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
+use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 use ark_ff::biginteger::S128;
@@ -238,7 +237,11 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                             // ShouldBranch: lookup_output × Branch_flag
                             // left: u64 -> i128; right: bool/u8 -> i32 -> i128
                             left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
-                            right_w[3] = if row.should_branch_flag { c[3] as i128 } else { 0 };
+                            right_w[3] = if row.should_branch_flag {
+                                c[3] as i128
+                            } else {
+                                0
+                            };
 
                             // ShouldJump: Jump_flag × (1 − NextIsNoop)
                             // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
@@ -502,10 +505,14 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                         let row_lo = ProductCycleInputs::from_trace::<F>(trace, idx_lo);
                         let row_hi = ProductCycleInputs::from_trace::<F>(trace, idx_hi);
 
-                        let (left0, right0) =
-                            row_lo.compute_left_right_at_r::<F>(&weights_at_r0[..]);
-                        let (left1, right1) =
-                            row_hi.compute_left_right_at_r::<F>(&weights_at_r0[..]);
+                        let (left0, right0) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_lo,
+                            &weights_at_r0[..],
+                        );
+                        let (left1, right1) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_hi,
+                            &weights_at_r0[..],
+                        );
 
                         let e_in = if num_x_in_vals == 1 {
                             split_eq_poly.E_in_current()[0]
@@ -721,7 +728,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let (r_cycle, _r0_slice) = opening_point.r.split_at(self.params.n_cycle_vars);
 
         // Compute claimed unique factor evaluations at r_cycle in one pass
-        let claims = compute_claimed_product_factor_evals::<F>(&self.trace, r_cycle);
+        let claims = ProductVirtualEval::compute_claimed_factors::<F>(&self.trace, r_cycle);
 
         // Append fused left/right product openings akin to outer (SpartanAz/Bz)
         let lr = self.final_sumcheck_evals();

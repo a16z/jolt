@@ -17,7 +17,7 @@
 //!
 //! ## Adding a new constraint
 //!
-//! 1. Add a new variant to `ConstraintName` (keep the same order as `UNIFORM_R1CS`).
+//! 1. Add a new variant to `R1CSConstraintName` (keep the same order as `UNIFORM_R1CS`).
 //! 2. Add the constraint to `UNIFORM_R1CS` using the `r1cs_eq_conditional!` macro.
 //! 3. Assign the constraint to a group:
 //!    - Put its name in `UNIFORM_R1CS_FIRST_GROUP_NAMES` if it matches Group 0
@@ -32,7 +32,7 @@
 //! ## Removing a constraint
 //!
 //! 1. Remove it from `UNIFORM_R1CS`.
-//! 2. Remove the corresponding variant from `ConstraintName`.
+//! 2. Remove the corresponding variant from `R1CSConstraintName`.
 //! 3. If present, remove its name from `UNIFORM_R1CS_FIRST_GROUP_NAMES`.
 //! 4. Re-check that `UNIFORM_R1CS_FIRST_GROUP_NAMES.len()` equals
 //!    `UNIVARIATE_SKIP_DOMAIN_SIZE` after the change; adjust the first group
@@ -48,7 +48,8 @@
 //! - This split minimizes conversions and maximizes accumulator efficiency.
 
 use super::inputs::JoltR1CSInputs;
-use crate::zkvm::instruction::CircuitFlags;
+use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use crate::zkvm::witness::VirtualPolynomial;
 use strum::EnumCount;
 use strum_macros::{EnumCount, EnumIter};
 
@@ -56,22 +57,22 @@ pub use super::ops::{Term, LC};
 
 /// A single R1CS constraint row
 #[derive(Clone, Copy, Debug)]
-pub struct Constraint {
+pub struct R1CSConstraint {
     pub a: LC,
     pub b: LC,
     // No c needed for now, all eq-conditional constraints
     // pub c: LC,
 }
 
-impl Constraint {
+impl R1CSConstraint {
     pub const fn new(a: LC, b: LC) -> Self {
         Self { a, b }
     }
 }
 
 /// Creates: condition * (left - right) == 0
-pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
-    Constraint::new(
+pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> R1CSConstraint {
+    R1CSConstraint::new(
         condition,
         match left.checked_sub(right) {
             Some(b) => b,
@@ -81,7 +82,7 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
-pub enum ConstraintName {
+pub enum R1CSConstraintName {
     RamAddrEqRs1PlusImmIfLoadStore,
     RamAddrEqZeroIfNotLoadStore,
     RamReadEqRamWriteIfLoad,
@@ -104,18 +105,18 @@ pub enum ConstraintName {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct NamedConstraint {
-    pub name: ConstraintName,
-    pub cons: Constraint,
+pub struct NamedR1CSConstraint {
+    pub name: R1CSConstraintName,
+    pub cons: R1CSConstraint,
 }
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
 ///
-/// Usage: `r1cs_eq_conditional!(name: ConstraintName::Foo, if { COND } => { LEFT } == { RIGHT });`
+/// Usage: `r1cs_eq_conditional!(name: R1CSConstraintName::Foo, if { COND } => { LEFT } == { RIGHT });`
 #[macro_export]
 macro_rules! r1cs_eq_conditional {
     (name: $nm:expr, if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::NamedConstraint {
+        $crate::zkvm::r1cs::constraints::NamedR1CSConstraint {
             name: $nm,
             cons: $crate::zkvm::r1cs::constraints::constraint_eq_conditional_lc(
                 $crate::lc!($($cond)*),
@@ -127,22 +128,22 @@ macro_rules! r1cs_eq_conditional {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = ConstraintName::COUNT;
+pub const NUM_R1CS_CONSTRAINTS: usize = R1CSConstraintName::COUNT;
 
 /// Static table of all R1CS uniform constraints.
-pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
+pub static UNIFORM_R1CS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Load || Store {
     //     assert!(RamAddress == Rs1Value + Imm)
     // } else {
     //     assert!(RamAddress == 0)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::RamAddrEqRs1PlusImmIfLoadStore,
+        name: R1CSConstraintName::RamAddrEqRs1PlusImmIfLoadStore,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } + { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::RamAddress } ) == ( { JoltR1CSInputs::Rs1Value } + { JoltR1CSInputs::Imm } )
     ),
     r1cs_eq_conditional!(
-        name: ConstraintName::RamAddrEqZeroIfNotLoadStore,
+        name: R1CSConstraintName::RamAddrEqZeroIfNotLoadStore,
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } - { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::RamAddress } ) == ( { 0i128 } )
     ),
@@ -150,7 +151,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RamReadValue == RamWriteValue)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::RamReadEqRamWriteIfLoad,
+        name: R1CSConstraintName::RamReadEqRamWriteIfLoad,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
         => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RamWriteValue } )
     ),
@@ -158,7 +159,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RamReadValue == RdWriteValue)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::RamReadEqRdWriteIfLoad,
+        name: R1CSConstraintName::RamReadEqRdWriteIfLoad,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
         => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RdWriteValue } )
     ),
@@ -166,7 +167,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(Rs2Value == RamWriteValue)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::Rs2EqRamWriteIfStore,
+        name: R1CSConstraintName::Rs2EqRamWriteIfStore,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::Rs2Value } ) == ( { JoltR1CSInputs::RamWriteValue } )
     ),
@@ -177,12 +178,12 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(LeftLookupOperand == LeftInstructionInput)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::LeftLookupZeroUnlessAddSubMul,
+        name: R1CSConstraintName::LeftLookupZeroUnlessAddSubMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { JoltR1CSInputs::LeftLookupOperand } ) == ( { 0i128 } )
     ),
     r1cs_eq_conditional!(
-        name: ConstraintName::LeftLookupEqLeftInputOtherwise,
+        name: R1CSConstraintName::LeftLookupEqLeftInputOtherwise,
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { JoltR1CSInputs::LeftLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } )
     ),
@@ -190,7 +191,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::RightLookupAdd,
+        name: R1CSConstraintName::RightLookupAdd,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } )
     ),
@@ -199,12 +200,12 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     // Converts from unsigned to twos-complement representation
     r1cs_eq_conditional!(
-        name: ConstraintName::RightLookupSub,
+        name: R1CSConstraintName::RightLookupSub,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
     ),
     r1cs_eq_conditional!(
-        name: ConstraintName::RightLookupEqProductIfMul,
+        name: R1CSConstraintName::RightLookupEqProductIfMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } )
     ),
@@ -213,7 +214,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     // Arbitrary untrusted advice goes in right lookup operand
     r1cs_eq_conditional!(
-        name: ConstraintName::RightLookupEqRightInputOtherwise,
+        name: R1CSConstraintName::RightLookupEqRightInputOtherwise,
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::Advice) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::RightInstructionInput } )
     ),
@@ -221,7 +222,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(LookupOutput == 1)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::AssertLookupOne,
+        name: R1CSConstraintName::AssertLookupOne,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Assert) } }
         => ( { JoltR1CSInputs::LookupOutput } ) == ( { 1i128 } )
     ),
@@ -229,7 +230,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RdWriteValue == LookupOutput)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::RdWriteEqLookupIfWriteLookupToRd,
+        name: R1CSConstraintName::RdWriteEqLookupIfWriteLookupToRd,
         if { { JoltR1CSInputs::WriteLookupOutputToRD } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::LookupOutput } )
     ),
@@ -241,7 +242,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     }
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
+        name: R1CSConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
         if { { JoltR1CSInputs::WritePCtoRD } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
@@ -249,7 +250,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(NextUnexpandedPC == LookupOutput)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::NextUnexpPCEqLookupIfShouldJump,
+        name: R1CSConstraintName::NextUnexpPCEqLookupIfShouldJump,
         if { { JoltR1CSInputs::ShouldJump } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::LookupOutput } )
     ),
@@ -257,7 +258,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch,
+        name: R1CSConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch,
         if { { JoltR1CSInputs::ShouldBranch } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::UnexpandedPC } + { JoltR1CSInputs::Imm } )
     ),
@@ -273,7 +274,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // Note that ShouldBranch and Jump instructions are mutually exclusive
     // And that DoNotUpdatePC and isCompressed are mutually exclusive
     r1cs_eq_conditional!(
-        name: ConstraintName::NextUnexpPCUpdateOtherwise,
+        name: R1CSConstraintName::NextUnexpPCUpdateOtherwise,
         if { { 1i128 } - { JoltR1CSInputs::ShouldBranch } - { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } )
            == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 }
@@ -284,7 +285,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(NextPC == PC + 1)
     // }
     r1cs_eq_conditional!(
-        name: ConstraintName::NextPCEqPCPlusOneIfInline,
+        name: R1CSConstraintName::NextPCEqPCPlusOneIfInline,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
     ),
@@ -293,7 +294,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     // (note: we write the constraint in this form to keep Bz boolean)
     r1cs_eq_conditional!(
-        name: ConstraintName::MustStartSequenceFromBeginning,
+        name: R1CSConstraintName::MustStartSequenceFromBeginning,
         if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }
         => ( { 1i128 } ) == ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } )
     ),
@@ -324,7 +325,10 @@ pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =
     NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE;
 
 /// Order-preserving, compile-time filter over `UNIFORM_R1CS` by constraint names.
-const fn contains_name<const N: usize>(names: &[ConstraintName; N], name: ConstraintName) -> bool {
+const fn contains_name<const N: usize>(
+    names: &[R1CSConstraintName; N],
+    name: R1CSConstraintName,
+) -> bool {
     let mut i = 0;
     while i < N {
         if names[i] as u32 == name as u32 {
@@ -337,13 +341,13 @@ const fn contains_name<const N: usize>(names: &[ConstraintName; N], name: Constr
 
 /// Select constraints from `UNIFORM_R1CS` whose names appear in `names`, preserving order.
 pub const fn filter_uniform_r1cs<const N: usize>(
-    names: &[ConstraintName; N],
-) -> [NamedConstraint; N] {
-    let dummy = NamedConstraint {
-        name: ConstraintName::RamReadEqRamWriteIfLoad,
-        cons: Constraint::new(LC::zero(), LC::zero()),
+    names: &[R1CSConstraintName; N],
+) -> [NamedR1CSConstraint; N] {
+    let dummy = NamedR1CSConstraint {
+        name: R1CSConstraintName::RamReadEqRamWriteIfLoad,
+        cons: R1CSConstraint::new(LC::zero(), LC::zero()),
     };
-    let mut out: [NamedConstraint; N] = [dummy; N];
+    let mut out: [NamedR1CSConstraint; N] = [dummy; N];
 
     let mut o = 0;
     let mut i = 0;
@@ -366,9 +370,9 @@ pub const fn filter_uniform_r1cs<const N: usize>(
 }
 
 /// Compute the complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES` within `UNIFORM_R1CS`.
-const fn complement_first_group_names() -> [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] {
-    let mut out: [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
-        [ConstraintName::RamReadEqRamWriteIfLoad; NUM_REMAINING_R1CS_CONSTRAINTS];
+const fn complement_first_group_names() -> [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] {
+    let mut out: [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
+        [R1CSConstraintName::RamReadEqRamWriteIfLoad; NUM_REMAINING_R1CS_CONSTRAINTS];
     let mut o = 0;
     let mut i = 0;
     while i < NUM_R1CS_CONSTRAINTS {
@@ -390,31 +394,113 @@ const fn complement_first_group_names() -> [ConstraintName; NUM_REMAINING_R1CS_C
 }
 
 /// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
-pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
-    ConstraintName::RamAddrEqZeroIfNotLoadStore,
-    ConstraintName::RamReadEqRamWriteIfLoad,
-    ConstraintName::RamReadEqRdWriteIfLoad,
-    ConstraintName::Rs2EqRamWriteIfStore,
-    ConstraintName::LeftLookupZeroUnlessAddSubMul,
-    ConstraintName::LeftLookupEqLeftInputOtherwise,
-    ConstraintName::AssertLookupOne,
-    ConstraintName::NextUnexpPCEqLookupIfShouldJump,
-    ConstraintName::NextPCEqPCPlusOneIfInline,
-    ConstraintName::MustStartSequenceFromBeginning,
+pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [R1CSConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
+    R1CSConstraintName::RamAddrEqZeroIfNotLoadStore,
+    R1CSConstraintName::RamReadEqRamWriteIfLoad,
+    R1CSConstraintName::RamReadEqRdWriteIfLoad,
+    R1CSConstraintName::Rs2EqRamWriteIfStore,
+    R1CSConstraintName::LeftLookupZeroUnlessAddSubMul,
+    R1CSConstraintName::LeftLookupEqLeftInputOtherwise,
+    R1CSConstraintName::AssertLookupOne,
+    R1CSConstraintName::NextUnexpPCEqLookupIfShouldJump,
+    R1CSConstraintName::NextPCEqPCPlusOneIfInline,
+    R1CSConstraintName::MustStartSequenceFromBeginning,
 ];
 
 /// Second group: complement of first within UNIFORM_R1CS
 /// Here, Az may be u8, and Bz may be around 128 bits
-pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
+pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
     complement_first_group_names();
 
 /// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
-pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; UNIVARIATE_SKIP_DOMAIN_SIZE] =
+pub static UNIFORM_R1CS_FIRST_GROUP: [NamedR1CSConstraint; UNIVARIATE_SKIP_DOMAIN_SIZE] =
     filter_uniform_r1cs(&UNIFORM_R1CS_FIRST_GROUP_NAMES);
 
 /// Second group: complement of first within UNIFORM_R1CS, where Az may be u8 and Bz may be around 128 bits
-pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
+pub static UNIFORM_R1CS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
+
+// ===========================================
+// Product virtualization constraints
+// ===========================================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
+pub enum ProductConstraintName {
+    Instruction,
+    WriteLookupOutputToRD,
+    WritePCtoRD,
+    ShouldBranch,
+    ShouldJump,
+}
+
+/// Number of product virtualization constraints
+pub const NUM_PRODUCT_CONSTRAINTS: usize = ProductConstraintName::COUNT;
+
+/// Factor expression for product constraints: either a direct virtual polynomial,
+/// or 1 minus a virtual polynomial (used for NextIsNoop in ShouldJump).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductFactorExpr {
+    Var(VirtualPolynomial),
+    OneMinus(VirtualPolynomial),
+}
+
+/// A single product constraint row: Az · Bz = z', where z' is a virtual
+/// polynomial whose claims come from Spartan outer's first stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProductConstraint {
+    pub name: &'static str,
+    pub left: ProductFactorExpr,
+    pub right: ProductFactorExpr,
+    pub output: VirtualPolynomial,
+}
+
+/// Canonical list of the product constraints in the same order as
+/// `PRODUCT_VIRTUAL_TERMS` used by the product virtualization stage.
+pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
+    // 0: Product = LeftInstructionInput · RightInstructionInput
+    ProductConstraint {
+        name: "Instruction",
+        left: ProductFactorExpr::Var(VirtualPolynomial::LeftInstructionInput),
+        right: ProductFactorExpr::Var(VirtualPolynomial::RightInstructionInput),
+        output: VirtualPolynomial::Product,
+    },
+    // 1: WriteLookupOutputToRD = IsRdNotZero · OpFlags(WriteLookupOutputToRD)
+    ProductConstraint {
+        name: "WriteLookupOutputToRD",
+        left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
+            InstructionFlags::IsRdNotZero,
+        )),
+        right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(
+            CircuitFlags::WriteLookupOutputToRD,
+        )),
+        output: VirtualPolynomial::WriteLookupOutputToRD,
+    },
+    // 2: WritePCtoRD = IsRdNotZero · OpFlags(Jump)
+    ProductConstraint {
+        name: "WritePCtoRD",
+        left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
+            InstructionFlags::IsRdNotZero,
+        )),
+        right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
+        output: VirtualPolynomial::WritePCtoRD,
+    },
+    // 3: ShouldBranch = LookupOutput · InstructionFlags(Branch)
+    ProductConstraint {
+        name: "ShouldBranch",
+        left: ProductFactorExpr::Var(VirtualPolynomial::LookupOutput),
+        right: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
+            InstructionFlags::Branch,
+        )),
+        output: VirtualPolynomial::ShouldBranch,
+    },
+    // 4: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
+    ProductConstraint {
+        name: "ShouldJump",
+        left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
+        right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
+        output: VirtualPolynomial::ShouldJump,
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -424,8 +510,8 @@ mod tests {
     /// Test that the constraint name enum matches the uniform R1CS order.
     #[test]
     fn constraint_enum_matches_uniform_r1cs_order() {
-        let enum_order: Vec<ConstraintName> = ConstraintName::iter().collect();
-        let array_order: Vec<ConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
+        let enum_order: Vec<R1CSConstraintName> = R1CSConstraintName::iter().collect();
+        let array_order: Vec<R1CSConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
         assert_eq!(array_order.len(), NUM_R1CS_CONSTRAINTS);
         assert_eq!(enum_order, array_order);
     }

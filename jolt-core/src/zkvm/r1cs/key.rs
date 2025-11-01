@@ -10,7 +10,7 @@ use crate::{
 use sha3::Digest;
 
 use super::constraints::{
-    Constraint, LC, UNIFORM_R1CS, UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP,
+    R1CSConstraint, LC, UNIFORM_R1CS, UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP,
     UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::utils::math::Math;
@@ -227,7 +227,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// for the first-round (size-UNIVARIATE_SKIP_DOMAIN_SIZE) row domain.
     fn evaluate_uniform_matrix_at_point(
         &self,
-        select: impl Fn(&Constraint) -> &LC,
+        select: impl Fn(&R1CSConstraint) -> &LC,
         rx_constr: &[F::Challenge],
         ry_var: &[F::Challenge],
     ) -> F {

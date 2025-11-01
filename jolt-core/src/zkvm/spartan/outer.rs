@@ -37,8 +37,8 @@ use crate::zkvm::r1cs::{
         FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
         UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
-    evaluation::{R1CSFirstGroup, R1CSSecondGroup},
-    inputs::{compute_claimed_r1cs_input_evals, R1CSCycleInputs, ALL_R1CS_INPUTS},
+    evaluation::{R1CSEval, R1CSFirstGroup, R1CSSecondGroup},
+    inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
@@ -664,7 +664,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
 
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let claimed_witness_evals =
-            compute_claimed_r1cs_input_evals::<F>(&self.preprocess, &self.trace, r_cycle);
+            R1CSEval::compute_claimed_inputs::<F>(&self.preprocess, &self.trace, r_cycle);
 
         #[cfg(test)]
         {
