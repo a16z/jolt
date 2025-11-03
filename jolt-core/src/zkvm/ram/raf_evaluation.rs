@@ -53,7 +53,7 @@ pub struct RafEvaluationSumcheckProver<F: JoltField> {
 impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let params = RafEvaluationSumcheckParams::new(state_manager, opening_accumulator);
@@ -187,7 +187,7 @@ pub struct RafEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = RafEvaluationSumcheckParams::new(state_manager, opening_accumulator);
@@ -255,7 +255,7 @@ pub struct RafEvaluationSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> RafEvaluationSumcheckParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let start_address = state_manager.program_io.memory_layout.get_lowest_address();

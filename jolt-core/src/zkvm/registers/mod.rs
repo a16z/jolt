@@ -34,7 +34,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 {
     fn stage4_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -50,7 +50,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
     fn stage5_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -68,7 +68,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 {
     fn stage4_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
@@ -79,7 +79,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
     fn stage5_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {

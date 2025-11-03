@@ -145,7 +145,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 {
     fn stage6_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
+        sm: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
@@ -175,7 +175,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 {
     fn stage6_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
+        sm: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
@@ -189,10 +189,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
     }
 }
 
-fn gen_ra_one_hot_provers<F: JoltField, T: Transcript>(
-    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+fn gen_ra_one_hot_provers<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
-    transcript: &mut T,
+    transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
     let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
     let bytecode_preprocessing = &preprocessing.shared.bytecode;
@@ -247,9 +247,9 @@ fn gen_ra_one_hot_provers<F: JoltField, T: Transcript>(
     )
 }
 
-fn new_ra_one_hot_verifiers<F: JoltField, T: Transcript>(
-    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-    transcript: &mut T,
+fn new_ra_one_hot_verifiers<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+    transcript: &mut impl Transcript,
 ) -> (
     HammingWeightSumcheckVerifier<F>,
     BooleanitySumcheckVerifier<F>,

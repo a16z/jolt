@@ -52,8 +52,8 @@ pub struct RaSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn gen<PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let params = RaSumcheckParams::new(opening_accumulator);

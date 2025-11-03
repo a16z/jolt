@@ -1,45 +1,16 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::ReducedOpeningProof;
-use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::compute_d_parameter;
 use crate::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing};
-use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::{JoltDevice, LazyTraceIterator};
-
-#[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
-#[repr(u8)]
-pub enum ProofKeys {
-    Stage1UniSkipFirstRound,
-    Stage1Sumcheck,
-    Stage2UniSkipFirstRound,
-    Stage2Sumcheck,
-    Stage3Sumcheck,
-    Stage4Sumcheck,
-    Stage5Sumcheck,
-    Stage6Sumcheck,
-    TrustedAdviceProof,
-    UntrustedAdviceProof,
-    ReducedOpeningProof, // Implicitly Stage 7
-}
-
-pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
-    SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
-    ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
-    OpeningProof(PCS::Proof),
-    UniSkipFirstRoundProof(UniSkipFirstRoundProof<F, ProofTranscript>),
-}
-
-pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
 
 pub struct ProverState<'a, F: JoltField, PCS>
 where
@@ -61,14 +32,7 @@ where
     pub trace_length: usize,
 }
 
-pub struct StateManager<
-    'a,
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-> {
-    pub proofs: Proofs<F, PCS, ProofTranscript>,
-    pub commitments: Vec<PCS::Commitment>,
+pub struct StateManager<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
@@ -79,10 +43,9 @@ pub struct StateManager<
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
-impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
+impl<'a, F, PCS> StateManager<'a, F, PCS>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn new_prover(
@@ -93,9 +56,6 @@ where
         trusted_advice_commitment: Option<PCS::Commitment>,
         final_memory_state: Memory,
     ) -> Self {
-        let proofs = BTreeMap::new();
-        let commitments = vec![];
-
         // Calculate K for DoryGlobals initialization
         let ram_K = trace
             .par_iter()
@@ -125,8 +85,6 @@ where
         let twist_sumcheck_switch_index = chunk_size.log_2();
 
         Self {
-            proofs,
-            commitments,
             untrusted_advice_commitment: None,
             trusted_advice_commitment,
             program_io,
@@ -155,13 +113,9 @@ where
         ram_K: usize,
         twist_sumcheck_switch_index: usize,
     ) -> Self {
-        let proofs = BTreeMap::new();
-        let commitments = vec![];
         let ram_d = compute_d_parameter(ram_K);
 
         StateManager {
-            proofs,
-            commitments,
             untrusted_advice_commitment: None,
             trusted_advice_commitment: None,
             program_io,
@@ -248,7 +202,7 @@ where
         }
     }
 
-    pub fn fiat_shamir_preamble(&self, transcript: &mut ProofTranscript) {
+    pub fn fiat_shamir_preamble(&self, transcript: &mut impl Transcript) {
         transcript.append_u64(self.program_io.memory_layout.max_input_size);
         transcript.append_u64(self.program_io.memory_layout.max_output_size);
         transcript.append_u64(self.program_io.memory_layout.memory_size);

@@ -55,7 +55,7 @@ pub struct InstructionInputSumcheckProver<F: JoltField> {
 impl<F: JoltField> InstructionInputSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {

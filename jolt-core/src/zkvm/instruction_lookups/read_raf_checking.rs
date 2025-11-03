@@ -180,10 +180,10 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
     /// - Allocates per-table suffix accumulators and u-evals for rv/raf parts
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::gen")]
-    pub fn gen<T: Transcript>(
-        sm: &'a mut StateManager<F, T, impl CommitmentScheme<Field = F>>,
+    pub fn gen(
+        sm: &'a mut StateManager<F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut T,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let params = ReadRafSumcheckParams::new(sm, transcript);
         let trace = sm.get_prover_data().2;
@@ -1008,9 +1008,9 @@ pub struct ReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckVerifier<F> {
-    pub fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let params = ReadRafSumcheckParams::new(state_manager, transcript);
         Self { params }
@@ -1153,9 +1153,9 @@ struct ReadRafSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
-    fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    fn new(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
@@ -1337,7 +1337,7 @@ mod tests {
         let lazy_trace = LazyTraceIterator::new_for_test();
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
-        let mut prover_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_prover(
+        let mut prover_sm = StateManager::<'_, Fr, _>::new_prover(
             &prover_preprocessing,
             lazy_trace,
             trace.clone(),
@@ -1347,7 +1347,7 @@ mod tests {
         );
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
         let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
-        let mut verifier_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_verifier(
+        let mut verifier_sm = StateManager::<'_, Fr, _>::new_verifier(
             &verifier_preprocessing,
             program_io,
             trace.len(),

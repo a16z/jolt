@@ -62,8 +62,8 @@ pub(crate) struct ValEvaluationSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn gen<PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new(state_manager);
@@ -203,9 +203,7 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
+    pub fn new(state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>) -> Self {
         let params = ValEvaluationSumcheckParams::new(state_manager);
         Self { params }
     }
@@ -297,9 +295,7 @@ struct ValEvaluationSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheckParams<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
+    pub fn new(state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>) -> Self {
         Self {
             n_cycle_vars: state_manager.get_trace_len().log_2(),
             _phantom: PhantomData,
