@@ -14,11 +14,12 @@ pub fn main() {
     let prove_modexp_chain = guest::build_prover_modexp_chain(program, prover_preprocessing);
     let verify_modexp_chain = guest::build_verifier_modexp_chain(verifier_preprocessing);
 
-    // Example inputs: 256-bit base, exponent, and modulus
+    // Configurable inputs: 256-bit base, exponent, and modulus (default)
+    // These values can be changed to test different modexp scenarios
     let base = [5u8; 32]; // 256-bit base
     let exponent = [3u8; 32]; // 256-bit exponent
     let modulus = [7u8; 32]; // 256-bit modulus
-    let iters = 10;
+    let iters = 10; // Configurable number of iterations
 
     let native_output = guest::modexp_chain(base, exponent, modulus, iters);
     let now = Instant::now();
