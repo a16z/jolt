@@ -157,8 +157,8 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             let chunk_size = 1 << num_x_in_bits;
 
             (0..B.len() / 2)
-                .collect::<Vec<_>>()
-                .par_chunks(chunk_size)
+                .into_par_iter()
+                .chunks(chunk_size)
                 .enumerate()
                 .map(|(x_out, chunk)| {
                     let B_E_out_eval = B.E_out_current()[x_out];
@@ -284,8 +284,8 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             let chunk_size = 1 << num_x_in_bits;
 
             (0..D_poly.len() / 2)
-                .collect::<Vec<_>>()
-                .par_chunks(chunk_size)
+                .into_par_iter()
+                .chunks(chunk_size)
                 .enumerate()
                 .map(|(x_out, chunk)| {
                     let D_E_out_eval = D_poly.E_out_current()[x_out];
