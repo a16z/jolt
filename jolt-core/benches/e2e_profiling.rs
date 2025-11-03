@@ -1,5 +1,6 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
+use jolt_core::zkvm::dag::state_manager::ProofKeys;
 use jolt_core::zkvm::JoltVerifierPreprocessing;
 use jolt_core::zkvm::{Jolt, JoltRV64IMAC};
 use std::fs;
@@ -280,11 +281,9 @@ fn prove_example_with_trace(
     });
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
     let proof_size_full_compressed = proof_size
-        - jolt_proof
-            .reduced_opening_proof
+        - jolt_proof.proofs[&ProofKeys::ReducedOpeningProof]
             .serialized_size(ark_serialize::Compress::Yes)
-        + (jolt_proof
-            .reduced_opening_proof
+        + (jolt_proof.proofs[&ProofKeys::ReducedOpeningProof]
             .serialized_size(ark_serialize::Compress::No)
             / 3)
         - jolt_proof
