@@ -245,17 +245,6 @@ impl CommittedPolynomial {
         }
         let batch = WitnessData::new(trace.len(), ram_d, bytecode_d);
 
-        // Precompute constants per cycle
-        let bytecode_constants = if bytecode_d > 0 {
-            let d = preprocessing.shared.bytecode.d;
-            let log_K = preprocessing.shared.bytecode.code_size.log_2();
-            let log_K_chunk = log_K.div_ceil(d);
-            let K_chunk = 1 << log_K_chunk;
-            Some((d, log_K_chunk, K_chunk))
-        } else {
-            None
-        };
-
         let dth_root_log = if ram_d > 0 {
             Some(DTH_ROOT_OF_K.log_2())
         } else {
@@ -298,11 +287,11 @@ impl CommittedPolynomial {
                 }
 
                 // BytecodeRa indices
-                if let Some((d, log_K_chunk, K_chunk)) = bytecode_constants {
+                if let Some(dth_root_log) = dth_root_log {
                     let pc = preprocessing.shared.bytecode.get_pc(cycle);
 
                     for j in 0..bytecode_d {
-                        let index = (pc >> (log_K_chunk * (d - 1 - j))) % K_chunk;
+                        let index = (pc >> (dth_root_log * (bytecode_d - 1 - j))) % DTH_ROOT_OF_K;
                         batch_ref.bytecode_ra[j][i] = Some(index as u8);
                     }
                 }
@@ -355,11 +344,7 @@ impl CommittedPolynomial {
                 CommittedPolynomial::BytecodeRa(i) => {
                     if *i < bytecode_d {
                         let indices = std::mem::take(&mut batch.bytecode_ra[*i]);
-                        let d = preprocessing.shared.bytecode.d;
-                        let log_K = preprocessing.shared.bytecode.code_size.log_2();
-                        let log_K_chunk = log_K.div_ceil(d);
-                        let K_chunk = 1 << log_K_chunk;
-                        let one_hot = OneHotPolynomial::from_indices(indices, K_chunk);
+                        let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
@@ -389,9 +374,6 @@ impl CommittedPolynomial {
         match self {
             CommittedPolynomial::BytecodeRa(i) => {
                 let d = preprocessing.shared.bytecode.d;
-                let log_K = preprocessing.shared.bytecode.code_size.log_2();
-                let log_K_chunk = log_K.div_ceil(d);
-                let K_chunk = 1 << log_K_chunk;
                 if *i > d {
                     panic!("Invalid index for bytecode ra: {i}");
                 }
@@ -399,10 +381,13 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| {
                         let pc = preprocessing.shared.bytecode.get_pc(cycle);
-                        Some(((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk) as u8)
+                        Some(((pc >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i))) % DTH_ROOT_OF_K) as u8)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                    addresses,
+                    DTH_ROOT_OF_K,
+                ))
             }
             CommittedPolynomial::RamRa(i) => {
                 let d = ram_d;

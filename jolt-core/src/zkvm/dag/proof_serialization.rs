@@ -11,7 +11,6 @@ use ark_serialize::{
 use num::FromPrimitive;
 use tracer::JoltDevice;
 
-use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
     field::JoltField,
     poly::{
@@ -29,6 +28,7 @@ use crate::{
         JoltVerifierPreprocessing,
     },
 };
+use crate::{utils::math::Math, zkvm::witness::AllCommittedPolynomials};
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
@@ -160,7 +160,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
         program_io: JoltDevice,
     ) -> StateManager<'a, F, FS, PCS> {
-        let mut opening_accumulator = VerifierOpeningAccumulator::<F>::new();
+        let mut opening_accumulator =
+            VerifierOpeningAccumulator::<F>::new(self.trace_length.log_2());
         // Populate claims in the verifier accumulator
         for (key, (_, claim)) in self.opening_claims.0.iter() {
             opening_accumulator

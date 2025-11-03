@@ -24,10 +24,7 @@ use crate::{
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    utils::{
-        expanding_table::ExpandingTable, math::Math, small_scalar::SmallScalar,
-        thread::unsafe_allocate_zero_vec,
-    },
+    utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         dag::state_manager::StateManager,
         instruction::{
@@ -35,7 +32,7 @@ use crate::{
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
 use allocative::Allocative;
@@ -107,8 +104,8 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     /// Chunked RA polynomials over address variables (one per dimension `d`), used to form
     /// the product ∏_i ra_i during the cycle-binding phase.
     ra: Vec<RaPolynomial<u8, F>>,
-    /// Expanding tables holding K_chunk-size prefix products for each address chunk.
-    v: Vec<ExpandingTable<F>>,
+    /// Binding challenges for the first log_K variables of the sumcheck
+    r_address_prime: Vec<F::Challenge>,
     /// Per-stage Gruen-split eq polynomials over cycle vars (low-to-high binding order).
     gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
     /// Previous-round claims s_i(0)+s_i(1) per stage, needed for degree-3 univariate recovery.
@@ -213,11 +210,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             .each_ref()
             .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
 
-        let mut v = (0..params.d)
-            .map(|_| ExpandingTable::new(params.K_chunk))
-            .collect::<Vec<_>>();
-        v.par_iter_mut().for_each(|v| v.reset(F::one()));
-
         let pc = trace
             .par_iter()
             .map(|cycle| preprocessing.shared.bytecode.get_pc(cycle))
@@ -226,7 +218,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         Self {
             F,
             ra: Vec::with_capacity(params.d),
-            v,
+            r_address_prime: Vec::with_capacity(params.log_K),
             // eq_polys,
             gruen_eq_polys,
             prev_round_claims: claim_per_stage,
@@ -267,20 +259,22 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .unwrap(),
         );
 
-        self.v
-            .par_iter()
+        let log_K_chunk = DTH_ROOT_OF_K.log_2();
+        self.r_address_prime
+            .par_chunks_mut(log_K_chunk)
+            .rev()
             .enumerate()
-            .map(|(i, v)| {
+            .map(|(i, r_address_prime)| {
                 let ra_i: Vec<Option<u8>> = self
                     .pc
                     .par_iter()
                     .map(|k| {
-                        let k = (k >> (self.params.log_K_chunk * (self.params.d - i - 1)))
-                            % self.params.K_chunk;
+                        let k = (k >> (log_K_chunk * (self.params.d - i - 1))) % DTH_ROOT_OF_K;
                         Some(k as u8)
                     })
                     .collect();
-                RaPolynomial::new(Arc::new(ra_i), v.clone_values())
+                r_address_prime.reverse();
+                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_prime))
             })
             .collect::<Vec<_>>()
             .into_iter()
@@ -316,12 +310,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                 .into_par_iter()
                 .map(|i| {
                     let ra_evals = self.F.each_ref().map(|poly| {
-                        poly.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow)
+                        poly.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh)
                     });
 
                     let int_evals =
                         self.params.int_poly
-                            .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                            .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
                     // We have a separate Val polynomial for each stage
                     // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
@@ -337,7 +331,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                         .params.val_polys
                         .iter()
                         // Val polynomials
-                        .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow))
+                        .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh))
                         // Here are the RAF polynomials and their powers
                         .zip([Some(&int_evals), None, Some(&int_evals), None, None])
                         .zip([Some(self.params.gamma_powers[5]), None, Some(self.params.gamma_powers[4]), None, None])
@@ -463,21 +457,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                     self.params
                         .val_polys
                         .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh))
                 });
                 s.spawn(|_| {
                     self.params
                         .int_poly
-                        .bind_parallel(r_j, BindingOrder::HighToLow);
+                        .bind_parallel(r_j, BindingOrder::LowToHigh);
                 });
                 s.spawn(|_| {
                     self.F
                         .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
                 });
-                s.spawn(|_| {
-                    self.v[round / self.params.log_K_chunk].update(r_j);
-                });
+                self.r_address_prime.push(r_j);
             });
             if round == self.params.log_K - 1 {
                 self.init_log_t_rounds();
@@ -503,7 +495,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
 
         for i in 0..self.params.d {
             let r_address =
-                &r_address.r[self.params.log_K_chunk * i..self.params.log_K_chunk * (i + 1)];
+                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -553,15 +545,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let (r_address_prime, r_cycle_prime) = sumcheck_challenges.split_at(self.params.log_K);
+        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.params.log_K);
         // r_cycle is bound LowToHigh, so reverse
-        let r_cycle_prime = r_cycle_prime
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<F::Challenge>>();
 
-        let int_poly = self.params.int_poly.evaluate(r_address_prime);
+        let int_poly = self.params.int_poly.evaluate(&r_address_prime.r);
 
         let ra_claims = (0..self.params.d).map(|i| {
             accumulator
@@ -596,8 +584,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
                 F::zero(),                              // There's no raf for Stage5
             ])
             .map(|(((val, r_cycle), gamma), int_poly)| {
-                (val.evaluate(r_address_prime) + int_poly)
-                    * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime)
+                (val.evaluate(&r_address_prime.r) + int_poly)
+                    * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime.r)
                     * gamma
             })
             .sum::<F>();
@@ -615,7 +603,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
         (0..self.params.d).for_each(|i| {
             let r_address =
-                &r_address.r[self.params.log_K_chunk * i..self.params.log_K_chunk * (i + 1)];
+                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -633,9 +621,6 @@ struct ReadRafSumcheckParams<F: JoltField> {
     rv_claim: F,
     /// Bytecode length.
     K: usize,
-    /// Address chunking parameters: split LOG_K into `d` chunks of size `log_K_chunk`.
-    log_K_chunk: usize,
-    K_chunk: usize,
     /// log2(K) and log2(T) used to determine round counts.
     log_K: usize,
     log_T: usize,
@@ -661,7 +646,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let log_K = K.log_2();
         let d = preprocessing.bytecode.d;
         let log_T = state_manager.get_trace_len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
         let gamma_powers = state_manager.transcript.challenge_scalar_powers(7);
 
         let (val_1, rv_claim_1) = Self::compute_val_rv(state_manager, ReadCheckingValType::Stage1);
@@ -731,8 +715,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             rv_claim,
             K,
             log_K,
-            log_K_chunk,
-            K_chunk: 1 << log_K_chunk,
             d,
             log_T,
             val_polys,
@@ -1185,6 +1167,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut r = sumcheck_challenges.to_vec();
+        r[0..self.log_K].reverse();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
     }
