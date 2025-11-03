@@ -7,12 +7,12 @@
 //! What lives here (compile-time only):
 //! - The uniform equality-conditional constraints:
 //!   - `R1CSConstraint`, `NamedR1CSConstraint`, and the `r1cs_eq_conditional!` macro
-//!   - The canonical table `R1CS_CONSTRAINTS` and its name enum `R1CSConstraintName`
+//!   - The canonical table `R1CS_CONSTRAINTS` and its label enum `R1CSConstraintLabel`
 //! - The univariate‑skip split of the uniform constraints into two groups:
 //!   - Constants `UNIVARIATE_SKIP_*` describing degree/domain sizes
-//!   - The first-group selector `R1CS_CONSTRAINTS_FIRST_GROUP_NAMES` and its
+//!   - The first-group selector `R1CS_CONSTRAINTS_FIRST_GROUP_LABELS` and its
 //!     order-preserving filtered view `R1CS_CONSTRAINTS_FIRST_GROUP`
-//!   - The compile-time complement `R1CS_CONSTRAINTS_SECOND_GROUP_NAMES` and view
+//!   - The compile-time complement `R1CS_CONSTRAINTS_SECOND_GROUP_LABELS` and view
 //!     `R1CS_CONSTRAINTS_SECOND_GROUP`
 //!   - Invariants: the first group has size `UNIVARIATE_SKIP_DOMAIN_SIZE` and is
 //!     never smaller than the second; order matches `R1CS_CONSTRAINTS`
@@ -28,8 +28,8 @@
 //!   Az/Bz evaluators, folding helpers, and product-virtualization evaluators)
 //!
 //! Notes for maintainers:
-//! - When adding/removing a uniform constraint, keep `R1CSConstraintName`,
-//!   `R1CS_CONSTRAINTS`, and the first-group name list in sync. The second group is
+//! - When adding/removing a uniform constraint, keep `R1CSConstraintLabel`,
+//!   `R1CS_CONSTRAINTS`, and the first-group label list in sync. The second group is
 //!   computed as a complement at compile time.
 //! - The first group is optimized for boolean guards and ~64-bit magnitudes;
 //!   the second group is the remainder (e.g., wider Bz arithmetic).
@@ -71,7 +71,7 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
-pub enum R1CSConstraintName {
+pub enum R1CSConstraintLabel {
     RamAddrEqRs1PlusImmIfLoadStore,
     RamAddrEqZeroIfNotLoadStore,
     RamReadEqRamWriteIfLoad,
@@ -95,18 +95,18 @@ pub enum R1CSConstraintName {
 
 #[derive(Clone, Copy, Debug)]
 pub struct NamedR1CSConstraint {
-    pub name: R1CSConstraintName,
+    pub label: R1CSConstraintLabel,
     pub cons: R1CSConstraint,
 }
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
 ///
-/// Usage: `r1cs_eq_conditional!(name: R1CSConstraintName::Foo, if { COND } => { LEFT } == { RIGHT });`
+/// Usage: `r1cs_eq_conditional!(label: R1CSConstraintLabel::Foo, if { COND } => { LEFT } == { RIGHT });`
 #[macro_export]
 macro_rules! r1cs_eq_conditional {
-    (name: $nm:expr, if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
+    (label: $nm:expr, if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
         $crate::zkvm::r1cs::constraints::NamedR1CSConstraint {
-            name: $nm,
+            label: $nm,
             cons: $crate::zkvm::r1cs::constraints::constraint_eq_conditional_lc(
                 $crate::lc!($($cond)*),
                 $crate::lc!($($left)*),
@@ -117,7 +117,7 @@ macro_rules! r1cs_eq_conditional {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = R1CSConstraintName::COUNT;
+pub const NUM_R1CS_CONSTRAINTS: usize = R1CSConstraintLabel::COUNT;
 
 /// Static table of all R1CS uniform constraints, to be proven in Spartan outer sumcheck
 pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
@@ -127,12 +127,12 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RamAddress == 0)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RamAddrEqRs1PlusImmIfLoadStore,
+        label: R1CSConstraintLabel::RamAddrEqRs1PlusImmIfLoadStore,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } + { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::RamAddress } ) == ( { JoltR1CSInputs::Rs1Value } + { JoltR1CSInputs::Imm } )
     ),
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RamAddrEqZeroIfNotLoadStore,
+        label: R1CSConstraintLabel::RamAddrEqZeroIfNotLoadStore,
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } - { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::RamAddress } ) == ( { 0i128 } )
     ),
@@ -140,7 +140,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RamReadValue == RamWriteValue)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RamReadEqRamWriteIfLoad,
+        label: R1CSConstraintLabel::RamReadEqRamWriteIfLoad,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
         => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RamWriteValue } )
     ),
@@ -148,7 +148,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RamReadValue == RdWriteValue)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RamReadEqRdWriteIfLoad,
+        label: R1CSConstraintLabel::RamReadEqRdWriteIfLoad,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
         => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RdWriteValue } )
     ),
@@ -156,7 +156,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(Rs2Value == RamWriteValue)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::Rs2EqRamWriteIfStore,
+        label: R1CSConstraintLabel::Rs2EqRamWriteIfStore,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::Rs2Value } ) == ( { JoltR1CSInputs::RamWriteValue } )
     ),
@@ -167,12 +167,12 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(LeftLookupOperand == LeftInstructionInput)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::LeftLookupZeroUnlessAddSubMul,
+        label: R1CSConstraintLabel::LeftLookupZeroUnlessAddSubMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { JoltR1CSInputs::LeftLookupOperand } ) == ( { 0i128 } )
     ),
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::LeftLookupEqLeftInputOtherwise,
+        label: R1CSConstraintLabel::LeftLookupEqLeftInputOtherwise,
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { JoltR1CSInputs::LeftLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } )
     ),
@@ -180,7 +180,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RightLookupAdd,
+        label: R1CSConstraintLabel::RightLookupAdd,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } )
     ),
@@ -189,12 +189,12 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     // Converts from unsigned to twos-complement representation
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RightLookupSub,
+        label: R1CSConstraintLabel::RightLookupSub,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
     ),
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RightLookupEqProductIfMul,
+        label: R1CSConstraintLabel::RightLookupEqProductIfMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } )
     ),
@@ -203,7 +203,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     // Arbitrary untrusted advice goes in right lookup operand
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RightLookupEqRightInputOtherwise,
+        label: R1CSConstraintLabel::RightLookupEqRightInputOtherwise,
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::Advice) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::RightInstructionInput } )
     ),
@@ -211,7 +211,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(LookupOutput == 1)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::AssertLookupOne,
+        label: R1CSConstraintLabel::AssertLookupOne,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Assert) } }
         => ( { JoltR1CSInputs::LookupOutput } ) == ( { 1i128 } )
     ),
@@ -219,7 +219,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RdWriteValue == LookupOutput)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RdWriteEqLookupIfWriteLookupToRd,
+        label: R1CSConstraintLabel::RdWriteEqLookupIfWriteLookupToRd,
         if { { JoltR1CSInputs::WriteLookupOutputToRD } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::LookupOutput } )
     ),
@@ -231,7 +231,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     }
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
+        label: R1CSConstraintLabel::RdWriteEqPCPlusConstIfWritePCtoRD,
         if { { JoltR1CSInputs::WritePCtoRD } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
@@ -239,7 +239,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(NextUnexpandedPC == LookupOutput)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::NextUnexpPCEqLookupIfShouldJump,
+        label: R1CSConstraintLabel::NextUnexpPCEqLookupIfShouldJump,
         if { { JoltR1CSInputs::ShouldJump } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::LookupOutput } )
     ),
@@ -247,7 +247,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch,
+        label: R1CSConstraintLabel::NextUnexpPCEqPCPlusImmIfShouldBranch,
         if { { JoltR1CSInputs::ShouldBranch } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::UnexpandedPC } + { JoltR1CSInputs::Imm } )
     ),
@@ -263,7 +263,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // Note that ShouldBranch and Jump instructions are mutually exclusive
     // And that DoNotUpdatePC and isCompressed are mutually exclusive
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::NextUnexpPCUpdateOtherwise,
+        label: R1CSConstraintLabel::NextUnexpPCUpdateOtherwise,
         if { { 1i128 } - { JoltR1CSInputs::ShouldBranch } - { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } )
            == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 }
@@ -274,7 +274,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(NextPC == PC + 1)
     // }
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::NextPCEqPCPlusOneIfInline,
+        label: R1CSConstraintLabel::NextPCEqPCPlusOneIfInline,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
     ),
@@ -283,7 +283,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     // (note: we put 1 on LHS to keep Bz boolean)
     r1cs_eq_conditional!(
-        name: R1CSConstraintName::MustStartSequenceFromBeginning,
+        label: R1CSConstraintLabel::MustStartSequenceFromBeginning,
         if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }
         => ( { 1i128 } ) == ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } )
     ),
@@ -310,13 +310,13 @@ pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =
     NUM_R1CS_CONSTRAINTS - OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE;
 
 /// Order-preserving, compile-time filter over `R1CS_CONSTRAINTS` by constraint names.
-const fn contains_name<const N: usize>(
-    names: &[R1CSConstraintName; N],
-    name: R1CSConstraintName,
+const fn contains_label<const N: usize>(
+    labels: &[R1CSConstraintLabel; N],
+    label: R1CSConstraintLabel,
 ) -> bool {
     let mut i = 0;
     while i < N {
-        if names[i] as u32 == name as u32 {
+        if labels[i] as u32 == label as u32 {
             return true;
         }
         i += 1;
@@ -325,11 +325,11 @@ const fn contains_name<const N: usize>(
 }
 
 /// Select constraints from `R1CS_CONSTRAINTS` whose names appear in `names`, preserving order.
-pub const fn filter_R1CS_CONSTRAINTS<const N: usize>(
-    names: &[R1CSConstraintName; N],
+pub const fn filter_r1cs_constraints<const N: usize>(
+    labels: &[R1CSConstraintLabel; N],
 ) -> [NamedR1CSConstraint; N] {
     let dummy = NamedR1CSConstraint {
-        name: R1CSConstraintName::RamReadEqRamWriteIfLoad,
+        label: R1CSConstraintLabel::RamReadEqRamWriteIfLoad,
         cons: R1CSConstraint::new(LC::zero(), LC::zero()),
     };
     let mut out: [NamedR1CSConstraint; N] = [dummy; N];
@@ -338,7 +338,7 @@ pub const fn filter_R1CS_CONSTRAINTS<const N: usize>(
     let mut i = 0;
     while i < NUM_R1CS_CONSTRAINTS {
         let cand = R1CS_CONSTRAINTS[i];
-        if contains_name(names, cand.name) {
+        if contains_label(labels, cand.label) {
             out[o] = cand;
             o += 1;
             if o == N {
@@ -350,21 +350,21 @@ pub const fn filter_R1CS_CONSTRAINTS<const N: usize>(
 
     if o != N {
         panic!(
-            "filter_R1CS_CONSTRAINTS: not all requested constraints were found in R1CS_CONSTRAINTS"
+            "filter_r1cs_constraints: not all requested constraints were found in R1CS_CONSTRAINTS"
         );
     }
     out
 }
 
-/// Compute the complement of `R1CS_CONSTRAINTS_FIRST_GROUP_NAMES` within `R1CS_CONSTRAINTS`.
-const fn complement_first_group_names() -> [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] {
-    let mut out: [R1CSConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
-        [R1CSConstraintName::RamReadEqRamWriteIfLoad; NUM_REMAINING_R1CS_CONSTRAINTS];
+/// Compute the complement of `R1CS_CONSTRAINTS_FIRST_GROUP_LABELS` within `R1CS_CONSTRAINTS`.
+const fn complement_first_group_labels() -> [R1CSConstraintLabel; NUM_REMAINING_R1CS_CONSTRAINTS] {
+    let mut out: [R1CSConstraintLabel; NUM_REMAINING_R1CS_CONSTRAINTS] =
+        [R1CSConstraintLabel::RamReadEqRamWriteIfLoad; NUM_REMAINING_R1CS_CONSTRAINTS];
     let mut o = 0;
     let mut i = 0;
     while i < NUM_R1CS_CONSTRAINTS {
-        let cand = R1CS_CONSTRAINTS[i].name;
-        if !contains_name(&R1CS_CONSTRAINTS_FIRST_GROUP_NAMES, cand) {
+        let cand = R1CS_CONSTRAINTS[i].label;
+        if !contains_label(&R1CS_CONSTRAINTS_FIRST_GROUP_LABELS, cand) {
             out[o] = cand;
             o += 1;
             if o == NUM_REMAINING_R1CS_CONSTRAINTS {
@@ -381,32 +381,32 @@ const fn complement_first_group_names() -> [R1CSConstraintName; NUM_REMAINING_R1
 }
 
 /// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
-pub const R1CS_CONSTRAINTS_FIRST_GROUP_NAMES: [R1CSConstraintName;
+pub const R1CS_CONSTRAINTS_FIRST_GROUP_LABELS: [R1CSConstraintLabel;
     OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = [
-    R1CSConstraintName::RamAddrEqZeroIfNotLoadStore,
-    R1CSConstraintName::RamReadEqRamWriteIfLoad,
-    R1CSConstraintName::RamReadEqRdWriteIfLoad,
-    R1CSConstraintName::Rs2EqRamWriteIfStore,
-    R1CSConstraintName::LeftLookupZeroUnlessAddSubMul,
-    R1CSConstraintName::LeftLookupEqLeftInputOtherwise,
-    R1CSConstraintName::AssertLookupOne,
-    R1CSConstraintName::NextUnexpPCEqLookupIfShouldJump,
-    R1CSConstraintName::NextPCEqPCPlusOneIfInline,
-    R1CSConstraintName::MustStartSequenceFromBeginning,
+    R1CSConstraintLabel::RamAddrEqZeroIfNotLoadStore,
+    R1CSConstraintLabel::RamReadEqRamWriteIfLoad,
+    R1CSConstraintLabel::RamReadEqRdWriteIfLoad,
+    R1CSConstraintLabel::Rs2EqRamWriteIfStore,
+    R1CSConstraintLabel::LeftLookupZeroUnlessAddSubMul,
+    R1CSConstraintLabel::LeftLookupEqLeftInputOtherwise,
+    R1CSConstraintLabel::AssertLookupOne,
+    R1CSConstraintLabel::NextUnexpPCEqLookupIfShouldJump,
+    R1CSConstraintLabel::NextPCEqPCPlusOneIfInline,
+    R1CSConstraintLabel::MustStartSequenceFromBeginning,
 ];
 
 /// Second group: complement of first within R1CS_CONSTRAINTS
 /// Here, Az may be u8, and Bz may be around 128 bits
-pub const R1CS_CONSTRAINTS_SECOND_GROUP_NAMES: [R1CSConstraintName;
-    NUM_REMAINING_R1CS_CONSTRAINTS] = complement_first_group_names();
+pub const R1CS_CONSTRAINTS_SECOND_GROUP_LABELS: [R1CSConstraintLabel;
+    NUM_REMAINING_R1CS_CONSTRAINTS] = complement_first_group_labels();
 
 /// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
 pub static R1CS_CONSTRAINTS_FIRST_GROUP: [NamedR1CSConstraint; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] =
-    filter_R1CS_CONSTRAINTS(&R1CS_CONSTRAINTS_FIRST_GROUP_NAMES);
+    filter_r1cs_constraints(&R1CS_CONSTRAINTS_FIRST_GROUP_LABELS);
 
 /// Second group: complement of first within R1CS_CONSTRAINTS, where Az may be u8 and Bz may be around 128 bits
 pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
-    filter_R1CS_CONSTRAINTS(&R1CS_CONSTRAINTS_SECOND_GROUP_NAMES);
+    filter_r1cs_constraints(&R1CS_CONSTRAINTS_SECOND_GROUP_LABELS);
 
 /// Domain sizing for product-virtualization univariate-skip (size-5 window)
 pub const NUM_PRODUCT_VIRTUAL: usize = 5;
@@ -503,9 +503,9 @@ mod tests {
     /// Test that the constraint name enum matches the uniform R1CS order.
     #[test]
     fn constraint_enum_matches_R1CS_CONSTRAINTS_order() {
-        let enum_order: Vec<R1CSConstraintName> = R1CSConstraintName::iter().collect();
-        let array_order: Vec<R1CSConstraintName> =
-            R1CS_CONSTRAINTS.iter().map(|nc| nc.name).collect();
+        let enum_order: Vec<R1CSConstraintLabel> = R1CSConstraintLabel::iter().collect();
+        let array_order: Vec<R1CSConstraintLabel> =
+            R1CS_CONSTRAINTS.iter().map(|nc| nc.label).collect();
         assert_eq!(array_order.len(), NUM_R1CS_CONSTRAINTS);
         assert_eq!(enum_order, array_order);
     }
