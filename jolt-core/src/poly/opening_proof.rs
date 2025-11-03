@@ -13,8 +13,6 @@ use allocative::FlameGraphBuilder;
 use num_derive::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
-#[cfg(test)]
-use std::cell::RefCell;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
@@ -551,7 +549,7 @@ where
     dense_polynomial_map: HashMap<CommittedPolynomial, Arc<RwLock<SharedDensePolynomial<F>>>>,
     eq_cycle_map: HashMap<Vec<F::Challenge>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
-    pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
+    pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
     log_T: usize,
 }
 
@@ -655,7 +653,7 @@ where
             eq_cycle_map: HashMap::new(),
             dense_polynomial_map: HashMap::new(),
             #[cfg(test)]
-            appended_virtual_openings: std::cell::RefCell::new(vec![]),
+            appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
             log_T,
             // #[cfg(test)]
             // joint_commitment: None,
@@ -664,6 +662,10 @@ where
 
     pub fn len(&self) -> usize {
         self.sumchecks.len()
+    }
+
+    pub fn evaluation_openings(&self) -> &Openings<F> {
+        &self.openings
     }
 
     pub fn evaluation_openings_mut(&mut self) -> &mut Openings<F> {
@@ -1046,6 +1048,10 @@ where
 
     pub fn len(&self) -> usize {
         self.sumchecks.len()
+    }
+
+    pub fn openings_mut(&mut self) -> &mut Openings<F> {
+        &mut self.openings
     }
 
     pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {

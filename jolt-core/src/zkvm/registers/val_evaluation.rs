@@ -64,12 +64,11 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::gen")]
     pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new(state_manager);
 
         // The opening point is r_address || r_cycle
-        let registers_val_input_sample = opening_accumulator.get_virtual_polynomial_opening(
+        let registers_val_input_sample = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );
