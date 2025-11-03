@@ -36,10 +36,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         let read_write_checking =
-            RegistersReadWriteCheckingProver::gen(state_manager, opening_accumulator, transcript);
+            RegistersReadWriteCheckingProver::gen(state_manager, opening_accumulator);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage(
             "registers RegistersReadWriteChecking",
@@ -52,7 +51,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         let val_evaluation = ValEvaluationSumcheckProver::gen(state_manager, opening_accumulator);
         #[cfg(feature = "allocative")]
@@ -70,10 +68,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         let read_write_checking =
-            RegistersReadWriteCheckingVerifier::new(state_manager, opening_accumulator, transcript);
+            RegistersReadWriteCheckingVerifier::new(state_manager, opening_accumulator);
         vec![Box::new(read_write_checking)]
     }
 
@@ -81,7 +78,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         let val_evaluation = ValEvaluationSumcheckVerifier::new(state_manager);
         vec![Box::new(val_evaluation)]

@@ -73,10 +73,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
         let ra_evals = self.get_or_compute_ra_evals(sm, opening_accumulator);
-        let hamming_weight = gen_ra_hamming_weight_prover(ra_evals, transcript);
+        let hamming_weight = gen_ra_hamming_weight_prover(sm, ra_evals);
 
         #[cfg(feature = "allocative")]
         {
@@ -93,9 +92,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let read_raf = ReadRafSumcheckProver::gen(sm, opening_accumulator, transcript);
+        let read_raf = ReadRafSumcheckProver::gen(sm, opening_accumulator);
 
         #[cfg(feature = "allocative")]
         {
@@ -109,12 +107,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
         let ra_virtual = RaSumcheckProver::gen(sm, opening_accumulator);
 
         let ra_evals = self.get_or_compute_ra_evals(sm, opening_accumulator);
-        let booleanity = gen_ra_booleanity_prover(sm, opening_accumulator, ra_evals, transcript);
+        let booleanity = gen_ra_booleanity_prover(sm, opening_accumulator, ra_evals);
 
         #[cfg(feature = "allocative")]
         {
@@ -139,11 +136,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 {
     fn stage3_instances(
         &mut self,
-        _sm: &mut StateManager<'_, F, T, PCS>,
+        sm: &mut StateManager<'_, F, T, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let hamming_weight = new_ra_hamming_weight_verifier(transcript);
+        let hamming_weight = new_ra_hamming_weight_verifier(sm);
         vec![Box::new(hamming_weight)]
     }
 
@@ -151,9 +147,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let read_raf = ReadRafSumcheckVerifier::new(sm, transcript);
+        let read_raf = ReadRafSumcheckVerifier::new(sm);
         vec![Box::new(read_raf)]
     }
 
@@ -161,19 +156,17 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
         let ra_virtual = RaSumcheckVerifier::new(opening_accumulator);
-        let booleanity = new_ra_booleanity_verifier(sm, transcript);
+        let booleanity = new_ra_booleanity_verifier(sm);
         vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 }
 
-fn gen_ra_booleanity_prover<F: JoltField, T: Transcript>(
-    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+fn gen_ra_booleanity_prover<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
     ra_evals: &[Vec<F>; D],
-    transcript: &mut T,
 ) -> BooleanitySumcheckProver<F> {
     let (_, _, trace, _, _) = state_manager.get_prover_data();
     let (r_cycle, _) = opening_accumulator
@@ -182,9 +175,11 @@ fn gen_ra_booleanity_prover<F: JoltField, T: Transcript>(
 
     let log_t = trace.len().log_2();
 
-    let gammas = transcript.challenge_vector_optimized::<F>(D);
+    let gammas = state_manager.transcript.challenge_vector_optimized::<F>(D);
 
-    let r_address = transcript.challenge_vector_optimized::<F>(LOG_K_CHUNK);
+    let r_address: Vec<F::Challenge> = state_manager
+        .transcript
+        .challenge_vector_optimized::<F>(LOG_K_CHUNK);
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..D).map(CommittedPolynomial::InstructionRa).collect();
 
@@ -203,11 +198,11 @@ fn gen_ra_booleanity_prover<F: JoltField, T: Transcript>(
     BooleanitySumcheckProver::gen(params, ra_evals.to_vec(), H_indices)
 }
 
-fn gen_ra_hamming_weight_prover<F: JoltField, T: Transcript>(
+fn gen_ra_hamming_weight_prover<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ra_evals: &[Vec<F>; D],
-    transcript: &mut T,
 ) -> HammingWeightSumcheckProver<F> {
-    let gamma_powers = transcript.challenge_scalar_powers(D);
+    let gamma_powers = state_manager.transcript.challenge_scalar_powers(D);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..D).map(CommittedPolynomial::InstructionRa).collect();
@@ -225,16 +220,17 @@ fn gen_ra_hamming_weight_prover<F: JoltField, T: Transcript>(
     HammingWeightSumcheckProver::gen(params, ra_evals.to_vec())
 }
 
-fn new_ra_booleanity_verifier<F: JoltField, T: Transcript>(
+fn new_ra_booleanity_verifier<F: JoltField>(
     state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    transcript: &mut T,
 ) -> BooleanitySumcheckVerifier<F> {
     let (_, _, T_val) = state_manager.get_verifier_data();
     let log_t = T_val.log_2();
 
-    let gammas: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(D);
+    let gammas: Vec<F::Challenge> = state_manager.transcript.challenge_vector_optimized::<F>(D);
 
-    let r_address: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(LOG_K_CHUNK);
+    let r_address: Vec<F::Challenge> = state_manager
+        .transcript
+        .challenge_vector_optimized::<F>(LOG_K_CHUNK);
 
     let r_cycle = Vec::new();
 
@@ -256,10 +252,10 @@ fn new_ra_booleanity_verifier<F: JoltField, T: Transcript>(
     BooleanitySumcheckVerifier::new(params)
 }
 
-fn new_ra_hamming_weight_verifier<F: JoltField, T: Transcript>(
-    transcript: &mut T,
+fn new_ra_hamming_weight_verifier<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
 ) -> HammingWeightSumcheckVerifier<F> {
-    let gamma_powers = transcript.challenge_scalar_powers(D);
+    let gamma_powers = state_manager.transcript.challenge_scalar_powers(D);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..D).map(CommittedPolynomial::InstructionRa).collect();

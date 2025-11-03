@@ -180,12 +180,11 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
     /// - Allocates per-table suffix accumulators and u-evals for rv/raf parts
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::gen")]
-    pub fn gen<T: Transcript>(
-        sm: &'a mut StateManager<F, T, impl CommitmentScheme<Field = F>>,
+    pub fn gen(
+        sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Self {
-        let params = ReadRafSumcheckParams::new(sm, transcript);
+        let params = ReadRafSumcheckParams::new(sm);
         let trace = sm.get_prover_data().2;
         let (r_branch, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
@@ -1008,11 +1007,10 @@ pub struct ReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckVerifier<F> {
-    pub fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let params = ReadRafSumcheckParams::new(state_manager, transcript);
+        let params = ReadRafSumcheckParams::new(state_manager);
         Self { params }
     }
 }
@@ -1153,11 +1151,10 @@ struct ReadRafSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
-    fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let gamma = transcript.challenge_scalar::<F>();
+        let gamma = state_manager.transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
         let log_T = state_manager.get_trace_len().log_2();
         Self {
@@ -1335,7 +1332,6 @@ mod tests {
         let final_memory_state = Memory::default();
 
         let lazy_trace = LazyTraceIterator::new_for_test();
-        let prover_transcript = &mut Blake2bTranscript::new(&[]);
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
         let mut prover_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_prover(
             &prover_preprocessing,
@@ -1345,7 +1341,6 @@ mod tests {
             None,
             final_memory_state,
         );
-        let verifier_transcript = &mut Blake2bTranscript::new(&[]);
         let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
         let mut verifier_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_verifier(
             &verifier_preprocessing,
@@ -1356,15 +1351,17 @@ mod tests {
         );
 
         let r_cycle: Vec<<Fr as JoltField>::Challenge> =
-            prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);
-        let _r_cycle: Vec<<Fr as JoltField>::Challenge> =
-            verifier_transcript.challenge_vector_optimized::<Fr>(LOG_T);
+            prover_sm.transcript.challenge_vector_optimized::<Fr>(LOG_T);
+        let _r_cycle: Vec<<Fr as JoltField>::Challenge> = verifier_sm
+            .transcript
+            .challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
         let r_cycle_branch: Vec<<Fr as JoltField>::Challenge> =
-            prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);
-        let _r_cycle_branch: Vec<<Fr as JoltField>::Challenge> =
-            verifier_transcript.challenge_vector_optimized::<Fr>(LOG_T);
+            prover_sm.transcript.challenge_vector_optimized::<Fr>(LOG_T);
+        let _r_cycle_branch: Vec<<Fr as JoltField>::Challenge> = verifier_sm
+            .transcript
+            .challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle_branch = EqPolynomial::<Fr>::evals(&r_cycle_branch);
 
         let mut rv_claim = Fr::zero();
@@ -1392,44 +1389,41 @@ mod tests {
         }
 
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
+            &mut prover_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             rv_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
+            &mut prover_sm.transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             left_operand_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
+            &mut prover_sm.transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             right_operand_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
+            &mut prover_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
             rv_claim_branch,
         );
 
-        let mut prover_sumcheck = ReadRafSumcheckProver::gen(
-            &mut prover_sm,
-            &prover_opening_accumulator,
-            prover_transcript,
-        );
+        let mut prover_sumcheck =
+            ReadRafSumcheckProver::gen(&mut prover_sm, &prover_opening_accumulator);
 
         let (proof, r_sumcheck) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],
             &mut prover_opening_accumulator,
-            prover_transcript,
+            &mut prover_sm.transcript,
         );
 
         // Take claims
@@ -1441,38 +1435,37 @@ mod tests {
         }
 
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
+            &mut verifier_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
+            &mut verifier_sm.transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
+            &mut verifier_sm.transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
+            &mut verifier_sm.transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
         );
 
-        let mut verifier_sumcheck =
-            ReadRafSumcheckVerifier::new(&mut verifier_sm, verifier_transcript);
+        let mut verifier_sumcheck = ReadRafSumcheckVerifier::new(&mut verifier_sm);
 
         let r_sumcheck_verif = BatchedSumcheck::verify(
             &proof,
             vec![&mut verifier_sumcheck],
             &mut verifier_opening_accumulator,
-            verifier_transcript,
+            &mut verifier_sm.transcript,
         )
         .unwrap();
 

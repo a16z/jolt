@@ -17,7 +17,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -27,7 +26,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -37,7 +35,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -47,7 +44,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -56,7 +52,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -65,7 +60,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -74,7 +68,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -83,7 +76,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -92,7 +84,6 @@ pub trait SumcheckStagesProver<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -109,7 +100,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -119,7 +109,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -129,7 +118,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -138,7 +126,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -147,7 +134,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -156,7 +142,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -165,7 +150,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -174,7 +158,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -183,7 +166,6 @@ pub trait SumcheckStagesVerifier<
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
