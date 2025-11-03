@@ -27,6 +27,7 @@ use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
     constraints::{
@@ -37,7 +38,6 @@ use crate::zkvm::r1cs::{
     inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
-use crate::zkvm::JoltSharedPreprocessing;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 
@@ -96,7 +96,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
         let tau_low = &tau[0..tau.len() - 1];
 
         let extended =
-            Self::compute_univariate_skip_extended_evals(&preprocessing.shared, trace, tau_low);
+            Self::compute_univariate_skip_extended_evals(&preprocessing.bytecode, trace, tau_low);
 
         let instance = Self {
             tau: tau.to_vec(),
@@ -123,7 +123,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     /// \sum_{x_in'} eq(tau_in, (x_in', 0)) * Az(x_out, x_in', 0, y) * Bz(x_out, x_in', 0, y)
     ///     + eq(tau_in, (x_in', 1)) * Az(x_out, x_in', 1, y) * Bz(x_out, x_in', 1, y)
     fn compute_univariate_skip_extended_evals(
-        preprocess: &JoltSharedPreprocessing,
+        bytecode_preprocessing: &BytecodePreprocessing,
         trace: &[Cycle],
         tau_low: &[F::Challenge],
     ) -> [F; OUTER_UNIVARIATE_SKIP_DEGREE] {
@@ -172,8 +172,11 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, base_step_idx);
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            bytecode_preprocessing,
+                            trace,
+                            base_step_idx,
+                        );
 
                         // Group 0 (even index)
                         let x_in_even = x_in_prime << 1;
@@ -246,7 +249,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
 #[derive(Allocative)]
 pub struct OuterRemainingSumcheckProver<F: JoltField> {
     #[allocative(skip)]
-    preprocess: Arc<JoltSharedPreprocessing>,
+    bytecode_preprocessing: BytecodePreprocessing,
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
@@ -266,6 +269,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
         uni: &UniSkipState<F>,
     ) -> Self {
         let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let bytecode_preprocessing = preprocessing.bytecode.clone();
 
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
@@ -288,7 +292,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
             );
 
         let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
-            &preprocessing.shared,
+            &bytecode_preprocessing,
             trace,
             &lagrange_evals_r,
             &split_eq_poly,
@@ -296,7 +300,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
 
         Self {
             split_eq_poly,
-            preprocess: Arc::new(preprocessing.shared.clone()),
+            bytecode_preprocessing,
             trace: Arc::new(trace.to_vec()),
             az: az_bound,
             bz: bz_bound,
@@ -332,7 +336,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     #[inline]
     fn compute_first_quadratic_evals_and_bound_polys(
-        preprocess: &JoltSharedPreprocessing,
+        bytecode_preprocessing: &BytecodePreprocessing,
         trace: &[Cycle],
         lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
@@ -361,8 +365,11 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                     let mut inner_sum_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            bytecode_preprocessing,
+                            trace,
+                            current_step_idx,
+                        );
                         let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
                         let az0 = eval.az_at_r_first_group(lagrange_evals_r);
                         let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
@@ -572,7 +579,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
 
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let claimed_witness_evals =
-            R1CSEval::compute_claimed_inputs(&self.preprocess, &self.trace, r_cycle);
+            R1CSEval::compute_claimed_inputs(&self.bytecode_preprocessing, &self.trace, r_cycle);
 
         #[cfg(test)]
         {

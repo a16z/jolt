@@ -131,7 +131,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
         let params = ReadRafSumcheckParams::gen(
-            &preprocessing.shared.bytecode,
+            &preprocessing.bytecode,
             trace.len().log_2(),
             opening_accumulator,
             transcript,
@@ -169,7 +169,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     array::from_fn(|_| unsafe_allocate_zero_vec::<F>(params.K));
 
                 for (j, cycle) in trace_chunk.iter().enumerate() {
-                    let pc = preprocessing.shared.bytecode.get_pc(cycle);
+                    let pc = preprocessing.bytecode.get_pc(cycle);
                     for stage in 0..N_STAGES {
                         res_per_stage[stage][pc] += eq_evals[stage][j]
                     }
@@ -221,7 +221,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
         let pc = trace
             .par_iter()
-            .map(|cycle| preprocessing.shared.bytecode.get_pc(cycle))
+            .map(|cycle| preprocessing.bytecode.get_pc(cycle))
             .collect();
 
         Self {
