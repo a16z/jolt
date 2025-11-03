@@ -282,8 +282,6 @@ pub trait MulU64WithCarry {
     fn mul_u64_w_carry<const NPLUS1: usize>(&self, other: u64) -> Self::Output<NPLUS1>;
 }
 
-// FmaddTrunc was removed in favor of calling MulTrunc and AddAssign at call sites
-
 pub trait MulTrunc {
     type Other<const M: usize>;
     type Output<const P: usize>;
