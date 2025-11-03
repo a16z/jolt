@@ -287,7 +287,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                 Some(lagrange_tau_r0),
             );
 
-        let (t0, t_inf, az_bound, bz_bound) = Self::compute_data_from_trace(
+        let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
             &preprocessing.shared,
             trace,
             &lagrange_evals_r,
@@ -331,7 +331,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     #[inline]
-    fn compute_data_from_trace(
+    fn compute_first_quadratic_evals_and_bound_polys(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
         lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],

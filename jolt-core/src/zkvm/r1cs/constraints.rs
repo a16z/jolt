@@ -418,7 +418,7 @@ pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS: usize =
     3 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
-pub enum ProductConstraintName {
+pub enum ProductConstraintLabel {
     Instruction,
     WriteLookupOutputToRD,
     WritePCtoRD,
@@ -427,7 +427,7 @@ pub enum ProductConstraintName {
 }
 
 /// Number of product virtualization constraints
-pub const NUM_PRODUCT_CONSTRAINTS: usize = ProductConstraintName::COUNT;
+pub const NUM_PRODUCT_CONSTRAINTS: usize = ProductConstraintLabel::COUNT;
 
 /// Factor expression for product constraints: either a direct virtual polynomial,
 /// or 1 minus a virtual polynomial (used for NextIsNoop in ShouldJump).
@@ -441,7 +441,7 @@ pub enum ProductFactorExpr {
 /// polynomial whose claims come from Spartan outer's first stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProductConstraint {
-    pub name: ProductConstraintName,
+    pub label: ProductConstraintLabel,
     pub left: ProductFactorExpr,
     pub right: ProductFactorExpr,
     pub output: VirtualPolynomial,
@@ -452,14 +452,14 @@ pub struct ProductConstraint {
 pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     // 0: Product = LeftInstructionInput · RightInstructionInput
     ProductConstraint {
-        name: ProductConstraintName::Instruction,
+        label: ProductConstraintLabel::Instruction,
         left: ProductFactorExpr::Var(VirtualPolynomial::LeftInstructionInput),
         right: ProductFactorExpr::Var(VirtualPolynomial::RightInstructionInput),
         output: VirtualPolynomial::Product,
     },
     // 1: WriteLookupOutputToRD = IsRdNotZero · OpFlags(WriteLookupOutputToRD)
     ProductConstraint {
-        name: ProductConstraintName::WriteLookupOutputToRD,
+        label: ProductConstraintLabel::WriteLookupOutputToRD,
         left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
             InstructionFlags::IsRdNotZero,
         )),
@@ -470,7 +470,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     },
     // 2: WritePCtoRD = IsRdNotZero · OpFlags(Jump)
     ProductConstraint {
-        name: ProductConstraintName::WritePCtoRD,
+        label: ProductConstraintLabel::WritePCtoRD,
         left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
             InstructionFlags::IsRdNotZero,
         )),
@@ -479,7 +479,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     },
     // 3: ShouldBranch = LookupOutput · InstructionFlags(Branch)
     ProductConstraint {
-        name: ProductConstraintName::ShouldBranch,
+        label: ProductConstraintLabel::ShouldBranch,
         left: ProductFactorExpr::Var(VirtualPolynomial::LookupOutput),
         right: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
             InstructionFlags::Branch,
@@ -488,7 +488,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     },
     // 4: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
     ProductConstraint {
-        name: ProductConstraintName::ShouldJump,
+        label: ProductConstraintLabel::ShouldJump,
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
         output: VirtualPolynomial::ShouldJump,

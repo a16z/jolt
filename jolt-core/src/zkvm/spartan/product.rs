@@ -360,7 +360,11 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
             );
 
         let (t0, t_inf, left_bound, right_bound) =
-            Self::compute_data_from_trace(trace, &lagrange_evals_r, &split_eq_poly);
+            Self::compute_first_quadratic_evals_and_bound_polys(
+                trace,
+                &lagrange_evals_r,
+                &split_eq_poly,
+            );
 
         Self {
             split_eq_poly,
@@ -387,7 +391,7 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
     ///   weights w_i = L_i(r0) over the size-5 domain.
     /// - For ShouldJump, the effective right factor is (1 − NextIsNoop).
     /// - We follow outer’s delayed-reduction pattern across x_in to reduce modular reductions.
-    fn compute_data_from_trace(
+    fn compute_first_quadratic_evals_and_bound_polys(
         trace: &[Cycle],
         weights_at_r0: &[F; NUM_PRODUCT_VIRTUAL],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
