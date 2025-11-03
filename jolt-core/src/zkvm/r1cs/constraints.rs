@@ -289,10 +289,6 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     ),
 ];
 
-// =============================================================================
-// Univariate skip constants for Spartan outer sumcheck and grouped views
-// =============================================================================
-
 /// Degree of univariate skip, defined to be `(NUM_R1CS_CONSTRAINTS - 1) / 2`
 pub const OUTER_UNIVARIATE_SKIP_DEGREE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2;
 
@@ -411,10 +407,6 @@ pub static R1CS_CONSTRAINTS_FIRST_GROUP: [NamedR1CSConstraint; OUTER_UNIVARIATE_
 /// Second group: complement of first within R1CS_CONSTRAINTS, where Az may be u8 and Bz may be around 128 bits
 pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_R1CS_CONSTRAINTS(&R1CS_CONSTRAINTS_SECOND_GROUP_NAMES);
-
-// ===========================================
-// Product virtualization constraints
-// ===========================================
 
 /// Domain sizing for product-virtualization univariate-skip (size-5 window)
 pub const NUM_PRODUCT_VIRTUAL: usize = 5;

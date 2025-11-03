@@ -68,8 +68,6 @@ fn s64_from_diff_u64s(a: u64, b: u64) -> S64 {
     }
 }
 
-// ===== Univariate-skip constants (module-level; visible to outer only) =====
-
 pub(crate) const UNISKIP_TARGETS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] =
     uniskip_targets::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_DEGREE>();
 
@@ -96,8 +94,6 @@ pub(crate) const COEFFS_PER_J: [[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
     }
     out
 };
-
-// ===== Product-virtual univariate-skip constants (size-5 window) =====
 
 pub(crate) const PRODUCT_VIRTUAL_UNISKIP_TARGETS: [i64; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
     uniskip_targets::<
