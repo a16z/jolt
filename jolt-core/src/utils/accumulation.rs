@@ -1,6 +1,6 @@
 use crate::field::{BarrettReduce, FMAdd, JoltField, MontgomeryReduce, MulTrunc};
 use ark_ff::biginteger::{S128, S160, S192, S256, S64};
-use ark_std::Zero;
+use ark_std::{Zero, ops::Add};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc5U<F: JoltField> {
@@ -10,13 +10,36 @@ pub struct Acc5U<F: JoltField> {
 impl<F: JoltField> Default for Acc5U<F> {
     #[inline(always)]
     fn default() -> Self {
-        Self {
-            word: <F as JoltField>::Unreduced::<5>::from([0u64; 5]),
-        }
+        Self::zero()
     }
 }
 
 impl<F: JoltField> Acc5U<F> {}
+
+impl<F: JoltField> Zero for Acc5U<F> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            word: <F as JoltField>::Unreduced::<5>::from([0u64; 5]),
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.word == <F as JoltField>::Unreduced::<5>::from([0u64; 5])
+    }
+}
+
+impl<F: JoltField> Add for Acc5U<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.word += rhs.word;
+        out
+    }
+}
 
 impl<F: JoltField> BarrettReduce<F> for Acc5U<F> {
     #[inline(always)]
@@ -64,13 +87,36 @@ pub struct Acc6U<F: JoltField> {
 impl<F: JoltField> Default for Acc6U<F> {
     #[inline(always)]
     fn default() -> Self {
-        Self {
-            word: <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
-        }
+        Self::zero()
     }
 }
 
 impl<F: JoltField> Acc6U<F> {}
+
+impl<F: JoltField> Zero for Acc6U<F> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            word: <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.word == <F as JoltField>::Unreduced::<6>::from([0u64; 6])
+    }
+}
+
+impl<F: JoltField> Add for Acc6U<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.word += rhs.word;
+        out
+    }
+}
 
 impl<F: JoltField> FMAdd<F, u64> for Acc6U<F> {
     #[inline(always)]
@@ -118,14 +164,39 @@ pub struct Acc6S<F: JoltField> {
 impl<F: JoltField> Default for Acc6S<F> {
     #[inline(always)]
     fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: JoltField> Acc6S<F> {}
+
+impl<F: JoltField> Zero for Acc6S<F> {
+    #[inline(always)]
+    fn zero() -> Self {
         Self {
             pos: <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
             neg: <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
         }
     }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.pos == <F as JoltField>::Unreduced::<6>::from([0u64; 6])
+            && self.neg == <F as JoltField>::Unreduced::<6>::from([0u64; 6])
+    }
 }
 
-impl<F: JoltField> Acc6S<F> {}
+impl<F: JoltField> Add for Acc6S<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.pos += rhs.pos;
+        out.neg += rhs.neg;
+        out
+    }
+}
 
 impl<F: JoltField> FMAdd<F, i128> for Acc6S<F> {
     #[inline(always)]
@@ -226,13 +297,36 @@ pub struct Acc7U<F: JoltField> {
 impl<F: JoltField> Default for Acc7U<F> {
     #[inline(always)]
     fn default() -> Self {
-        Self {
-            word: <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-        }
+        Self::zero()
     }
 }
 
 impl<F: JoltField> Acc7U<F> {}
+
+impl<F: JoltField> Zero for Acc7U<F> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            word: <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.word == <F as JoltField>::Unreduced::<7>::from([0u64; 7])
+    }
+}
+
+impl<F: JoltField> Add for Acc7U<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.word += rhs.word;
+        out
+    }
+}
 
 impl<F: JoltField> FMAdd<F, u128> for Acc7U<F> {
     #[inline(always)]
@@ -260,14 +354,39 @@ pub struct Acc7S<F: JoltField> {
 impl<F: JoltField> Default for Acc7S<F> {
     #[inline(always)]
     fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: JoltField> Acc7S<F> {}
+
+impl<F: JoltField> Zero for Acc7S<F> {
+    #[inline(always)]
+    fn zero() -> Self {
         Self {
             pos: <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
             neg: <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
         }
     }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.pos == <F as JoltField>::Unreduced::<7>::from([0u64; 7])
+            && self.neg == <F as JoltField>::Unreduced::<7>::from([0u64; 7])
+    }
 }
 
-impl<F: JoltField> Acc7S<F> {}
+impl<F: JoltField> Add for Acc7S<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.pos += rhs.pos;
+        out.neg += rhs.neg;
+        out
+    }
+}
 
 impl<F: JoltField> FMAdd<F, i128> for Acc7S<F> {
     #[inline(always)]
@@ -390,13 +509,36 @@ pub struct Acc8U<F: JoltField> {
 impl<F: JoltField> Default for Acc8U<F> {
     #[inline(always)]
     fn default() -> Self {
-        Self {
-            word: <F as JoltField>::Unreduced::<8>::from([0u64; 8]),
-        }
+        Self::zero()
     }
 }
 
 impl<F: JoltField> Acc8U<F> {}
+
+impl<F: JoltField> Zero for Acc8U<F> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            word: <F as JoltField>::Unreduced::<8>::from([0u64; 8]),
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.word == <F as JoltField>::Unreduced::<8>::from([0u64; 8])
+    }
+}
+
+impl<F: JoltField> Add for Acc8U<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.word += rhs.word;
+        out
+    }
+}
 
 impl<F: JoltField> FMAdd<F, u128> for Acc8U<F> {
     #[inline(always)]
@@ -454,14 +596,39 @@ pub struct Acc8S<F: JoltField> {
 impl<F: JoltField> Default for Acc8S<F> {
     #[inline(always)]
     fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: JoltField> Acc8S<F> {}
+
+impl<F: JoltField> Zero for Acc8S<F> {
+    #[inline(always)]
+    fn zero() -> Self {
         Self {
             pos: <F as JoltField>::Unreduced::<8>::from([0u64; 8]),
             neg: <F as JoltField>::Unreduced::<8>::from([0u64; 8]),
         }
     }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.pos == <F as JoltField>::Unreduced::<8>::from([0u64; 8])
+            && self.neg == <F as JoltField>::Unreduced::<8>::from([0u64; 8])
+    }
 }
 
-impl<F: JoltField> Acc8S<F> {}
+impl<F: JoltField> Add for Acc8S<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.pos += rhs.pos;
+        out.neg += rhs.neg;
+        out
+    }
+}
 
 impl<F: JoltField> FMAdd<F, S128> for Acc8S<F> {
     #[inline(always)]
@@ -576,6 +743,27 @@ impl S128Sum {
     }
 }
 
+impl Zero for S128Sum {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self::new()
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.sum == S128::from(0i128)
+    }
+}
+
+impl Add for S128Sum {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self { sum: self.sum + rhs.sum }
+    }
+}
+
 // Accumulate c (i32) when the boolean is true; add nothing when false
 impl FMAdd<i32, bool> for S128Sum {
     #[inline(always)]
@@ -650,5 +838,26 @@ impl FMAdd<i32, S160> for S192Sum {
         let c_s64 = S64::from(*c as i64);
         let term_s192 = term.to_signed_bigint_nplus1::<3>();
         self.sum += c_s64.mul_trunc::<3, 3>(&term_s192);
+    }
+}
+
+impl Zero for S192Sum {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self { sum: S192::from(0i128) }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.sum == S192::from(0i128)
+    }
+}
+
+impl Add for S192Sum {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self { sum: self.sum + rhs.sum }
     }
 }

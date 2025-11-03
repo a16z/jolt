@@ -268,7 +268,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[inline]
     pub fn az_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let az = self.eval_az_first_group();
-        let mut acc: Acc5U<F> = Acc5U::default();
+        let mut acc: Acc5U<F> = Acc5U::zero();
         acc.fmadd(&w[0], &az.not_load_store);
         acc.fmadd(&w[1], &az.load_a);
         acc.fmadd(&w[2], &az.load_b);
@@ -285,7 +285,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[inline]
     pub fn bz_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let bz = self.eval_bz_first_group();
-        let mut acc: Acc6S<F> = Acc6S::default();
+        let mut acc: Acc6S<F> = Acc6S::zero();
         acc.fmadd(&w[0], &bz.ram_addr);
         acc.fmadd(&w[1], &bz.ram_read_minus_ram_write);
         acc.fmadd(&w[2], &bz.ram_read_minus_rd_write);
@@ -307,7 +307,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let bz = self.eval_bz_first_group();
 
         let mut az_eval_i32: i32 = 0;
-        let mut bz_eval_s128: S128Sum = S128Sum::default();
+        let mut bz_eval_s128: S128Sum = S128Sum::zero();
 
         let c0_i32 = coeffs_i32[0];
         if az.not_load_store {
@@ -496,7 +496,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn az_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let az = self.eval_az_second_group();
-        let mut acc: Acc5U<F> = Acc5U::default();
+        let mut acc: Acc5U<F> = Acc5U::zero();
         acc.fmadd(&w[0], &az.load_or_store);
         acc.fmadd(&w[1], &az.add);
         acc.fmadd(&w[2], &az.sub);
@@ -513,7 +513,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn bz_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let bz = self.eval_bz_second_group();
-        let mut acc: Acc7S<F> = Acc7S::default();
+        let mut acc: Acc7S<F> = Acc7S::zero();
         acc.fmadd(&w[0], &bz.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &bz.right_lookup_minus_add_result);
         acc.fmadd(&w[2], &bz.right_lookup_minus_sub_result);
@@ -537,7 +537,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let bz = self.eval_bz_second_group();
 
         let mut az_eval_i32: i32 = 0;
-        let mut bz_eval_s192 = S192Sum::default();
+        let mut bz_eval_s192 = S192Sum::zero();
 
         let c0 = coeffs_i32[0];
         if az.load_or_store {
@@ -643,31 +643,31 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 // If u64 => 6 limbs unsigned
                 // If i128 => 6 limbs signed
                 // If S128 => 7 limbs signed
-                let mut acc_left_input: Acc6U<F> = Acc6U::default();
-                let mut acc_right_input: Acc6S<F> = Acc6S::default();
-                let mut acc_product: Acc7S<F> = Acc7S::default();
-                let mut acc_wl_left: Acc5U<F> = Acc5U::default();
-                let mut acc_wp_left: Acc5U<F> = Acc5U::default();
-                let mut acc_sb_right: Acc5U<F> = Acc5U::default();
-                let mut acc_pc: Acc6U<F> = Acc6U::default();
-                let mut acc_unexpanded_pc: Acc6U<F> = Acc6U::default();
-                let mut acc_imm: Acc6S<F> = Acc6S::default();
-                let mut acc_ram_address: Acc6U<F> = Acc6U::default();
-                let mut acc_rs1_value: Acc6U<F> = Acc6U::default();
-                let mut acc_rs2_value: Acc6U<F> = Acc6U::default();
-                let mut acc_rd_write_value: Acc6U<F> = Acc6U::default();
-                let mut acc_ram_read_value: Acc6U<F> = Acc6U::default();
-                let mut acc_ram_write_value: Acc6U<F> = Acc6U::default();
-                let mut acc_left_lookup_operand: Acc6U<F> = Acc6U::default();
-                let mut acc_right_lookup_operand: Acc7U<F> = Acc7U::default();
-                let mut acc_next_unexpanded_pc: Acc6U<F> = Acc6U::default();
-                let mut acc_next_pc: Acc6U<F> = Acc6U::default();
-                let mut acc_lookup_output: Acc6U<F> = Acc6U::default();
-                let mut acc_sj_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_next_is_virtual: Acc5U<F> = Acc5U::default();
-                let mut acc_next_is_first_in_sequence: Acc5U<F> = Acc5U::default();
+                let mut acc_left_input: Acc6U<F> = Acc6U::zero();
+                let mut acc_right_input: Acc6S<F> = Acc6S::zero();
+                let mut acc_product: Acc7S<F> = Acc7S::zero();
+                let mut acc_wl_left: Acc5U<F> = Acc5U::zero();
+                let mut acc_wp_left: Acc5U<F> = Acc5U::zero();
+                let mut acc_sb_right: Acc5U<F> = Acc5U::zero();
+                let mut acc_pc: Acc6U<F> = Acc6U::zero();
+                let mut acc_unexpanded_pc: Acc6U<F> = Acc6U::zero();
+                let mut acc_imm: Acc6S<F> = Acc6S::zero();
+                let mut acc_ram_address: Acc6U<F> = Acc6U::zero();
+                let mut acc_rs1_value: Acc6U<F> = Acc6U::zero();
+                let mut acc_rs2_value: Acc6U<F> = Acc6U::zero();
+                let mut acc_rd_write_value: Acc6U<F> = Acc6U::zero();
+                let mut acc_ram_read_value: Acc6U<F> = Acc6U::zero();
+                let mut acc_ram_write_value: Acc6U<F> = Acc6U::zero();
+                let mut acc_left_lookup_operand: Acc6U<F> = Acc6U::zero();
+                let mut acc_right_lookup_operand: Acc7U<F> = Acc7U::zero();
+                let mut acc_next_unexpanded_pc: Acc6U<F> = Acc6U::zero();
+                let mut acc_next_pc: Acc6U<F> = Acc6U::zero();
+                let mut acc_lookup_output: Acc6U<F> = Acc6U::zero();
+                let mut acc_sj_flag: Acc5U<F> = Acc5U::zero();
+                let mut acc_next_is_virtual: Acc5U<F> = Acc5U::zero();
+                let mut acc_next_is_first_in_sequence: Acc5U<F> = Acc5U::zero();
                 let mut acc_flags: Vec<Acc5U<F>> =
-                    (0..NUM_CIRCUIT_FLAGS).map(|_| Acc5U::default()).collect();
+                    (0..NUM_CIRCUIT_FLAGS).map(|_| Acc5U::zero()).collect();
 
                 let eq_two_len = eq_two.len();
                 for x2 in 0..eq_two_len {
@@ -786,7 +786,7 @@ impl ProductVirtualEval {
         weights_at_r0: &[F],
     ) -> (F, F) {
         // Left: u64/u8/bool
-        let mut left_acc: Acc6U<F> = Acc6U::default();
+        let mut left_acc: Acc6U<F> = Acc6U::zero();
         left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
         left_acc.fmadd(&weights_at_r0[1], &row.is_rd_not_zero);
         left_acc.fmadd(&weights_at_r0[2], &row.is_rd_not_zero);
@@ -794,7 +794,7 @@ impl ProductVirtualEval {
         left_acc.fmadd(&weights_at_r0[4], &row.jump_flag);
 
         // Right: i128/bool
-        let mut right_acc: Acc6S<F> = Acc6S::default();
+        let mut right_acc: Acc6S<F> = Acc6S::zero();
         right_acc.fmadd(&weights_at_r0[0], &row.instruction_right_input);
         right_acc.fmadd(&weights_at_r0[1], &row.write_lookup_output_to_rd_flag);
         right_acc.fmadd(&weights_at_r0[2], &row.jump_flag);
@@ -885,14 +885,14 @@ impl ProductVirtualEval {
                 let eq1_val = eq_one[x1];
 
                 // Accumulators for 8 outputs
-                let mut acc_left_u64: Acc6U<F> = Acc6U::default();
-                let mut acc_right_i128: Acc6S<F> = Acc6S::default();
-                let mut acc_rd_zero_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_wl_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_jump_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_lookup_output: Acc6U<F> = Acc6U::default();
-                let mut acc_branch_flag: Acc5U<F> = Acc5U::default();
-                let mut acc_next_is_noop: Acc5U<F> = Acc5U::default();
+                let mut acc_left_u64: Acc6U<F> = Acc6U::zero();
+                let mut acc_right_i128: Acc6S<F> = Acc6S::zero();
+                let mut acc_rd_zero_flag: Acc5U<F> = Acc5U::zero();
+                let mut acc_wl_flag: Acc5U<F> = Acc5U::zero();
+                let mut acc_jump_flag: Acc5U<F> = Acc5U::zero();
+                let mut acc_lookup_output: Acc6U<F> = Acc6U::zero();
+                let mut acc_branch_flag: Acc5U<F> = Acc5U::zero();
+                let mut acc_next_is_noop: Acc5U<F> = Acc5U::zero();
 
                 for x2 in 0..eq_two_len {
                     let e_in = eq_two[x2];
