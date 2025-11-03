@@ -67,13 +67,14 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let T = trace.len();
         let K = state_manager.ram_K;
 
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
@@ -226,22 +227,22 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let (_, program_io, T) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
 
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address, _) = r.split_at(K.log_2());
 
-        let accumulator = state_manager.get_verifier_accumulator();
         let total_memory_vars = K.log_2();
 
         // Calculate untrusted advice contribution
         let untrusted_contribution = super::calculate_advice_memory_evaluation(
-            accumulator.borrow().get_untrusted_advice_opening(),
+            opening_accumulator.get_untrusted_advice_opening(),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -253,7 +254,7 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
 
         // Calculate trusted advice contribution
         let trusted_contribution = super::calculate_advice_memory_evaluation(
-            accumulator.borrow().get_trusted_advice_opening(),
+            opening_accumulator.get_trusted_advice_opening(),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),

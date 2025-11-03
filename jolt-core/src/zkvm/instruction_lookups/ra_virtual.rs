@@ -54,12 +54,13 @@ impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::gen")]
     pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = RaSumcheckParams::new(state_manager);
+        let params = RaSumcheckParams::new(opening_accumulator);
 
         let (_preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
@@ -171,10 +172,8 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let params = RaSumcheckParams::new(state_manager);
+    pub fn new(opening_accumulator: &VerifierOpeningAccumulator<F>) -> Self {
+        let params = RaSumcheckParams::new(opening_accumulator);
         Self { params }
     }
 }
@@ -249,10 +248,8 @@ struct RaSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckParams<F> {
-    fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+    fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
