@@ -64,9 +64,9 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn gen<PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
@@ -226,7 +226,7 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let (_, program_io, T) = state_manager.get_verifier_data();

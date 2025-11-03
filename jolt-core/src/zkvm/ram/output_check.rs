@@ -85,11 +85,11 @@ pub struct OutputSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> OutputSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn gen(
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        transcript: &mut ProofTranscript,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let params = OutputSumcheckParams::new(state_manager, transcript);
 
@@ -263,9 +263,9 @@ pub struct OutputSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheckVerifier<F> {
-    pub fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let params = OutputSumcheckParams::new(state_manager, transcript);
         Self { params }
@@ -364,9 +364,9 @@ struct OutputSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheckParams<F> {
-    pub fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let program_io = state_manager.program_io.clone();
         let K = state_manager.ram_K;
@@ -400,7 +400,7 @@ pub struct ValFinalSumcheckProver<F: JoltField> {
 impl<F: JoltField> ValFinalSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
@@ -568,7 +568,7 @@ pub struct ValFinalSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> ValFinalSumcheckVerifier<F> {
     pub fn new(
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let (_, program_io, T) = state_manager.get_verifier_data();

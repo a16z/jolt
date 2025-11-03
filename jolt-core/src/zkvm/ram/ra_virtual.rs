@@ -55,10 +55,10 @@ pub struct RaSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn gen<PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let params = RaSumcheckParams::new(state_manager, opening_accumulator, transcript);
 
@@ -210,10 +210,10 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
-    pub fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let params = RaSumcheckParams::new(state_manager, opening_accumulator, transcript);
         Self { params }
@@ -288,10 +288,10 @@ struct RaSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckParams<F> {
-    fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    fn new(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut T,
+        transcript: &mut impl Transcript,
     ) -> Self {
         // Calculate d dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(state_manager.ram_K);

@@ -5,6 +5,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
     OpeningAccumulator, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
 };
+use crate::subprotocols::sumcheck::UniSkipFirstRoundProof;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::univariate_skip::{prove_uniskip_round, UniSkipState};
@@ -12,7 +13,7 @@ use crate::transcripts::Transcript;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::{SumcheckStagesProver, SumcheckStagesVerifier};
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::{InnerSumcheckProver, InnerSumcheckVerifier};
@@ -51,21 +52,14 @@ impl<F: JoltField> SpartanDagProver<F> {
             state: SpartanDagState::new(padded_trace_length),
         }
     }
-}
 
-impl<F, ProofTranscript, PCS> SumcheckStagesProver<F, ProofTranscript, PCS> for SpartanDagProver<F>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-{
     // Stage 1: Outer sumcheck with uni-skip first round
-    fn stage1_uni_skip(
+    pub fn stage1_uni_skip<T: Transcript>(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), anyhow::Error> {
+        transcript: &mut T,
+    ) -> UniSkipFirstRoundProof<F, T> {
         let num_rounds_x: usize = self.state.key.num_rows_bits();
 
         // Transcript and tau
@@ -74,13 +68,7 @@ where
         // Prove uni-skip first round
         let mut uniskip_instance = OuterUniSkipInstanceProver::gen(state_manager, &tau);
         let (first_round_proof, r0, claim_after_first) =
-            prove_uniskip_round::<F, ProofTranscript, _>(&mut uniskip_instance, transcript);
-
-        // Store proof and handoff state
-        state_manager.proofs.insert(
-            ProofKeys::Stage1UniSkipFirstRound,
-            ProofData::UniSkipFirstRoundProof(first_round_proof),
-        );
+            prove_uniskip_round(&mut uniskip_instance, transcript);
 
         self.state.uni_skip_state = Some(UniSkipState {
             claim_after_first,
@@ -88,32 +76,16 @@ where
             tau,
         });
 
-        Ok(())
-    }
-
-    fn stage1_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        // Stage 1 remainder: outer-remaining
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> = Vec::new();
-        if let Some(st) = self.state.uni_skip_state.take() {
-            let n_cycles = self.state.key.num_cycle_vars();
-            let outer_remaining = OuterRemainingSumcheckProver::gen(state_manager, n_cycles, &st);
-            instances.push(Box::new(outer_remaining));
-        }
-        instances
+        first_round_proof
     }
 
     // Stage 2: Product virtualization uni-skip first round
-    fn stage2_uni_skip(
+    pub fn stage2_uni_skip<T: Transcript>(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), anyhow::Error> {
+        transcript: &mut T,
+    ) -> UniSkipFirstRoundProof<F, T> {
         let num_cycle_vars: usize = self.state.key.num_cycle_vars();
 
         // Reuse r_cycle from Stage 1 (outer) for τ_low, and sample τ_high
@@ -129,27 +101,42 @@ where
         let mut uniskip_instance =
             ProductVirtualUniSkipInstanceProver::gen(state_manager, opening_accumulator, &tau);
         let (first_round_proof, r0, claim_after_first) =
-            prove_uniskip_round::<F, ProofTranscript, ProductVirtualUniSkipInstanceProver<F>>(
-                &mut uniskip_instance,
-                transcript,
-            );
-
-        state_manager.proofs.insert(
-            ProofKeys::Stage2UniSkipFirstRound,
-            ProofData::UniSkipFirstRoundProof(first_round_proof),
-        );
+            prove_uniskip_round(&mut uniskip_instance, transcript);
 
         self.state.uni_skip_state = Some(UniSkipState {
             claim_after_first,
             r0,
             tau,
         });
-        Ok(())
+        first_round_proof
+    }
+}
+
+impl<F, ProofTranscript, PCS> SumcheckStagesProver<F, ProofTranscript, PCS> for SpartanDagProver<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn stage1_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
+    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
+        // Stage 1 remainder: outer-remaining
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> = Vec::new();
+        if let Some(st) = self.state.uni_skip_state.take() {
+            let n_cycles = self.state.key.num_cycle_vars();
+            let outer_remaining = OuterRemainingSumcheckProver::gen(state_manager, n_cycles, &st);
+            instances.push(Box::new(outer_remaining));
+        }
+        instances
     }
 
     fn stage2_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -174,7 +161,7 @@ where
 
     fn stage3_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -221,40 +208,20 @@ impl<F: JoltField> SpartanDagVerifier<F> {
             state: SpartanDagState::new(padded_trace_length),
         }
     }
-}
 
-impl<F, ProofTranscript, PCS> SumcheckStagesVerifier<F, ProofTranscript, PCS>
-    for SpartanDagVerifier<F>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-{
-    fn stage1_uni_skip(
+    /// Stage 1a: Verify first round of Spartan outer sum-check with univariate skip
+    pub fn stage1_uni_skip<T: Transcript>(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        proof: &UniSkipFirstRoundProof<F, T>,
+        transcript: &mut T,
     ) -> Result<(), anyhow::Error> {
         let key = self.state.key.clone();
         let num_rounds_x = key.num_rows_bits();
 
         let tau = transcript.challenge_vector_optimized::<F>(num_rounds_x);
 
-        // Load and verify uni-skip first round proof
-        let first_round = {
-            match state_manager
-                .proofs
-                .get(&ProofKeys::Stage1UniSkipFirstRound)
-                .expect("missing Stage1UniSkipFirstRound")
-            {
-                ProofData::UniSkipFirstRoundProof(fr) => fr.clone(),
-                _ => panic!("unexpected proof type for Stage1UniSkipFirstRound"),
-            }
-        };
-
         let input_claim = outer_uni_skip_input_claim();
-        let (r0, claim_after_first) = first_round
+        let (r0, claim_after_first) = proof
             .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
                 FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
@@ -271,27 +238,11 @@ where
         Ok(())
     }
 
-    fn stage1_instances(
+    pub fn stage2_uni_skip<T: Transcript>(
         &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        // Stage 1 remainder: outer-remaining (verifier)
-        let mut instances: Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> = Vec::new();
-        if let Some(st) = self.state.uni_skip_state.take() {
-            let num_cycles_bits = self.state.key.num_steps.ilog2() as usize;
-            let outer_remaining = OuterRemainingSumcheckVerifier::new(num_cycles_bits, &st);
-            instances.push(Box::new(outer_remaining));
-        }
-        instances
-    }
-
-    fn stage2_uni_skip(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        proof: &UniSkipFirstRoundProof<F, T>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut T,
     ) -> Result<(), anyhow::Error> {
         let num_cycle_vars: usize = self.state.key.num_cycle_vars();
 
@@ -305,20 +256,9 @@ where
         let mut tau: Vec<F::Challenge> = r_cycle;
         tau.push(tau_high);
 
-        let first_round = {
-            match state_manager
-                .proofs
-                .get(&ProofKeys::Stage2UniSkipFirstRound)
-                .expect("missing Stage2UniSkipFirstRound")
-            {
-                ProofData::UniSkipFirstRoundProof(fr) => fr.clone(),
-                _ => panic!("unexpected proof type for Stage2UniSkipFirstRound"),
-            }
-        };
-
         let uniskip_params = ProductVirtualUniSkipInstanceParams::new(opening_accumulator, &tau);
         let input_claim = uniskip_params.input_claim();
-        let (r0, claim_after_first) = first_round
+        let (r0, claim_after_first) = proof
             .verify::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS>(
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
@@ -333,10 +273,34 @@ where
         });
         Ok(())
     }
+}
+
+impl<F, ProofTranscript, PCS> SumcheckStagesVerifier<F, ProofTranscript, PCS>
+    for SpartanDagVerifier<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn stage1_instances(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
+    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
+        // Stage 1 remainder: outer-remaining (verifier)
+        let mut instances: Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> = Vec::new();
+        if let Some(st) = self.state.uni_skip_state.take() {
+            let num_cycles_bits = self.state.key.num_steps.ilog2() as usize;
+            let outer_remaining = OuterRemainingSumcheckVerifier::new(num_cycles_bits, &st);
+            instances.push(Box::new(outer_remaining));
+        }
+        instances
+    }
 
     fn stage2_instances(
         &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _state_manager: &mut StateManager<'_, F, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
@@ -359,7 +323,7 @@ where
 
     fn stage3_instances(
         &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {

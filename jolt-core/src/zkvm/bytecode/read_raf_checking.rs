@@ -122,10 +122,10 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ReadRafSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::gen")]
-    pub fn gen<T: Transcript>(
-        state_manager: &mut StateManager<F, T, impl CommitmentScheme<Field = F>>,
+    pub fn gen(
+        state_manager: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut T,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let params = ReadRafSumcheckParams::gen(state_manager, opening_accumulator, transcript);
 
@@ -520,10 +520,10 @@ pub struct ReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckVerifier<F> {
-    pub fn gen<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    pub fn gen(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
+        transcript: &mut impl Transcript,
     ) -> Self {
         Self {
             params: ReadRafSumcheckParams::gen(state_manager, opening_accumulator, transcript),
@@ -642,10 +642,10 @@ struct ReadRafSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
-    fn gen<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    fn gen(
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut T,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let preprocessing = state_manager.get_shared_preprocessing();
         let K = preprocessing.bytecode.code_size;
@@ -757,11 +757,11 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         }
     }
 
-    fn compute_val_rv<T: Transcript>(
-        sm: &mut StateManager<F, T, impl CommitmentScheme<Field = F>>,
+    fn compute_val_rv(
+        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         val_type: ReadCheckingValType,
-        transcript: &mut T,
+        transcript: &mut impl Transcript,
     ) -> (Vec<F>, F) {
         match val_type {
             ReadCheckingValType::Stage1 => {
@@ -807,7 +807,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ///             + gamma^2 * circuit_flags[0](k) + gamma^3 * circuit_flags[1](k) + ...
     /// This particular Val virtualizes claims output by Spartan's "outer" sumcheck
     fn compute_val_1(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> Vec<F> {
         sm.get_bytecode()
@@ -880,7 +880,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise.
     /// This Val matches the fused product sumcheck.
     fn compute_val_2(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> Vec<F> {
         sm.get_bytecode()
@@ -948,7 +948,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ///             + gamma^3 * left_operand_is_pc(k) + ...
     /// This particular Val virtualizes claims output by the ShiftSumcheck.
     fn compute_val_3(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> Vec<F> {
         sm.get_bytecode()
@@ -1067,7 +1067,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     /// and analogously for rs1(k, k') and rs2(k, k').
     /// This particular Val virtualizes claims output by the registers read/write checking sumcheck.
     fn compute_val_4(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
     ) -> Vec<F> {
@@ -1125,7 +1125,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     /// This particular Val virtualizes the claim output by the registers val-evaluation sumcheck
     /// and the instruction lookups sumcheck.
     fn compute_val_5(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
     ) -> Vec<F> {

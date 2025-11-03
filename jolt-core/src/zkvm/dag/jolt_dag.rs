@@ -23,7 +23,7 @@ use crate::zkvm::dag::proof_serialization::Claims;
 use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStagesProver;
 use crate::zkvm::dag::stage::SumcheckStagesVerifier;
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction_lookups::LookupsDagProver;
 use crate::zkvm::instruction_lookups::LookupsDagVerifier;
 use crate::zkvm::ram::RamDagProver;
@@ -49,7 +49,7 @@ pub fn prove_jolt_dag<
     ProofTranscript: Transcript,
     PCS: StreamingCommitmentScheme<Field = F>,
 >(
-    mut state_manager: StateManager<'_, F, ProofTranscript, PCS>,
+    mut state_manager: StateManager<'_, F, PCS>,
     mut opening_accumulator: ProverOpeningAccumulator<F>,
     transcript: &mut ProofTranscript,
 ) -> Result<
@@ -93,10 +93,10 @@ pub fn prove_jolt_dag<
     );
 
     // Generate and commit to all witness polynomials
-    let opening_proof_hints = generate_and_commit_polynomials(&mut state_manager)?;
+    let (commitments, opening_proof_hints) = generate_and_commit_polynomials(&mut state_manager);
 
     // Append commitments to transcript
-    for commitment in &state_manager.commitments {
+    for commitment in &commitments {
         transcript.append_serializable(commitment);
     }
 
@@ -125,9 +125,8 @@ pub fn prove_jolt_dag<
     let mut bytecode_dag = BytecodeDagProver;
 
     tracing::info!("Stage 1 proving (univariate skip first round)");
-    spartan_dag
-        .stage1_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
-        .context("Stage 1 univariate skip first round")?;
+    let stage1_uni_skip_first_round_proof =
+        spartan_dag.stage1_uni_skip(&mut state_manager, &mut opening_accumulator, transcript);
 
     // Batch the stage1 remainder instances (outer-remaining + extras)
     let mut remainder_instances: Vec<_> = spartan_dag
@@ -140,15 +139,10 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 1 proving (remainder batch)");
-    let (stage1_remainder_proof, _r_stage1) = BatchedSumcheck::prove(
+    let (stage1_sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
         remainder_instances_mut,
         &mut opening_accumulator,
         transcript,
-    );
-
-    state_manager.proofs.insert(
-        ProofKeys::Stage1Sumcheck,
-        ProofData::SumcheckProof(stage1_remainder_proof),
     );
 
     drop(_guard);
@@ -161,9 +155,8 @@ pub fn prove_jolt_dag<
     let _guard = span.enter();
 
     // Stage 2a: Prove univariate-skip first round for product virtualization
-    spartan_dag
-        .stage2_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
-        .context("Stage 2 univariate skip first round")?;
+    let stage2_uni_skip_first_round_proof =
+        spartan_dag.stage2_uni_skip(&mut state_manager, &mut opening_accumulator, transcript);
 
     let mut stage2_instances: Vec<_> = std::iter::empty()
         .chain(spartan_dag.stage2_instances(
@@ -204,13 +197,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 2 proving");
-    let (stage2_proof, _r_stage2) =
+    let (stage2_sumcheck_proof, _r_stage2) =
         BatchedSumcheck::prove(stage2_instances_mut, &mut opening_accumulator, transcript);
-
-    state_manager.proofs.insert(
-        ProofKeys::Stage2Sumcheck,
-        ProofData::SumcheckProof(stage2_proof),
-    );
 
     #[cfg(feature = "allocative")]
     {
@@ -266,13 +254,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 3 proving");
-    let (stage3_proof, _r_stage3) =
+    let (stage3_sumcheck_proof, _r_stage3) =
         BatchedSumcheck::prove(stage3_instances_mut, &mut opening_accumulator, transcript);
-
-    state_manager.proofs.insert(
-        ProofKeys::Stage3Sumcheck,
-        ProofData::SumcheckProof(stage3_proof),
-    );
 
     #[cfg(feature = "allocative")]
     {
@@ -318,13 +301,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 4 proving");
-    let (stage4_proof, _r_stage4) =
+    let (stage4_sumcheck_proof, _r_stage4) =
         BatchedSumcheck::prove(stage4_instances_mut, &mut opening_accumulator, transcript);
-
-    state_manager.proofs.insert(
-        ProofKeys::Stage4Sumcheck,
-        ProofData::SumcheckProof(stage4_proof),
-    );
 
     #[cfg(feature = "allocative")]
     {
@@ -375,13 +353,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 5 proving");
-    let (stage5_proof, _r_stage5) =
+    let (stage5_sumcheck_proof, _r_stage5) =
         BatchedSumcheck::prove(stage5_instances_mut, &mut opening_accumulator, transcript);
-
-    state_manager.proofs.insert(
-        ProofKeys::Stage5Sumcheck,
-        ProofData::SumcheckProof(stage5_proof),
-    );
 
     #[cfg(feature = "allocative")]
     {
@@ -432,13 +405,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 6 proving");
-    let (stage6_proof, _r_stage6) =
+    let (stage6_sumcheck_proof, _r_stage6) =
         BatchedSumcheck::prove(stage6_instances_mut, &mut opening_accumulator, transcript);
-
-    state_manager.proofs.insert(
-        ProofKeys::Stage6Sumcheck,
-        ProofData::SumcheckProof(stage6_proof),
-    );
 
     #[cfg(feature = "allocative")]
     {
@@ -470,43 +438,31 @@ pub fn prove_jolt_dag<
     tracing::info!("Stage 7 proving");
 
     // Generate trusted_advice opening proofs
-    if !state_manager.program_io.trusted_advice.is_empty() {
-        let proof = generate_trusted_advice_proof(
+    let trusted_advice_proof = (!state_manager.program_io.trusted_advice.is_empty()).then(|| {
+        generate_trusted_advice_proof(
             &mut state_manager,
             &opening_accumulator,
             transcript,
             &preprocessing.generators,
-        );
-        state_manager.proofs.insert(
-            ProofKeys::TrustedAdviceProof,
-            ProofData::OpeningProof(proof),
-        );
-    }
+        )
+    });
 
     // Generate untrusted_advice opening proofs
-    if !state_manager.program_io.untrusted_advice.is_empty() {
-        let proof = generate_untrusted_advice_proof(
-            &mut state_manager,
-            &opening_accumulator,
-            transcript,
-            &preprocessing.generators,
-        );
-        state_manager.proofs.insert(
-            ProofKeys::UntrustedAdviceProof,
-            ProofData::OpeningProof(proof),
-        );
-    }
+    let untrusted_advice_proof =
+        (!state_manager.program_io.untrusted_advice.is_empty()).then(|| {
+            generate_untrusted_advice_proof(
+                &mut state_manager,
+                &opening_accumulator,
+                transcript,
+                &preprocessing.generators,
+            )
+        });
 
-    let opening_proof = opening_accumulator.reduce_and_prove(
+    let reduced_opening_proof = opening_accumulator.reduce_and_prove(
         polynomials_map,
         opening_proof_hints,
         &preprocessing.generators,
         transcript,
-    );
-
-    state_manager.proofs.insert(
-        ProofKeys::ReducedOpeningProof,
-        ProofData::ReducedOpeningProof(opening_proof),
     );
 
     #[cfg(test)]
@@ -531,9 +487,19 @@ pub fn prove_jolt_dag<
     let prover_state = state_manager.prover_state.as_mut().unwrap();
     let proof = JoltProof {
         opening_claims: Claims(opening_accumulator.openings),
-        commitments: state_manager.commitments,
+        commitments,
         untrusted_advice_commitment: state_manager.untrusted_advice_commitment,
-        proofs: state_manager.proofs,
+        stage1_uni_skip_first_round_proof,
+        stage1_sumcheck_proof,
+        stage2_uni_skip_first_round_proof,
+        stage2_sumcheck_proof,
+        stage3_sumcheck_proof,
+        stage4_sumcheck_proof,
+        stage5_sumcheck_proof,
+        stage6_sumcheck_proof,
+        trusted_advice_proof,
+        untrusted_advice_proof,
+        reduced_opening_proof,
         trace_length: prover_state.trace.len(),
         ram_K: state_manager.ram_K,
         bytecode_d: prover_state.preprocessing.shared.bytecode.d,
@@ -550,7 +516,8 @@ pub fn verify_jolt_dag<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 >(
-    mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
+    proof: &JoltProof<F, PCS, ProofTranscript>,
+    mut state_manager: StateManager<'a, F, PCS>,
     mut opening_accumulator: VerifierOpeningAccumulator<F>,
     transcript: &mut ProofTranscript,
 ) -> Result<(), anyhow::Error> {
@@ -561,7 +528,7 @@ pub fn verify_jolt_dag<
     let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
 
     // Append commitments to transcript
-    for commitment in &state_manager.commitments {
+    for commitment in &proof.commitments {
         transcript.append_serializable(commitment);
     }
 
@@ -585,7 +552,7 @@ pub fn verify_jolt_dag<
 
     // Stage 1:
     spartan_dag
-        .stage1_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
+        .stage1_uni_skip(&proof.stage1_uni_skip_first_round_proof, transcript)
         .context("Stage 1 univariate skip first round")?;
 
     let stage1_remainder_instances: Vec<_> = spartan_dag
@@ -597,17 +564,8 @@ pub fn verify_jolt_dag<
         .map(|instance| &**instance as _)
         .collect();
 
-    let stage1_remainder_proof = state_manager
-        .proofs
-        .get(&ProofKeys::Stage1Sumcheck)
-        .expect("Stage 1 remainder proof not found");
-    let stage1_remainder_proof = match stage1_remainder_proof {
-        ProofData::SumcheckProof(proof) => proof,
-        _ => panic!("Invalid proof type for stage 1 remainder"),
-    };
-
     let _r_stage1 = BatchedSumcheck::verify(
-        stage1_remainder_proof,
+        &proof.stage1_sumcheck_proof,
         stage1_remainder_instances_ref,
         &mut opening_accumulator,
         transcript,
@@ -617,7 +575,11 @@ pub fn verify_jolt_dag<
     // Stage 2:
     // Stage 2a: Verify univariate-skip first round for product virtualization
     spartan_dag
-        .stage2_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
+        .stage2_uni_skip(
+            &proof.stage2_uni_skip_first_round_proof,
+            &mut opening_accumulator,
+            transcript,
+        )
         .context("Stage 2 univariate skip first round")?;
 
     let stage2_instances: Vec<_> = std::iter::empty()
@@ -645,17 +607,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage2_instances_ref = stage2_instances.iter().map(|inst| &**inst as _).collect();
 
-    let stage2_proof_data = state_manager
-        .proofs
-        .get(&ProofKeys::Stage2Sumcheck)
-        .expect("Stage 2 sumcheck proof not found");
-    let stage2_proof = match stage2_proof_data {
-        ProofData::SumcheckProof(proof) => proof,
-        _ => panic!("Invalid proof type for stage 2"),
-    };
-
     let _r_stage2 = BatchedSumcheck::verify(
-        stage2_proof,
+        &proof.stage2_sumcheck_proof,
         stage2_instances_ref,
         &mut opening_accumulator,
         transcript,
@@ -678,17 +631,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage3_instances_ref = stage3_instances.iter().map(|inst| &**inst as _).collect();
 
-    let stage3_proof_data = state_manager
-        .proofs
-        .get(&ProofKeys::Stage3Sumcheck)
-        .expect("Stage 3 sumcheck proof not found");
-    let stage3_proof = match stage3_proof_data {
-        ProofData::SumcheckProof(proof) => proof,
-        _ => panic!("Invalid proof type for stage 3"),
-    };
-
     let _r_stage3 = BatchedSumcheck::verify(
-        stage3_proof,
+        &proof.stage3_sumcheck_proof,
         stage3_instances_ref,
         &mut opening_accumulator,
         transcript,
@@ -709,17 +653,8 @@ pub fn verify_jolt_dag<
         .map(|instance| &**instance as _)
         .collect();
 
-    let stage4_proof_data = state_manager
-        .proofs
-        .get(&ProofKeys::Stage4Sumcheck)
-        .expect("Stage 4 sumcheck proof not found");
-    let stage4_proof = match stage4_proof_data {
-        ProofData::SumcheckProof(proof) => proof,
-        _ => panic!("Invalid proof type for stage 4"),
-    };
-
     let _r_stage4 = BatchedSumcheck::verify(
-        stage4_proof,
+        &proof.stage4_sumcheck_proof,
         stage4_instances_ref,
         &mut opening_accumulator,
         transcript,
@@ -742,17 +677,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage5_instances_ref = stage5_instances.iter().map(|inst| &**inst as _).collect();
 
-    let stage5_proof_data = state_manager
-        .proofs
-        .get(&ProofKeys::Stage5Sumcheck)
-        .expect("Stage 5 sumcheck proof not found");
-    let stage5_proof = match stage5_proof_data {
-        ProofData::SumcheckProof(proof) => proof,
-        _ => panic!("Invalid proof type for stage 5"),
-    };
-
     let _r_stage5 = BatchedSumcheck::verify(
-        stage5_proof,
+        &proof.stage5_sumcheck_proof,
         stage5_instances_ref,
         &mut opening_accumulator,
         transcript,
@@ -775,17 +701,8 @@ pub fn verify_jolt_dag<
         .collect();
     let stage6_instances_ref = stage6_instances.iter().map(|inst| &**inst as _).collect();
 
-    let stage6_proof_data = state_manager
-        .proofs
-        .get(&ProofKeys::Stage6Sumcheck)
-        .expect("Stage 6 sumcheck proof not found");
-    let stage6_proof = match stage6_proof_data {
-        ProofData::SumcheckProof(proof) => proof,
-        _ => panic!("Invalid proof type for stage 6"),
-    };
-
     let _r_stage6 = BatchedSumcheck::verify(
-        stage6_proof,
+        &proof.stage6_sumcheck_proof,
         stage6_instances_ref,
         &mut opening_accumulator,
         transcript,
@@ -793,47 +710,55 @@ pub fn verify_jolt_dag<
     .context("Stage 6")?;
 
     // Verify trusted_advice opening proofs
-    if state_manager.trusted_advice_commitment.is_some() {
-        verify_trusted_advice_proofs(
-            &mut state_manager,
-            &opening_accumulator,
-            transcript,
+    if let Some(ref commitment) = state_manager.trusted_advice_commitment {
+        let Some(ref proof) = proof.trusted_advice_proof else {
+            return Err(anyhow::anyhow!("Trusted advice proof not found"));
+        };
+        let Some((point, eval)) = opening_accumulator.get_trusted_advice_opening() else {
+            return Err(anyhow::anyhow!("Trusted advice opening not found"));
+        };
+        PCS::verify(
+            proof,
             &preprocessing.generators,
+            transcript,
+            &point.r,
+            &eval,
+            commitment,
         )
-        .context("Trusted advice proofs")?;
+        .map_err(|e| anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}"))?;
     }
 
     // Verify untrusted_advice opening proofs
-    if state_manager.untrusted_advice_commitment.is_some() {
-        verify_untrusted_advice_proofs(
-            &mut state_manager,
-            &opening_accumulator,
-            transcript,
+    if let Some(ref commitment) = state_manager.untrusted_advice_commitment {
+        let Some(ref proof) = proof.untrusted_advice_proof else {
+            return Err(anyhow::anyhow!("Untrusted advice proof not found"));
+        };
+        let Some((point, eval)) = opening_accumulator.get_trusted_advice_opening() else {
+            return Err(anyhow::anyhow!("Untrusted advice opening not found"));
+        };
+        PCS::verify(
+            proof,
             &preprocessing.generators,
+            transcript,
+            &point.r,
+            &eval,
+            commitment,
         )
-        .context("Untrusted advice proofs")?;
+        .map_err(|e| {
+            anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
+        })?;
     }
 
     // Batch-prove all openings (Stage 7)
-    let batched_opening_proof = state_manager
-        .proofs
-        .get(&ProofKeys::ReducedOpeningProof)
-        .expect("Reduced opening proof not found");
-    let batched_opening_proof = match batched_opening_proof {
-        ProofData::ReducedOpeningProof(proof) => proof,
-        _ => panic!("Invalid proof type for opening reduction"),
-    };
-
     let mut commitments_map = HashMap::new();
-    for (polynomial, commitment) in AllCommittedPolynomials::iter().zip(&state_manager.commitments)
-    {
+    for (polynomial, commitment) in AllCommittedPolynomials::iter().zip_eq(&proof.commitments) {
         commitments_map.insert(*polynomial, commitment.clone());
     }
     opening_accumulator
         .reduce_and_verify(
             &preprocessing.generators,
             &mut commitments_map,
-            batched_opening_proof,
+            &proof.reduced_opening_proof,
             transcript,
         )
         .context("Stage 7")?;
@@ -843,13 +768,12 @@ pub fn verify_jolt_dag<
 
 // Prover utility to commit to all the polynomials for the PCS
 #[tracing::instrument(skip_all)]
-fn generate_and_commit_polynomials<
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: StreamingCommitmentScheme<Field = F>,
->(
-    prover_state_manager: &mut StateManager<F, ProofTranscript, PCS>,
-) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+fn generate_and_commit_polynomials<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
+    prover_state_manager: &mut StateManager<F, PCS>,
+) -> (
+    Vec<PCS::Commitment>,
+    HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+) {
     let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
         prover_state_manager.get_prover_data();
 
@@ -896,18 +820,11 @@ fn generate_and_commit_polynomials<
         hint_map.insert(*poly, hint);
     }
 
-    prover_state_manager.commitments = commitments;
-
-    Ok(hint_map)
+    (commitments, hint_map)
 }
 
-fn commit_untrusted_advice<
-    'a,
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
->(
-    state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
+fn commit_untrusted_advice<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    state_manager: &mut StateManager<'a, F, PCS>,
 ) -> Option<PCS::OpeningProofHint> {
     let (preprocessing, _, _, program_io, _) = state_manager.get_prover_data();
 
@@ -940,13 +857,8 @@ fn commit_untrusted_advice<
     Some(hint)
 }
 
-fn compute_trusted_advice_poly<
-    'a,
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
->(
-    state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
+fn compute_trusted_advice_poly<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    state_manager: &mut StateManager<'a, F, PCS>,
 ) {
     let (_, _, _, program_io, _) = state_manager.get_prover_data();
 
@@ -980,7 +892,7 @@ fn generate_trusted_advice_proof<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 >(
-    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    state_manager: &mut StateManager<'_, F, PCS>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
     transcript: &mut ProofTranscript,
     generators: &PCS::ProverSetup,
@@ -996,7 +908,7 @@ fn generate_untrusted_advice_proof<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 >(
-    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    state_manager: &mut StateManager<'_, F, PCS>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
     transcript: &mut ProofTranscript,
     generators: &PCS::ProverSetup,
@@ -1005,66 +917,4 @@ fn generate_untrusted_advice_proof<
     let untrusted_advice_poly = prover_state.untrusted_advice_polynomial.as_ref().unwrap();
     let (point, _) = opening_accumulator.get_untrusted_advice_opening().unwrap();
     PCS::prove_without_hint(generators, untrusted_advice_poly, &point.r, transcript)
-}
-
-fn verify_trusted_advice_proofs<
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
->(
-    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    opening_accumulator: &VerifierOpeningAccumulator<F>,
-    transcript: &mut ProofTranscript,
-    verifier_setup: &PCS::VerifierSetup,
-) -> Result<(), anyhow::Error> {
-    let trusted_advice_commitment = state_manager.trusted_advice_commitment.as_ref().unwrap();
-
-    let (point, eval) = opening_accumulator.get_trusted_advice_opening().unwrap();
-    let proof = match state_manager.proofs.get(&ProofKeys::TrustedAdviceProof) {
-        Some(ProofData::OpeningProof(proof)) => proof.clone(),
-        _ => return Err(anyhow::anyhow!("Trusted advice proof not found")),
-    };
-
-    PCS::verify(
-        &proof,
-        verifier_setup,
-        transcript,
-        &point.r,
-        &eval,
-        trusted_advice_commitment,
-    )
-    .map_err(|e| anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}"))?;
-
-    Ok(())
-}
-
-fn verify_untrusted_advice_proofs<
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
->(
-    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    opening_accumulator: &VerifierOpeningAccumulator<F>,
-    transcript: &mut ProofTranscript,
-    verifier_setup: &PCS::VerifierSetup,
-) -> Result<(), anyhow::Error> {
-    let untrusted_advice_commitment = state_manager.untrusted_advice_commitment.as_ref().unwrap();
-
-    let (point, eval) = opening_accumulator.get_untrusted_advice_opening().unwrap();
-    let proof = match state_manager.proofs.get(&ProofKeys::UntrustedAdviceProof) {
-        Some(ProofData::OpeningProof(proof)) => proof.clone(),
-        _ => return Err(anyhow::anyhow!("Untrusted advice proof not found")),
-    };
-
-    PCS::verify(
-        &proof,
-        verifier_setup,
-        transcript,
-        &point.r,
-        &eval,
-        untrusted_advice_commitment,
-    )
-    .map_err(|e| anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}"))?;
-
-    Ok(())
 }

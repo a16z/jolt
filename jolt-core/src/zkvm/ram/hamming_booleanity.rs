@@ -43,7 +43,7 @@ pub struct HammingBooleanitySumcheckProver<F: JoltField> {
 impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let (_, _, trace, _, _) = state_manager.get_prover_data();
@@ -198,9 +198,7 @@ pub struct HammingBooleanitySumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
+    pub fn new(state_manager: &mut StateManager<F, impl CommitmentScheme<Field = F>>) -> Self {
         Self {
             log_T: state_manager.get_trace_len().log_2(),
             _phantom: PhantomData,
