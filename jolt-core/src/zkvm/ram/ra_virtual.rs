@@ -58,8 +58,9 @@ impl<F: JoltField> RaSumcheckProver<F> {
     pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Self {
-        let params = RaSumcheckParams::new(state_manager, opening_accumulator);
+        let params = RaSumcheckParams::new(state_manager, opening_accumulator, transcript);
 
         // Precompute EQ tables for each chunk
         let eq_tables: Vec<Vec<F>> = params
@@ -209,11 +210,12 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    pub fn new<T: Transcript>(
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Self {
-        let params = RaSumcheckParams::new(state_manager, opening_accumulator);
+        let params = RaSumcheckParams::new(state_manager, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -286,9 +288,10 @@ struct RaSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckParams<F> {
-    fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    fn new<T: Transcript>(
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Self {
         // Calculate d dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(state_manager.ram_K);
@@ -353,11 +356,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
             r_cycle_raf.to_vec(),
         ];
 
-        let gamma_powers = state_manager
-            .transcript
-            .challenge_scalar_powers(3)
-            .try_into()
-            .unwrap();
+        let gamma_powers = transcript.challenge_scalar_powers(3).try_into().unwrap();
 
         Self {
             gamma_powers,

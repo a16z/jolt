@@ -64,20 +64,17 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         let num_rounds_x: usize = self.state.key.num_rows_bits();
 
         // Transcript and tau
-        let tau: Vec<F::Challenge> = state_manager
-            .transcript
-            .challenge_vector_optimized::<F>(num_rounds_x);
+        let tau = transcript.challenge_vector_optimized::<F>(num_rounds_x);
 
         // Prove uni-skip first round
         let mut uniskip_instance = OuterUniSkipInstanceProver::gen(state_manager, &tau);
-        let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<F, ProofTranscript, _>(
-            &mut uniskip_instance,
-            &mut state_manager.transcript,
-        );
+        let (first_round_proof, r0, claim_after_first) =
+            prove_uniskip_round::<F, ProofTranscript, _>(&mut uniskip_instance, transcript);
 
         // Store proof and handoff state
         state_manager.proofs.insert(
@@ -98,6 +95,7 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         // Stage 1 remainder: outer-remaining
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> = Vec::new();
@@ -114,6 +112,7 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         let num_cycle_vars: usize = self.state.key.num_cycle_vars();
 
@@ -123,8 +122,8 @@ where
             .0
             .r;
         debug_assert_eq!(r_cycle.len(), num_cycle_vars);
-        let tau_high: F::Challenge = state_manager.transcript.challenge_scalar_optimized::<F>();
-        let mut tau: Vec<F::Challenge> = r_cycle;
+        let tau_high = transcript.challenge_scalar_optimized::<F>();
+        let mut tau = r_cycle;
         tau.push(tau_high);
 
         let mut uniskip_instance =
@@ -132,7 +131,7 @@ where
         let (first_round_proof, r0, claim_after_first) =
             prove_uniskip_round::<F, ProofTranscript, ProductVirtualUniSkipInstanceProver<F>>(
                 &mut uniskip_instance,
-                &mut state_manager.transcript,
+                transcript,
             );
 
         state_manager.proofs.insert(
@@ -152,10 +151,11 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         // Stage 2 remainder: inner + product remainder
         let key = self.state.key.clone();
-        let inner_sumcheck = InnerSumcheckProver::gen(state_manager, opening_accumulator, key);
+        let inner_sumcheck = InnerSumcheckProver::gen(opening_accumulator, key, transcript);
 
         let st = self
             .state
@@ -176,6 +176,7 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
             Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
@@ -186,11 +187,12 @@ where
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
         let key = self.state.key.clone();
-        let shift_sumcheck = ShiftSumcheckProver::gen(state_manager, opening_accumulator, key);
+        let shift_sumcheck =
+            ShiftSumcheckProver::gen(state_manager, opening_accumulator, key, transcript);
         let instruction_input_sumcheck =
-            InstructionInputSumcheckProver::gen(state_manager, opening_accumulator);
+            InstructionInputSumcheckProver::gen(state_manager, opening_accumulator, transcript);
         let product_virtual_claim_check =
-            ProductVirtualInnerProver::new(state_manager, opening_accumulator);
+            ProductVirtualInnerProver::new(opening_accumulator, transcript);
 
         #[cfg(feature = "allocative")]
         {
@@ -232,13 +234,12 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         let key = self.state.key.clone();
         let num_rounds_x = key.num_rows_bits();
 
-        let tau: Vec<F::Challenge> = state_manager
-            .transcript
-            .challenge_vector_optimized::<F>(num_rounds_x);
+        let tau = transcript.challenge_vector_optimized::<F>(num_rounds_x);
 
         // Load and verify uni-skip first round proof
         let first_round = {
@@ -257,7 +258,7 @@ where
             .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
                 FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
-                &mut state_manager.transcript,
+                transcript,
             )
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
 
@@ -274,6 +275,7 @@ where
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         // Stage 1 remainder: outer-remaining (verifier)
         let mut instances: Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> = Vec::new();
@@ -289,6 +291,7 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         let num_cycle_vars: usize = self.state.key.num_cycle_vars();
 
@@ -298,7 +301,7 @@ where
             .0
             .r;
         debug_assert_eq!(r_cycle.len(), num_cycle_vars);
-        let tau_high: F::Challenge = state_manager.transcript.challenge_scalar_optimized::<F>();
+        let tau_high: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let mut tau: Vec<F::Challenge> = r_cycle;
         tau.push(tau_high);
 
@@ -319,7 +322,7 @@ where
             .verify::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS>(
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
-                &mut state_manager.transcript,
+                transcript,
             )
             .map_err(|_| anyhow::anyhow!("ProductVirtual uni-skip first-round verification failed"))?;
 
@@ -333,12 +336,13 @@ where
 
     fn stage2_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         // Stage 2 remainder (verifier side)
         let num_cycle_vars = self.state.key.num_cycle_vars();
-        let inner_sumcheck = InnerSumcheckVerifier::new(state_manager, self.state.key.clone());
+        let inner_sumcheck = InnerSumcheckVerifier::new(self.state.key.clone(), transcript);
 
         let st = self
             .state
@@ -355,18 +359,19 @@ where
 
     fn stage3_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         /* Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
            Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
         let key = self.state.key.clone();
-        let shift_sumcheck = ShiftSumcheckVerifier::new(state_manager, opening_accumulator, key);
+        let shift_sumcheck = ShiftSumcheckVerifier::new(opening_accumulator, key, transcript);
         let instruction_input_sumcheck =
-            InstructionInputSumcheckVerifier::new(state_manager, opening_accumulator);
+            InstructionInputSumcheckVerifier::new(opening_accumulator, transcript);
         let product_virtual_claim_check =
-            ProductVirtualInnerVerifier::new(state_manager, opening_accumulator);
+            ProductVirtualInnerVerifier::new(opening_accumulator, transcript);
         vec![
             Box::new(shift_sumcheck),
             Box::new(instruction_input_sumcheck),

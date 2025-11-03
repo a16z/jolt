@@ -51,6 +51,7 @@ pub fn prove_jolt_dag<
 >(
     mut state_manager: StateManager<'_, F, ProofTranscript, PCS>,
     mut opening_accumulator: ProverOpeningAccumulator<F>,
+    transcript: &mut ProofTranscript,
 ) -> Result<
     (
         JoltProof<F, PCS, ProofTranscript>,
@@ -58,7 +59,7 @@ pub fn prove_jolt_dag<
     ),
     anyhow::Error,
 > {
-    state_manager.fiat_shamir_preamble();
+    state_manager.fiat_shamir_preamble(transcript);
 
     // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
     let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
@@ -96,21 +97,17 @@ pub fn prove_jolt_dag<
 
     // Append commitments to transcript
     for commitment in &state_manager.commitments {
-        state_manager.transcript.append_serializable(commitment);
+        transcript.append_serializable(commitment);
     }
 
     // Append untrusted_advice commitment to transcript if it exists
     if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
-        state_manager
-            .transcript
-            .append_serializable(untrusted_advice_commitment);
+        transcript.append_serializable(untrusted_advice_commitment);
     }
 
     if !state_manager.program_io.trusted_advice.is_empty() {
         compute_trusted_advice_poly(&mut state_manager);
-        state_manager
-            .transcript
-            .append_serializable(state_manager.trusted_advice_commitment.as_ref().unwrap());
+        transcript.append_serializable(state_manager.trusted_advice_commitment.as_ref().unwrap());
     }
 
     // Stage 1:
@@ -129,12 +126,12 @@ pub fn prove_jolt_dag<
 
     tracing::info!("Stage 1 proving (univariate skip first round)");
     spartan_dag
-        .stage1_uni_skip(&mut state_manager, &mut opening_accumulator)
+        .stage1_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
         .context("Stage 1 univariate skip first round")?;
 
     // Batch the stage1 remainder instances (outer-remaining + extras)
     let mut remainder_instances: Vec<_> = spartan_dag
-        .stage1_instances(&mut state_manager, &mut opening_accumulator)
+        .stage1_instances(&mut state_manager, &mut opening_accumulator, transcript)
         .into_iter()
         .collect();
     let remainder_instances_mut = remainder_instances
@@ -146,7 +143,7 @@ pub fn prove_jolt_dag<
     let (stage1_remainder_proof, _r_stage1) = BatchedSumcheck::prove(
         remainder_instances_mut,
         &mut opening_accumulator,
-        &mut state_manager.transcript,
+        transcript,
     );
 
     state_manager.proofs.insert(
@@ -165,15 +162,31 @@ pub fn prove_jolt_dag<
 
     // Stage 2a: Prove univariate-skip first round for product virtualization
     spartan_dag
-        .stage2_uni_skip(&mut state_manager, &mut opening_accumulator)
+        .stage2_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
         .context("Stage 2 univariate skip first round")?;
 
     let mut stage2_instances: Vec<_> = std::iter::empty()
-        .chain(spartan_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(registers_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(bytecode_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(spartan_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(registers_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage2_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(bytecode_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
         .collect();
 
     #[cfg(feature = "allocative")]
@@ -191,11 +204,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 2 proving");
-    let (stage2_proof, _r_stage2) = BatchedSumcheck::prove(
-        stage2_instances_mut,
-        &mut opening_accumulator,
-        &mut state_manager.transcript,
-    );
+    let (stage2_proof, _r_stage2) =
+        BatchedSumcheck::prove(stage2_instances_mut, &mut opening_accumulator, transcript);
 
     state_manager.proofs.insert(
         ProofKeys::Stage2Sumcheck,
@@ -223,10 +233,22 @@ pub fn prove_jolt_dag<
     let _guard = span.enter();
 
     let mut stage3_instances: Vec<_> = std::iter::empty()
-        .chain(spartan_dag.stage3_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(registers_dag.stage3_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage3_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage3_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(spartan_dag.stage3_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(registers_dag.stage3_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(lookups_dag.stage3_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage3_instances(&mut state_manager, &mut opening_accumulator, transcript))
         .collect();
 
     #[cfg(feature = "allocative")]
@@ -244,11 +266,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 3 proving");
-    let (stage3_proof, _r_stage3) = BatchedSumcheck::prove(
-        stage3_instances_mut,
-        &mut opening_accumulator,
-        &mut state_manager.transcript,
-    );
+    let (stage3_proof, _r_stage3) =
+        BatchedSumcheck::prove(stage3_instances_mut, &mut opening_accumulator, transcript);
 
     state_manager.proofs.insert(
         ProofKeys::Stage3Sumcheck,
@@ -276,8 +295,12 @@ pub fn prove_jolt_dag<
     let _guard = span.enter();
 
     let mut stage4_instances: Vec<_> = std::iter::empty()
-        .chain(registers_dag.stage4_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage4_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(registers_dag.stage4_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage4_instances(&mut state_manager, &mut opening_accumulator, transcript))
         .collect();
 
     #[cfg(feature = "allocative")]
@@ -295,11 +318,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 4 proving");
-    let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
-        stage4_instances_mut,
-        &mut opening_accumulator,
-        &mut state_manager.transcript,
-    );
+    let (stage4_proof, _r_stage4) =
+        BatchedSumcheck::prove(stage4_instances_mut, &mut opening_accumulator, transcript);
 
     state_manager.proofs.insert(
         ProofKeys::Stage4Sumcheck,
@@ -327,9 +347,17 @@ pub fn prove_jolt_dag<
     let _guard = span.enter();
 
     let mut stage5_instances: Vec<_> = std::iter::empty()
-        .chain(registers_dag.stage5_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage5_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(registers_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
         .collect();
 
     #[cfg(feature = "allocative")]
@@ -347,11 +375,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 5 proving");
-    let (stage5_proof, _r_stage5) = BatchedSumcheck::prove(
-        stage5_instances_mut,
-        &mut opening_accumulator,
-        &mut state_manager.transcript,
-    );
+    let (stage5_proof, _r_stage5) =
+        BatchedSumcheck::prove(stage5_instances_mut, &mut opening_accumulator, transcript);
 
     state_manager.proofs.insert(
         ProofKeys::Stage5Sumcheck,
@@ -379,9 +404,17 @@ pub fn prove_jolt_dag<
     let _guard = span.enter();
 
     let mut stage6_instances: Vec<_> = std::iter::empty()
-        .chain(bytecode_dag.stage6_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage6_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(bytecode_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
         .collect();
 
     #[cfg(feature = "allocative")]
@@ -399,11 +432,8 @@ pub fn prove_jolt_dag<
         .collect();
 
     tracing::info!("Stage 6 proving");
-    let (stage6_proof, _r_stage6) = BatchedSumcheck::prove(
-        stage6_instances_mut,
-        &mut opening_accumulator,
-        &mut state_manager.transcript,
-    );
+    let (stage6_proof, _r_stage6) =
+        BatchedSumcheck::prove(stage6_instances_mut, &mut opening_accumulator, transcript);
 
     state_manager.proofs.insert(
         ProofKeys::Stage6Sumcheck,
@@ -444,6 +474,7 @@ pub fn prove_jolt_dag<
         let proof = generate_trusted_advice_proof(
             &mut state_manager,
             &opening_accumulator,
+            transcript,
             &preprocessing.generators,
         );
         state_manager.proofs.insert(
@@ -457,6 +488,7 @@ pub fn prove_jolt_dag<
         let proof = generate_untrusted_advice_proof(
             &mut state_manager,
             &opening_accumulator,
+            transcript,
             &preprocessing.generators,
         );
         state_manager.proofs.insert(
@@ -469,7 +501,7 @@ pub fn prove_jolt_dag<
         polynomials_map,
         opening_proof_hints,
         &preprocessing.generators,
-        &mut state_manager.transcript,
+        transcript,
     );
 
     state_manager.proofs.insert(
@@ -489,7 +521,7 @@ pub fn prove_jolt_dag<
 
     #[cfg(test)]
     let debug_info = Some(ProverDebugInfo {
-        transcript: state_manager.transcript.clone(),
+        transcript: transcript.clone(),
         opening_accumulator: opening_accumulator.clone(),
         prover_setup: preprocessing.generators.clone(),
     });
@@ -520,8 +552,9 @@ pub fn verify_jolt_dag<
 >(
     mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     mut opening_accumulator: VerifierOpeningAccumulator<F>,
+    transcript: &mut ProofTranscript,
 ) -> Result<(), anyhow::Error> {
-    state_manager.fiat_shamir_preamble();
+    state_manager.fiat_shamir_preamble(transcript);
 
     let ram_K = state_manager.ram_K;
     let bytecode_d = state_manager.get_verifier_data().0.shared.bytecode.d;
@@ -529,20 +562,16 @@ pub fn verify_jolt_dag<
 
     // Append commitments to transcript
     for commitment in &state_manager.commitments {
-        state_manager.transcript.append_serializable(commitment);
+        transcript.append_serializable(commitment);
     }
 
     // Append untrusted advice commitment to transcript
     if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
-        state_manager
-            .transcript
-            .append_serializable(untrusted_advice_commitment);
+        transcript.append_serializable(untrusted_advice_commitment);
     }
     // Append trusted advice commitment to transcript
     if let Some(ref trusted_advice_commitment) = state_manager.trusted_advice_commitment {
-        state_manager
-            .transcript
-            .append_serializable(trusted_advice_commitment);
+        transcript.append_serializable(trusted_advice_commitment);
     }
 
     // Initialize Dags
@@ -556,11 +585,11 @@ pub fn verify_jolt_dag<
 
     // Stage 1:
     spartan_dag
-        .stage1_uni_skip(&mut state_manager, &mut opening_accumulator)
+        .stage1_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
         .context("Stage 1 univariate skip first round")?;
 
     let stage1_remainder_instances: Vec<_> = spartan_dag
-        .stage1_instances(&mut state_manager, &mut opening_accumulator)
+        .stage1_instances(&mut state_manager, &mut opening_accumulator, transcript)
         .into_iter()
         .collect();
     let stage1_remainder_instances_ref = stage1_remainder_instances
@@ -581,22 +610,38 @@ pub fn verify_jolt_dag<
         stage1_remainder_proof,
         stage1_remainder_instances_ref,
         &mut opening_accumulator,
-        &mut state_manager.transcript,
+        transcript,
     )
     .context("Stage 1 remainder")?;
 
     // Stage 2:
     // Stage 2a: Verify univariate-skip first round for product virtualization
     spartan_dag
-        .stage2_uni_skip(&mut state_manager, &mut opening_accumulator)
+        .stage2_uni_skip(&mut state_manager, &mut opening_accumulator, transcript)
         .context("Stage 2 univariate skip first round")?;
 
     let stage2_instances: Vec<_> = std::iter::empty()
-        .chain(spartan_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(registers_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(bytecode_dag.stage2_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(spartan_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(registers_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage2_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(bytecode_dag.stage2_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
         .collect();
     let stage2_instances_ref = stage2_instances.iter().map(|inst| &**inst as _).collect();
 
@@ -613,15 +658,23 @@ pub fn verify_jolt_dag<
         stage2_proof,
         stage2_instances_ref,
         &mut opening_accumulator,
-        &mut state_manager.transcript,
+        transcript,
     )
     .context("Stage 2")?;
 
     // Stage 3:
     let stage3_instances: Vec<_> = std::iter::empty()
-        .chain(spartan_dag.stage3_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage3_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage3_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(spartan_dag.stage3_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(lookups_dag.stage3_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage3_instances(&mut state_manager, &mut opening_accumulator, transcript))
         .collect();
     let stage3_instances_ref = stage3_instances.iter().map(|inst| &**inst as _).collect();
 
@@ -638,14 +691,18 @@ pub fn verify_jolt_dag<
         stage3_proof,
         stage3_instances_ref,
         &mut opening_accumulator,
-        &mut state_manager.transcript,
+        transcript,
     )
     .context("Stage 3")?;
 
     // Stage 4:
     let stage4_instances: Vec<_> = std::iter::empty()
-        .chain(registers_dag.stage4_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage4_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(registers_dag.stage4_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage4_instances(&mut state_manager, &mut opening_accumulator, transcript))
         .collect();
     let stage4_instances_ref = stage4_instances
         .iter()
@@ -665,15 +722,23 @@ pub fn verify_jolt_dag<
         stage4_proof,
         stage4_instances_ref,
         &mut opening_accumulator,
-        &mut state_manager.transcript,
+        transcript,
     )
     .context("Stage 4")?;
 
     // Stage 5:
     let stage5_instances: Vec<_> = std::iter::empty()
-        .chain(registers_dag.stage5_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage5_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(registers_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
         .collect();
     let stage5_instances_ref = stage5_instances.iter().map(|inst| &**inst as _).collect();
 
@@ -690,15 +755,23 @@ pub fn verify_jolt_dag<
         stage5_proof,
         stage5_instances_ref,
         &mut opening_accumulator,
-        &mut state_manager.transcript,
+        transcript,
     )
     .context("Stage 5")?;
 
     // Stage 6:
     let stage6_instances: Vec<_> = std::iter::empty()
-        .chain(bytecode_dag.stage6_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator))
-        .chain(lookups_dag.stage6_instances(&mut state_manager, &mut opening_accumulator))
+        .chain(bytecode_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
         .collect();
     let stage6_instances_ref = stage6_instances.iter().map(|inst| &**inst as _).collect();
 
@@ -715,7 +788,7 @@ pub fn verify_jolt_dag<
         stage6_proof,
         stage6_instances_ref,
         &mut opening_accumulator,
-        &mut state_manager.transcript,
+        transcript,
     )
     .context("Stage 6")?;
 
@@ -724,6 +797,7 @@ pub fn verify_jolt_dag<
         verify_trusted_advice_proofs(
             &mut state_manager,
             &opening_accumulator,
+            transcript,
             &preprocessing.generators,
         )
         .context("Trusted advice proofs")?;
@@ -734,6 +808,7 @@ pub fn verify_jolt_dag<
         verify_untrusted_advice_proofs(
             &mut state_manager,
             &opening_accumulator,
+            transcript,
             &preprocessing.generators,
         )
         .context("Untrusted advice proofs")?;
@@ -759,7 +834,7 @@ pub fn verify_jolt_dag<
             &preprocessing.generators,
             &mut commitments_map,
             batched_opening_proof,
-            &mut state_manager.transcript,
+            transcript,
         )
         .context("Stage 7")?;
 
@@ -907,17 +982,13 @@ fn generate_trusted_advice_proof<
 >(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
+    transcript: &mut ProofTranscript,
     generators: &PCS::ProverSetup,
 ) -> PCS::Proof {
     let prover_state = state_manager.prover_state.as_ref().unwrap();
     let trusted_advice_poly = prover_state.trusted_advice_polynomial.as_ref().unwrap();
     let (point, _) = opening_accumulator.get_trusted_advice_opening().unwrap();
-    PCS::prove_without_hint(
-        generators,
-        trusted_advice_poly,
-        &point.r,
-        &mut state_manager.transcript,
-    )
+    PCS::prove_without_hint(generators, trusted_advice_poly, &point.r, transcript)
 }
 
 fn generate_untrusted_advice_proof<
@@ -927,17 +998,13 @@ fn generate_untrusted_advice_proof<
 >(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
+    transcript: &mut ProofTranscript,
     generators: &PCS::ProverSetup,
 ) -> PCS::Proof {
     let prover_state = state_manager.prover_state.as_ref().unwrap();
     let untrusted_advice_poly = prover_state.untrusted_advice_polynomial.as_ref().unwrap();
     let (point, _) = opening_accumulator.get_untrusted_advice_opening().unwrap();
-    PCS::prove_without_hint(
-        generators,
-        untrusted_advice_poly,
-        &point.r,
-        &mut state_manager.transcript,
-    )
+    PCS::prove_without_hint(generators, untrusted_advice_poly, &point.r, transcript)
 }
 
 fn verify_trusted_advice_proofs<
@@ -947,6 +1014,7 @@ fn verify_trusted_advice_proofs<
 >(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     opening_accumulator: &VerifierOpeningAccumulator<F>,
+    transcript: &mut ProofTranscript,
     verifier_setup: &PCS::VerifierSetup,
 ) -> Result<(), anyhow::Error> {
     let trusted_advice_commitment = state_manager.trusted_advice_commitment.as_ref().unwrap();
@@ -960,7 +1028,7 @@ fn verify_trusted_advice_proofs<
     PCS::verify(
         &proof,
         verifier_setup,
-        &mut state_manager.transcript,
+        transcript,
         &point.r,
         &eval,
         trusted_advice_commitment,
@@ -977,6 +1045,7 @@ fn verify_untrusted_advice_proofs<
 >(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     opening_accumulator: &VerifierOpeningAccumulator<F>,
+    transcript: &mut ProofTranscript,
     verifier_setup: &PCS::VerifierSetup,
 ) -> Result<(), anyhow::Error> {
     let untrusted_advice_commitment = state_manager.untrusted_advice_commitment.as_ref().unwrap();
@@ -990,7 +1059,7 @@ fn verify_untrusted_advice_proofs<
     PCS::verify(
         &proof,
         verifier_setup,
-        &mut state_manager.transcript,
+        transcript,
         &point.r,
         &eval,
         untrusted_advice_commitment,
