@@ -168,7 +168,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
 
                 for x_out_val in x_out_start..x_out_end {
                     let mut inner_acc: [Acc8S<F>; OUTER_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::default(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                        [Acc8S::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;

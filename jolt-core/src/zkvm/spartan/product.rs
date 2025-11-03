@@ -196,7 +196,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
                     let e_out = E_out[x_out_val];
                     // Accumulate across x_in using 8-limb signed accumulators per j
                     let mut inner_acc: [Acc8S<F>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::default(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                        [Acc8S::<F>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
                     for x_in_val in 0..num_x_in_vals {
                         let e_in = if num_x_in_vals == 1 {
                             E_in[0]
@@ -502,10 +502,14 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                         let row_lo = ProductCycleInputs::from_trace::<F>(trace, idx_lo);
                         let row_hi = ProductCycleInputs::from_trace::<F>(trace, idx_hi);
 
-                        let (left0, right0) =
-                            ProductVirtualEval::fused_left_right_at_r::<F>(&row_lo, &weights_at_r0[..]);
-                        let (left1, right1) =
-                            ProductVirtualEval::fused_left_right_at_r::<F>(&row_hi, &weights_at_r0[..]);
+                        let (left0, right0) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_lo,
+                            &weights_at_r0[..],
+                        );
+                        let (left1, right1) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_hi,
+                            &weights_at_r0[..],
+                        );
 
                         let e_in = if num_x_in_vals == 1 {
                             split_eq_poly.E_in_current()[0]

@@ -1,6 +1,6 @@
 use crate::field::{BarrettReduce, FMAdd, JoltField, MontgomeryReduce, MulTrunc};
 use ark_ff::biginteger::{S128, S160, S192, S256, S64};
-use ark_std::{Zero, ops::Add};
+use ark_std::{ops::Add, Zero};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc5U<F: JoltField> {
@@ -760,7 +760,9 @@ impl Add for S128Sum {
 
     #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
-        Self { sum: self.sum + rhs.sum }
+        Self {
+            sum: self.sum + rhs.sum,
+        }
     }
 }
 
@@ -844,7 +846,9 @@ impl FMAdd<i32, S160> for S192Sum {
 impl Zero for S192Sum {
     #[inline(always)]
     fn zero() -> Self {
-        Self { sum: S192::from(0i128) }
+        Self {
+            sum: S192::from(0i128),
+        }
     }
 
     #[inline(always)]
@@ -858,6 +862,8 @@ impl Add for S192Sum {
 
     #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
-        Self { sum: self.sum + rhs.sum }
+        Self {
+            sum: self.sum + rhs.sum,
+        }
     }
 }
