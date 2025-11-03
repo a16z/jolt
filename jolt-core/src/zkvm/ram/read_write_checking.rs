@@ -1,3 +1,4 @@
+use common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 
 use crate::poly::opening_proof::OpeningAccumulator;
@@ -5,10 +6,11 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::witness::compute_d_parameter;
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
@@ -18,7 +20,6 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -29,7 +30,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use tracer::instruction::RAMAccess;
+use tracer::instruction::{Cycle, RAMAccess};
 
 // RAM read-write checking sumcheck
 //
@@ -103,16 +104,18 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::gen")]
     pub fn gen(
         initial_memory_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        trace: &[Cycle],
+        ram_K: usize,
+        twist_sumcheck_switch_index: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
-
         let params = ReadWriteCheckingParams::new(
-            state_manager.ram_K,
+            ram_K,
             trace.len(),
-            state_manager.twist_sumcheck_switch_index,
+            twist_sumcheck_switch_index,
             opening_accumulator,
             transcript,
         );
@@ -137,8 +140,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 let mut delta = vec![0; params.K];
                 for cycle in trace_chunk.iter() {
                     let ram_op = cycle.ram_access();
-                    let k = remap_address(ram_op.address() as u64, &program_io.memory_layout)
-                        .unwrap_or(0) as usize;
+                    let k =
+                        remap_address(ram_op.address() as u64, memory_layout).unwrap_or(0) as usize;
                     let increment = match ram_op {
                         RAMAccess::Write(write) => {
                             write.post_value as i128 - write.pre_value as i128
@@ -156,12 +159,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         let ram_addresses = trace
             .par_iter()
-            .map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &program_io.memory_layout,
-                )
-            })
+            .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))
             .collect::<Vec<_>>();
 
         // #[cfg(feature = "test_incremental")]
@@ -286,8 +284,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     .iter()
                     .map(|cycle| {
                         let ram_op = cycle.ram_access();
-                        let k = remap_address(ram_op.address() as u64, &program_io.memory_layout)
-                            .unwrap_or(0) as usize;
+                        let k = remap_address(ram_op.address() as u64, memory_layout).unwrap_or(0)
+                            as usize;
                         let increment = match ram_op {
                             RAMAccess::Write(write) => {
                                 write.post_value as i128 - write.pre_value as i128
@@ -308,8 +306,13 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
 
-        let inc_cycle =
-            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc_cycle = CommittedPolynomial::RamInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()

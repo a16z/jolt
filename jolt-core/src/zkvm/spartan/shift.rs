@@ -6,7 +6,6 @@ use itertools::chain;
 use tracer::instruction::Cycle;
 
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::{EqPlusOnePolynomial, EqPolynomial};
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -19,7 +18,6 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, Flags, InstructionFlags};
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
@@ -53,15 +51,13 @@ pub enum ShiftSumcheckProver<F: JoltField> {
 impl<F: JoltField> ShiftSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        trace: Arc<Vec<Cycle>>,
+        bytecode_preprocessing: &BytecodePreprocessing,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, _, _, _) = state_manager.get_prover_data();
-        let trace = state_manager.get_trace_arc();
         let n_cycle_vars = trace.len().ilog2() as usize;
         let params = ShiftSumcheckParams::new(n_cycle_vars, opening_accumulator, transcript);
-        let bytecode_preprocessing = preprocessing.bytecode.clone();
         Self::Phase1(Phase1Prover::gen(trace, bytecode_preprocessing, params))
     }
 }
@@ -96,7 +92,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
     #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         match self {
-            Self::Phase1(prover) => *self = mem::take(prover).bind(r_j),
+            Self::Phase1(prover) => {
+                if prover.should_transition_to_phase2() {
+                    let params = mem::take(&mut prover.params);
+                    let sumcheck_challenges = &mut prover.sumcheck_challenges;
+                    sumcheck_challenges.push(r_j);
+                    *self = Self::Phase2(Phase2Prover::gen(
+                        &prover.trace,
+                        &prover.bytecode_preprocessing,
+                        sumcheck_challenges,
+                        params,
+                    ));
+                    return;
+                }
+
+                prover.bind(r_j);
+            }
             Self::Phase2(prover) => prover.bind(r_j),
         }
     }
@@ -351,7 +362,7 @@ fn get_opening_point<F: JoltField>(
 /// Prover for 1st half of the rounds.
 ///
 /// Performs prefix-suffix sumcheck. See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
-#[derive(Default, Allocative)]
+#[derive(Allocative)]
 struct Phase1Prover<F: JoltField> {
     // All prefix-suffix (P, Q) buffers for this sumcheck.
     prefix_suffix_pairs: Vec<(MultilinearPolynomial<F>, MultilinearPolynomial<F>)>,
@@ -368,7 +379,7 @@ struct Phase1Prover<F: JoltField> {
 impl<F: JoltField> Phase1Prover<F> {
     fn gen(
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: BytecodePreprocessing,
+        bytecode_preprocessing: &BytecodePreprocessing,
         params: ShiftSumcheckParams<F>,
     ) -> Self {
         let EqPlusOnePrefixSuffixPoly {
@@ -425,7 +436,7 @@ impl<F: JoltField> Phase1Prover<F> {
                             is_virtual,
                             is_first_in_sequence,
                             is_noop,
-                        } = CycleState::new(&trace[x], &bytecode_preprocessing);
+                        } = CycleState::new(&trace[x], bytecode_preprocessing);
 
                         let mut v = F::from_u64(unexpanded_pc) + params.gamma_powers[1].mul_u64(pc);
                         if is_virtual {
@@ -457,8 +468,8 @@ impl<F: JoltField> Phase1Prover<F> {
 
         Self {
             prefix_suffix_pairs,
-            trace: trace.clone(),
-            bytecode_preprocessing,
+            trace,
+            bytecode_preprocessing: bytecode_preprocessing.clone(),
             sumcheck_challenges: Vec::new(),
             params,
         }
@@ -485,29 +496,22 @@ impl<F: JoltField> Phase1Prover<F> {
             .to_vec()
     }
 
-    fn bind(mut self, r_j: F::Challenge) -> ShiftSumcheckProver<F> {
+    fn bind(&mut self, r_j: F::Challenge) {
+        assert!(!self.should_transition_to_phase2());
         self.sumcheck_challenges.push(r_j);
-
-        // Transition to phase 2.
-        if self.prefix_suffix_pairs[0].0.len().ilog2() == 1 {
-            return ShiftSumcheckProver::Phase2(Phase2Prover::gen(
-                &self.trace,
-                &self.bytecode_preprocessing,
-                &self.sumcheck_challenges,
-                self.params,
-            ));
-        }
-
         self.prefix_suffix_pairs.iter_mut().for_each(|(p, q)| {
             p.bind(r_j, BindingOrder::LowToHigh);
             q.bind(r_j, BindingOrder::LowToHigh);
         });
-        ShiftSumcheckProver::Phase1(self)
+    }
+
+    fn should_transition_to_phase2(&self) -> bool {
+        self.prefix_suffix_pairs[0].0.len().ilog2() == 1
     }
 }
 
 /// Prover for 2nd half of the rounds.
-#[derive(Default, Allocative)]
+#[derive(Allocative)]
 struct Phase2Prover<F: JoltField> {
     unexpanded_pc_poly: MultilinearPolynomial<F>,
     pc_poly: MultilinearPolynomial<F>,

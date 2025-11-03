@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use allocative::Allocative;
 use tracing::{span, Level};
 
@@ -35,7 +33,7 @@ impl<F: JoltField> InnerSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InnerSumcheckProver::gen")]
     pub fn gen(
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        key: Arc<UniformSpartanKey<F>>,
+        key: &UniformSpartanKey<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let num_vars_uniform = key.num_vars_uniform_padded();

@@ -5,7 +5,6 @@ use num_traits::Zero;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         multilinear_polynomial::{
@@ -27,7 +26,6 @@ use crate::{
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::state_manager::StateManager,
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
@@ -43,7 +41,7 @@ use common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{chain, zip_eq, Itertools};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::{Instruction, NormalizedInstruction};
+use tracer::instruction::{Cycle, Instruction, NormalizedInstruction};
 
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;
@@ -124,14 +122,13 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
 impl<F: JoltField> ReadRafSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-
         let params = ReadRafSumcheckParams::gen(
-            &preprocessing.bytecode,
+            bytecode_preprocessing,
             trace.len().log_2(),
             opening_accumulator,
             transcript,
@@ -169,7 +166,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     array::from_fn(|_| unsafe_allocate_zero_vec::<F>(params.K));
 
                 for (j, cycle) in trace_chunk.iter().enumerate() {
-                    let pc = preprocessing.bytecode.get_pc(cycle);
+                    let pc = bytecode_preprocessing.get_pc(cycle);
                     for stage in 0..N_STAGES {
                         res_per_stage[stage][pc] += eq_evals[stage][j]
                     }
@@ -221,7 +218,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
         let pc = trace
             .par_iter()
-            .map(|cycle| preprocessing.bytecode.get_pc(cycle))
+            .map(|cycle| bytecode_preprocessing.get_pc(cycle))
             .collect();
 
         Self {

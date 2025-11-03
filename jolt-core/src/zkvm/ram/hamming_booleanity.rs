@@ -1,5 +1,4 @@
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
@@ -11,13 +10,13 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::VirtualPolynomial;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use std::marker::PhantomData;
+use tracer::instruction::Cycle;
 
 // RAM Hamming booleanity sumcheck
 //
@@ -39,12 +38,7 @@ pub struct HammingBooleanitySumcheckProver<F: JoltField> {
 
 impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::gen")]
-    pub fn gen(
-        state_manager: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-    ) -> Self {
-        let (_, _, trace, _, _) = state_manager.get_prover_data();
-
+    pub fn gen(trace: &[Cycle], opening_accumulator: &ProverOpeningAccumulator<F>) -> Self {
         let T = trace.len();
         let log_T = T.log_2();
 

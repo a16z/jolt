@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
@@ -19,7 +18,6 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        dag::state_manager::StateManager,
         instruction::LookupQuery,
         instruction_lookups::{D, K_CHUNK, LOG_K, LOG_K_CHUNK},
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -29,6 +27,7 @@ use allocative::Allocative;
 use common::constants::XLEN;
 use itertools::chain;
 use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 /// Degree bound of the sumcheck round polynomials in [`RaSumcheckVerifier`].
 const DEGREE_BOUND: usize = D + 1;
@@ -52,13 +51,8 @@ pub struct RaSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-    ) -> Self {
+    pub fn gen(trace: &[Cycle], opening_accumulator: &ProverOpeningAccumulator<F>) -> Self {
         let params = RaSumcheckParams::new(opening_accumulator);
-
-        let (_preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,

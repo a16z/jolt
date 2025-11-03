@@ -3,12 +3,11 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::VirtualPolynomial;
+use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial};
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
@@ -21,11 +20,13 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
+use common::jolt_device::MemoryLayout;
 use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::array;
 use std::iter::zip;
+use tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
 //
@@ -113,15 +114,17 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        ram_K: usize,
+        twist_sumcheck_switch_index: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-
         let params = RegistersReadWriteCheckingParams::new(
-            state_manager.twist_sumcheck_switch_index,
+            twist_sumcheck_switch_index,
             trace.len().log_2(),
             opening_accumulator,
             transcript,
@@ -223,8 +226,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             GruenSplitEqPolynomial::<F>::new(&params.r_cycle_stage_1.r, BindingOrder::LowToHigh);
         let gruen_eq_r_cycle_stage_3 =
             GruenSplitEqPolynomial::<F>::new(&params.r_cycle_stage_3.r, BindingOrder::LowToHigh);
-        let inc_cycle =
-            CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
 
         let (_, rs1_rv_claim_stage_1) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);

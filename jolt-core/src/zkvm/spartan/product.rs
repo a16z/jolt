@@ -1,8 +1,9 @@
+use std::sync::Arc;
+
 use allocative::Allocative;
 use ark_std::Zero;
 
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
@@ -24,7 +25,6 @@ use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::constraints::{
     NUM_PRODUCT_VIRTUAL, PRODUCT_CONSTRAINTS, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
@@ -35,7 +35,6 @@ use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
 use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
-use std::sync::Arc;
 use tracer::instruction::Cycle;
 
 // Product virtualization with univariate skip
@@ -81,14 +80,12 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
     /// Initialize a new prover for the univariate skip round
     /// The 5 base evaluations are the claimed evaluations of the 5 product terms from Spartan outer
     #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstanceProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
         opening_accumulator: &ProverOpeningAccumulator<F>,
         tau: &[F::Challenge],
     ) -> Self {
         let params = ProductVirtualUniSkipInstanceParams::new(opening_accumulator, tau);
-
-        let (_, _, trace, _, _) = state_manager.get_prover_data();
 
         // Compute extended univariate-skip evals using split-eq fold-in-out (includes R^2 scaling)
         let extended_evals = Self::compute_univariate_skip_extended_evals(trace, tau);
@@ -281,13 +278,7 @@ pub struct ProductVirtualRemainderProver<F: JoltField> {
 
 impl<F: JoltField> ProductVirtualRemainderProver<F> {
     #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
-        num_cycle_vars: usize,
-        uni: &UniSkipState<F>,
-    ) -> Self {
-        let (_, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
-
+    pub fn gen(trace: Arc<Vec<Cycle>>, uni: &UniSkipState<F>) -> Self {
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -310,18 +301,20 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
 
         let (t0, t_inf, left_bound, right_bound) =
             Self::compute_first_quadratic_evals_and_bound_polys(
-                trace,
+                &trace,
                 &lagrange_evals_r,
                 &split_eq_poly,
             );
 
+        let n_cycle_vars = trace.len().ilog2() as usize;
+
         Self {
             split_eq_poly,
-            trace: state_manager.get_trace_arc(),
+            trace,
             left: left_bound,
             right: right_bound,
             first_round_evals: (t0, t_inf),
-            params: ProductVirtualRemainderParams::new(num_cycle_vars, uni),
+            params: ProductVirtualRemainderParams::new(n_cycle_vars, uni),
         }
     }
 
