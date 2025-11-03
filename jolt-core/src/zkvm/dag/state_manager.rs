@@ -132,22 +132,22 @@ where
             panic!("Prover state not initialized");
         }
     }
+}
 
-    pub fn fiat_shamir_preamble(&self, transcript: &mut impl Transcript) {
-        transcript.append_u64(self.program_io.memory_layout.max_input_size);
-        transcript.append_u64(self.program_io.memory_layout.max_output_size);
-        transcript.append_u64(self.program_io.memory_layout.memory_size);
-        transcript.append_bytes(&self.program_io.inputs);
-        transcript.append_bytes(&self.program_io.outputs);
-        transcript.append_u64(self.program_io.panic as u64);
-        transcript.append_u64(self.ram_K as u64);
-
-        if let Some(ref verifier_state) = self.verifier_state {
-            transcript.append_u64(verifier_state.trace_length as u64);
-        } else if let Some(ref prover_state) = self.prover_state {
-            transcript.append_u64(prover_state.trace.len() as u64);
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
+// TODO: Perhaps better we have something like a JoltClaim with this stuff in
+// it and have a method on that to append that to the transcript.
+pub fn fiat_shamir_preamble(
+    program_io: &JoltDevice,
+    ram_K: usize,
+    trace_length: usize,
+    transcript: &mut impl Transcript,
+) {
+    transcript.append_u64(program_io.memory_layout.max_input_size);
+    transcript.append_u64(program_io.memory_layout.max_output_size);
+    transcript.append_u64(program_io.memory_layout.memory_size);
+    transcript.append_bytes(&program_io.inputs);
+    transcript.append_bytes(&program_io.outputs);
+    transcript.append_u64(program_io.panic as u64);
+    transcript.append_u64(ram_K as u64);
+    transcript.append_u64(trace_length as u64);
 }
