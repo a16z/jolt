@@ -8,7 +8,9 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
+use crate::utils::math::Math;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
@@ -17,22 +19,42 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transpose;
+use crate::zkvm::bytecode;
+use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier;
 use crate::zkvm::bytecode::BytecodeDagProver;
-use crate::zkvm::bytecode::BytecodeDagVerifier;
 use crate::zkvm::dag::proof_serialization::Claims;
 use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStagesProver;
-use crate::zkvm::dag::stage::SumcheckStagesVerifier;
 use crate::zkvm::dag::state_manager::StateManager;
+use crate::zkvm::instruction_lookups;
+use crate::zkvm::instruction_lookups::ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier;
+use crate::zkvm::instruction_lookups::read_raf_checking::ReadRafSumcheckVerifier as LookupsReadRafSumcheckVerifier;
 use crate::zkvm::instruction_lookups::LookupsDagProver;
-use crate::zkvm::instruction_lookups::LookupsDagVerifier;
+use crate::zkvm::r1cs::key::UniformSpartanKey;
+use crate::zkvm::ram;
+use crate::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheckVerifier;
+use crate::zkvm::ram::output_check::OutputSumcheckVerifier;
+use crate::zkvm::ram::output_check::ValFinalSumcheckVerifier;
+use crate::zkvm::ram::ra_virtual::RaSumcheckVerifier as RamRaSumcheckVerifier;
+use crate::zkvm::ram::raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier;
+use crate::zkvm::ram::read_write_checking::RamReadWriteCheckingVerifier;
+use crate::zkvm::ram::val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier;
+use crate::zkvm::ram::verifier_accumulate_advice;
 use crate::zkvm::ram::RamDagProver;
-use crate::zkvm::ram::RamDagVerifier;
+use crate::zkvm::registers::read_write_checking::RegistersReadWriteCheckingVerifier;
+use crate::zkvm::registers::val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier;
 use crate::zkvm::registers::RegistersDagProver;
-use crate::zkvm::registers::RegistersDagVerifier;
+use crate::zkvm::spartan::inner::InnerSumcheckVerifier;
+use crate::zkvm::spartan::instruction_input::InstructionInputSumcheckVerifier;
+use crate::zkvm::spartan::outer::OuterRemainingSumcheckVerifier;
+use crate::zkvm::spartan::product::ProductVirtualInnerVerifier;
+use crate::zkvm::spartan::product::ProductVirtualRemainderVerifier;
+use crate::zkvm::spartan::shift::ShiftSumcheckVerifier;
+use crate::zkvm::spartan::verify_stage1_uni_skip;
+use crate::zkvm::spartan::verify_stage2_uni_skip;
 use crate::zkvm::spartan::SpartanDagProver;
-use crate::zkvm::spartan::SpartanDagVerifier;
 use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
+use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -517,9 +539,10 @@ pub fn verify_jolt_dag<
     PCS: CommitmentScheme<Field = F>,
 >(
     proof: &JoltProof<F, PCS, ProofTranscript>,
-    mut state_manager: StateManager<'a, F, PCS>,
+    state_manager: StateManager<'a, F, PCS>,
     mut opening_accumulator: VerifierOpeningAccumulator<F>,
     transcript: &mut ProofTranscript,
+    preprocessing: &JoltVerifierPreprocessing<F, PCS>,
 ) -> Result<(), anyhow::Error> {
     state_manager.fiat_shamir_preamble(transcript);
 
@@ -531,7 +554,6 @@ pub fn verify_jolt_dag<
     for commitment in &proof.commitments {
         transcript.append_serializable(commitment);
     }
-
     // Append untrusted advice commitment to transcript
     if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
         transcript.append_serializable(untrusted_advice_commitment);
@@ -541,32 +563,30 @@ pub fn verify_jolt_dag<
         transcript.append_serializable(trusted_advice_commitment);
     }
 
-    // Initialize Dags
-    let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
-    let padded_trace_length = trace_length.next_power_of_two();
-    let mut spartan_dag = SpartanDagVerifier::new(padded_trace_length);
-    let mut lookups_dag = LookupsDagVerifier;
-    let mut registers_dag = RegistersDagVerifier;
-    let mut ram_dag = RamDagVerifier::new(&state_manager);
-    let mut bytecode_dag = BytecodeDagVerifier;
+    // Init.
+    let program_io = &state_manager.program_io;
+    let trace_len = proof.trace_length;
+    let n_cycle_vars = trace_len.log_2();
+    let padded_trace_len = trace_len.next_power_of_two();
+    let spartan_key = UniformSpartanKey::new(padded_trace_len);
+    let twist_sumcheck_switch_index = proof.twist_sumcheck_switch_index;
+    let initial_ram_state =
+        ram::gen_ram_initial_memory_state::<F>(ram_K, &preprocessing.shared.ram, program_io);
 
     // Stage 1:
-    spartan_dag
-        .stage1_uni_skip(&proof.stage1_uni_skip_first_round_proof, transcript)
-        .context("Stage 1 univariate skip first round")?;
-
-    let stage1_remainder_instances: Vec<_> = spartan_dag
-        .stage1_instances(&mut state_manager, &mut opening_accumulator, transcript)
-        .into_iter()
-        .collect();
-    let stage1_remainder_instances_ref = stage1_remainder_instances
-        .iter()
-        .map(|instance| &**instance as _)
-        .collect();
-
+    let spartan_outer_uni_skip_state = verify_stage1_uni_skip(
+        &proof.stage1_uni_skip_first_round_proof,
+        &spartan_key,
+        transcript,
+    )
+    .context("Stage 1 univariate skip first round")?;
+    let spartan_outer_remaining =
+        OuterRemainingSumcheckVerifier::new(n_cycle_vars, &spartan_outer_uni_skip_state);
+    let state1_instances =
+        vec![&spartan_outer_remaining as &dyn SumcheckInstanceVerifier<F, ProofTranscript>];
     let _r_stage1 = BatchedSumcheck::verify(
         &proof.stage1_sumcheck_proof,
-        stage1_remainder_instances_ref,
+        state1_instances,
         &mut opening_accumulator,
         transcript,
     )
@@ -574,136 +594,154 @@ pub fn verify_jolt_dag<
 
     // Stage 2:
     // Stage 2a: Verify univariate-skip first round for product virtualization
-    spartan_dag
-        .stage2_uni_skip(
-            &proof.stage2_uni_skip_first_round_proof,
-            &mut opening_accumulator,
-            transcript,
-        )
-        .context("Stage 2 univariate skip first round")?;
-
-    let stage2_instances: Vec<_> = std::iter::empty()
-        .chain(spartan_dag.stage2_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(registers_dag.stage2_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(ram_dag.stage2_instances(&mut state_manager, &mut opening_accumulator, transcript))
-        .chain(lookups_dag.stage2_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(bytecode_dag.stage2_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .collect();
-    let stage2_instances_ref = stage2_instances.iter().map(|inst| &**inst as _).collect();
-
+    let product_virtual_uni_skip_state = verify_stage2_uni_skip(
+        &proof.stage2_uni_skip_first_round_proof,
+        &spartan_key,
+        &mut opening_accumulator,
+        transcript,
+    )
+    .context("Stage 2 univariate skip first round")?;
+    let spartan_inner = InnerSumcheckVerifier::new(&spartan_key, transcript);
+    let spartan_product_virtual_remainder =
+        ProductVirtualRemainderVerifier::new(n_cycle_vars, &product_virtual_uni_skip_state);
+    let ram_raf_evaluation =
+        RamRafEvaluationSumcheckVerifier::new(program_io, ram_K, &opening_accumulator);
+    let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
+        ram_K,
+        trace_len,
+        twist_sumcheck_switch_index,
+        &opening_accumulator,
+        transcript,
+    );
+    let ram_output_check = OutputSumcheckVerifier::new(ram_K, program_io, transcript);
+    let state2_instances = vec![
+        &spartan_inner as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+        &spartan_product_virtual_remainder,
+        &ram_raf_evaluation,
+        &ram_read_write_checking,
+        &ram_output_check,
+    ];
     let _r_stage2 = BatchedSumcheck::verify(
         &proof.stage2_sumcheck_proof,
-        stage2_instances_ref,
+        state2_instances,
         &mut opening_accumulator,
         transcript,
     )
     .context("Stage 2")?;
 
     // Stage 3:
-    let stage3_instances: Vec<_> = std::iter::empty()
-        .chain(spartan_dag.stage3_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(lookups_dag.stage3_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(ram_dag.stage3_instances(&mut state_manager, &mut opening_accumulator, transcript))
-        .collect();
-    let stage3_instances_ref = stage3_instances.iter().map(|inst| &**inst as _).collect();
-
+    let spartan_shift_sumcheck =
+        ShiftSumcheckVerifier::new(n_cycle_vars, &opening_accumulator, transcript);
+    let spartan_instruction_input =
+        InstructionInputSumcheckVerifier::new(&opening_accumulator, transcript);
+    let spartan_product_virtual_claim_check =
+        ProductVirtualInnerVerifier::new(&opening_accumulator, transcript);
+    let lookups_ra_hamming_weight = instruction_lookups::new_ra_hamming_weight_verifier(transcript);
+    let stage3_instances = vec![
+        &spartan_shift_sumcheck as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+        &spartan_instruction_input,
+        &spartan_product_virtual_claim_check,
+        &lookups_ra_hamming_weight,
+    ];
     let _r_stage3 = BatchedSumcheck::verify(
         &proof.stage3_sumcheck_proof,
-        stage3_instances_ref,
+        stage3_instances,
         &mut opening_accumulator,
         transcript,
     )
     .context("Stage 3")?;
 
     // Stage 4:
-    let stage4_instances: Vec<_> = std::iter::empty()
-        .chain(registers_dag.stage4_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(ram_dag.stage4_instances(&mut state_manager, &mut opening_accumulator, transcript))
-        .collect();
-    let stage4_instances_ref = stage4_instances
-        .iter()
-        .map(|instance| &**instance as _)
-        .collect();
-
+    let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
+        twist_sumcheck_switch_index,
+        n_cycle_vars,
+        &opening_accumulator,
+        transcript,
+    );
+    verifier_accumulate_advice::<F>(
+        ram_K,
+        program_io,
+        state_manager.untrusted_advice_commitment.is_some(),
+        state_manager.trusted_advice_commitment.is_some(),
+        &mut opening_accumulator,
+        transcript,
+    );
+    let ram_ra_booleanity = ram::new_ra_booleanity_verifier(ram_K, n_cycle_vars, transcript);
+    let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
+        &initial_ram_state,
+        program_io,
+        trace_len,
+        ram_K,
+        &opening_accumulator,
+    );
+    let ram_val_final = ValFinalSumcheckVerifier::new(
+        &initial_ram_state,
+        program_io,
+        trace_len,
+        ram_K,
+        &opening_accumulator,
+    );
+    let stage4_instances = vec![
+        &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+        &ram_ra_booleanity,
+        &ram_val_evaluation,
+        &ram_val_final,
+    ];
     let _r_stage4 = BatchedSumcheck::verify(
         &proof.stage4_sumcheck_proof,
-        stage4_instances_ref,
+        stage4_instances,
         &mut opening_accumulator,
         transcript,
     )
     .context("Stage 4")?;
 
     // Stage 5:
-    let stage5_instances: Vec<_> = std::iter::empty()
-        .chain(registers_dag.stage5_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator, transcript))
-        .chain(lookups_dag.stage5_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .collect();
-    let stage5_instances_ref = stage5_instances.iter().map(|inst| &**inst as _).collect();
-
+    let registers_val_evaluation = RegistersValEvaluationSumcheckVerifier::new(n_cycle_vars);
+    let ram_hamming_booleanity = HammingBooleanitySumcheckVerifier::new(n_cycle_vars);
+    let ram_ra_virtual =
+        RamRaSumcheckVerifier::new(trace_len, ram_K, &opening_accumulator, transcript);
+    let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(n_cycle_vars, transcript);
+    let stage5_instances = vec![
+        &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+        &ram_hamming_booleanity,
+        &ram_ra_virtual,
+        &lookups_read_raf,
+    ];
     let _r_stage5 = BatchedSumcheck::verify(
         &proof.stage5_sumcheck_proof,
-        stage5_instances_ref,
+        stage5_instances,
         &mut opening_accumulator,
         transcript,
     )
     .context("Stage 5")?;
 
     // Stage 6:
-    let stage6_instances: Vec<_> = std::iter::empty()
-        .chain(bytecode_dag.stage6_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator, transcript))
-        .chain(lookups_dag.stage6_instances(
-            &mut state_manager,
-            &mut opening_accumulator,
-            transcript,
-        ))
-        .collect();
-    let stage6_instances_ref = stage6_instances.iter().map(|inst| &**inst as _).collect();
-
+    let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
+        &preprocessing.shared.bytecode,
+        n_cycle_vars,
+        &opening_accumulator,
+        transcript,
+    );
+    let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::new_ra_one_hot_verifiers(
+        &preprocessing.shared.bytecode,
+        n_cycle_vars,
+        transcript,
+    );
+    let ram_hamming_weight = ram::new_ra_hamming_weight_verifier(ram_K, transcript);
+    let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(&opening_accumulator);
+    let lookups_booleanity =
+        instruction_lookups::new_ra_booleanity_verifier(n_cycle_vars, transcript);
+    let stage6_instances = vec![
+        &bytecode_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+        &bytecode_hamming_weight,
+        &bytecode_booleanity,
+        &ram_hamming_weight,
+        &lookups_ra_virtual,
+        &lookups_booleanity,
+    ];
     let _r_stage6 = BatchedSumcheck::verify(
         &proof.stage6_sumcheck_proof,
-        stage6_instances_ref,
+        stage6_instances,
         &mut opening_accumulator,
         transcript,
     )

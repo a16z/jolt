@@ -435,8 +435,14 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }),
         };
 
-        verify_jolt_dag(&proof, state_manager, opening_accumulator, transcript)
-            .expect("Verification failed");
+        verify_jolt_dag(
+            &proof,
+            state_manager,
+            opening_accumulator,
+            transcript,
+            preprocessing,
+        )
+        .expect("Verification failed");
 
         Ok(())
     }

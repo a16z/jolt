@@ -66,8 +66,6 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         state_manager: &mut StateManager<'_, F, PCS>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = ValEvaluationSumcheckParams::new(state_manager);
-
         // The opening point is r_address || r_cycle
         let registers_val_input_sample = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
@@ -76,6 +74,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         let (r_address, r_cycle) = registers_val_input_sample.0.split_at(LOG_K);
 
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+        let params = ValEvaluationSumcheckParams::new(trace.len().log_2());
         let inc =
             CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
@@ -203,8 +202,8 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
-    pub fn new(state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>) -> Self {
-        let params = ValEvaluationSumcheckParams::new(state_manager);
+    pub fn new(n_cycle_vars: usize) -> Self {
+        let params = ValEvaluationSumcheckParams::new(n_cycle_vars);
         Self { params }
     }
 }
@@ -295,9 +294,9 @@ struct ValEvaluationSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheckParams<F> {
-    pub fn new(state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>) -> Self {
+    pub fn new(n_cycle_vars: usize) -> Self {
         Self {
-            n_cycle_vars: state_manager.get_trace_len().log_2(),
+            n_cycle_vars,
             _phantom: PhantomData,
         }
     }

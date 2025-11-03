@@ -107,9 +107,15 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
-
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
+
+        let params = ReadWriteCheckingParams::new(
+            state_manager.ram_K,
+            trace.len(),
+            state_manager.twist_sumcheck_switch_index,
+            opening_accumulator,
+            transcript,
+        );
 
         let r_prime = opening_accumulator
             .get_virtual_polynomial_opening(
@@ -1002,12 +1008,20 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
 
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        ram_K: usize,
+        trace_len: usize,
+        twist_sumcheck_switch_index: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         Self {
-            params: ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript),
+            params: ReadWriteCheckingParams::new(
+                ram_K,
+                trace_len,
+                twist_sumcheck_switch_index,
+                opening_accumulator,
+                transcript,
+            ),
         }
     }
 }
@@ -1087,29 +1101,28 @@ struct ReadWriteCheckingParams<F: JoltField> {
     T: usize,
     gamma: F,
     r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
-    sumcheck_switch_index: usize,
+    twist_sumcheck_switch_index: usize,
 }
 
 impl<F: JoltField> ReadWriteCheckingParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        ram_K: usize,
+        trace_len: usize,
+        twist_sumcheck_switch_index: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let K = state_manager.ram_K;
-        let T = state_manager.get_trace_len();
-        let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
         let gamma = transcript.challenge_scalar();
         let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamReadValue,
             SumcheckId::SpartanOuter,
         );
         Self {
-            K,
-            T,
+            K: ram_K,
+            T: trace_len,
             gamma,
             r_cycle_stage_1,
-            sumcheck_switch_index,
+            twist_sumcheck_switch_index,
         }
     }
 
@@ -1133,7 +1146,7 @@ impl<F: JoltField> ReadWriteCheckingParams<F> {
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let sumcheck_switch_index = self.sumcheck_switch_index;
+        let sumcheck_switch_index = self.twist_sumcheck_switch_index;
         // The high-order cycle variables are bound after the switch
         let mut r_cycle = sumcheck_challenges[sumcheck_switch_index..self.T.log_2()].to_vec();
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
