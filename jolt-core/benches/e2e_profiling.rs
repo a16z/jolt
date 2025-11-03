@@ -11,6 +11,7 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
+const CYCLES_PER_MODEXP: f64 = 50000.0; // Estimated cycles per modexp operation
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 /// Calculate number of operations to target a specific cycle count
@@ -30,6 +31,8 @@ pub enum BenchType {
     Sha2Chain,
     #[strum(serialize = "SHA3 Chain")]
     Sha3Chain,
+    #[strum(serialize = "Modexp Chain")]
+    ModexpChain,
 }
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -40,6 +43,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Sha3Chain => sha3_chain(),
         BenchType::Fibonacci => fibonacci(),
+        BenchType::ModexpChain => modexp_chain(),
     }
 }
 
@@ -83,6 +87,20 @@ fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
     prove_example("sha3-chain-guest", inputs)
+}
+
+fn modexp_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut inputs = vec![];
+    // Base, exponent, and modulus (256 bits = 32 bytes each)
+    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&[3u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&[7u8; 32]).unwrap());
+    let iters = scale_to_target_ops(
+        ((1 << 24) as f64 * SAFETY_MARGIN) as usize,
+        CYCLES_PER_MODEXP,
+    );
+    inputs.append(&mut postcard::to_stdvec(&iters).unwrap());
+    prove_example("modexp-chain-guest", inputs)
 }
 
 pub fn master_benchmark(
@@ -129,6 +147,16 @@ pub fn master_benchmark(
             }),
             BenchType::BTreeMap => ("btreemap", |target| {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
+            }),
+            BenchType::ModexpChain => ("modexp-chain", |target| {
+                let iterations = scale_to_target_ops(target, CYCLES_PER_MODEXP);
+                [
+                    postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                    postcard::to_stdvec(&[3u8; 32]).unwrap(),
+                    postcard::to_stdvec(&[7u8; 32]).unwrap(),
+                    postcard::to_stdvec(&iterations).unwrap(),
+                ]
+                .concat()
             }),
             BenchType::Sha2 => panic!("Use sha2-chain instead"),
             BenchType::Sha3 => panic!("Use sha3-chain instead"),
