@@ -1,4 +1,6 @@
-use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
+use crate::poly::opening_proof::{
+    OpeningAccumulator, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::{
@@ -44,11 +46,14 @@ impl BytecodePreprocessing {
         bytecode.insert(0, Instruction::NoOp);
         let pc_map = BytecodePCMapper::new(&bytecode);
 
-        let d = compute_d_parameter(bytecode.len().next_power_of_two().max(2));
-        // Make log(code_size) a multiple of d
-        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d)
-            .pow2()
-            .max(DTH_ROOT_OF_K);
+        let code_size = (bytecode
+            .len()
+            .next_power_of_two()
+            .log_2()
+            .div_ceil(DTH_ROOT_OF_K.log_2())
+            * DTH_ROOT_OF_K.log_2())
+        .pow2();
+        let d = compute_d_parameter(code_size);
 
         // Bytecode: Pad to nearest power of 2
         bytecode.resize(code_size, Instruction::NoOp);
@@ -140,10 +145,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 {
     fn stage6_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
+        sm: &mut StateManager<'_, F, PCS>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let read_raf = ReadRafSumcheckProver::gen(sm);
-        let (hamming_weight, booleanity) = gen_ra_one_hot_provers(sm);
+        let read_raf = ReadRafSumcheckProver::gen(sm, opening_accumulator, transcript);
+        let (hamming_weight, booleanity) =
+            gen_ra_one_hot_provers(sm, opening_accumulator, transcript);
 
         #[cfg(feature = "allocative")]
         {
@@ -167,10 +175,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 {
     fn stage6_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
+        sm: &mut StateManager<'_, F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let read_checking = ReadRafSumcheckVerifier::gen(sm);
-        let (hamming_weight, booleanity) = new_ra_one_hot_verifiers(sm);
+        let read_checking = ReadRafSumcheckVerifier::gen(sm, opening_accumulator, transcript);
+        let (hamming_weight, booleanity) = new_ra_one_hot_verifiers(sm, transcript);
         vec![
             Box::new(read_checking),
             Box::new(hamming_weight),
@@ -180,12 +190,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 }
 
 fn gen_ra_one_hot_provers<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+    opening_accumulator: &ProverOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
     let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
     let bytecode_preprocessing = &preprocessing.shared.bytecode;
 
-    let r_cycle: Vec<F::Challenge> = state_manager
+    let r_cycle: Vec<F::Challenge> = opening_accumulator
         .get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter)
         .0
         .r;
@@ -195,18 +207,16 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     let H_indices = compute_bytecode_h_indices(bytecode_preprocessing, trace);
 
     let d = bytecode_preprocessing.d;
-    let log_K = bytecode_preprocessing.code_size.log_2();
-    let log_k_chunk = log_K.div_ceil(d);
     let log_t = trace.len().log_2();
 
-    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers::<F>(d);
+    let hamming_weight_gamma_powers = transcript.challenge_scalar_powers::<F>(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
 
     let hamming_weight_params = HammingWeightSumcheckParams {
         d,
-        num_rounds: log_k_chunk,
+        num_rounds: DTH_ROOT_OF_K.log_2(),
         gamma_powers: hamming_weight_gamma_powers,
         polynomial_types: polynomial_types.clone(),
         sumcheck_id: SumcheckId::BytecodeHammingWeight,
@@ -214,15 +224,14 @@ fn gen_ra_one_hot_provers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
+    let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
 
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_k_chunk);
+    let r_address: Vec<F::Challenge> =
+        transcript.challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
     let booleanity_params = BooleanitySumcheckParams {
         d,
-        log_k_chunk,
+        log_k_chunk: DTH_ROOT_OF_K.log_2(),
         log_t,
         gammas: booleanity_gammas,
         r_address,
@@ -239,7 +248,8 @@ fn gen_ra_one_hot_provers<F: JoltField>(
 }
 
 fn new_ra_one_hot_verifiers<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+    transcript: &mut impl Transcript,
 ) -> (
     HammingWeightSumcheckVerifier<F>,
     BooleanitySumcheckVerifier<F>,
@@ -247,16 +257,14 @@ fn new_ra_one_hot_verifiers<F: JoltField>(
     let (preprocessing, _, T_val) = state_manager.get_verifier_data();
     let bytecode_preprocessing = &preprocessing.shared.bytecode;
     let d = bytecode_preprocessing.d;
-    let log_K = bytecode_preprocessing.code_size.log_2();
-    let log_k_chunk = log_K.div_ceil(d);
     let log_t = T_val.log_2();
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
-    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
+    let hamming_weight_gamma_powers = transcript.challenge_scalar_powers(d);
 
     let hamming_weight_params = HammingWeightSumcheckParams {
         d,
-        num_rounds: log_k_chunk,
+        num_rounds: DTH_ROOT_OF_K.log_2(),
         gamma_powers: hamming_weight_gamma_powers,
         polynomial_types: polynomial_types.clone(),
         sumcheck_id: SumcheckId::BytecodeHammingWeight,
@@ -264,14 +272,13 @@ fn new_ra_one_hot_verifiers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_k_chunk);
+    let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
+    let r_address: Vec<F::Challenge> =
+        transcript.challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
     let booleanity_params = BooleanitySumcheckParams {
         d,
-        log_k_chunk,
+        log_k_chunk: DTH_ROOT_OF_K.log_2(),
         log_t,
         gammas: booleanity_gammas,
         r_address,
@@ -320,24 +327,22 @@ fn compute_ra_evals<F: JoltField>(
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
-    let log_K = preprocessing.code_size.log_2();
     let d = preprocessing.d;
-    let log_K_chunk = log_K.div_ceil(d);
-    let K_chunk = log_K_chunk.pow2();
 
     trace
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
-            let mut result: Vec<Vec<F>> =
-                (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+            let mut result: Vec<Vec<F>> = (0..d)
+                .map(|_| unsafe_allocate_zero_vec(DTH_ROOT_OF_K))
+                .collect();
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
                 let mut pc = preprocessing.get_pc(cycle);
                 for i in (0..d).rev() {
-                    let k = pc % K_chunk;
+                    let k = pc % DTH_ROOT_OF_K;
                     result[i][k] += eq_r_cycle[j];
-                    pc >>= log_K_chunk;
+                    pc >>= DTH_ROOT_OF_K.log_2();
                 }
                 j += 1;
             }
@@ -346,7 +351,7 @@ fn compute_ra_evals<F: JoltField>(
         .reduce(
             || {
                 (0..d)
-                    .map(|_| unsafe_allocate_zero_vec(K_chunk))
+                    .map(|_| unsafe_allocate_zero_vec(DTH_ROOT_OF_K))
                     .collect::<Vec<_>>()
             },
             |mut running, new| {

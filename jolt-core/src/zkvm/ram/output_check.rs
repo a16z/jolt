@@ -85,12 +85,13 @@ pub struct OutputSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> OutputSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn gen(
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = OutputSumcheckParams::new(state_manager);
+        let params = OutputSumcheckParams::new(state_manager, transcript);
 
         let K = final_ram_state.len();
         debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
@@ -163,20 +164,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             .map(|k| {
                 let eq_evals = eq_poly.sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
                     k,
-                    BindingOrder::HighToLow,
+                    BindingOrder::LowToHigh,
                 );
                 let io_mask_evals = io_mask.sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
                     k,
-                    BindingOrder::HighToLow,
+                    BindingOrder::LowToHigh,
                 );
                 let val_final_evals = val_final
                     .sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
                         k,
-                        BindingOrder::HighToLow,
+                        BindingOrder::LowToHigh,
                     );
                 let val_io_evals = val_io.sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
                     k,
-                    BindingOrder::HighToLow,
+                    BindingOrder::LowToHigh,
                 );
                 [
                     (eq_evals[0] * io_mask_evals[0])
@@ -219,7 +220,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         // because we'll need Val_init(r) in `ValFinalSumcheck`
         [val_init, val_final, val_io, eq_poly, io_mask]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         eq_table.update(r_j);
     }
 
@@ -263,9 +264,10 @@ pub struct OutputSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> OutputSumcheckVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = OutputSumcheckParams::new(state_manager);
+        let params = OutputSumcheckParams::new(state_manager, transcript);
         Self { params }
     }
 }
@@ -296,7 +298,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
             .1;
 
         let r_address = &self.params.r_address;
-        let r_address_prime = &sumcheck_challenges[..self.params.r_address.len()];
+        let r_address_prime = &sumcheck_challenges[..self.params.r_address.len()]
+            .iter()
+            .cloned()
+            .rev()
+            .collect::<Vec<_>>();
         let program_io = &self.params.program_io;
 
         // let io_mask = RangeMaskPolynomial::new(
@@ -359,13 +365,12 @@ struct OutputSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> OutputSumcheckParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let program_io = state_manager.program_io.clone();
         let K = state_manager.ram_K;
-        let r_address = state_manager
-            .transcript
-            .challenge_vector_optimized::<F>(K.log_2());
+        let r_address = transcript.challenge_vector_optimized::<F>(K.log_2());
         Self {
             K,
             r_address,
@@ -381,7 +386,7 @@ impl<F: JoltField> OutputSumcheckParams<F> {
 fn get_output_sumcheck_opening_point<F: JoltField>(
     sumcheck_challenges: &[F::Challenge],
 ) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::new(sumcheck_challenges.to_vec())
+    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }
 
 #[derive(Allocative)]
@@ -395,13 +400,14 @@ pub struct ValFinalSumcheckProver<F: JoltField> {
 impl<F: JoltField> ValFinalSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let T = trace.len();
 
-        let r_address = state_manager
+        let r_address = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
@@ -455,7 +461,7 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
         //     );
         // }
 
-        let val_init_eval = state_manager
+        let val_init_eval = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValInit,
                 SumcheckId::RamOutputCheck,
@@ -562,11 +568,12 @@ pub struct ValFinalSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> ValFinalSumcheckVerifier<F> {
     pub fn new(
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let (_, program_io, T) = state_manager.get_verifier_data();
 
-        let r_address = state_manager
+        let r_address = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
@@ -577,7 +584,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         {
             // Verify that val_evaluation and output_check use the same opening point for initial_ram_state.
             // This allows us to reuse a single untrusted_advice opening instead of providing two.
-            let (r, _) = state_manager.get_virtual_polynomial_opening(
+            let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamVal,
                 SumcheckId::RamReadWriteChecking,
             );
@@ -585,11 +592,10 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
             assert_eq!(r_address_val_evaluation.r, r_address);
         }
 
-        let accumulator = state_manager.get_verifier_accumulator();
         let total_memory_vars = state_manager.ram_K.log_2();
 
         let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            accumulator.borrow().get_untrusted_advice_opening(),
+            opening_accumulator.get_untrusted_advice_opening(),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -600,7 +606,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         );
 
         let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            accumulator.borrow().get_trusted_advice_opening(),
+            opening_accumulator.get_trusted_advice_opening(),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),

@@ -87,8 +87,8 @@ pub struct OuterUniSkipInstanceProver<F: JoltField> {
 
 impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn gen<PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, PCS>,
         tau: &[F::Challenge],
     ) -> Self {
         let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
@@ -260,8 +260,8 @@ pub struct OuterRemainingSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn gen<PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, PCS>,
         num_cycles_bits: usize,
         uni: &UniSkipState<F>,
     ) -> Self {

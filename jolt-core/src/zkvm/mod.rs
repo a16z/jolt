@@ -5,21 +5,28 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
-    poly::opening_proof::ProverOpeningAccumulator,
+    poly::opening_proof::{OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator},
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{jolt_dag::verify_jolt_dag, proof_serialization::JoltProof},
+        dag::{
+            jolt_dag::verify_jolt_dag, proof_serialization::JoltProof, state_manager::StateManager,
+        },
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
+};
+use crate::{
+    poly::commitment::commitment_scheme::CommitmentScheme, zkvm::witness::AllCommittedPolynomials,
+};
+use crate::{
+    poly::commitment::commitment_scheme::StreamingCommitmentScheme,
+    zkvm::dag::state_manager::VerifierState,
 };
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -340,7 +347,12 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trusted_advice_commitment,
                 final_memory_state,
             );
-            let (proof, debug_info) = prove_jolt_dag(state_manager).ok().unwrap();
+            let transcript = &mut FS::new(b"Jolt");
+            let opening_accumulator = ProverOpeningAccumulator::new(trace_length.log_2());
+            let (proof, debug_info) =
+                prove_jolt_dag(state_manager, opening_accumulator, transcript)
+                    .ok()
+                    .unwrap();
             let prove_duration = start.elapsed();
             tracing::info!(
                 "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
@@ -391,21 +403,40 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 .map_or(0, |pos| pos + 1),
         );
 
-        let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
-        state_manager.trusted_advice_commitment = trusted_advice_commitment;
+        let mut opening_accumulator = VerifierOpeningAccumulator::new(proof.trace_length.log_2());
+        // Populate claims in the verifier accumulator
+        for (key, (_, claim)) in &proof.opening_claims.0 {
+            opening_accumulator
+                .openings
+                .insert(*key, (OpeningPoint::default(), *claim));
+        }
+
+        let transcript = &mut FS::new(b"Jolt");
 
         #[cfg(test)]
         {
             if let Some(debug_info) = _debug_info {
-                state_manager.transcript.compare_to(debug_info.transcript);
-                let opening_accumulator = state_manager.get_verifier_accumulator();
-                opening_accumulator
-                    .borrow_mut()
-                    .compare_to(debug_info.opening_accumulator);
+                transcript.compare_to(debug_info.transcript);
+                opening_accumulator.compare_to(debug_info.opening_accumulator);
             }
         }
 
-        verify_jolt_dag(state_manager).expect("Verification failed");
+        let state_manager = StateManager {
+            untrusted_advice_commitment: proof.untrusted_advice_commitment.clone(),
+            trusted_advice_commitment,
+            program_io,
+            ram_K: proof.ram_K,
+            ram_d: AllCommittedPolynomials::ram_d_from_K(proof.ram_K),
+            twist_sumcheck_switch_index: proof.twist_sumcheck_switch_index,
+            prover_state: None,
+            verifier_state: Some(VerifierState {
+                preprocessing,
+                trace_length: proof.trace_length,
+            }),
+        };
+
+        verify_jolt_dag(&proof, state_manager, opening_accumulator, transcript)
+            .expect("Verification failed");
 
         Ok(())
     }

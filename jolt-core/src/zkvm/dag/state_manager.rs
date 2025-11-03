@@ -1,50 +1,16 @@
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::witness::compute_d_parameter;
 use crate::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing};
-use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::{JoltDevice, LazyTraceIterator};
-
-#[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
-#[repr(u8)]
-pub enum ProofKeys {
-    Stage1UniSkipFirstRound,
-    Stage1Sumcheck,
-    Stage2UniSkipFirstRound,
-    Stage2Sumcheck,
-    Stage3Sumcheck,
-    Stage4Sumcheck,
-    Stage5Sumcheck,
-    Stage6Sumcheck,
-    TrustedAdviceProof,
-    UntrustedAdviceProof,
-    ReducedOpeningProof, // Implicitly Stage 7
-}
-
-pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
-    SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
-    ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
-    OpeningProof(PCS::Proof),
-    UniSkipFirstRoundProof(UniSkipFirstRoundProof<F, ProofTranscript>),
-}
-
-pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
 
 pub struct ProverState<'a, F: JoltField, PCS>
 where
@@ -54,7 +20,6 @@ where
     pub lazy_trace: Option<LazyTraceIterator>,
     pub trace: Arc<Vec<Cycle>>,
     pub final_memory_state: Memory,
-    pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
     pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
     pub trusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
 }
@@ -65,18 +30,9 @@ where
 {
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub trace_length: usize,
-    pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
 }
 
-pub struct StateManager<
-    'a,
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-> {
-    pub transcript: ProofTranscript,
-    pub proofs: Proofs<F, PCS, ProofTranscript>,
-    pub commitments: Vec<PCS::Commitment>,
+pub struct StateManager<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
@@ -87,60 +43,9 @@ pub struct StateManager<
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
-impl<'a, F, ProofTranscript, PCS> OpeningAccumulator<F>
-    for StateManager<'a, F, ProofTranscript, PCS>
+impl<'a, F, PCS> StateManager<'a, F, PCS>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-{
-    /// Gets the opening for a given virtual polynomial from whichever accumulator is available.
-    fn get_virtual_polynomial_opening(
-        &self,
-        polynomial: VirtualPolynomial,
-        sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state
-                .accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(polynomial, sumcheck)
-        } else if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state
-                .accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(polynomial, sumcheck)
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    /// Gets the opening for a given committed polynomial from whichever accumulator is available.
-    fn get_committed_polynomial_opening(
-        &self,
-        polynomial: CommittedPolynomial,
-        sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state
-                .accumulator
-                .borrow()
-                .get_committed_polynomial_opening(polynomial, sumcheck)
-        } else if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state
-                .accumulator
-                .borrow()
-                .get_committed_polynomial_opening(polynomial, sumcheck)
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-}
-
-impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn new_prover(
@@ -151,12 +56,6 @@ where
         trusted_advice_commitment: Option<PCS::Commitment>,
         final_memory_state: Memory,
     ) -> Self {
-        let opening_accumulator = ProverOpeningAccumulator::new();
-        let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
-        let transcript = ProofTranscript::new(b"Jolt");
-        let proofs = BTreeMap::new();
-        let commitments = vec![];
-
         // Calculate K for DoryGlobals initialization
         let ram_K = trace
             .par_iter()
@@ -186,9 +85,6 @@ where
         let twist_sumcheck_switch_index = chunk_size.log_2();
 
         Self {
-            transcript,
-            proofs,
-            commitments,
             untrusted_advice_commitment: None,
             trusted_advice_commitment,
             program_io,
@@ -200,7 +96,6 @@ where
                 lazy_trace: Some(lazy_trace),
                 trace: Arc::new(trace),
                 final_memory_state,
-                accumulator: opening_accumulator,
                 untrusted_advice_polynomial: None,
                 trusted_advice_polynomial: None,
             }),
@@ -218,17 +113,9 @@ where
         ram_K: usize,
         twist_sumcheck_switch_index: usize,
     ) -> Self {
-        let opening_accumulator = VerifierOpeningAccumulator::new();
-        let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
-        let transcript = ProofTranscript::new(b"Jolt");
-        let proofs = BTreeMap::new();
-        let commitments = vec![];
         let ram_d = compute_d_parameter(ram_K);
 
         StateManager {
-            transcript,
-            proofs,
-            commitments,
             untrusted_advice_commitment: None,
             trusted_advice_commitment: None,
             program_io,
@@ -239,7 +126,6 @@ where
             verifier_state: Some(VerifierState {
                 preprocessing,
                 trace_length,
-                accumulator: opening_accumulator,
             }),
         }
     }
@@ -316,39 +202,19 @@ where
         }
     }
 
-    pub fn get_prover_accumulator(&self) -> Rc<RefCell<ProverOpeningAccumulator<F>>> {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state.accumulator.clone()
-        } else {
-            panic!("Prover state not initialized");
-        }
-    }
-
-    pub fn get_verifier_accumulator(&self) -> Rc<RefCell<VerifierOpeningAccumulator<F>>> {
-        if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state.accumulator.clone()
-        } else {
-            panic!("Verifier state not initialized");
-        }
-    }
-
-    pub fn fiat_shamir_preamble(&mut self) {
-        self.transcript
-            .append_u64(self.program_io.memory_layout.max_input_size);
-        self.transcript
-            .append_u64(self.program_io.memory_layout.max_output_size);
-        self.transcript
-            .append_u64(self.program_io.memory_layout.memory_size);
-        self.transcript.append_bytes(&self.program_io.inputs);
-        self.transcript.append_bytes(&self.program_io.outputs);
-        self.transcript.append_u64(self.program_io.panic as u64);
-        self.transcript.append_u64(self.ram_K as u64);
+    pub fn fiat_shamir_preamble(&self, transcript: &mut impl Transcript) {
+        transcript.append_u64(self.program_io.memory_layout.max_input_size);
+        transcript.append_u64(self.program_io.memory_layout.max_output_size);
+        transcript.append_u64(self.program_io.memory_layout.memory_size);
+        transcript.append_bytes(&self.program_io.inputs);
+        transcript.append_bytes(&self.program_io.outputs);
+        transcript.append_u64(self.program_io.panic as u64);
+        transcript.append_u64(self.ram_K as u64);
 
         if let Some(ref verifier_state) = self.verifier_state {
-            self.transcript
-                .append_u64(verifier_state.trace_length as u64);
+            transcript.append_u64(verifier_state.trace_length as u64);
         } else if let Some(ref prover_state) = self.prover_state {
-            self.transcript.append_u64(prover_state.trace.len() as u64);
+            transcript.append_u64(prover_state.trace.len() as u64);
         } else {
             panic!("Neither prover nor verifier state initialized");
         }

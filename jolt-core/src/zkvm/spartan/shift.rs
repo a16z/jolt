@@ -54,11 +54,13 @@ pub enum ShiftSumcheckProver<F: JoltField> {
 impl<F: JoltField> ShiftSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
         key: Arc<UniformSpartanKey<F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let (preprocessing, _, _, _, _) = state_manager.get_prover_data();
-        let params = ShiftSumcheckParams::new(state_manager, key);
+        let params = ShiftSumcheckParams::new(opening_accumulator, key, transcript);
         let trace = state_manager.get_trace_arc();
         let bytecode_preprocessing = preprocessing.shared.bytecode.clone();
         Self::Phase1(Phase1Prover::gen(trace, bytecode_preprocessing, params))
@@ -166,10 +168,11 @@ pub struct ShiftSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ShiftSumcheckVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
         key: Arc<UniformSpartanKey<F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ShiftSumcheckParams::new(state_manager, key);
+        let params = ShiftSumcheckParams::new(opening_accumulator, key, transcript);
         Self { params }
     }
 }
@@ -284,20 +287,17 @@ struct ShiftSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> ShiftSumcheckParams<F> {
     fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
         key: Arc<UniformSpartanKey<F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma_powers = state_manager
-            .transcript
-            .challenge_scalar_powers(5)
-            .try_into()
-            .unwrap();
+        let gamma_powers = transcript.challenge_scalar_powers(5).try_into().unwrap();
 
         let n_cycle_vars = key.num_steps.ilog2() as usize;
-        let (outer_sumcheck_r, _) = state_manager
+        let (outer_sumcheck_r, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
-        let (product_sumcheck_r, _) = state_manager.get_virtual_polynomial_opening(
+        let (product_sumcheck_r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsNoop,
             SumcheckId::ProductVirtualization,
         );

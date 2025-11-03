@@ -103,13 +103,15 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::gen")]
     pub fn gen(
         initial_memory_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ReadWriteCheckingParams::new(state_manager);
+        let params = ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
 
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
 
-        let r_prime = state_manager
+        let r_prime = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamReadValue,
                 SumcheckId::SpartanOuter,
@@ -724,8 +726,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         let evals = (0..ra.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
-                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                 let inc_cycle_eval = inc_cycle.final_sumcheck_claim();
 
                 [
@@ -918,7 +920,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         // variables, so they are not bound here
         [ra, val]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 }
 
@@ -1000,10 +1002,12 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
 
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         Self {
-            params: ReadWriteCheckingParams::new(state_manager),
+            params: ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript),
         }
     }
 }
@@ -1088,13 +1092,15 @@ struct ReadWriteCheckingParams<F: JoltField> {
 
 impl<F: JoltField> ReadWriteCheckingParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let K = state_manager.ram_K;
         let T = state_manager.get_trace_len();
         let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
-        let gamma = state_manager.transcript.challenge_scalar();
-        let (r_cycle_stage_1, _) = state_manager.get_virtual_polynomial_opening(
+        let gamma = transcript.challenge_scalar();
+        let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamReadValue,
             SumcheckId::SpartanOuter,
         );
@@ -1133,7 +1139,11 @@ impl<F: JoltField> ReadWriteCheckingParams<F> {
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
         r_cycle.extend(sumcheck_challenges[..sumcheck_switch_index].iter().rev());
         // Address variables are bound high-to-low
-        let r_address = sumcheck_challenges[self.T.log_2()..].to_vec();
+        let r_address = sumcheck_challenges[self.T.log_2()..]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
         [r_address, r_cycle].concat().into()
     }
 }

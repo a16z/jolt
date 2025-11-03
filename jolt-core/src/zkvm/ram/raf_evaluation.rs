@@ -16,7 +16,7 @@ use crate::{
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
     },
     subprotocols::{
@@ -53,9 +53,10 @@ pub struct RafEvaluationSumcheckProver<F: JoltField> {
 impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = RafEvaluationSumcheckParams::new(state_manager);
+        let params = RafEvaluationSumcheckParams::new(state_manager, opening_accumulator);
 
         let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -65,7 +66,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );
@@ -130,10 +131,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
             .map(|i| {
                 let ra_evals = self
                     .ra
-                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::LowToHigh);
                 let unmap_evals =
                     self.unmap
-                        .sumcheck_evals(i, DEGREE_BOUND, BindingOrder::HighToLow);
+                        .sumcheck_evals(i, DEGREE_BOUND, BindingOrder::LowToHigh);
 
                 // Compute the product evaluations
                 [
@@ -152,8 +153,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        self.ra.bind_parallel(r_j, BindingOrder::HighToLow);
-        self.unmap.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.unmap.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn cache_openings(
@@ -186,9 +187,10 @@ pub struct RafEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = RafEvaluationSumcheckParams::new(state_manager);
+        let params = RafEvaluationSumcheckParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -253,11 +255,12 @@ pub struct RafEvaluationSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> RafEvaluationSumcheckParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let start_address = state_manager.program_io.memory_layout.get_lowest_address();
         let log_K = state_manager.ram_K.log_2();
-        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );
@@ -284,7 +287,7 @@ impl<F: JoltField> RafEvaluationSumcheckParams<F> {
 fn get_opening_point<F: JoltField>(
     sumcheck_challenges: &[F::Challenge],
 ) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::new(sumcheck_challenges.to_vec())
+    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }
 
 // #[cfg(test)]
