@@ -293,7 +293,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     /// Product Az·Bz at the j-th extended uniskip target for the first group (uses precomputed weights).
-    #[inline]
     pub fn extended_azbz_product_first_group(&self, j: usize) -> S192 {
         let coeffs_i32: &[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
         let az = self.eval_az_first_group();
@@ -520,7 +519,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     /// Product Az·Bz at the j-th extended uniskip target for the second group (uses precomputed weights).
-    #[inline]
     pub fn extended_azbz_product_second_group(&self, j: usize) -> S192 {
         #[cfg(test)]
         self.assert_constraints_second_group();
@@ -861,7 +859,6 @@ impl ProductVirtualEval {
     /// 6: InstructionFlags(Branch) (bool)
     /// 7: NextIsNoop (bool)
     #[tracing::instrument(skip_all, name = "ProductVirtualEval::compute_claimed_factors")]
-    #[inline]
     pub fn compute_claimed_factors<F: JoltField>(
         trace: &[tracer::instruction::Cycle],
         r_cycle: &[<F as JoltField>::Challenge],
