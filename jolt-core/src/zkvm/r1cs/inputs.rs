@@ -112,9 +112,6 @@ impl JoltR1CSInputs {
 
     /// Converts a constraint input to its index in the canonical
     /// ordering over inputs given by `ALL_R1CS_INPUTS`.
-    ///
-    /// This is tested to align with ALL_R1CS_INPUTS, and this is the default version
-    /// since it is simple pattern matching and not iteration over all r1cs inputs.
     pub const fn to_index(&self) -> usize {
         match self {
             JoltR1CSInputs::LeftInstructionInput => 0,

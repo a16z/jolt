@@ -56,10 +56,6 @@ impl<F: JoltField> FMAdd<F, u64> for Acc5U<F> {
     }
 }
 
-// ------------------------------
-// New wrappers for 6-limb accumulators
-// ------------------------------
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc6U<F: JoltField> {
     pub word: <F as JoltField>::Unreduced<6>,
@@ -212,10 +208,6 @@ impl<F: JoltField> BarrettReduce<F> for Acc6S<F> {
         result
     }
 }
-
-// ------------------------------
-// 7-limb fmadd_trunc accumulators (Barrett reduce)
-// ------------------------------
 
 type Acc7<F> = <F as JoltField>::Unreduced<7>;
 
@@ -543,10 +535,6 @@ impl<F: JoltField> MontgomeryReduce<F> for Acc8S<F> {
     }
 }
 
-// ------------------------------
-// Small-integer fused multiply-add helpers (no field type F)
-// ------------------------------
-
 #[inline(always)]
 pub fn fmadd_i32_s64(sum: &mut S128, c: i32, v: S64) {
     if c == 0 {
@@ -573,10 +561,6 @@ pub fn fmadd_i32_u64(sum: &mut S128, c: i32, v: u64) {
     let signed = if c >= 0 { mag as i128 } else { -(mag as i128) };
     *sum += S128::from_i128(signed);
 }
-
-// ------------------------------
-// Pure-trait accumulator for S128 sums driven by cz (S128) and small others
-// ------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct S128Sum {
@@ -625,10 +609,6 @@ impl FMAdd<i32, S64> for S128Sum {
         self.sum += cz_s64.mul_trunc::<1, 2>(right);
     }
 }
-
-// ------------------------------
-// Pure-trait accumulator for S192 sums driven by c (S192) and S160 terms
-// ------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct S192Sum {
