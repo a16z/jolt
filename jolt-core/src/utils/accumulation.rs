@@ -2,6 +2,9 @@ use crate::field::{BarrettReduce, FMAdd, JoltField, MontgomeryReduce, MulTrunc};
 use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::{ops::Add, Zero};
 
+// TODO(Quang): Refactor accumulators to reduce verbosity; consider a small macro to
+// generate repeated FMAdd and reduction impls.
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc5U<F: JoltField> {
     pub word: <F as JoltField>::Unreduced<5>,

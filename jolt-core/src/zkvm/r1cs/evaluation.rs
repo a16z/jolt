@@ -47,7 +47,10 @@ use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::univariate_skip::uniskip_targets;
-use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U, S128Sum, S192Sum};
+use crate::utils::{
+    accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U, S128Sum, S192Sum},
+    math::s64_from_diff_u64s,
+};
 use crate::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use crate::zkvm::r1cs::inputs::ProductCycleInputs;
 use crate::zkvm::JoltSharedPreprocessing;
@@ -57,16 +60,6 @@ use super::constraints::{
     PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
-
-// TODO: put this into arkworks
-#[inline(always)]
-fn s64_from_diff_u64s(a: u64, b: u64) -> S64 {
-    if a < b {
-        S64::new([b - a], false)
-    } else {
-        S64::new([a - b], true)
-    }
-}
 
 pub(crate) const UNISKIP_TARGETS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] =
     uniskip_targets::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_DEGREE>();
