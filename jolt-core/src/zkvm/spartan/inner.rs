@@ -4,7 +4,6 @@ use allocative::Allocative;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
@@ -14,7 +13,6 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
@@ -36,15 +34,15 @@ pub struct InnerSumcheckProver<F: JoltField> {
 impl<F: JoltField> InnerSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InnerSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         key: Arc<UniformSpartanKey<F>>,
+        transcript: &mut impl Transcript,
     ) -> Self {
         let num_vars_uniform = key.num_vars_uniform_padded();
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        let params = InnerSumcheckParams::new(state_manager);
+        let params = InnerSumcheckParams::new(transcript);
 
         // Get opening_point and claims from accumulator (Az, Bz all have the same point)
         let (outer_sumcheck_r, _) = opening_accumulator
@@ -190,11 +188,8 @@ pub struct InnerSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> InnerSumcheckVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        key: Arc<UniformSpartanKey<F>>,
-    ) -> Self {
-        let params = InnerSumcheckParams::new(state_manager);
+    pub fn new(key: Arc<UniformSpartanKey<F>>, transcript: &mut impl Transcript) -> Self {
+        let params = InnerSumcheckParams::new(transcript);
         Self { params, key }
     }
 }
@@ -275,10 +270,8 @@ struct InnerSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> InnerSumcheckParams<F> {
-    fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let gamma = state_manager.transcript.challenge_scalar_optimized::<F>();
+    fn new(transcript: &mut impl Transcript) -> Self {
+        let gamma = transcript.challenge_scalar_optimized::<F>();
         Self { gamma }
     }
 

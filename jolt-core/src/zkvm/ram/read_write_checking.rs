@@ -101,12 +101,13 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::gen")]
-    pub fn gen(
+    pub fn gen<T: Transcript>(
         initial_memory_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Self {
-        let params = ReadWriteCheckingParams::new(state_manager, opening_accumulator);
+        let params = ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
 
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
 
@@ -1000,12 +1001,13 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    pub fn new<T: Transcript>(
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Self {
         Self {
-            params: ReadWriteCheckingParams::new(state_manager, opening_accumulator),
+            params: ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript),
         }
     }
 }
@@ -1089,14 +1091,15 @@ struct ReadWriteCheckingParams<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingParams<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    pub fn new<T: Transcript>(
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Self {
         let K = state_manager.ram_K;
         let T = state_manager.get_trace_len();
         let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
-        let gamma = state_manager.transcript.challenge_scalar();
+        let gamma = transcript.challenge_scalar();
         let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamReadValue,
             SumcheckId::SpartanOuter,

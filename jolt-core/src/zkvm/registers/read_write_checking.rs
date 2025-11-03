@@ -116,8 +116,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator);
+        let params =
+            RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
 
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
@@ -1388,8 +1390,10 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator);
+        let params =
+            RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -1508,8 +1512,9 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma = state_manager.transcript.challenge_scalar::<F>();
+        let gamma = transcript.challenge_scalar::<F>();
         let gamma_cub = gamma.square() * gamma;
         let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
         let n_cycle_vars = state_manager.get_trace_len().log_2();

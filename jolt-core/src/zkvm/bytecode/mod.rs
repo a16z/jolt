@@ -147,9 +147,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let read_raf = ReadRafSumcheckProver::gen(sm, opening_accumulator);
-        let (hamming_weight, booleanity) = gen_ra_one_hot_provers(sm, opening_accumulator);
+        let read_raf = ReadRafSumcheckProver::gen(sm, opening_accumulator, transcript);
+        let (hamming_weight, booleanity) =
+            gen_ra_one_hot_provers(sm, opening_accumulator, transcript);
 
         #[cfg(feature = "allocative")]
         {
@@ -175,9 +177,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let read_checking = ReadRafSumcheckVerifier::gen(sm, opening_accumulator);
-        let (hamming_weight, booleanity) = new_ra_one_hot_verifiers(sm);
+        let read_checking = ReadRafSumcheckVerifier::gen(sm, opening_accumulator, transcript);
+        let (hamming_weight, booleanity) = new_ra_one_hot_verifiers(sm, transcript);
         vec![
             Box::new(read_checking),
             Box::new(hamming_weight),
@@ -186,9 +189,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
     }
 }
 
-fn gen_ra_one_hot_provers<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+fn gen_ra_one_hot_provers<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
+    transcript: &mut T,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
     let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
     let bytecode_preprocessing = &preprocessing.shared.bytecode;
@@ -205,7 +209,7 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     let d = bytecode_preprocessing.d;
     let log_t = trace.len().log_2();
 
-    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers::<F>(d);
+    let hamming_weight_gamma_powers = transcript.challenge_scalar_powers::<F>(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
@@ -220,11 +224,10 @@ fn gen_ra_one_hot_provers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
+    let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
 
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
+    let r_address: Vec<F::Challenge> =
+        transcript.challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
     let booleanity_params = BooleanitySumcheckParams {
         d,
@@ -244,8 +247,9 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     )
 }
 
-fn new_ra_one_hot_verifiers<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+fn new_ra_one_hot_verifiers<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    transcript: &mut T,
 ) -> (
     HammingWeightSumcheckVerifier<F>,
     BooleanitySumcheckVerifier<F>,
@@ -256,7 +260,7 @@ fn new_ra_one_hot_verifiers<F: JoltField>(
     let log_t = T_val.log_2();
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
-    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
+    let hamming_weight_gamma_powers = transcript.challenge_scalar_powers(d);
 
     let hamming_weight_params = HammingWeightSumcheckParams {
         d,
@@ -268,10 +272,9 @@ fn new_ra_one_hot_verifiers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
+    let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
+    let r_address: Vec<F::Challenge> =
+        transcript.challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
     let booleanity_params = BooleanitySumcheckParams {
         d,

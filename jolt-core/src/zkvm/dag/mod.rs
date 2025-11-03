@@ -8,6 +8,7 @@ mod tests {
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::opening_proof::ProverOpeningAccumulator;
+    use crate::transcripts::{Blake2bTranscript, Transcript};
     use crate::utils::math::Math;
     use crate::zkvm::dag::jolt_dag::prove_jolt_dag;
     use crate::zkvm::dag::state_manager::StateManager;
@@ -52,6 +53,7 @@ mod tests {
         // TODO: Create prover struct. Construct with prover state and pass prover
         // object to prover_jolt_dag.
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
+        let transcript = &mut Blake2bTranscript::new(b"Jolt");
         let state_manager = StateManager::new_prover(
             &preprocessing,
             lazy_trace,
@@ -60,7 +62,7 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager, opening_accumulator)
+        let (proof, _) = prove_jolt_dag(state_manager, opening_accumulator, transcript)
             .ok()
             .unwrap();
 
@@ -107,7 +109,8 @@ mod tests {
                 .map_or(0, |pos| pos + 1),
         );
 
-        let opening_acc = ProverOpeningAccumulator::new(trace.len().log_2());
+        let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
+        let transcript = &mut Blake2bTranscript::new(b"Jolt");
         let state_manager = StateManager::new_prover(
             &preprocessing,
             lazy_trace,
@@ -116,7 +119,9 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager, opening_acc).ok().unwrap();
+        let (proof, _) = prove_jolt_dag(state_manager, opening_accumulator, transcript)
+            .ok()
+            .unwrap();
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
