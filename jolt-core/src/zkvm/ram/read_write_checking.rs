@@ -104,12 +104,13 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     pub fn gen(
         initial_memory_state: &[u64],
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = ReadWriteCheckingParams::new(state_manager);
+        let params = ReadWriteCheckingParams::new(state_manager, opening_accumulator);
 
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
 
-        let r_prime = state_manager
+        let r_prime = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamReadValue,
                 SumcheckId::SpartanOuter,
@@ -1001,9 +1002,10 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         Self {
-            params: ReadWriteCheckingParams::new(state_manager),
+            params: ReadWriteCheckingParams::new(state_manager, opening_accumulator),
         }
     }
 }
@@ -1089,12 +1091,13 @@ struct ReadWriteCheckingParams<F: JoltField> {
 impl<F: JoltField> ReadWriteCheckingParams<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let K = state_manager.ram_K;
         let T = state_manager.get_trace_len();
         let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
         let gamma = state_manager.transcript.challenge_scalar();
-        let (r_cycle_stage_1, _) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamReadValue,
             SumcheckId::SpartanOuter,
         );

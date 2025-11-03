@@ -115,8 +115,9 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::gen")]
     pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new(state_manager);
+        let params = RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator);
 
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
@@ -219,19 +220,19 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let inc_cycle =
             CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
-        let (_, rs1_rv_claim_stage_1) = state_manager
+        let (_, rs1_rv_claim_stage_1) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (_, rd_wv_claim) = state_manager.get_virtual_polynomial_opening(
+        let (_, rd_wv_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWriteValue,
             SumcheckId::SpartanOuter,
         );
-        let (_, rs2_rv_claim_stage_1) = state_manager
+        let (_, rs2_rv_claim_stage_1) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        let (_, rs1_rv_claim_stage_3) = state_manager.get_virtual_polynomial_opening(
+        let (_, rs1_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
         );
-        let (_, rs2_rv_claim_stage_3) = state_manager.get_virtual_polynomial_opening(
+        let (_, rs2_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs2Value,
             SumcheckId::InstructionInputVirtualization,
         );
@@ -1386,8 +1387,9 @@ pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new(state_manager);
+        let params = RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -1505,15 +1507,16 @@ struct RegistersReadWriteCheckingParams<F: JoltField> {
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let gamma = state_manager.transcript.challenge_scalar::<F>();
         let gamma_cub = gamma.square() * gamma;
         let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
         let n_cycle_vars = state_manager.get_trace_len().log_2();
 
-        let (r_cycle_stage_1, _) = state_manager
+        let (r_cycle_stage_1, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (r_cycle_stage_3, _) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle_stage_3, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
         );
