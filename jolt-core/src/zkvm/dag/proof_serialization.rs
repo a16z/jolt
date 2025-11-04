@@ -1,37 +1,44 @@
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     io::{Read, Write},
+    rc::Rc,
 };
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use num::FromPrimitive;
+use tracer::JoltDevice;
 
-use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
+        opening_proof::{
+            OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId,
+            VerifierOpeningAccumulator,
+        },
     },
     subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
     transcripts::Transcript,
     zkvm::{
-        dag::state_manager::{ProofData, ProofKeys, Proofs},
+        dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager, VerifierState},
         witness::{CommittedPolynomial, VirtualPolynomial},
+        JoltVerifierPreprocessing,
     },
 };
+use crate::{utils::math::Math, zkvm::witness::AllCommittedPolynomials};
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
-    pub opening_claims: Claims<F>,
+    opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
     pub proofs: Proofs<F, PCS, FS>,
-    pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
-    pub ram_K: usize,
-    pub bytecode_d: usize,
-    pub twist_sumcheck_switch_index: usize,
+    ram_K: usize,
+    bytecode_d: usize,
+    twist_sumcheck_switch_index: usize,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
@@ -125,7 +132,70 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
     }
 }
 
-pub struct Claims<F: JoltField>(pub Openings<F>);
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
+    pub fn from_prover_state_manager(mut state_manager: StateManager<'_, F, FS, PCS>) -> Self {
+        let prover_state = state_manager.prover_state.as_mut().unwrap();
+        let openings = std::mem::take(&mut prover_state.accumulator.borrow_mut().openings);
+        let commitments = state_manager.commitments;
+        let proofs = state_manager.proofs;
+        let trace_length = prover_state.trace.len();
+        let ram_K = state_manager.ram_K;
+        let twist_sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
+        let untrusted_advice_commitment = state_manager.untrusted_advice_commitment;
+
+        Self {
+            opening_claims: Claims(openings),
+            commitments,
+            untrusted_advice_commitment,
+            proofs,
+            trace_length,
+            ram_K,
+            bytecode_d: prover_state.preprocessing.shared.bytecode.d,
+            twist_sumcheck_switch_index,
+        }
+    }
+
+    pub fn to_verifier_state_manager<'a>(
+        self,
+        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        program_io: JoltDevice,
+    ) -> StateManager<'a, F, FS, PCS> {
+        let mut opening_accumulator =
+            VerifierOpeningAccumulator::<F>::new(self.trace_length.log_2());
+        // Populate claims in the verifier accumulator
+        for (key, (_, claim)) in self.opening_claims.0.iter() {
+            opening_accumulator
+                .openings_mut()
+                .insert(*key, (OpeningPoint::default(), *claim));
+        }
+
+        let proofs = self.proofs;
+
+        let commitments = self.commitments;
+
+        let transcript = FS::new(b"Jolt");
+
+        StateManager {
+            transcript,
+            proofs,
+            commitments,
+            untrusted_advice_commitment: self.untrusted_advice_commitment,
+            trusted_advice_commitment: None,
+            program_io,
+            ram_K: self.ram_K,
+            ram_d: AllCommittedPolynomials::ram_d_from_K(self.ram_K),
+            twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
+            prover_state: None,
+            verifier_state: Some(VerifierState {
+                preprocessing,
+                trace_length: self.trace_length,
+                accumulator: Rc::new(RefCell::new(opening_accumulator)),
+            }),
+        }
+    }
+}
+
+pub struct Claims<F: JoltField>(Openings<F>);
 
 impl<F: JoltField> CanonicalSerialize for Claims<F> {
     fn serialize_with_mode<W: Write>(
