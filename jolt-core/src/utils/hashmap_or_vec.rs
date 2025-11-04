@@ -59,6 +59,13 @@ impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
             HashMapOrVec::Vec(vec) => vec[index].clone(),
         }
     }
+
+    pub fn clear(&mut self) {
+        match self {
+            HashMapOrVec::HashMap(map) => map.clear(),
+            HashMapOrVec::Vec(vec) => vec.clear(),
+        }
+    }
 }
 
 impl<T: Clone + Default + Send> Index<usize> for HashMapOrVec<T> {

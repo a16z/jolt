@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -7,16 +8,18 @@ use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, RAMAccess};
 
 /// Tuple of (row, col, coefficient)
-pub struct MatrixEntry<F: JoltField>(usize, usize, F);
+#[derive(Allocative, Debug, PartialEq)]
+pub struct MatrixEntry<F: JoltField>(pub usize, pub usize, pub F);
 
+#[derive(Allocative)]
 pub struct SparseValPolynomial<F: JoltField> {
     /// Chunks of rows
-    row_chunks: Vec<Vec<MatrixEntry<F>>>,
+    pub row_chunks: Vec<Vec<MatrixEntry<F>>>,
     K: usize,
 }
 
 impl<F: JoltField> SparseValPolynomial<F> {
-    pub fn new(trace: &[Cycle], memory_layout: MemoryLayout, K: usize) -> Self {
+    pub fn new(trace: &[Cycle], memory_layout: &MemoryLayout, K: usize) -> Self {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
@@ -25,35 +28,46 @@ impl<F: JoltField> SparseValPolynomial<F> {
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
+                let mut matrix_entries = Vec::with_capacity(trace_chunk.len() * 2);
+
                 // Row index of the I matrix
                 let mut j = chunk_index * chunk_size;
+                for cycle in trace_chunk.iter() {
+                    let ram_op = cycle.ram_access();
+                    let k = remap_address(ram_op.address() as u64, &memory_layout).unwrap_or(0)
+                        as usize;
+                    match ram_op {
+                        RAMAccess::Write(write) => {
+                            matrix_entries.push(MatrixEntry(j, k, F::from_u64(write.pre_value)));
+                            if j + 1 != (chunk_index + 1) * chunk_size {
+                                // If next cycle is within the same chunk, append entry for
+                                // write value
+                                matrix_entries.push(MatrixEntry(
+                                    j + 1,
+                                    k,
+                                    F::from_u64(write.post_value),
+                                ));
+                            }
+                        }
+                        RAMAccess::Read(read) => {
+                            matrix_entries.push(MatrixEntry(j, k, F::from_u64(read.value)));
+                        }
+                        _ => {
+                            matrix_entries.push(MatrixEntry(j, k, F::zero()));
+                        }
+                    }
+                    j += 1;
+                }
 
-                trace_chunk
-                    .iter()
-                    .filter_map(|cycle| {
-                        let ram_op = cycle.ram_access();
-                        let k = remap_address(ram_op.address() as u64, &memory_layout).unwrap_or(0)
-                            as usize;
-                        let entry = match ram_op {
-                            RAMAccess::Write(write) => {
-                                Some(MatrixEntry(j, k, F::from_u64(write.pre_value)))
-                            }
-                            RAMAccess::Read(read) => {
-                                Some(MatrixEntry(j, k, F::from_u64(read.value)))
-                            }
-                            _ => None,
-                        };
-                        j += 1;
-                        entry
-                    })
-                    .collect()
+                matrix_entries.dedup();
+                matrix_entries
             })
             .collect();
 
         SparseValPolynomial { row_chunks, K }
     }
 
-    pub fn bind(&mut self, r: F) {
+    pub fn bind(&mut self, r: F::Challenge) {
         self.row_chunks.par_iter_mut().for_each(|row_chunk| {
             // Bind a cycle variable LowToHigh
             // Each row_chunk is bound serially in-place

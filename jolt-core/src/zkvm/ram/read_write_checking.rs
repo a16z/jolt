@@ -9,6 +9,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::utils::hashmap_or_vec::HashMapOrVec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::ram::sparse_val_poly::{MatrixEntry, SparseValPolynomial};
 use crate::zkvm::witness::compute_d_parameter;
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -91,6 +92,7 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     val_checkpoints_new: Vec<HashMapOrVec<u64>>,
     data_buffers: Vec<DataBuffers<F>>,
     I: Vec<Vec<(usize, usize, F, i128)>>,
+    sparse_val: SparseValPolynomial<F>,
     A: Vec<F>,
     gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
     inc_cycle: MultilinearPolynomial<F>,
@@ -360,6 +362,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             })
             .collect();
 
+        let sparse_val = SparseValPolynomial::new(&trace, &memory_layout, params.K);
+
         Self {
             ram_addresses,
             chunk_size,
@@ -367,6 +371,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             val_checkpoints_new,
             data_buffers,
             I,
+            sparse_val,
             A,
             gruens_eq_r_prime,
             inc_cycle,
@@ -382,6 +387,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         let Self {
             ram_addresses,
             I,
+            sparse_val,
             data_buffers,
             A,
             val_checkpoints_new,
@@ -396,9 +402,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             // E_in is fully bound, use E_out evaluations
 
             I.par_iter()
+                .zip(sparse_val.row_chunks.par_iter())
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints_new.par_iter())
-                .map(|((I_chunk, buffers), checkpoint_new)| {
+                .map(|(((I_chunk, sparse_val_chunk), buffers), checkpoint_new)| {
                     let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let DataBuffers {
@@ -412,7 +419,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     // Iterate over I_chunk, two rows at a time.
                     I_chunk
                         .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
+                        .zip(sparse_val_chunk.chunk_by(|a, b| a.0 / 2 == b.0 / 2))
+                        .for_each(|(inc_chunk, val_chunk)| {
                             let j_prime = inc_chunk[0].0; // row index
 
                             for j in j_prime << round..(j_prime + 1) << round {
@@ -472,6 +480,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 [inc_cycle_0, inc_cycle_infty]
                             };
 
+                            for MatrixEntry(j, k, coeff) in val_chunk.iter() {
+                                assert_eq!(*coeff, val_j_r[j % 2][*k]);
+                            }
+
                             let mut inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
@@ -511,9 +523,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
             I.par_iter()
+                .zip(sparse_val.row_chunks.par_iter())
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints_new.par_iter())
-                .map(|((I_chunk, buffers), checkpoint_new)| {
+                .map(|(((I_chunk, sparse_val_chunk), buffers), checkpoint_new)| {
                     let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let mut evals_for_current_E_out =
@@ -527,11 +540,16 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                         ..
                     } = buffers;
                     let mut val_j_0_new = checkpoint_new.clone();
+                    let mut val_j_r_new = [
+                        HashMapOrVec::<F>::new(params.K, sparse_val_chunk.len()),
+                        HashMapOrVec::<F>::new(params.K, sparse_val_chunk.len()),
+                    ];
 
                     // Iterate over I_chunk, two rows at a time.
                     I_chunk
                         .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
+                        .zip(sparse_val_chunk.chunk_by(|a, b| a.0 / 2 == b.0 / 2))
+                        .for_each(|(inc_chunk, val_chunk)| {
                             let j_prime = inc_chunk[0].0; // row index
 
                             for j in j_prime << round..(j_prime + 1) << round {
@@ -583,6 +601,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 val_j_0_new[col] = (val_j_0_new[col] as i128 + inc) as u64;
                             }
 
+                            for MatrixEntry(j, k, coeff) in val_chunk.iter() {
+                                val_j_r_new[j % 2][*k] = *coeff;
+                            }
+
                             let x_in = (j_prime / 2) & x_bitmask;
                             let x_out = (j_prime / 2) >> num_x_in_bits;
                             let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
@@ -621,6 +643,20 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
                                     let ra_evals = [ra[0][k], ra[1][k] - ra[0][k]];
+                                    println!("{} {}", val_j_r[0][k], val_j_r[1][k]);
+                                    println!(
+                                        "{:?} {:?}",
+                                        val_j_r_new[0].get(k),
+                                        val_j_r_new[1].get(k)
+                                    );
+                                    assert_eq!(
+                                        val_j_r[0][k],
+                                        val_j_r_new[0].get(k).unwrap_or_else(|| val_j_r_new[1][k])
+                                    );
+                                    assert_eq!(
+                                        val_j_r[1][k],
+                                        val_j_r_new[1].get(k).unwrap_or_else(|| val_j_r_new[0][k])
+                                    );
                                     let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                     inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
@@ -638,6 +674,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 val_j_r[0][k] = F::zero();
                                 val_j_r[1][k] = F::zero();
                             }
+                            val_j_r_new[0].clear();
+                            val_j_r_new[1].clear();
 
                             evals_for_current_E_out[0] +=
                                 E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]);
@@ -814,6 +852,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
         let Self {
             I,
+            sparse_val,
             A,
             inc_cycle,
             eq_r_prime,
@@ -864,6 +903,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         drop(_inner_guard);
         drop(inner_span);
+
+        sparse_val.bind(r_j);
 
         gruens_eq_r_prime.bind(r_j);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
