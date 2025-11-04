@@ -1,25 +1,34 @@
 use std::{
+    cell::RefCell,
     fs::File,
     io::{Read, Write},
     path::Path,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
-    poly::opening_proof::ProverOpeningAccumulator,
+    poly::opening_proof::{OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator},
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{jolt_dag::verify_jolt_dag, proof_serialization::JoltProof},
+        dag::{
+            jolt_dag::verify_jolt_dag, proof_serialization::JoltProof, state_manager::StateManager,
+        },
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
+};
+use crate::{
+    poly::commitment::commitment_scheme::CommitmentScheme, zkvm::witness::AllCommittedPolynomials,
+};
+use crate::{
+    poly::commitment::commitment_scheme::StreamingCommitmentScheme,
+    zkvm::dag::state_manager::VerifierState,
 };
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -395,7 +404,40 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 .map_or(0, |pos| pos + 1),
         );
 
-        let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        // let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+
+        let mut opening_accumulator =
+            VerifierOpeningAccumulator::<F>::new(proof.trace_length.log_2());
+        // Populate claims in the verifier accumulator
+        for (key, (_, claim)) in proof.opening_claims.0.iter() {
+            opening_accumulator
+                .openings
+                .insert(*key, (OpeningPoint::default(), *claim));
+        }
+
+        let proofs = proof.proofs;
+
+        let commitments = proof.commitments;
+
+        let transcript = FS::new(b"Jolt");
+
+        let mut state_manager = StateManager {
+            transcript,
+            proofs,
+            commitments,
+            untrusted_advice_commitment: proof.untrusted_advice_commitment,
+            trusted_advice_commitment: None,
+            program_io,
+            ram_K: proof.ram_K,
+            ram_d: AllCommittedPolynomials::ram_d_from_K(proof.ram_K),
+            twist_sumcheck_switch_index: proof.twist_sumcheck_switch_index,
+            prover_state: None,
+            verifier_state: Some(VerifierState {
+                preprocessing,
+                trace_length: proof.trace_length,
+                accumulator: Rc::new(RefCell::new(opening_accumulator)),
+            }),
+        };
         state_manager.trusted_advice_commitment = trusted_advice_commitment;
 
         #[cfg(test)]
