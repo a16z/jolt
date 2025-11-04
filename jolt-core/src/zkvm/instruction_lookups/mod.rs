@@ -57,7 +57,7 @@ impl<F: JoltField> LookupsDagProver<F> {
 impl<F: JoltField> LookupsDagProver<F> {
     fn get_or_compute_ra_evals(
         &mut self,
-        sm: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        sm: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> &[Vec<F>; D] {
         &*self
@@ -71,7 +71,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 {
     fn stage3_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
+        sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
@@ -91,7 +91,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
     fn stage5_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
+        sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
@@ -107,7 +107,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
     fn stage6_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
+        sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
@@ -139,7 +139,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 {
     fn stage3_instances(
         &mut self,
-        _sm: &mut StateManager<'_, F, PCS>,
+        _sm: &mut StateManager<'_, F, T, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
@@ -149,7 +149,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 
     fn stage5_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
+        sm: &mut StateManager<'_, F, T, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
@@ -159,7 +159,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 
     fn stage6_instances(
         &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
+        sm: &mut StateManager<'_, F, T, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
@@ -169,11 +169,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
     }
 }
 
-fn gen_ra_booleanity_prover<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+fn gen_ra_booleanity_prover<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
     ra_evals: &[Vec<F>; D],
-    transcript: &mut impl Transcript,
+    transcript: &mut T,
 ) -> BooleanitySumcheckProver<F> {
     let (_, _, trace, _, _) = state_manager.get_prover_data();
     let (r_cycle, _) = opening_accumulator
@@ -225,9 +225,9 @@ fn gen_ra_hamming_weight_prover<F: JoltField, T: Transcript>(
     HammingWeightSumcheckProver::gen(params, ra_evals.to_vec())
 }
 
-fn new_ra_booleanity_verifier<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
-    transcript: &mut impl Transcript,
+fn new_ra_booleanity_verifier<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    transcript: &mut T,
 ) -> BooleanitySumcheckVerifier<F> {
     let (_, _, T_val) = state_manager.get_verifier_data();
     let log_t = T_val.log_2();
@@ -295,7 +295,7 @@ fn compute_instruction_h_indices(trace: &[Cycle]) -> Vec<Vec<Option<u8>>> {
 #[inline(always)]
 #[tracing::instrument(skip_all, name = "instruction_lookups::compute_ra_evals")]
 fn compute_ra_evals<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
 ) -> [Vec<F>; D] {
     let (_, _, trace, _, _) = state_manager.get_prover_data();

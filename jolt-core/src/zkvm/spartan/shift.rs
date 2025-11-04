@@ -53,11 +53,11 @@ pub enum ShiftSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ShiftSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::gen")]
-    pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+    pub fn gen<T: Transcript>(
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         key: Arc<UniformSpartanKey<F>>,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
     ) -> Self {
         let (preprocessing, _, _, _, _) = state_manager.get_prover_data();
         let params = ShiftSumcheckParams::new(opening_accumulator, key, transcript);
