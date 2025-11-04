@@ -405,7 +405,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
 
         let mut opening_accumulator = VerifierOpeningAccumulator::new(proof.trace_length.log_2());
         // Populate claims in the verifier accumulator
-        for (key, (_, claim)) in &proof.opening_claims.0 {
+        for (key, (_, claim)) in proof.opening_claims.0.iter() {
             opening_accumulator
                 .openings
                 .insert(*key, (OpeningPoint::default(), *claim));
@@ -422,7 +422,9 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         }
 
         let state_manager = StateManager {
-            untrusted_advice_commitment: proof.untrusted_advice_commitment.clone(),
+            proofs: proof.proofs,
+            commitments: proof.commitments,
+            untrusted_advice_commitment: proof.untrusted_advice_commitment,
             trusted_advice_commitment,
             program_io,
             ram_K: proof.ram_K,
@@ -435,7 +437,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }),
         };
 
-        verify_jolt_dag(&proof, state_manager, opening_accumulator, transcript)
+        verify_jolt_dag(state_manager, opening_accumulator, transcript)
             .expect("Verification failed");
 
         Ok(())

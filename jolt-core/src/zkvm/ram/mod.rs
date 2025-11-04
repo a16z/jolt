@@ -120,7 +120,7 @@ pub struct RamDagProver {
 
 impl RamDagProver {
     pub fn new<F: JoltField>(
-        state_manager: &StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let (preprocessing, _, _, program_io, final_memory) = state_manager.get_prover_data();
         let ram_preprocessing = &preprocessing.shared.ram;
@@ -269,12 +269,13 @@ impl RamDagProver {
 }
 
 /// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
-pub fn prover_accumulate_advice<F, PCS>(
-    state_manager: &mut StateManager<'_, F, PCS>,
+pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
+    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
+    transcript: &mut ProofTranscript,
 ) where
     F: JoltField,
+    ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
     let prover_state = state_manager
@@ -328,12 +329,13 @@ pub fn prover_accumulate_advice<F, PCS>(
 }
 
 /// Accumulates advice commitments into the verifier's accumulator.
-pub fn verifier_accumulate_advice<F, PCS>(
-    state_manager: &mut StateManager<'_, F, PCS>,
+pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
+    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
+    transcript: &mut ProofTranscript,
 ) where
     F: JoltField,
+    ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
     let get_advice_point = |opening_accumulator: &VerifierOpeningAccumulator<F>,
@@ -469,7 +471,7 @@ where
 {
     fn stage2_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -505,7 +507,7 @@ where
 
     fn stage4_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -535,7 +537,7 @@ where
 
     fn stage5_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -554,7 +556,7 @@ where
 
     fn stage6_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
@@ -576,7 +578,7 @@ pub struct RamDagVerifier {
 
 impl RamDagVerifier {
     pub fn new<F: JoltField>(
-        state_manager: &StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let (preprocessing, program_io, _) = state_manager.get_verifier_data();
         let ram_preprocessing = &preprocessing.shared.ram;
@@ -626,7 +628,7 @@ where
 {
     fn stage2_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
@@ -644,7 +646,7 @@ where
 
     fn stage4_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
@@ -672,7 +674,7 @@ where
 
     fn stage5_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
@@ -683,7 +685,7 @@ where
 
     fn stage6_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
@@ -692,9 +694,9 @@ where
     }
 }
 
-fn gen_ra_booleanity_prover<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
-    transcript: &mut impl Transcript,
+fn gen_ra_booleanity_prover<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    transcript: &mut T,
 ) -> BooleanitySumcheckProver<F> {
     let K = state_manager.ram_K;
 
@@ -732,10 +734,10 @@ fn gen_ra_booleanity_prover<F: JoltField>(
     BooleanitySumcheckProver::gen(params, G, H_indices)
 }
 
-fn gen_ra_hamming_weight_prover<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+fn gen_ra_hamming_weight_prover<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
+    transcript: &mut T,
 ) -> HammingWeightSumcheckProver<F> {
     let (_, _, trace, program_io, _) = state_manager.get_prover_data();
     let memory_layout = &program_io.memory_layout;
@@ -768,9 +770,9 @@ fn gen_ra_hamming_weight_prover<F: JoltField>(
     HammingWeightSumcheckProver::gen(params, G)
 }
 
-fn new_ra_booleanity_verifier<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
-    transcript: &mut impl Transcript,
+fn new_ra_booleanity_verifier<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    transcript: &mut T,
 ) -> BooleanitySumcheckVerifier<F> {
     let (_, _, T) = state_manager.get_verifier_data();
     let K = state_manager.ram_K;
@@ -801,9 +803,9 @@ fn new_ra_booleanity_verifier<F: JoltField>(
     BooleanitySumcheckVerifier::new(params)
 }
 
-fn new_ra_hamming_weight_verifier<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
-    transcript: &mut impl Transcript,
+fn new_ra_hamming_weight_verifier<F: JoltField, T: Transcript>(
+    state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    transcript: &mut T,
 ) -> HammingWeightSumcheckVerifier<F> {
     let d = compute_d_parameter(state_manager.ram_K);
     let num_rounds = DTH_ROOT_OF_K.log_2();

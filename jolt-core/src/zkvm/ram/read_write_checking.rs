@@ -101,11 +101,11 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::gen")]
-    pub fn gen(
+    pub fn gen<T: Transcript>(
         initial_memory_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
     ) -> Self {
         let params = ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
 
@@ -1001,10 +1001,10 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+    pub fn new<T: Transcript>(
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
     ) -> Self {
         Self {
             params: ReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript),
@@ -1091,10 +1091,10 @@ struct ReadWriteCheckingParams<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingParams<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+    pub fn new<T: Transcript>(
+        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
     ) -> Self {
         let K = state_manager.ram_K;
         let T = state_manager.get_trace_len();
