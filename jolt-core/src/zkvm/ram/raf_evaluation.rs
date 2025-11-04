@@ -54,9 +54,8 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::gen")]
     pub fn gen(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = RafEvaluationSumcheckParams::new(state_manager, opening_accumulator);
+        let params = RafEvaluationSumcheckParams::new(state_manager);
 
         let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -66,7 +65,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
+        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );
@@ -188,9 +187,8 @@ pub struct RafEvaluationSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = RafEvaluationSumcheckParams::new(state_manager, opening_accumulator);
+        let params = RafEvaluationSumcheckParams::new(state_manager);
         Self { params }
     }
 }
@@ -256,11 +254,10 @@ pub struct RafEvaluationSumcheckParams<F: JoltField> {
 impl<F: JoltField> RafEvaluationSumcheckParams<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let start_address = state_manager.program_io.memory_layout.get_lowest_address();
         let log_K = state_manager.ram_K.log_2();
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
+        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );

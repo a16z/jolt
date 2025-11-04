@@ -400,13 +400,12 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::gen")]
     pub fn gen(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let T = trace.len();
 
-        let r_address = opening_accumulator
+        let r_address = state_manager
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
@@ -460,7 +459,7 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
         //     );
         // }
 
-        let val_init_eval = opening_accumulator
+        let val_init_eval = state_manager
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValInit,
                 SumcheckId::RamOutputCheck,
@@ -568,11 +567,10 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
     pub fn new(
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let (_, program_io, T) = state_manager.get_verifier_data();
 
-        let r_address = opening_accumulator
+        let r_address = state_manager
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
@@ -583,7 +581,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         {
             // Verify that val_evaluation and output_check use the same opening point for initial_ram_state.
             // This allows us to reuse a single untrusted_advice opening instead of providing two.
-            let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
+            let (r, _) = state_manager.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamVal,
                 SumcheckId::RamReadWriteChecking,
             );
@@ -591,10 +589,11 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
             assert_eq!(r_address_val_evaluation.r, r_address);
         }
 
+        let accumulator = state_manager.get_verifier_accumulator();
         let total_memory_vars = state_manager.ram_K.log_2();
 
         let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_untrusted_advice_opening(),
+            accumulator.borrow().get_untrusted_advice_opening(),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -605,7 +604,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         );
 
         let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_trusted_advice_opening(),
+            accumulator.borrow().get_trusted_advice_opening(),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),

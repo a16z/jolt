@@ -43,10 +43,9 @@ pub struct HammingBooleanitySumcheckProver<F: JoltField> {
 impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
+        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let (_, _, trace, _, _) = state_manager.get_prover_data();
+        let (_, _, trace, _, _) = sm.get_prover_data();
 
         let T = trace.len();
         let log_T = T.log_2();
@@ -57,7 +56,7 @@ impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
             .collect::<Vec<bool>>();
         let H = MultilinearPolynomial::from(H);
 
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
+        let (r_cycle, _) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
         );

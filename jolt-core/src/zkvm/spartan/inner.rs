@@ -37,7 +37,6 @@ impl<F: JoltField> InnerSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InnerSumcheckProver::gen")]
     pub fn gen(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
         key: Arc<UniformSpartanKey<F>>,
     ) -> Self {
         let num_vars_uniform = key.num_vars_uniform_padded();
@@ -47,7 +46,7 @@ impl<F: JoltField> InnerSumcheckProver<F> {
         let params = InnerSumcheckParams::new(state_manager);
 
         // Get opening_point and claims from accumulator (Az, Bz all have the same point)
-        let (outer_sumcheck_r, _) = opening_accumulator
+        let (outer_sumcheck_r, _) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
 
         let (_r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
@@ -66,8 +65,10 @@ impl<F: JoltField> InnerSumcheckProver<F> {
             .into_iter()
             .zip(bind_z.iter_mut())
             .for_each(|(r1cs_input, dest)| {
+                let accumulator = state_manager.get_prover_accumulator();
+                let accumulator = accumulator.borrow();
                 let key = OpeningId::from(&r1cs_input);
-                let (_, claim) = opening_accumulator
+                let (_, claim) = accumulator
                     .openings
                     .get(&key)
                     .expect("Missing opening claim for expected OpeningId in bind_z");
