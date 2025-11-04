@@ -1,8 +1,6 @@
 use std::{
-    cell::RefCell,
     collections::BTreeMap,
     io::{Read, Write},
-    rc::Rc,
 };
 
 use ark_serialize::{
@@ -16,8 +14,8 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{
-            OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId,
-            VerifierOpeningAccumulator,
+            OpeningId, OpeningPoint, Openings, ProverOpeningAccumulator, ReducedOpeningProof,
+            SumcheckId, VerifierOpeningAccumulator,
         },
     },
     subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
@@ -133,9 +131,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
-    pub fn from_prover_state_manager(mut state_manager: StateManager<'_, F, FS, PCS>) -> Self {
+    pub fn from_prover_state_manager(
+        mut state_manager: StateManager<'_, F, FS, PCS>,
+        opening_accumulator: ProverOpeningAccumulator<F>,
+    ) -> Self {
         let prover_state = state_manager.prover_state.as_mut().unwrap();
-        let openings = std::mem::take(&mut prover_state.accumulator.borrow_mut().openings);
+        let openings = opening_accumulator.openings;
         let commitments = state_manager.commitments;
         let proofs = state_manager.proofs;
         let trace_length = prover_state.trace.len();
@@ -159,7 +160,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         self,
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
         program_io: JoltDevice,
-    ) -> StateManager<'a, F, FS, PCS> {
+    ) -> (StateManager<'a, F, FS, PCS>, VerifierOpeningAccumulator<F>) {
         let mut opening_accumulator =
             VerifierOpeningAccumulator::<F>::new(self.trace_length.log_2());
         // Populate claims in the verifier accumulator
@@ -175,23 +176,25 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
 
         let transcript = FS::new(b"Jolt");
 
-        StateManager {
-            transcript,
-            proofs,
-            commitments,
-            untrusted_advice_commitment: self.untrusted_advice_commitment,
-            trusted_advice_commitment: None,
-            program_io,
-            ram_K: self.ram_K,
-            ram_d: AllCommittedPolynomials::ram_d_from_K(self.ram_K),
-            twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
-            prover_state: None,
-            verifier_state: Some(VerifierState {
-                preprocessing,
-                trace_length: self.trace_length,
-                accumulator: Rc::new(RefCell::new(opening_accumulator)),
-            }),
-        }
+        (
+            StateManager {
+                transcript,
+                proofs,
+                commitments,
+                untrusted_advice_commitment: self.untrusted_advice_commitment,
+                trusted_advice_commitment: None,
+                program_io,
+                ram_K: self.ram_K,
+                ram_d: AllCommittedPolynomials::ram_d_from_K(self.ram_K),
+                twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
+                prover_state: None,
+                verifier_state: Some(VerifierState {
+                    preprocessing,
+                    trace_length: self.trace_length,
+                }),
+            },
+            opening_accumulator,
+        )
     }
 }
 
