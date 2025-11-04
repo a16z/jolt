@@ -5,11 +5,7 @@ use rayon::prelude::*;
 
 use crate::{
     field::{JoltField, MulU64WithCarry},
-    poly::{
-        eq_poly::EqPolynomial, ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial,
-        unipoly::UniPoly,
-    },
-    utils::math::Math,
+    poly::{eq_poly::EqPolynomial, ra_poly::RaPolynomial, unipoly::UniPoly},
 };
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
@@ -18,118 +14,65 @@ use crate::{
 pub fn compute_mles_product_sum<F: JoltField>(
     mles: &[RaPolynomial<u8, F>],
     claim: F,
-    eq_poly: &GruenSplitEqPolynomial<F>,
+    r: &[F::Challenge],
+    r_prime: &[F::Challenge],
 ) -> UniPoly<F> {
-    // Split Eq poly optimization using GruenSplitEqPolynomial.
+    // Split Eq poly optimization.
     // See https://eprint.iacr.org/2025/1117.pdf section 5.2.
-
-    // Get the eq polynomial evaluations from the split structure
-    // Note: With LowToHigh binding, E_out corresponds to the first half (outer loop)
-    // and E_in corresponds to the second half (inner loop)
-    let num_x_out = eq_poly.E_out_current_len();
-    let num_x_in = eq_poly.E_in_current_len();
-
-    // Get the scaling factor that accumulates eq evaluations for already-bound variables
-    let current_scalar = eq_poly.get_current_scalar();
+    // TODO: Consider refactoring GruenSplitEqPolynomial and integrating here.
+    let w = &r[r_prime.len() + 1..];
+    let (wr, wl) = w.split_at(w.len() / 2);
+    let eq_constant_factor = EqPolynomial::mle(r_prime, &r[..r_prime.len()]);
+    let eq_wl_evals = EqPolynomial::evals_parallel(wl, Some(eq_constant_factor));
+    let eq_wr_evals = EqPolynomial::evals_parallel(wr, None);
 
     // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, inf].
-    let sum_evals: Vec<F> = if num_x_in == 1 {
-        // E_in is fully bound - simplified computation
-        let eq_in_eval = eq_poly.E_in_current()[0] * current_scalar;
-        let eq_out_evals = eq_poly.E_out_current();
+    let sum_evals: Vec<F> = eq_wr_evals
+        .par_iter()
+        .enumerate()
+        .map(|(j_wr, eq_wr_eval)| {
+            let mut partial_evals = vec![F::zero(); mles.len()];
+            let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
 
-        (0..num_x_out)
-            .into_par_iter()
-            .map(|j_out| {
-                let mut partial_evals = vec![F::zero(); mles.len()];
-                let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
+            for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
+                let j = j_wl + (j_wr << wl.len());
 
                 for (i, mle) in mles.iter().enumerate() {
-                    let mle_eval_at_0_j = mle.get_bound_coeff(2 * j_out);
-                    let mle_eval_at_1_j = mle.get_bound_coeff(2 * j_out + 1);
+                    // TODO: Improve memory access.
+                    let mle_eval_at_0_j = mle.get_bound_coeff(j);
+                    let mle_eval_at_1_j = mle.get_bound_coeff(j + (1 << w.len()));
                     mle_eval_pairs[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
                 }
 
-                mle_eval_pairs[0].0 *= eq_in_eval;
-                mle_eval_pairs[0].1 *= eq_in_eval;
+                mle_eval_pairs[0].0 *= eq_wl_eval;
+                mle_eval_pairs[0].1 *= eq_wl_eval;
                 product_eval_univariate_accumulate(&mle_eval_pairs, &mut partial_evals);
+            }
 
-                partial_evals
-                    .into_iter()
-                    .map(|v| {
-                        let result = v * eq_out_evals[j_out];
-                        let unreduced = *result.as_unreduced_ref();
-                        unreduced
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .fold_with(
-                vec![F::Unreduced::<5>::zero(); mles.len()],
-                |running, new: Vec<F::Unreduced<4>>| {
-                    zip(running, new).map(|(a, b)| a + b).collect()
-                },
-            )
-            .reduce(
-                || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
-            )
-            .into_iter()
-            .map(F::from_barrett_reduce)
-            .collect()
-    } else {
-        // General case with both E_in and E_out
-        let num_x_in_bits = num_x_in.log_2();
-        let eq_in_evals = eq_poly.E_in_current();
-        let eq_out_evals = eq_poly.E_out_current();
+            partial_evals
+                .iter()
+                .map(|v| {
+                    let result = *v * *eq_wr_eval;
+                    let unreduced = *result.as_unreduced_ref();
+                    unreduced
+                })
+                .collect()
+        })
+        .fold_with(
+            vec![F::Unreduced::<5>::zero(); mles.len()],
+            |running, new: Vec<F::Unreduced<4>>| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
+        .reduce(
+            || vec![F::Unreduced::zero(); mles.len()],
+            |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
+        .into_iter()
+        .map(F::from_barrett_reduce)
+        .collect();
 
-        (0..num_x_out)
-            .into_par_iter()
-            .map(|j_out| {
-                let mut partial_evals = vec![F::zero(); mles.len()];
-                let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
-
-                for j_in in 0..num_x_in {
-                    let j = (j_out << num_x_in_bits) | j_in;
-
-                    for (i, mle) in mles.iter().enumerate() {
-                        let mle_eval_at_0_j = mle.get_bound_coeff(2 * j);
-                        let mle_eval_at_1_j = mle.get_bound_coeff(2 * j + 1);
-                        mle_eval_pairs[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
-                    }
-
-                    mle_eval_pairs[0].0 *= eq_in_evals[j_in] * current_scalar;
-                    mle_eval_pairs[0].1 *= eq_in_evals[j_in] * current_scalar;
-                    product_eval_univariate_accumulate(&mle_eval_pairs, &mut partial_evals);
-                }
-
-                partial_evals
-                    .into_iter()
-                    .map(|v| {
-                        let result = v * eq_out_evals[j_out];
-                        let unreduced = *result.as_unreduced_ref();
-                        unreduced
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .fold_with(
-                vec![F::Unreduced::<5>::zero(); mles.len()],
-                |running, new: Vec<F::Unreduced<4>>| {
-                    zip(running, new).map(|(a, b)| a + b).collect()
-                },
-            )
-            .reduce(
-                || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
-            )
-            .into_iter()
-            .map(F::from_barrett_reduce)
-            .collect()
-    };
-
-    // Get r[round] from the eq polynomial
-    let r_round = eq_poly.get_current_w();
-    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r_round]);
-    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r_round]);
+    let round = r_prime.len();
+    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r[round]]);
+    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r[round]]);
 
     // Obtain the eval at 0 from the claim.
     let eval_at_1 = sum_evals[0];
@@ -141,8 +84,8 @@ pub fn compute_mles_product_sum<F: JoltField>(
 
     // Add in the missing eq(X, r[round]) factor.
     // Note eq(X, r[round]) = (1 - r[round]) + (2r[round] - 1)X.
-    let constant_coeff = F::one() - r_round;
-    let x_coeff = r_round + r_round - F::one();
+    let constant_coeff = F::one() - r[round];
+    let x_coeff = r[round] + r[round] - F::one();
     let mut coeffs = vec![F::zero(); tmp_coeffs.len() + 1];
     for (i, coeff) in tmp_coeffs.into_iter().enumerate() {
         coeffs[i] += coeff * constant_coeff;
@@ -397,9 +340,8 @@ mod tests {
         poly::{
             dense_mlpoly::DensePolynomial,
             eq_poly::EqPolynomial,
-            multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation},
+            multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
             ra_poly::RaPolynomial,
-            split_eq_poly::GruenSplitEqPolynomial,
         },
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
@@ -419,8 +361,7 @@ mod tests {
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);
 
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
         assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
@@ -439,8 +380,7 @@ mod tests {
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);
 
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
         assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
@@ -459,8 +399,7 @@ mod tests {
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);
 
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
         assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
@@ -479,8 +418,7 @@ mod tests {
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);
 
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
         assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }

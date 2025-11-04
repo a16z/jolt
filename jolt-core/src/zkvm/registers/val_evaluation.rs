@@ -11,7 +11,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -116,19 +116,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
         name = "RegistersValEvaluationSumcheckProver::compute_prover_message"
     )]
     fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+        let half_n = self.inc.len() / 2;
+
         let [eval_at_1, eval_at_2, eval_at_inf] = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_at_1_j = self.inc.get_bound_coeff(2 * j + 1);
-                let inc_at_inf_j = inc_at_1_j - self.inc.get_bound_coeff(2 * j);
+                let inc_at_1_j = self.inc.get_bound_coeff(j + half_n);
+                let inc_at_inf_j = inc_at_1_j - self.inc.get_bound_coeff(j);
                 let inc_at_2_j = inc_at_1_j + inc_at_inf_j;
 
-                let wa_at_1_j = self.wa.get_bound_coeff(2 * j + 1);
-                let wa_at_inf_j = wa_at_1_j - self.wa.get_bound_coeff(2 * j);
+                let wa_at_1_j = self.wa.get_bound_coeff(j + half_n);
+                let wa_at_inf_j = wa_at_1_j - self.wa.get_bound_coeff(j);
                 let wa_at_2_j = wa_at_1_j + wa_at_inf_j;
 
-                let lt_at_1_j = self.lt.get_bound_coeff(2 * j + 1);
-                let lt_at_inf_j = lt_at_1_j - self.lt.get_bound_coeff(2 * j);
+                let lt_at_1_j = self.lt.get_bound_coeff(j + half_n);
+                let lt_at_inf_j = lt_at_1_j - self.lt.get_bound_coeff(j);
                 let lt_at_2_j = lt_at_1_j + lt_at_inf_j;
 
                 // Eval inc * wa * lt.
@@ -152,9 +154,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
 
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        self.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.lt.bind(r_j, BindingOrder::LowToHigh);
+        self.inc.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.wa.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.lt.bind(r_j, BindingOrder::HighToLow);
     }
 
     fn cache_openings(
@@ -321,5 +323,5 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
 fn get_opening_point<F: JoltField>(
     sumcheck_challenges: &[F::Challenge],
 ) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
+    OpeningPoint::new(sumcheck_challenges.to_vec())
 }

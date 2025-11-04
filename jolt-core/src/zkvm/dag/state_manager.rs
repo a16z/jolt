@@ -151,7 +151,7 @@ where
         trusted_advice_commitment: Option<PCS::Commitment>,
         final_memory_state: Memory,
     ) -> Self {
-        let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
+        let opening_accumulator = ProverOpeningAccumulator::new();
         let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
         let transcript = ProofTranscript::new(b"Jolt");
         let proofs = BTreeMap::new();
@@ -218,7 +218,7 @@ where
         ram_K: usize,
         twist_sumcheck_switch_index: usize,
     ) -> Self {
-        let opening_accumulator = VerifierOpeningAccumulator::new(trace_length.log_2());
+        let opening_accumulator = VerifierOpeningAccumulator::new();
         let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
         let transcript = ProofTranscript::new(b"Jolt");
         let proofs = BTreeMap::new();

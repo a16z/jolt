@@ -8,7 +8,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
@@ -115,10 +116,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InnerSumcheck
             .map(|i| {
                 let abc_evals = self
                     .poly_abc_small
-                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::HighToLow);
                 let z_evals = self
                     .poly_z
-                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::HighToLow);
 
                 [
                     abc_evals[0] * z_evals[0], // eval at 0
@@ -142,8 +143,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InnerSumcheck
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         // Bind both polynomials in parallel
         self.poly_abc_small
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.poly_z.bind_parallel(r_j, BindingOrder::LowToHigh);
+            .bind_parallel(r_j, BindingOrder::HighToLow);
+        self.poly_z.bind_parallel(r_j, BindingOrder::HighToLow);
     }
 
     fn cache_openings(
@@ -218,12 +219,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for InnerSumche
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r = sumcheck_challenges
-            .iter()
-            .cloned()
-            .rev()
-            .collect::<Vec<_>>();
-
         // Get rx_var from the outer sumcheck opening point in accumulator
         let (outer_sumcheck_opening, _) = accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
@@ -249,15 +244,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for InnerSumche
         // (A_small(rx_var, r) + gamma * B_small(rx_var, r)) * z(r)
 
         // Evaluate uniform matrices A_small and B_small at point (rx_var, r)
-        let eval_a = self.key.evaluate_uniform_a_at_point(rx_var, &r);
-        let eval_b = self.key.evaluate_uniform_b_at_point(rx_var, &r);
+        let r = get_opening_point::<F>(sumcheck_challenges);
+        let eval_a = self.key.evaluate_uniform_a_at_point(rx_var, &r.r);
+        let eval_b = self.key.evaluate_uniform_b_at_point(rx_var, &r.r);
 
         let left_expected = eval_a + self.params.gamma * eval_b;
 
         // Evaluate z(ry)
         let eval_z = self
             .key
-            .evaluate_z_mle_with_segment_evals(&claimed_witness_evals, &r, true);
+            .evaluate_z_mle_with_segment_evals(&claimed_witness_evals, &r.r, true);
         left_expected * eval_z
     }
 
@@ -290,4 +286,10 @@ impl<F: JoltField> InnerSumcheckParams<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
         claim_Az + self.gamma * claim_Bz
     }
+}
+
+fn get_opening_point<F: JoltField>(
+    sumcheck_challenges: &[F::Challenge],
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    OpeningPoint::new(sumcheck_challenges.to_vec())
 }

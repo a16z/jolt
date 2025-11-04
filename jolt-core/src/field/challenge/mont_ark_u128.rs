@@ -18,7 +18,16 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{Add, Mul, Sub};
 #[derive(
-    Copy, Clone, Default, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize, Allocative,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    Allocative,
 )]
 pub struct MontU128Challenge<F: JoltField> {
     value: [u64; 4],
@@ -27,15 +36,11 @@ pub struct MontU128Challenge<F: JoltField> {
 
 impl<F: JoltField> Display for MontU128Challenge<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bigint = BigInt::new(self.value);
-        write!(f, "{bigint}")
-    }
-}
-
-impl<F: JoltField> Debug for MontU128Challenge<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bigint = BigInt::new(self.value);
-        write!(f, "{bigint}")
+        write!(
+            f,
+            "MontU128Challenge([{}, {}, {}, {}]",
+            self.value[0], self.value[1], self.value[2], self.value[3]
+        )
     }
 }
 

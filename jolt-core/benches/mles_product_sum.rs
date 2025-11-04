@@ -3,11 +3,7 @@ use ark_std::test_rng;
 use criterion::{criterion_group, criterion_main, Criterion};
 use jolt_core::{
     field::JoltField,
-    poly::{
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial},
-        ra_poly::RaPolynomial,
-        split_eq_poly::GruenSplitEqPolynomial,
-    },
+    poly::{multilinear_polynomial::MultilinearPolynomial, ra_poly::RaPolynomial},
     subprotocols::mles_product_sum::compute_mles_product_sum,
 };
 
@@ -16,12 +12,12 @@ fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
     let mle_n_vars = 14;
     let random_mle: MultilinearPolynomial<Fr> = vec![Fr::random(rng); 1 << mle_n_vars].into();
     let mles = vec![RaPolynomial::RoundN(random_mle); n_mle];
-    let r = vec![<Fr as JoltField>::Challenge::random(rng); mle_n_vars];
+    let r = &vec![<Fr as JoltField>::Challenge::random(rng); mle_n_vars];
+    let r_prime = &[];
     let claim = Fr::random(rng);
-    let eq_poly = GruenSplitEqPolynomial::new(&r, BindingOrder::LowToHigh);
 
     c.bench_function(&format!("Product of {n_mle} MLEs sum"), |b| {
-        b.iter(|| compute_mles_product_sum(&mles, claim, &eq_poly))
+        b.iter(|| compute_mles_product_sum(&mles, claim, r, r_prime))
     });
 }
 
