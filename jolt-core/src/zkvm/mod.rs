@@ -339,7 +339,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
 
             let _pprof_prove = pprof_scope!("prove");
             let start = Instant::now();
-            let mut opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
+            let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
             let state_manager = StateManager::new_prover(
                 preprocessing,
                 lazy_trace,
@@ -348,7 +348,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trusted_advice_commitment,
                 final_memory_state,
             );
-            let (proof, debug_info) = prove_jolt_dag(state_manager, &mut opening_accumulator)
+            let (proof, debug_info) = prove_jolt_dag(state_manager, opening_accumulator)
                 .ok()
                 .unwrap();
             let prove_duration = start.elapsed();
@@ -444,7 +444,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }
         }
 
-        verify_jolt_dag(state_manager, &mut opening_accumulator).expect("Verification failed");
+        verify_jolt_dag(state_manager, opening_accumulator).expect("Verification failed");
 
         Ok(())
     }

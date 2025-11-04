@@ -5,9 +5,6 @@ pub mod state_manager;
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -53,7 +50,6 @@ mod tests {
         );
 
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
-        let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
         let state_manager = StateManager::new_prover(
             &preprocessing,
             lazy_trace,
@@ -62,7 +58,7 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
+        let (proof, _) = prove_jolt_dag(state_manager, opening_accumulator)
             .ok()
             .unwrap();
 
@@ -110,7 +106,6 @@ mod tests {
         );
 
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
-        let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
         let state_manager = StateManager::new_prover(
             &preprocessing,
             lazy_trace,
@@ -119,7 +114,7 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
+        let (proof, _) = prove_jolt_dag(state_manager, opening_accumulator)
             .ok()
             .unwrap();
 
