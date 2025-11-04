@@ -332,7 +332,6 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
 
             let _pprof_prove = pprof_scope!("prove");
             let start = Instant::now();
-            let opening_accumulator = ProverOpeningAccumulator::new(trace_length.log_2());
             let state_manager = StateManager::new_prover(
                 preprocessing,
                 lazy_trace,
@@ -341,9 +340,11 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trusted_advice_commitment,
                 final_memory_state,
             );
-            let (proof, debug_info) = prove_jolt_dag(state_manager, opening_accumulator)
-                .ok()
-                .unwrap();
+            let opening_accumulator = state_manager.get_prover_accumulator();
+            let (proof, debug_info) =
+                prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
+                    .ok()
+                    .unwrap();
             let prove_duration = start.elapsed();
             tracing::info!(
                 "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
@@ -394,23 +395,22 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 .map_or(0, |pos| pos + 1),
         );
 
-        #[cfg(test)]
-        let (mut state_manager, mut opening_accumulator) =
-            proof.to_verifier_state_manager(preprocessing, program_io);
-        #[cfg(not(test))]
-        let (mut state_manager, opening_accumulator) =
-            proof.to_verifier_state_manager(preprocessing, program_io);
+        let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
         state_manager.trusted_advice_commitment = trusted_advice_commitment;
 
         #[cfg(test)]
         {
             if let Some(debug_info) = _debug_info {
                 state_manager.transcript.compare_to(debug_info.transcript);
-                opening_accumulator.compare_to(debug_info.opening_accumulator);
+                state_manager
+                    .get_verifier_accumulator()
+                    .borrow_mut()
+                    .compare_to(debug_info.opening_accumulator);
             }
         }
 
-        verify_jolt_dag(state_manager, opening_accumulator).expect("Verification failed");
+        let acc = state_manager.get_verifier_accumulator();
+        verify_jolt_dag(state_manager, &mut acc.borrow_mut()).expect("Verification failed");
 
         Ok(())
     }

@@ -7,8 +7,6 @@ pub mod state_manager;
 mod tests {
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
-    use crate::poly::opening_proof::ProverOpeningAccumulator;
-    use crate::utils::math::Math;
     use crate::zkvm::dag::jolt_dag::prove_jolt_dag;
     use crate::zkvm::dag::state_manager::StateManager;
     use crate::zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing};
@@ -49,7 +47,6 @@ mod tests {
                 .map_or(0, |pos| pos + 1),
         );
 
-        let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
         let state_manager = StateManager::new_prover(
             &preprocessing,
             lazy_trace,
@@ -58,7 +55,8 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager, opening_accumulator)
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let (proof, _) = prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
             .ok()
             .unwrap();
 
@@ -105,7 +103,6 @@ mod tests {
                 .map_or(0, |pos| pos + 1),
         );
 
-        let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
         let state_manager = StateManager::new_prover(
             &preprocessing,
             lazy_trace,
@@ -114,7 +111,8 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager, opening_accumulator)
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let (proof, _) = prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
             .ok()
             .unwrap();
 
