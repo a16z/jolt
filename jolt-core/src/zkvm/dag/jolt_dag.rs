@@ -733,7 +733,7 @@ pub fn verify_jolt_dag<
         let Some(ref proof) = proof.untrusted_advice_proof else {
             return Err(anyhow::anyhow!("Untrusted advice proof not found"));
         };
-        let Some((point, eval)) = opening_accumulator.get_untrusted_advice_opening() else {
+        let Some((point, eval)) = opening_accumulator.get_trusted_advice_opening() else {
             return Err(anyhow::anyhow!("Untrusted advice opening not found"));
         };
         PCS::verify(
