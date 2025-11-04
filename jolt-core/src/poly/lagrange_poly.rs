@@ -388,8 +388,6 @@ impl<F: JoltField> LagrangePolynomial<F> {
 pub struct LagrangeHelper;
 
 impl LagrangeHelper {
-    // ===== Binomial coefficient utilities =====
-
     /// Compute binomial coefficient C(n, k) with k reduced to min(k, n-k).
     #[inline]
     pub const fn binomial_coeff(n: usize, k: usize) -> u64 {
@@ -527,8 +525,7 @@ impl LagrangeHelper {
         out
     }
 
-    // ===== Const-time power sums over symmetric integer window =====
-    /// Const power sums over a symmetric integer window, up to an arbitrary degree, as i128.
+    /// Power sums over a symmetric integer window, up to an arbitrary degree, as i128.
     ///
     /// Domain: WINDOW_N consecutive integers centered at 0: t = start..start+WINDOW_N-1,
     /// where start = -floor((WINDOW_N-1)/2).

@@ -1,21 +1,11 @@
 //! Const-friendly R1CS linear combination operations
 //!
 //! This module provides compile-time constant operations for building R1CS constraints.
-//! Unlike the legacy dynamic operations, these are designed to work with const contexts
-//! and provide better performance in the prover's hot path.
 
 use super::inputs::JoltR1CSInputs;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
-
-/// Helper for JoltR1CSInputs to get indices
-impl JoltR1CSInputs {
-    /// Convert this input to a usable index
-    pub const fn idx(self) -> usize {
-        self.to_index()
-    }
-}
 
 /// A single term in a linear combination: (input_index, coefficient)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,17 +78,17 @@ impl LC {
 
     /// Create an LC from a single input with unit coefficient.
     pub const fn from_input(inp: JoltR1CSInputs) -> LC {
-        LC::single_term(inp.idx(), 1)
+        LC::single_term(inp.to_index(), 1)
     }
 
     /// Create an LC from a single input with explicit coefficient.
     pub const fn from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> LC {
-        LC::single_term(inp.idx(), coeff)
+        LC::single_term(inp.to_index(), coeff)
     }
 
     /// Create an LC from a single input with explicit i128 coefficient.
     pub const fn from_input_with_coeff_i128(inp: JoltR1CSInputs, coeff: i128) -> LC {
-        LC::single_term_i128(inp.idx(), coeff)
+        LC::single_term_i128(inp.to_index(), coeff)
     }
 
     /// Create a constant LC.
@@ -106,9 +96,6 @@ impl LC {
         LC::constant(k)
     }
 
-    // =========================
-    // Introspection
-    // =========================
     pub const fn num_terms(&self) -> usize {
         match self {
             LC::Zero | LC::Const(_) => 0,
@@ -682,9 +669,6 @@ impl LC {
     }
 }
 
-// =============================================================================
-// LC MACRO
-// =============================================================================
 /// lc!: parse a linear combination with +, -, and literal * expr
 /// Examples:
 /// - lc!({ JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })

@@ -14,15 +14,16 @@ use crate::transcripts::Transcript;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::{SumcheckStagesProver, SumcheckStagesVerifier};
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
+use crate::zkvm::r1cs::constraints::{
+    OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::{InnerSumcheckProver, InnerSumcheckVerifier};
 use crate::zkvm::spartan::instruction_input::{
     InstructionInputSumcheckProver, InstructionInputSumcheckVerifier,
 };
 use crate::zkvm::spartan::outer::{
-    outer_uni_skip_input_claim, OuterRemainingSumcheckProver, OuterRemainingSumcheckVerifier,
-    OuterUniSkipInstanceProver,
+    OuterRemainingSumcheckProver, OuterRemainingSumcheckVerifier, OuterUniSkipInstanceProver,
 };
 use crate::zkvm::spartan::product::{
     ProductVirtualInnerProver, ProductVirtualInnerVerifier, ProductVirtualRemainderProver,
@@ -220,10 +221,10 @@ impl<F: JoltField> SpartanDagVerifier<F> {
 
         let tau = transcript.challenge_vector_optimized::<F>(num_rounds_x);
 
-        let input_claim = outer_uni_skip_input_claim();
+        let input_claim = F::zero();
         let (r0, claim_after_first) = proof
-            .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
-                FIRST_ROUND_POLY_NUM_COEFFS - 1,
+            .verify::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_FIRST_ROUND_POLY_NUM_COEFFS>(
+                OUTER_FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 input_claim,
                 transcript,
             )
