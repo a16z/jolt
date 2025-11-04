@@ -122,12 +122,11 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ReadRafSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::gen")]
-    pub fn gen<T: Transcript>(
-        state_manager: &mut StateManager<F, T, impl CommitmentScheme<Field = F>>,
+    pub fn gen(
+        state_manager: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Self {
-        let params = ReadRafSumcheckParams::gen(state_manager, opening_accumulator, transcript);
+        let params = ReadRafSumcheckParams::gen(state_manager, opening_accumulator);
 
         let claim_per_stage = [
             params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
@@ -520,13 +519,12 @@ pub struct ReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckVerifier<F> {
-    pub fn gen<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    pub fn gen(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Self {
         Self {
-            params: ReadRafSumcheckParams::gen(state_manager, opening_accumulator, transcript),
+            params: ReadRafSumcheckParams::gen(state_manager, opening_accumulator),
         }
     }
 }
@@ -642,47 +640,41 @@ struct ReadRafSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
-    fn gen<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
+    fn gen(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut T,
     ) -> Self {
         let preprocessing = state_manager.get_shared_preprocessing();
         let K = preprocessing.bytecode.code_size;
         let log_K = K.log_2();
         let d = preprocessing.bytecode.d;
         let log_T = state_manager.get_trace_len().log_2();
-        let gamma_powers = transcript.challenge_scalar_powers(7);
+        let gamma_powers = state_manager.transcript.challenge_scalar_powers(7);
 
         let (val_1, rv_claim_1) = Self::compute_val_rv(
             state_manager,
             opening_accumulator,
             ReadCheckingValType::Stage1,
-            transcript,
         );
         let (val_2, rv_claim_2) = Self::compute_val_rv(
             state_manager,
             opening_accumulator,
             ReadCheckingValType::Stage2,
-            transcript,
         );
         let (val_3, rv_claim_3) = Self::compute_val_rv(
             state_manager,
             opening_accumulator,
             ReadCheckingValType::Stage3,
-            transcript,
         );
         let (val_4, rv_claim_4) = Self::compute_val_rv(
             state_manager,
             opening_accumulator,
             ReadCheckingValType::Stage4,
-            transcript,
         );
         let (val_5, rv_claim_5) = Self::compute_val_rv(
             state_manager,
             opening_accumulator,
             ReadCheckingValType::Stage5,
-            transcript,
         );
         let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
         let int_poly = IdentityPolynomial::new(log_K);
@@ -757,43 +749,42 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         }
     }
 
-    fn compute_val_rv<T: Transcript>(
-        sm: &mut StateManager<F, T, impl CommitmentScheme<Field = F>>,
+    fn compute_val_rv(
+        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         val_type: ReadCheckingValType,
-        transcript: &mut T,
     ) -> (Vec<F>, F) {
         match val_type {
             ReadCheckingValType::Stage1 => {
-                let gamma_powers = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
                 (
                     Self::compute_val_1(sm, &gamma_powers),
                     Self::compute_rv_claim_1(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage2 => {
-                let gamma_powers = transcript.challenge_scalar_powers(4);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(4);
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage3 => {
-                let gamma_powers = transcript.challenge_scalar_powers(9);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(9);
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage4 => {
-                let gamma_powers = transcript.challenge_scalar_powers(3);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(3);
                 (
                     Self::compute_val_4(sm, opening_accumulator, &gamma_powers),
                     Self::compute_rv_claim_4(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage5 => {
-                let gamma_powers = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
+                let gamma_powers = sm.transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
                 (
                     Self::compute_val_5(sm, opening_accumulator, &gamma_powers),
                     Self::compute_rv_claim_5(opening_accumulator, &gamma_powers),

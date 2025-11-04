@@ -89,9 +89,8 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        transcript: &mut ProofTranscript,
     ) -> Self {
-        let params = OutputSumcheckParams::new(state_manager, transcript);
+        let params = OutputSumcheckParams::new(state_manager);
 
         let K = final_ram_state.len();
         debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
@@ -263,11 +262,10 @@ pub struct OutputSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheckVerifier<F> {
-    pub fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let params = OutputSumcheckParams::new(state_manager, transcript);
+        let params = OutputSumcheckParams::new(state_manager);
         Self { params }
     }
 }
@@ -364,13 +362,14 @@ struct OutputSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheckParams<F> {
-    pub fn new<T: Transcript>(
-        state_manager: &mut StateManager<'_, F, T, impl CommitmentScheme<Field = F>>,
-        transcript: &mut T,
+    pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let program_io = state_manager.program_io.clone();
         let K = state_manager.ram_K;
-        let r_address = transcript.challenge_vector_optimized::<F>(K.log_2());
+        let r_address = state_manager
+            .transcript
+            .challenge_vector_optimized::<F>(K.log_2());
         Self {
             K,
             r_address,

@@ -67,6 +67,7 @@ pub struct StateManager<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 > {
+    pub transcript: ProofTranscript,
     pub proofs: Proofs<F, PCS, ProofTranscript>,
     pub commitments: Vec<PCS::Commitment>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
@@ -93,6 +94,7 @@ where
         trusted_advice_commitment: Option<PCS::Commitment>,
         final_memory_state: Memory,
     ) -> Self {
+        let transcript = ProofTranscript::new(b"Jolt");
         let proofs = BTreeMap::new();
         let commitments = vec![];
 
@@ -125,6 +127,7 @@ where
         let twist_sumcheck_switch_index = chunk_size.log_2();
 
         Self {
+            transcript,
             proofs,
             commitments,
             untrusted_advice_commitment: None,
@@ -155,11 +158,13 @@ where
         ram_K: usize,
         twist_sumcheck_switch_index: usize,
     ) -> Self {
+        let transcript = ProofTranscript::new(b"Jolt");
         let proofs = BTreeMap::new();
         let commitments = vec![];
         let ram_d = compute_d_parameter(ram_K);
 
         StateManager {
+            transcript,
             proofs,
             commitments,
             untrusted_advice_commitment: None,
@@ -248,19 +253,23 @@ where
         }
     }
 
-    pub fn fiat_shamir_preamble(&self, transcript: &mut ProofTranscript) {
-        transcript.append_u64(self.program_io.memory_layout.max_input_size);
-        transcript.append_u64(self.program_io.memory_layout.max_output_size);
-        transcript.append_u64(self.program_io.memory_layout.memory_size);
-        transcript.append_bytes(&self.program_io.inputs);
-        transcript.append_bytes(&self.program_io.outputs);
-        transcript.append_u64(self.program_io.panic as u64);
-        transcript.append_u64(self.ram_K as u64);
+    pub fn fiat_shamir_preamble(&mut self) {
+        self.transcript
+            .append_u64(self.program_io.memory_layout.max_input_size);
+        self.transcript
+            .append_u64(self.program_io.memory_layout.max_output_size);
+        self.transcript
+            .append_u64(self.program_io.memory_layout.memory_size);
+        self.transcript.append_bytes(&self.program_io.inputs);
+        self.transcript.append_bytes(&self.program_io.outputs);
+        self.transcript.append_u64(self.program_io.panic as u64);
+        self.transcript.append_u64(self.ram_K as u64);
 
         if let Some(ref verifier_state) = self.verifier_state {
-            transcript.append_u64(verifier_state.trace_length as u64);
+            self.transcript
+                .append_u64(verifier_state.trace_length as u64);
         } else if let Some(ref prover_state) = self.prover_state {
-            transcript.append_u64(prover_state.trace.len() as u64);
+            self.transcript.append_u64(prover_state.trace.len() as u64);
         } else {
             panic!("Neither prover nor verifier state initialized");
         }
