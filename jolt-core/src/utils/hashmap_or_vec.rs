@@ -1,6 +1,8 @@
 use allocative::Allocative;
+use itertools::Either;
 use std::{
     collections::HashMap,
+    convert::identity,
     ops::{Index, IndexMut},
 };
 
@@ -26,12 +28,12 @@ impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
     /// If the key already exists, return an error with the existing value.
     pub fn try_insert(&mut self, k: usize, v: T) -> Result<(), &T> {
         match self {
-            HashMapOrVec::HashMap(hashmap) => {
-                if !hashmap.contains_key(&k) {
-                    hashmap.insert(k, v);
+            HashMapOrVec::HashMap(map) => {
+                if !map.contains_key(&k) {
+                    map.insert(k, v);
                     Ok(())
                 } else {
-                    Err(&hashmap[&k])
+                    Err(&map[&k])
                 }
             }
             HashMapOrVec::Vec(vec) => {
@@ -48,7 +50,7 @@ impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
     /// Shrink the HashMapOrVec to fit its contents.
     pub fn shrink_to_fit(&mut self) {
         match self {
-            HashMapOrVec::HashMap(hashmap) => hashmap.shrink_to_fit(),
+            HashMapOrVec::HashMap(map) => map.shrink_to_fit(),
             HashMapOrVec::Vec(vec) => vec.shrink_to_fit(),
         };
     }
@@ -57,6 +59,40 @@ impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
         match self {
             HashMapOrVec::HashMap(map) => map.get(&index).cloned(),
             HashMapOrVec::Vec(vec) => vec[index].clone(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        match self {
+            HashMapOrVec::HashMap(map) => map.clear(),
+            HashMapOrVec::Vec(vec) => vec.fill(None),
+        };
+    }
+
+    pub fn clone_from(&mut self, other: &Self) {
+        match (self, other) {
+            (HashMapOrVec::HashMap(map), HashMapOrVec::HashMap(other)) => {
+                map.clear();
+                map.extend(other.iter().map(|(k, v)| (*k, v.clone())));
+            }
+            (HashMapOrVec::Vec(vec), HashMapOrVec::Vec(other)) => {
+                vec.clone_from_slice(&other);
+            }
+            _ => panic!("mismatched data structures"),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        match self {
+            HashMapOrVec::HashMap(map) => Either::Left(map.values()),
+            HashMapOrVec::Vec(vec) => Either::Right(vec.iter().filter_map(|x| x.as_ref())),
+        }
+    }
+
+    pub fn drain(&mut self) -> impl Iterator<Item = T> + use<'_, T> {
+        match self {
+            HashMapOrVec::HashMap(map) => Either::Left(map.drain().map(|(_k, v)| v)),
+            HashMapOrVec::Vec(vec) => Either::Right(vec.drain(..).filter_map(identity)),
         }
     }
 }
