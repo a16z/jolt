@@ -422,10 +422,10 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }
         }
 
-        let mut state_manager = StateManager {
+        let state_manager = StateManager {
             transcript,
-            proofs: proofs.proofs,
-            commitments: proofs.commitments,
+            proofs: proof.proofs,
+            commitments: proof.commitments,
             untrusted_advice_commitment: proof.untrusted_advice_commitment,
             trusted_advice_commitment,
             program_io,
@@ -438,14 +438,6 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trace_length: proof.trace_length,
             }),
         };
-
-        #[cfg(test)]
-        {
-            if let Some(debug_info) = _debug_info {
-                state_manager.transcript.compare_to(debug_info.transcript);
-                opening_accumulator.compare_to(debug_info.opening_accumulator);
-            }
-        }
 
         verify_jolt_dag(state_manager, opening_accumulator).expect("Verification failed");
 
