@@ -226,6 +226,7 @@ impl<F: JoltField> DensePolynomial<F> {
 
         scratch_space
             .par_iter_mut()
+            .with_min_len(4096)
             .take(n)
             .enumerate()
             .for_each(|(i, z)| {

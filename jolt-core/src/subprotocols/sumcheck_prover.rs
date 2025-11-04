@@ -50,23 +50,12 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
 pub trait UniSkipFirstRoundInstanceProver<F: JoltField, T: Transcript>:
     Send + Sync + MaybeAllocative
 {
-    /// The degree of the sum-check
-    const DEGREE_BOUND: usize;
-
-    /// The domain size of the sum-check. Canonically instantiated to the domain
-    /// [-floor(DOMAIN_SIZE/2), ceil(DOMAIN_SIZE)/2]
-    const DOMAIN_SIZE: usize;
-
     /// Returns the initial claim of this univariate skip round, i.e.
-    /// input_claim = \sum_{-floor(S/2) <= z <= ceil(S/2)} \sum_{x \in \{0, 1}^n} P(z, x)
-    /// where S = DOMAIN_SIZE
+    /// input_claim = \sum_{-floor(N/2) <= z <= ceil(N/2)} \sum_{x \in \{0, 1}^n} P(z, x)
+    /// where N is the domain size (one more than the degree of univariate skip)
     fn input_claim(&self) -> F;
 
     /// Computes the full univariate polynomial to be sent in the uni-skip round.
     /// Returns a degree-bounded `UniPoly` with exactly `DEGREE_BOUND + 1` coefficients.
     fn compute_poly(&mut self) -> UniPoly<F>;
-
-    // TODO: add flamegraph support
-    // #[cfg(feature = "allocative")]
-    // fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
 }

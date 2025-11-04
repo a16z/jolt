@@ -339,6 +339,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
 
             let _pprof_prove = pprof_scope!("prove");
             let start = Instant::now();
+            let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
             let state_manager = StateManager::new_prover(
                 preprocessing,
                 lazy_trace,
@@ -348,7 +349,6 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 final_memory_state,
             );
             let transcript = &mut FS::new(b"Jolt");
-            let opening_accumulator = ProverOpeningAccumulator::new(trace_length.log_2());
             let (proof, debug_info) =
                 prove_jolt_dag(state_manager, opening_accumulator, transcript)
                     .ok()
