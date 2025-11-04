@@ -1,9 +1,7 @@
 use std::{
-    cell::RefCell,
     fs::File,
     io::{Read, Write},
     path::Path,
-    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -341,8 +339,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
 
             let _pprof_prove = pprof_scope!("prove");
             let start = Instant::now();
-            let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
-            let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
+            let mut opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
             let state_manager = StateManager::new_prover(
                 preprocessing,
                 lazy_trace,
@@ -351,10 +348,9 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trusted_advice_commitment,
                 final_memory_state,
             );
-            let (proof, debug_info) =
-                prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
-                    .ok()
-                    .unwrap();
+            let (proof, debug_info) = prove_jolt_dag(state_manager, &mut opening_accumulator)
+                .ok()
+                .unwrap();
             let prove_duration = start.elapsed();
             tracing::info!(
                 "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
@@ -416,8 +412,6 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 .insert(*key, (OpeningPoint::default(), *claim));
         }
 
-        let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
-
         let proofs = proof.proofs;
 
         let commitments = proof.commitments;
@@ -446,14 +440,11 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         {
             if let Some(debug_info) = _debug_info {
                 state_manager.transcript.compare_to(debug_info.transcript);
-                opening_accumulator
-                    .borrow_mut()
-                    .compare_to(debug_info.opening_accumulator);
+                opening_accumulator.compare_to(debug_info.opening_accumulator);
             }
         }
 
-        verify_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
-            .expect("Verification failed");
+        verify_jolt_dag(state_manager, &mut opening_accumulator).expect("Verification failed");
 
         Ok(())
     }
