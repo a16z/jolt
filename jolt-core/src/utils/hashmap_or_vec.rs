@@ -117,7 +117,7 @@ impl<T: Clone + Default + Send> IndexMut<usize> for HashMapOrVec<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         match self {
             HashMapOrVec::HashMap(map) => map.entry(index).or_insert(T::default()),
-            HashMapOrVec::Vec(vec) => vec[index].as_mut().unwrap(),
+            HashMapOrVec::Vec(vec) => vec[index].get_or_insert_default(),
         }
     }
 }

@@ -64,13 +64,13 @@ struct DataBuffers<F: JoltField> {
     /// `val_j_r[1]` contains
     ///     Val(k, j'', 1, r_i, ..., r_1)
     /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_r: [Vec<F>; 2],
+    val_j_r: [HashMapOrVec<F>; 2],
     /// `ra[0]` contains
     ///     ra(k, j'', 0, r_i, ..., r_1)
     /// `ra[1]` contains
     ///     ra(k, j'', 1, r_i, ..., r_1)
     /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-    ra: [Vec<F>; 2],
+    ra: [HashMapOrVec<F>; 2],
     dirty_indices: Vec<usize>,
 }
 
@@ -337,14 +337,14 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             .map(|_| DataBuffers {
                 val_j_0: HashMapOrVec::new(params.K, chunk_size),
                 val_j_r: [
-                    unsafe_allocate_zero_vec(params.K),
-                    unsafe_allocate_zero_vec(params.K),
+                    HashMapOrVec::new(params.K, chunk_size),
+                    HashMapOrVec::new(params.K, chunk_size),
                 ],
                 ra: [
-                    unsafe_allocate_zero_vec(params.K),
-                    unsafe_allocate_zero_vec(params.K),
+                    HashMapOrVec::new(params.K, chunk_size),
+                    HashMapOrVec::new(params.K, chunk_size),
                 ],
-                dirty_indices: Vec::with_capacity(params.K),
+                dirty_indices: Vec::with_capacity(std::cmp::min(params.K, chunk_size)),
             })
             .collect();
 
@@ -527,7 +527,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 let j_bound = j % (1 << round);
                                 if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
-                                    if ra[0][k].is_zero() {
+                                    if ra[0].get(k).unwrap_or(F::zero()).is_zero() {
                                         dirty_indices.push(k);
                                     }
                                     ra[0][k] += A[j_bound];
@@ -538,7 +538,9 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 let j_bound = j % (1 << round);
                                 if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
-                                    if ra[0][k].is_zero() && ra[1][k].is_zero() {
+                                    if ra[0].get(k).unwrap_or(F::zero()).is_zero()
+                                        && ra[1].get(k).unwrap_or(F::zero()).is_zero()
+                                    {
                                         dirty_indices.push(k);
                                     }
                                     ra[1][k] += A[j_bound];
@@ -605,8 +607,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
                             let mut inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
                             for k in dirty_indices.drain(..) {
-                                if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
-                                    let ra_evals = [ra[0][k], ra[1][k] - ra[0][k]];
+                                let ra_0 = ra[0].get(k).unwrap_or(F::zero());
+                                let ra_1 = ra[1].get(k).unwrap_or(F::zero());
+                                if !ra_0.is_zero() || !ra_1.is_zero() {
+                                    let ra_evals = [ra_0, ra_1 - ra_0];
                                     let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                     inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
