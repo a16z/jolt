@@ -56,8 +56,9 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::gen")]
     pub fn gen(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = InstructionInputParams::new(state_manager);
+        let params = InstructionInputParams::new(state_manager, opening_accumulator);
 
         let (_, _, trace, _, _) = state_manager.get_prover_data();
 
@@ -113,19 +114,19 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
         let eq_r_cycle_stage_2 =
             GruenSplitEqPolynomial::new(&params.r_cycle_stage_2.r, BindingOrder::LowToHigh);
 
-        let (_, left_claim_stage_1) = state_manager.get_virtual_polynomial_opening(
+        let (_, left_claim_stage_1) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
             SumcheckId::SpartanOuter,
         );
-        let (_, right_claim_stage_1) = state_manager.get_virtual_polynomial_opening(
+        let (_, right_claim_stage_1) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
             SumcheckId::SpartanOuter,
         );
-        let (_, left_claim_stage_2) = state_manager.get_virtual_polynomial_opening(
+        let (_, left_claim_stage_2) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
             SumcheckId::ProductVirtualization,
         );
-        let (_, right_claim_stage_2) = state_manager.get_virtual_polynomial_opening(
+        let (_, right_claim_stage_2) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
             SumcheckId::ProductVirtualization,
         );
@@ -416,8 +417,9 @@ pub struct InstructionInputSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = InstructionInputParams::new(state_manager);
+        let params = InstructionInputParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -555,12 +557,13 @@ struct InstructionInputParams<F: JoltField> {
 impl<F: JoltField> InstructionInputParams<F> {
     fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
-        let (r_cycle_stage_1, _) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
             SumcheckId::SpartanOuter,
         );
-        let (r_cycle_stage_2, _) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle_stage_2, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
             SumcheckId::ProductVirtualization,
         );

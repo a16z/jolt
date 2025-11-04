@@ -86,7 +86,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let read_raf = ReadRafSumcheckProver::gen(sm);
+        let opening_accumulator = sm.get_prover_accumulator();
+        let read_raf = ReadRafSumcheckProver::gen(sm, &opening_accumulator.borrow());
 
         #[cfg(feature = "allocative")]
         {
@@ -100,7 +101,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let ra_virtual = RaSumcheckProver::gen(sm);
+        let opening_accumulator = sm.get_prover_accumulator();
+        let ra_virtual = RaSumcheckProver::gen(sm, &opening_accumulator.borrow());
 
         let ra_evals = self.get_or_compute_ra_evals(sm);
         let booleanity = gen_ra_booleanity_prover(sm, ra_evals);
@@ -146,7 +148,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let ra_virtual = RaSumcheckVerifier::new(sm);
+        let opening_accumulator = sm.get_verifier_accumulator();
+        let ra_virtual = RaSumcheckVerifier::new(&opening_accumulator.borrow());
         let booleanity = new_ra_booleanity_verifier(sm);
         vec![Box::new(ra_virtual), Box::new(booleanity)]
     }

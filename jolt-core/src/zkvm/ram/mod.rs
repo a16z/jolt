@@ -490,10 +490,15 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let raf_evaluation = RafEvaluationSumcheckProver::gen(state_manager);
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let raf_evaluation =
+            RafEvaluationSumcheckProver::gen(state_manager, &opening_accumulator.borrow());
 
-        let read_write_checking =
-            RamReadWriteCheckingProver::gen(&self.initial_memory_state, state_manager);
+        let read_write_checking = RamReadWriteCheckingProver::gen(
+            &self.initial_memory_state,
+            state_manager,
+            &opening_accumulator.borrow(),
+        );
 
         let output_check = OutputSumcheckProver::gen(
             &self.initial_memory_state,
@@ -522,9 +527,14 @@ where
         prover_accumulate_advice(state_manager);
         let booleanity = gen_ra_booleanity_prover(state_manager);
 
-        let val_evaluation =
-            ValEvaluationSumcheckProver::gen(&self.initial_memory_state, state_manager);
-        let val_final_evaluation = ValFinalSumcheckProver::gen(state_manager);
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let val_evaluation = ValEvaluationSumcheckProver::gen(
+            &self.initial_memory_state,
+            state_manager,
+            &opening_accumulator.borrow(),
+        );
+        let val_final_evaluation =
+            ValFinalSumcheckProver::gen(state_manager, &opening_accumulator.borrow());
 
         #[cfg(feature = "allocative")]
         {
@@ -544,8 +554,10 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let hamming_booleanity = HammingBooleanitySumcheckProver::gen(state_manager);
-        let ra_virtual = RaSumcheckProver::gen(state_manager);
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let hamming_booleanity =
+            HammingBooleanitySumcheckProver::gen(state_manager, &opening_accumulator.borrow());
+        let ra_virtual = RaSumcheckProver::gen(state_manager, &opening_accumulator.borrow());
 
         #[cfg(feature = "allocative")]
         {
@@ -629,8 +641,11 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        let raf_evaluation = RafEvaluationSumcheckVerifier::new(state_manager);
-        let read_write_checking = RamReadWriteCheckingVerifier::new(state_manager);
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        let raf_evaluation =
+            RafEvaluationSumcheckVerifier::new(state_manager, &opening_accumulator.borrow());
+        let opening_ref = opening_accumulator.borrow();
+        let read_write_checking = RamReadWriteCheckingVerifier::new(state_manager, &*opening_ref);
         let output_check = OutputSumcheckVerifier::new(state_manager);
 
         vec![
@@ -648,10 +663,17 @@ where
         verifier_accumulate_advice(state_manager);
         let booleanity = new_ra_booleanity_verifier(state_manager);
 
-        let val_evaluation =
-            ValEvaluationSumcheckVerifier::new(&self.initial_memory_state, state_manager);
-        let val_final_evaluation =
-            ValFinalSumcheckVerifier::new(&self.initial_memory_state, state_manager);
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        let val_evaluation = ValEvaluationSumcheckVerifier::new(
+            &self.initial_memory_state,
+            state_manager,
+            &opening_accumulator.borrow(),
+        );
+        let val_final_evaluation = ValFinalSumcheckVerifier::new(
+            &self.initial_memory_state,
+            state_manager,
+            &opening_accumulator.borrow(),
+        );
 
         vec![
             Box::new(booleanity),
@@ -665,7 +687,8 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         let hamming_booleanity = HammingBooleanitySumcheckVerifier::new(state_manager);
-        let ra_virtual = RaSumcheckVerifier::new(state_manager);
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        let ra_virtual = RaSumcheckVerifier::new(state_manager, &opening_accumulator.borrow());
         vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
     }
 

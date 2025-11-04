@@ -24,13 +24,13 @@ use crate::zkvm::spartan::outer::{
 use crate::zkvm::spartan::product::{
     ProductVirtualInnerProver, ProductVirtualInnerVerifier, ProductVirtualRemainderProver,
     ProductVirtualRemainderVerifier, ProductVirtualUniSkipInstanceParams,
+    ProductVirtualUniSkipInstanceProver,
 };
 use crate::zkvm::spartan::shift::{ShiftSumcheckProver, ShiftSumcheckVerifier};
 use crate::zkvm::witness::VirtualPolynomial;
 
 use product::{
-    ProductVirtualUniSkipInstance, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
-    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 
 pub mod inner;
@@ -126,10 +126,14 @@ where
         let mut tau: Vec<F::Challenge> = r_cycle;
         tau.push(tau_high);
 
-        let mut uniskip_instance =
-            ProductVirtualUniSkipInstance::<F>::new_prover(state_manager, &tau);
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let mut uniskip_instance = ProductVirtualUniSkipInstanceProver::<F>::gen(
+            state_manager,
+            &opening_accumulator.borrow(),
+            &tau,
+        );
         let (first_round_proof, r0, claim_after_first) =
-            prove_uniskip_round::<F, ProofTranscript, ProductVirtualUniSkipInstance<F>>(
+            prove_uniskip_round::<F, ProofTranscript, ProductVirtualUniSkipInstanceProver<F>>(
                 &mut uniskip_instance,
                 &mut state_manager.transcript,
             );
@@ -153,7 +157,9 @@ where
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         // Stage 2 remainder: inner + product remainder
         let key = self.state.key.clone();
-        let inner_sumcheck = InnerSumcheckProver::gen(state_manager, key);
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let inner_sumcheck =
+            InnerSumcheckProver::gen(state_manager, &opening_accumulator.borrow(), key);
 
         let st = self
             .state
@@ -183,9 +189,13 @@ where
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
         let key = self.state.key.clone();
-        let shift_sumcheck = ShiftSumcheckProver::gen(state_manager, key);
-        let instruction_input_sumcheck = InstructionInputSumcheckProver::gen(state_manager);
-        let product_virtual_claim_check = ProductVirtualInnerProver::new(state_manager);
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let shift_sumcheck =
+            ShiftSumcheckProver::gen(state_manager, &opening_accumulator.borrow(), key);
+        let instruction_input_sumcheck =
+            InstructionInputSumcheckProver::gen(state_manager, &opening_accumulator.borrow());
+        let product_virtual_claim_check =
+            ProductVirtualInnerProver::new(state_manager, &opening_accumulator.borrow());
 
         #[cfg(feature = "allocative")]
         {
@@ -356,9 +366,13 @@ where
            Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
         let key = self.state.key.clone();
-        let shift_sumcheck = ShiftSumcheckVerifier::new(state_manager, key);
-        let instruction_input_sumcheck = InstructionInputSumcheckVerifier::new(state_manager);
-        let product_virtual_claim_check = ProductVirtualInnerVerifier::new(state_manager);
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        let shift_sumcheck =
+            ShiftSumcheckVerifier::new(state_manager, &opening_accumulator.borrow(), key);
+        let instruction_input_sumcheck =
+            InstructionInputSumcheckVerifier::new(state_manager, &opening_accumulator.borrow());
+        let product_virtual_claim_check =
+            ProductVirtualInnerVerifier::new(state_manager, &opening_accumulator.borrow());
         vec![
             Box::new(shift_sumcheck),
             Box::new(instruction_input_sumcheck),

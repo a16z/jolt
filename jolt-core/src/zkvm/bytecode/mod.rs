@@ -145,7 +145,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let read_raf = ReadRafSumcheckProver::gen(sm);
+        let opening_accumulator = sm.get_prover_accumulator();
+        let read_raf = ReadRafSumcheckProver::gen(sm, &opening_accumulator.borrow());
         let (hamming_weight, booleanity) = gen_ra_one_hot_provers(sm);
 
         #[cfg(feature = "allocative")]
@@ -172,7 +173,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let read_checking = ReadRafSumcheckVerifier::gen(sm);
+        let opening_accumulator = sm.get_verifier_accumulator();
+        let read_checking = ReadRafSumcheckVerifier::gen(sm, &opening_accumulator.borrow());
         let (hamming_weight, booleanity) = new_ra_one_hot_verifiers(sm);
         vec![
             Box::new(read_checking),

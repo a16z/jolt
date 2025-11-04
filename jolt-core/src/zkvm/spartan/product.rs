@@ -86,22 +86,23 @@ const PRODUCT_VIRTUAL_REMAINDER_DEGREE: usize = 3;
 
 /// Uni-skip instance for product virtualization, computing the first-round polynomial only.
 #[derive(Allocative)]
-pub struct ProductVirtualUniSkipInstance<F: JoltField> {
+pub struct ProductVirtualUniSkipInstanceProver<F: JoltField> {
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
     #[allocative(skip)]
     params: ProductVirtualUniSkipInstanceParams<F>,
 }
 
-impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
+impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
     /// Initialize a new prover for the univariate skip round
     /// The 5 base evaluations are the claimed evaluations of the 5 product terms from Spartan outer
-    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstance::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstanceProver::gen")]
+    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
         tau: &[F::Challenge],
     ) -> Self {
-        let params = ProductVirtualUniSkipInstanceParams::new(state_manager, tau);
+        let params = ProductVirtualUniSkipInstanceParams::new(opening_accumulator, tau);
 
         let (_, _, trace, _, _) = state_manager.get_prover_data();
 
@@ -298,7 +299,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
 }
 
 impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
-    for ProductVirtualUniSkipInstance<F>
+    for ProductVirtualUniSkipInstanceProver<F>
 {
     const DEGREE_BOUND: usize = PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1;
     const DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
@@ -336,14 +337,11 @@ pub struct ProductVirtualUniSkipInstanceParams<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualUniSkipInstanceParams<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        tau: &[F::Challenge],
-    ) -> Self {
+    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>, tau: &[F::Challenge]) -> Self {
         let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
         for (i, vp) in PRODUCT_VIRTUAL_TERMS.iter().enumerate() {
             let (_, eval) =
-                state_manager.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
+                opening_accumulator.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
             base_evals[i] = eval;
         }
         Self {
@@ -921,8 +919,9 @@ impl<F: JoltField> ProductVirtualInnerProver<F> {
     #[tracing::instrument(skip_all, name = "ProductVirtualInnerProver::new")]
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = ProductVirtualInnerParams::new(state_manager);
+        let params = ProductVirtualInnerParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -968,8 +967,9 @@ pub struct ProductVirtualInnerVerifier<F: JoltField> {
 impl<F: JoltField> ProductVirtualInnerVerifier<F> {
     pub fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = ProductVirtualInnerParams::new(state_manager);
+        let params = ProductVirtualInnerParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -1082,9 +1082,10 @@ struct ProductVirtualInnerParams<F: JoltField> {
 impl<F: JoltField> ProductVirtualInnerParams<F> {
     fn new(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let gamma = state_manager.transcript.challenge_scalar_optimized::<F>();
-        let (pt_left, _) = state_manager.get_virtual_polynomial_opening(
+        let (pt_left, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::FusedProductLeft,
             SumcheckId::ProductVirtualization,
         );
