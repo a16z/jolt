@@ -347,12 +347,10 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trusted_advice_commitment,
                 final_memory_state,
             );
-            let transcript = &mut FS::new(b"Jolt");
             let opening_accumulator = ProverOpeningAccumulator::new(trace_length.log_2());
-            let (proof, debug_info) =
-                prove_jolt_dag(state_manager, opening_accumulator, transcript)
-                    .ok()
-                    .unwrap();
+            let (proof, debug_info) = prove_jolt_dag(state_manager, opening_accumulator)
+                .ok()
+                .unwrap();
             let prove_duration = start.elapsed();
             tracing::info!(
                 "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
@@ -411,7 +409,10 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 .insert(*key, (OpeningPoint::default(), *claim));
         }
 
-        let transcript = &mut FS::new(b"Jolt");
+        #[cfg(test)]
+        let mut transcript = FS::new(b"Jolt");
+        #[cfg(not(test))]
+        let transcript = FS::new(b"Jolt");
 
         #[cfg(test)]
         {
@@ -422,6 +423,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         }
 
         let state_manager = StateManager {
+            transcript,
             proofs: proof.proofs,
             commitments: proof.commitments,
             untrusted_advice_commitment: proof.untrusted_advice_commitment,
@@ -437,8 +439,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }),
         };
 
-        verify_jolt_dag(state_manager, opening_accumulator, transcript)
-            .expect("Verification failed");
+        verify_jolt_dag(state_manager, opening_accumulator).expect("Verification failed");
 
         Ok(())
     }

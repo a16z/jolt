@@ -57,9 +57,8 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
     pub fn gen(
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = InstructionInputParams::new(opening_accumulator, transcript);
+        let params = InstructionInputParams::new(state_manager, opening_accumulator);
 
         let (_, _, trace, _, _) = state_manager.get_prover_data();
 
@@ -417,10 +416,10 @@ pub struct InstructionInputSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
     pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = InstructionInputParams::new(opening_accumulator, transcript);
+        let params = InstructionInputParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -557,8 +556,8 @@ struct InstructionInputParams<F: JoltField> {
 
 impl<F: JoltField> InstructionInputParams<F> {
     fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
         let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
@@ -568,7 +567,7 @@ impl<F: JoltField> InstructionInputParams<F> {
             VirtualPolynomial::LeftInstructionInput,
             SumcheckId::ProductVirtualization,
         );
-        let gamma = transcript.challenge_scalar();
+        let gamma = state_manager.transcript.challenge_scalar();
         Self {
             r_cycle_stage_1,
             r_cycle_stage_2,

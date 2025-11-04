@@ -918,10 +918,10 @@ pub struct ProductVirtualInnerProver<F: JoltField> {
 impl<F: JoltField> ProductVirtualInnerProver<F> {
     #[tracing::instrument(skip_all, name = "ProductVirtualInnerProver::new")]
     pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ProductVirtualInnerParams::new(opening_accumulator, transcript);
+        let params = ProductVirtualInnerParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -966,10 +966,10 @@ pub struct ProductVirtualInnerVerifier<F: JoltField> {
 
 impl<F: JoltField> ProductVirtualInnerVerifier<F> {
     pub fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ProductVirtualInnerParams::new(opening_accumulator, transcript);
+        let params = ProductVirtualInnerParams::new(state_manager, opening_accumulator);
         Self { params }
     }
 }
@@ -1081,10 +1081,10 @@ struct ProductVirtualInnerParams<F: JoltField> {
 
 impl<F: JoltField> ProductVirtualInnerParams<F> {
     fn new(
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma = transcript.challenge_scalar_optimized::<F>();
+        let gamma = state_manager.transcript.challenge_scalar_optimized::<F>();
         let (pt_left, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::FusedProductLeft,
             SumcheckId::ProductVirtualization,
