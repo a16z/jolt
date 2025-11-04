@@ -401,10 +401,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 .map_or(0, |pos| pos + 1),
         );
 
-        // let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
-
-        let mut opening_accumulator =
-            VerifierOpeningAccumulator::<F>::new(proof.trace_length.log_2());
+        let mut opening_accumulator = VerifierOpeningAccumulator::new(proof.trace_length.log_2());
         // Populate claims in the verifier accumulator
         for (key, (_, claim)) in proof.opening_claims.0.iter() {
             opening_accumulator
@@ -412,18 +409,25 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 .insert(*key, (OpeningPoint::default(), *claim));
         }
 
-        let proofs = proof.proofs;
-
-        let commitments = proof.commitments;
-
+        #[cfg(test)]
+        let mut transcript = FS::new(b"Jolt");
+        #[cfg(not(test))]
         let transcript = FS::new(b"Jolt");
+
+        #[cfg(test)]
+        {
+            if let Some(debug_info) = _debug_info {
+                transcript.compare_to(debug_info.transcript);
+                opening_accumulator.compare_to(debug_info.opening_accumulator);
+            }
+        }
 
         let mut state_manager = StateManager {
             transcript,
-            proofs,
-            commitments,
+            proofs: proofs.proofs,
+            commitments: proofs.commitments,
             untrusted_advice_commitment: proof.untrusted_advice_commitment,
-            trusted_advice_commitment: None,
+            trusted_advice_commitment,
             program_io,
             ram_K: proof.ram_K,
             ram_d: AllCommittedPolynomials::ram_d_from_K(proof.ram_K),
@@ -434,7 +438,6 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trace_length: proof.trace_length,
             }),
         };
-        state_manager.trusted_advice_commitment = trusted_advice_commitment;
 
         #[cfg(test)]
         {
