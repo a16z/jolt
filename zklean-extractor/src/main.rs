@@ -83,12 +83,12 @@ fn main() -> Result<(), FSError> {
     let modules: Vec<Box<dyn AsModule>> = vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
-        match ParameterSet::WORD_SIZE {
+        match ParameterSet::XLEN {
             32 => Box::new(ZkLeanLookupTables::<32>::extract()),
             64 => Box::new(ZkLeanLookupTables::<64>::extract()),
             _ => panic!("Unsupported architecture size"),
         },
-        match ParameterSet::WORD_SIZE {
+        match ParameterSet::XLEN {
             32 => Box::new(ZkLeanTests::<32>::extract(&mut rng)),
             64 => Box::new(ZkLeanTests::<64>::extract(&mut rng)),
             _ => panic!("Unsupported architecture size"),

@@ -11,13 +11,13 @@ use crate::{
 type TestField = ark_bn254::Fr;
 
 #[derive(Debug, Clone)]
-pub struct ZkLeanLookupTableTest<const WORD_SIZE: usize> {
+pub struct ZkLeanLookupTableTest<const XLEN: usize> {
     lookup_table_ident: String,
     output: TestField,
 }
 
-impl<const WORD_SIZE: usize> ZkLeanLookupTableTest<WORD_SIZE> {
-    fn extract(lookup_table: &ZkLeanLookupTable<WORD_SIZE>, input: &[TestField]) -> Self {
+impl<const XLEN: usize> ZkLeanLookupTableTest<XLEN> {
+    fn extract(lookup_table: &ZkLeanLookupTable<XLEN>, input: &[TestField]) -> Self {
         Self {
             lookup_table_ident: lookup_table.name(),
             output: lookup_table.lookup_table.evaluate_mle(input),
@@ -26,14 +26,14 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTableTest<WORD_SIZE> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ZkLeanTests<const WORD_SIZE: usize> {
+pub struct ZkLeanTests<const XLEN: usize> {
     input: Vec<TestField>,
-    tests: Vec<ZkLeanLookupTableTest<WORD_SIZE>>,
+    tests: Vec<ZkLeanLookupTableTest<XLEN>>,
 }
 
-impl<const WORD_SIZE: usize> ZkLeanTests<WORD_SIZE> {
+impl<const XLEN: usize> ZkLeanTests<XLEN> {
     pub fn extract(rng: &mut impl RngCore) -> Self {
-        let num_variables = 2 * WORD_SIZE;
+        let num_variables = 2 * XLEN;
         let input: Vec<_> = (0..num_variables).map(|_| TestField::random(rng)).collect();
         let tests: Vec<_> = ZkLeanLookupTable::iter()
             .map(|table| ZkLeanLookupTableTest::extract(&table, &input))
@@ -60,7 +60,7 @@ impl<const WORD_SIZE: usize> ZkLeanTests<WORD_SIZE> {
         writeln!(f, "abbrev TestField := BN254.ScalarField")?;
         writeln!(f)?;
 
-        let num_variables = 2 * WORD_SIZE;
+        let num_variables = 2 * XLEN;
         write!(
             f,
             "{}def input : Vector TestField {num_variables} := #v[",
@@ -86,7 +86,7 @@ impl<const WORD_SIZE: usize> ZkLeanTests<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> AsModule for ZkLeanTests<WORD_SIZE> {
+impl<const XLEN: usize> AsModule for ZkLeanTests<XLEN> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents, 0)?;

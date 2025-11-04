@@ -8,15 +8,15 @@ use crate::{
 };
 
 /// Wrapper around a JoltInstruction
-// TODO: Can we tie the WORD_SIZE to the JoltParameterSet somehow? Seem hard w/o const generic
+// TODO: Can we tie the XLEN to the JoltParameterSet somehow? Seem hard w/o const generic
 // exprs...
 #[derive(Debug, Clone)]
-pub struct ZkLeanLookupTable<const WORD_SIZE: usize> {
-    pub lookup_table: LookupTables<WORD_SIZE>,
+pub struct ZkLeanLookupTable<const XLEN: usize> {
+    pub lookup_table: LookupTables<XLEN>,
 }
 
-impl<const WORD_SIZE: usize> From<LookupTables<WORD_SIZE>> for ZkLeanLookupTable<WORD_SIZE> {
-    fn from(value: LookupTables<WORD_SIZE>) -> Self {
+impl<const XLEN: usize> From<LookupTables<XLEN>> for ZkLeanLookupTable<XLEN> {
+    fn from(value: LookupTables<XLEN>) -> Self {
         Self {
             lookup_table: value,
         }
@@ -36,23 +36,23 @@ impl<F: ZkLeanReprField> std::fmt::Display for DisplayZkLean<F> {
     }
 }
 
-impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
+impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
     pub fn name(&self) -> String {
         let name = <&'static str>::from(&self.lookup_table);
-        let word_size = WORD_SIZE;
+        let word_size = XLEN;
 
         format!("{name}_{word_size}_lookup_table")
     }
 
     pub fn evaluate_mle<F: ZkLeanReprField>(&self, reg_name: char) -> F {
-        let num_variables = 2 * WORD_SIZE;
+        let num_variables = 2 * XLEN;
         let reg = F::register(reg_name, num_variables);
 
         self.lookup_table.evaluate_mle::<F, F>(&reg)
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        LookupTables::<WORD_SIZE>::iter().map(Self::from)
+        LookupTables::<XLEN>::iter().map(Self::from)
     }
 
     /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
@@ -62,7 +62,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
     ) -> std::io::Result<()> {
         let printable = DisplayZkLean {
             name: self.name(),
-            num_variables: 2 * WORD_SIZE,
+            num_variables: 2 * XLEN,
             mle: self.evaluate_mle::<F>('x'),
         };
         let _ = write!(f, "{printable}");
@@ -70,11 +70,11 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
     }
 }
 
-pub struct ZkLeanLookupTables<const WORD_SIZE: usize> {
-    instructions: Vec<ZkLeanLookupTable<WORD_SIZE>>,
+pub struct ZkLeanLookupTables<const XLEN: usize> {
+    instructions: Vec<ZkLeanLookupTable<XLEN>>,
 }
 
-impl<const WORD_SIZE: usize> ZkLeanLookupTables<WORD_SIZE> {
+impl<const XLEN: usize> ZkLeanLookupTables<XLEN> {
     pub fn extract() -> Self {
         Self {
             instructions: ZkLeanLookupTable::iter().collect(),
@@ -93,7 +93,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTables<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> AsModule for ZkLeanLookupTables<WORD_SIZE> {
+impl<const XLEN: usize> AsModule for ZkLeanLookupTables<XLEN> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents)?;
@@ -120,21 +120,21 @@ mod test {
     type RefField = ark_bn254::Fr;
     type TestField = crate::mle_ast::DefaultMleAst;
 
-    const WORD_SIZE: usize = 32;
+    const XLEN: usize = 32;
 
     #[derive(Clone)]
-    struct TestableLookupTable<const WORD_SIZE: usize> {
-        reference: LookupTables<WORD_SIZE>,
-        test: ZkLeanLookupTable<WORD_SIZE>,
+    struct TestableLookupTable<const XLEN: usize> {
+        reference: LookupTables<XLEN>,
+        test: ZkLeanLookupTable<XLEN>,
     }
 
-    impl<const WORD_SIZE: usize> std::fmt::Debug for TestableLookupTable<WORD_SIZE> {
+    impl<const XLEN: usize> std::fmt::Debug for TestableLookupTable<XLEN> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_fmt(format_args!("{}", self.test.name()))
         }
     }
 
-    impl<const WORD_SIZE: usize> TestableLookupTable<WORD_SIZE> {
+    impl<const XLEN: usize> TestableLookupTable<XLEN> {
         fn iter() -> impl Iterator<Item = Self> {
             ZkLeanLookupTable::iter().map(|instr| Self {
                 reference: instr.lookup_table,
@@ -143,13 +143,13 @@ mod test {
         }
 
         fn evaluate_reference_mle<R: JoltField>(&self, inputs: &[R]) -> R {
-            assert_eq!(inputs.len(), 2 * WORD_SIZE);
+            assert_eq!(inputs.len(), 2 * XLEN);
 
             self.reference.evaluate_mle(inputs)
         }
 
         fn evaluate_test_mle<R: JoltField, T: ZkLeanReprField>(&self, inputs: &[R]) -> R {
-            assert_eq!(inputs.len(), 2 * WORD_SIZE);
+            assert_eq!(inputs.len(), 2 * XLEN);
 
             let ast: T = self.test.evaluate_mle('x');
             ast.evaluate(&Environment {
@@ -159,17 +159,16 @@ mod test {
         }
     }
 
-    fn arb_instruction<const WORD_SIZE: usize>(
-    ) -> impl Strategy<Value = TestableLookupTable<WORD_SIZE>> {
-        let num_instrs = TestableLookupTable::<WORD_SIZE>::iter().count();
+    fn arb_instruction<const XLEN: usize>() -> impl Strategy<Value = TestableLookupTable<XLEN>> {
+        let num_instrs = TestableLookupTable::<XLEN>::iter().count();
 
         (0..num_instrs).prop_map(|n| TestableLookupTable::iter().nth(n).unwrap())
     }
 
-    fn arb_instruction_and_input<R: JoltField, const WORD_SIZE: usize>(
-    ) -> impl Strategy<Value = (TestableLookupTable<WORD_SIZE>, Vec<R>)> {
+    fn arb_instruction_and_input<R: JoltField, const XLEN: usize>(
+    ) -> impl Strategy<Value = (TestableLookupTable<XLEN>, Vec<R>)> {
         arb_instruction().prop_flat_map(|instr| {
-            let input_len = 2 * WORD_SIZE;
+            let input_len = 2 * XLEN;
             let inputs = vec(arb_field_elem::<R>(), input_len);
 
             (Just(instr), inputs)
@@ -179,7 +178,7 @@ mod test {
     proptest! {
         #[test]
         fn evaluate_mle(
-            (instr, inputs) in arb_instruction_and_input::<RefField, WORD_SIZE>(),
+            (instr, inputs) in arb_instruction_and_input::<RefField, XLEN>(),
         ) {
             prop_assert_eq!(
                 instr.evaluate_test_mle::<_, TestField>(&inputs),

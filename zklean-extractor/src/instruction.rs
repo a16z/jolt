@@ -69,7 +69,7 @@ impl<J> From<Instruction> for ZkLeanInstruction<J> {
 impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     pub fn name(&self) -> String {
         let name = <&'static str>::from(&self.instruction);
-        let word_size = J::WORD_SIZE;
+        let word_size = J::XLEN;
 
         format!("{name}_{word_size}")
     }
@@ -78,7 +78,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         Instruction::iter().filter_map(|instr| {
             // Needed to call `Instruction::inline_sequence`
             let allocator = tracer::utils::virtual_registers::VirtualRegisterAllocator::new();
-            let xlen = match J::WORD_SIZE {
+            let xlen = match J::XLEN {
                 32 => tracer::emulator::cpu::Xlen::Bit32,
                 64 => tracer::emulator::cpu::Xlen::Bit64,
                 _ => panic!("Unsupported bit width"),
@@ -103,7 +103,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         mut indent_level: usize,
     ) -> std::io::Result<()> {
         let name = self.name();
-        let num_variables = 2 * J::WORD_SIZE;
+        let num_variables = 2 * J::XLEN;
         let interleaving = self.interleaving;
         let lookup_table = match self
             .instruction

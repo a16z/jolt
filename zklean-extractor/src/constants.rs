@@ -5,7 +5,7 @@ use common::{constants, jolt_device::MemoryConfig};
 /// compatibility.
 pub trait JoltParameterSet {
     /// The architecture size.
-    const WORD_SIZE: usize;
+    const XLEN: usize;
     /// The memory config to use
     const MEMORY_CONFIG: MemoryConfig;
 }
@@ -15,7 +15,7 @@ pub trait JoltParameterSet {
 pub struct RV64IParameterSet;
 
 impl JoltParameterSet for RV64IParameterSet {
-    const WORD_SIZE: usize = 64;
+    const XLEN: usize = 64;
     const MEMORY_CONFIG: MemoryConfig = MemoryConfig {
         max_input_size: constants::DEFAULT_MAX_INPUT_SIZE,
         max_output_size: constants::DEFAULT_MAX_OUTPUT_SIZE,
