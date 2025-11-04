@@ -1,5 +1,6 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -15,6 +16,7 @@ pub trait SumcheckStagesProver<
     fn stage1_uni_skip(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -23,6 +25,7 @@ pub trait SumcheckStagesProver<
     fn stage1_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -31,6 +34,7 @@ pub trait SumcheckStagesProver<
     fn stage2_uni_skip(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -39,6 +43,7 @@ pub trait SumcheckStagesProver<
     fn stage2_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -46,6 +51,7 @@ pub trait SumcheckStagesProver<
     fn stage3_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -53,6 +59,7 @@ pub trait SumcheckStagesProver<
     fn stage4_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -60,6 +67,7 @@ pub trait SumcheckStagesProver<
     fn stage5_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -67,6 +75,7 @@ pub trait SumcheckStagesProver<
     fn stage6_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -74,6 +83,7 @@ pub trait SumcheckStagesProver<
     fn stage7_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         vec![]
     }
@@ -89,6 +99,7 @@ pub trait SumcheckStagesVerifier<
     fn stage1_uni_skip(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -97,6 +108,7 @@ pub trait SumcheckStagesVerifier<
     fn stage1_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -105,6 +117,7 @@ pub trait SumcheckStagesVerifier<
     fn stage2_uni_skip(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -112,6 +125,7 @@ pub trait SumcheckStagesVerifier<
     fn stage2_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -119,6 +133,7 @@ pub trait SumcheckStagesVerifier<
     fn stage3_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -126,6 +141,7 @@ pub trait SumcheckStagesVerifier<
     fn stage4_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -133,6 +149,7 @@ pub trait SumcheckStagesVerifier<
     fn stage5_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -140,6 +157,7 @@ pub trait SumcheckStagesVerifier<
     fn stage6_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }
@@ -147,6 +165,7 @@ pub trait SumcheckStagesVerifier<
     fn stage7_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         vec![]
     }

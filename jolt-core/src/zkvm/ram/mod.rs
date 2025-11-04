@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
     HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
@@ -270,6 +271,7 @@ impl RamDagProver {
 /// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
 pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    opening_accumulator: &mut ProverOpeningAccumulator<F>,
 ) where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -280,10 +282,10 @@ pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
         .as_ref()
         .expect("prover_state must be present when accumulating advice");
 
-    let accumulate_closure = |state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+    let accumulate_closure = |opening_accumulator: &ProverOpeningAccumulator<F>,
                               advice_poly: &MultilinearPolynomial<F>,
                               max_advice_size: usize| {
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
@@ -302,54 +304,41 @@ pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
 
     if let Some(untrusted_advice_poly) = &prover_state.untrusted_advice_polynomial {
         let (point, eval) = accumulate_closure(
-            state_manager,
+            opening_accumulator,
             untrusted_advice_poly,
             state_manager
                 .program_io
                 .memory_layout
                 .max_untrusted_advice_size as usize,
         );
-
-        prover_state
-            .accumulator
-            .borrow_mut()
-            .append_untrusted_advice(&mut state_manager.transcript, point, eval);
+        opening_accumulator.append_untrusted_advice(&mut state_manager.transcript, point, eval);
     }
 
     if let Some(trusted_advice_poly) = &prover_state.trusted_advice_polynomial {
         let (point, eval) = accumulate_closure(
-            state_manager,
+            opening_accumulator,
             trusted_advice_poly,
             state_manager
                 .program_io
                 .memory_layout
                 .max_trusted_advice_size as usize,
         );
-
-        prover_state.accumulator.borrow_mut().append_trusted_advice(
-            &mut state_manager.transcript,
-            point,
-            eval,
-        );
+        opening_accumulator.append_trusted_advice(&mut state_manager.transcript, point, eval);
     }
 }
 
 /// Accumulates advice commitments into the verifier's accumulator.
 pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
     state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
 ) where
     F: JoltField,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
-    let verifier_state = state_manager
-        .verifier_state
-        .as_ref()
-        .expect("verifier_state must be present when accumulating advice");
-
-    let get_advice_point = |state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+    let get_advice_point = |opening_accumulator: &VerifierOpeningAccumulator<F>,
                             max_advice_size: usize| {
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
@@ -365,32 +354,24 @@ pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
 
     if state_manager.untrusted_advice_commitment.is_some() {
         let point = get_advice_point(
-            state_manager,
+            opening_accumulator,
             state_manager
                 .program_io
                 .memory_layout
                 .max_untrusted_advice_size as usize,
         );
-
-        verifier_state
-            .accumulator
-            .borrow_mut()
-            .append_untrusted_advice(&mut state_manager.transcript, point);
+        opening_accumulator.append_untrusted_advice(&mut state_manager.transcript, point);
     }
 
     if state_manager.trusted_advice_commitment.is_some() {
         let point = get_advice_point(
-            state_manager,
+            opening_accumulator,
             state_manager
                 .program_io
                 .memory_layout
                 .max_trusted_advice_size as usize,
         );
-
-        verifier_state
-            .accumulator
-            .borrow_mut()
-            .append_trusted_advice(&mut state_manager.transcript, point);
+        opening_accumulator.append_trusted_advice(&mut state_manager.transcript, point);
     }
 }
 
@@ -489,15 +470,14 @@ where
     fn stage2_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let opening_accumulator = state_manager.get_prover_accumulator();
-        let raf_evaluation =
-            RafEvaluationSumcheckProver::gen(state_manager, &opening_accumulator.borrow());
+        let raf_evaluation = RafEvaluationSumcheckProver::gen(state_manager, opening_accumulator);
 
         let read_write_checking = RamReadWriteCheckingProver::gen(
             &self.initial_memory_state,
             state_manager,
-            &opening_accumulator.borrow(),
+            opening_accumulator,
         );
 
         let output_check = OutputSumcheckProver::gen(
@@ -523,18 +503,17 @@ where
     fn stage4_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        prover_accumulate_advice(state_manager);
+        prover_accumulate_advice(state_manager, opening_accumulator);
         let booleanity = gen_ra_booleanity_prover(state_manager);
 
-        let opening_accumulator = state_manager.get_prover_accumulator();
         let val_evaluation = ValEvaluationSumcheckProver::gen(
             &self.initial_memory_state,
             state_manager,
-            &opening_accumulator.borrow(),
+            opening_accumulator,
         );
-        let val_final_evaluation =
-            ValFinalSumcheckProver::gen(state_manager, &opening_accumulator.borrow());
+        let val_final_evaluation = ValFinalSumcheckProver::gen(state_manager, opening_accumulator);
 
         #[cfg(feature = "allocative")]
         {
@@ -553,11 +532,11 @@ where
     fn stage5_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let opening_accumulator = state_manager.get_prover_accumulator();
         let hamming_booleanity =
-            HammingBooleanitySumcheckProver::gen(state_manager, &opening_accumulator.borrow());
-        let ra_virtual = RaSumcheckProver::gen(state_manager, &opening_accumulator.borrow());
+            HammingBooleanitySumcheckProver::gen(state_manager, opening_accumulator);
+        let ra_virtual = RaSumcheckProver::gen(state_manager, opening_accumulator);
 
         #[cfg(feature = "allocative")]
         {
@@ -571,8 +550,9 @@ where
     fn stage6_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let hamming_weight = gen_ra_hamming_weight_prover(state_manager);
+        let hamming_weight = gen_ra_hamming_weight_prover(state_manager, opening_accumulator);
 
         #[cfg(feature = "allocative")]
         {
@@ -640,12 +620,11 @@ where
     fn stage2_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        let opening_accumulator = state_manager.get_verifier_accumulator();
-        let raf_evaluation =
-            RafEvaluationSumcheckVerifier::new(state_manager, &opening_accumulator.borrow());
-        let opening_ref = opening_accumulator.borrow();
-        let read_write_checking = RamReadWriteCheckingVerifier::new(state_manager, &*opening_ref);
+        let raf_evaluation = RafEvaluationSumcheckVerifier::new(state_manager, opening_accumulator);
+        let read_write_checking =
+            RamReadWriteCheckingVerifier::new(state_manager, opening_accumulator);
         let output_check = OutputSumcheckVerifier::new(state_manager);
 
         vec![
@@ -658,21 +637,21 @@ where
     fn stage4_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         // Accumulate advice commitments if present
-        verifier_accumulate_advice(state_manager);
+        verifier_accumulate_advice(state_manager, opening_accumulator);
         let booleanity = new_ra_booleanity_verifier(state_manager);
 
-        let opening_accumulator = state_manager.get_verifier_accumulator();
         let val_evaluation = ValEvaluationSumcheckVerifier::new(
             &self.initial_memory_state,
             state_manager,
-            &opening_accumulator.borrow(),
+            opening_accumulator,
         );
         let val_final_evaluation = ValFinalSumcheckVerifier::new(
             &self.initial_memory_state,
             state_manager,
-            &opening_accumulator.borrow(),
+            opening_accumulator,
         );
 
         vec![
@@ -685,16 +664,17 @@ where
     fn stage5_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         let hamming_booleanity = HammingBooleanitySumcheckVerifier::new(state_manager);
-        let opening_accumulator = state_manager.get_verifier_accumulator();
-        let ra_virtual = RaSumcheckVerifier::new(state_manager, &opening_accumulator.borrow());
+        let ra_virtual = RaSumcheckVerifier::new(state_manager, opening_accumulator);
         vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
     }
 
     fn stage6_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
         let hamming_weight = new_ra_hamming_weight_verifier(state_manager);
         vec![Box::new(hamming_weight)]
@@ -747,13 +727,14 @@ fn gen_ra_booleanity_prover<F: JoltField>(
 
 fn gen_ra_hamming_weight_prover<F: JoltField>(
     state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    opening_accumulator: &ProverOpeningAccumulator<F>,
 ) -> HammingWeightSumcheckProver<F> {
     let (_, _, trace, program_io, _) = state_manager.get_prover_data();
     let memory_layout = &program_io.memory_layout;
     let d = compute_d_parameter(state_manager.ram_K);
     let num_rounds = DTH_ROOT_OF_K.log_2();
 
-    let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
+    let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RamHammingWeight,
         SumcheckId::RamHammingBooleanity,
     );

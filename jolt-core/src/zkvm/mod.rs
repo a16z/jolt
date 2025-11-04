@@ -340,7 +340,11 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trusted_advice_commitment,
                 final_memory_state,
             );
-            let (proof, debug_info) = prove_jolt_dag(state_manager).ok().unwrap();
+            let opening_accumulator = state_manager.get_prover_accumulator();
+            let (proof, debug_info) =
+                prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
+                    .ok()
+                    .unwrap();
             let prove_duration = start.elapsed();
             tracing::info!(
                 "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
@@ -405,7 +409,9 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }
         }
 
-        verify_jolt_dag(state_manager).expect("Verification failed");
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        verify_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
+            .expect("Verification failed");
 
         Ok(())
     }

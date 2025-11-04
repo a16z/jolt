@@ -31,14 +31,14 @@ use crate::{
 use crate::{utils::math::Math, zkvm::witness::AllCommittedPolynomials};
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
-    opening_claims: Claims<F>,
+    pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
     pub proofs: Proofs<F, PCS, FS>,
-    untrusted_advice_commitment: Option<PCS::Commitment>,
+    pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
-    ram_K: usize,
-    bytecode_d: usize,
-    twist_sumcheck_switch_index: usize,
+    pub ram_K: usize,
+    pub bytecode_d: usize,
+    pub twist_sumcheck_switch_index: usize,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
@@ -165,7 +165,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         // Populate claims in the verifier accumulator
         for (key, (_, claim)) in self.opening_claims.0.iter() {
             opening_accumulator
-                .openings_mut()
+                .openings
                 .insert(*key, (OpeningPoint::default(), *claim));
         }
 
@@ -195,7 +195,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
     }
 }
 
-pub struct Claims<F: JoltField>(Openings<F>);
+pub struct Claims<F: JoltField>(pub Openings<F>);
 
 impl<F: JoltField> CanonicalSerialize for Claims<F> {
     fn serialize_with_mode<W: Write>(

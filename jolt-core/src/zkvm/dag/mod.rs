@@ -55,7 +55,10 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager).ok().unwrap();
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let (proof, _) = prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
+            .ok()
+            .unwrap();
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
@@ -108,7 +111,10 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = prove_jolt_dag(state_manager).ok().unwrap();
+        let opening_accumulator = state_manager.get_prover_accumulator();
+        let (proof, _) = prove_jolt_dag(state_manager, &mut opening_accumulator.borrow_mut())
+            .ok()
+            .unwrap();
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);

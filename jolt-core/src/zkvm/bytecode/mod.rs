@@ -1,4 +1,6 @@
-use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
+use crate::poly::opening_proof::{
+    OpeningAccumulator, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::{
@@ -144,10 +146,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage6_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let opening_accumulator = sm.get_prover_accumulator();
-        let read_raf = ReadRafSumcheckProver::gen(sm, &opening_accumulator.borrow());
-        let (hamming_weight, booleanity) = gen_ra_one_hot_provers(sm);
+        let read_raf = ReadRafSumcheckProver::gen(sm, opening_accumulator);
+        let (hamming_weight, booleanity) = gen_ra_one_hot_provers(sm, opening_accumulator);
 
         #[cfg(feature = "allocative")]
         {
@@ -172,9 +174,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
     fn stage6_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let opening_accumulator = sm.get_verifier_accumulator();
-        let read_checking = ReadRafSumcheckVerifier::gen(sm, &opening_accumulator.borrow());
+        let read_checking = ReadRafSumcheckVerifier::gen(sm, opening_accumulator);
         let (hamming_weight, booleanity) = new_ra_one_hot_verifiers(sm);
         vec![
             Box::new(read_checking),
@@ -186,11 +188,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
 
 fn gen_ra_one_hot_provers<F: JoltField>(
     state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    opening_accumulator: &ProverOpeningAccumulator<F>,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
     let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
     let bytecode_preprocessing = &preprocessing.shared.bytecode;
 
-    let r_cycle: Vec<F::Challenge> = state_manager
+    let r_cycle: Vec<F::Challenge> = opening_accumulator
         .get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter)
         .0
         .r;
