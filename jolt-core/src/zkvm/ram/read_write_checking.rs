@@ -86,7 +86,7 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     ram_addresses: Vec<Option<u64>>,
     chunk_size: usize,
     val_checkpoints: Vec<u64>,
-    val_checkpoints_new: Vec<HashMapOrVec<u64>>,
+    val_checkpoints_sparse: Vec<HashMapOrVec<u64>>,
     data_buffers: Vec<DataBuffers<F>>,
     I: Vec<Vec<(usize, usize, F, i128)>>,
     A: Vec<F>,
@@ -237,7 +237,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     .for_each(|(dest, src)| *dest = *src as u64)
             });
 
-        let val_checkpoints_new: Vec<HashMapOrVec<u64>> = trace
+        let val_checkpoints_sparse: Vec<HashMapOrVec<u64>> = trace
             .par_chunks(chunk_size)
             .map(|trace_chunk| {
                 let mut checkpoint = HashMapOrVec::new(params.K, trace_chunk.len());
@@ -352,7 +352,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             ram_addresses,
             chunk_size,
             val_checkpoints,
-            val_checkpoints_new,
+            val_checkpoints_sparse,
             data_buffers,
             I,
             A,
@@ -372,7 +372,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             I,
             data_buffers,
             A,
-            val_checkpoints_new,
+            val_checkpoints_sparse,
             inc_cycle,
             gruens_eq_r_prime,
             params,
@@ -385,7 +385,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
-                .zip(val_checkpoints_new.par_iter())
+                .zip(val_checkpoints_sparse.par_iter())
                 .map(|((I_chunk, buffers), checkpoint)| {
                     let mut evals = [F::Unreduced::<9>::zero(); 2];
 
@@ -501,7 +501,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
-                .zip(val_checkpoints_new.par_iter())
+                .zip(val_checkpoints_sparse.par_iter())
                 .map(|((I_chunk, buffers), checkpoint)| {
                     let mut evals = [F::Unreduced::<9>::zero(); 2];
 
