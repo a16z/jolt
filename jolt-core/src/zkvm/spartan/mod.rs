@@ -129,8 +129,9 @@ where
         // Stage 1 remainder: outer-remaining
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> = Vec::new();
         if let Some(st) = self.uni_skip_state.take() {
-            let n_cycles = self.key.num_cycle_vars();
-            let outer_remaining = OuterRemainingSumcheckProver::gen(state_manager, n_cycles, &st);
+            let n_cycle_vars = self.key.num_cycle_vars();
+            let outer_remaining =
+                OuterRemainingSumcheckProver::gen(state_manager, n_cycle_vars, &st);
             instances.push(Box::new(outer_remaining));
         }
         instances
