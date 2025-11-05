@@ -16,10 +16,12 @@ pub fn main() {
     let leaf2 = [6u8; 32];
     let leaf3 = [7u8; 32];
     let leaf4 = [8u8; 32];
+    let test_input = 10;
 
     let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
         TrustedAdvice::new(leaf2),
         TrustedAdvice::new(leaf3),
+        // TrustedAdvice::new(test_input),
         &prover_preprocessing,
     );
 
@@ -31,6 +33,7 @@ pub fn main() {
         leaf1,
         TrustedAdvice::new(leaf2),
         TrustedAdvice::new(leaf3),
+        // TrustedAdvice::new(test_input),
         UntrustedAdvice::new(leaf4),
         trusted_advice_commitment.clone(),
     );

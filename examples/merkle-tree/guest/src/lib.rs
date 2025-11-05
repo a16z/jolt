@@ -17,12 +17,15 @@ fn merkle_tree(
     leaf1: &[u8],
     leaf2: jolt::TrustedAdvice<[u8; 32]>,
     leaf3: jolt::TrustedAdvice<[u8; 32]>,
+    // test_input: jolt::TrustedAdvice<u32>,
     leaf4: jolt::UntrustedAdvice<[u8; 32]>,
 ) -> [u8; 32] {
     let h0 = jolt_inlines_sha2::Sha256::digest(leaf1);
     let h1 = jolt_inlines_sha2::Sha256::digest(leaf2.deref());
     let h2 = jolt_inlines_sha2::Sha256::digest(leaf3.deref());
     let h3 = jolt_inlines_sha2::Sha256::digest(leaf4.deref());
+
+    // let result = *test_input.deref();
 
     let mut pair_01 = [0u8; 64];
     pair_01[..32].copy_from_slice(&h0);

@@ -311,6 +311,10 @@ pub fn prover_accumulate_advice<F, PCS>(
                 .memory_layout
                 .max_untrusted_advice_size as usize,
         );
+        println!("===== PROVER UNTRUSTED ADVICE =====");
+        println!("Prover untrusted advice point: {:?}", point.r);
+        println!("Prover untrusted advice eval: {}", eval);
+        println!("=====================================");
         opening_accumulator.append_untrusted_advice(transcript, point, eval);
     }
 
@@ -323,6 +327,10 @@ pub fn prover_accumulate_advice<F, PCS>(
                 .memory_layout
                 .max_trusted_advice_size as usize,
         );
+        println!("===== PROVER TRUSTED ADVICE =====");
+        println!("Prover trusted advice point: {:?}", point.r);
+        println!("Prover trusted advice eval: {}", eval);
+        println!("==================================");
         opening_accumulator.append_trusted_advice(transcript, point, eval);
     }
 }
@@ -360,6 +368,9 @@ pub fn verifier_accumulate_advice<F, PCS>(
                 .memory_layout
                 .max_untrusted_advice_size as usize,
         );
+        println!("===== VERIFIER UNTRUSTED ADVICE =====");
+        println!("Verifier untrusted advice point: {:?}", point.r);
+        println!("======================================");
         opening_accumulator.append_untrusted_advice(transcript, point);
     }
 
@@ -371,6 +382,9 @@ pub fn verifier_accumulate_advice<F, PCS>(
                 .memory_layout
                 .max_trusted_advice_size as usize,
         );
+        println!("===== VERIFIER TRUSTED ADVICE =====");
+        println!("Verifier trusted advice point: {:?}", point.r);
+        println!("====================================");
         opening_accumulator.append_trusted_advice(transcript, point);
     }
 }
@@ -528,7 +542,7 @@ where
 
         vec![
             Box::new(booleanity),
-            Box::new(val_evaluation),
+            // Box::new(val_evaluation),
             Box::new(val_final_evaluation),
         ]
     }
@@ -665,7 +679,7 @@ where
 
         vec![
             Box::new(booleanity),
-            Box::new(val_evaluation),
+            // Box::new(val_evaluation),
             Box::new(val_final_evaluation),
         ]
     }

@@ -29,11 +29,11 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage2_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub trusted_advice_proof: Option<PCS::Proof>,
-    pub untrusted_advice_proof: Option<PCS::Proof>,
-    pub reduced_opening_proof: ReducedOpeningProof<F, PCS, FS>, // Stage 7
+    // pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    // pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    // pub trusted_advice_proof: Option<PCS::Proof>,
+    // pub untrusted_advice_proof: Option<PCS::Proof>,
+    // pub reduced_opening_proof: ReducedOpeningProof<F, PCS, FS>, // Stage 7
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -72,16 +72,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.stage4_sumcheck_proof
             .serialize_with_mode(&mut writer, compress)?;
-        self.stage5_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage6_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.trusted_advice_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.reduced_opening_proof
-            .serialize_with_mode(&mut writer, compress)?;
+        // self.stage5_sumcheck_proof
+        //     .serialize_with_mode(&mut writer, compress)?;
+        // self.stage6_sumcheck_proof
+        //     .serialize_with_mode(&mut writer, compress)?;
+        // self.trusted_advice_proof
+        //     .serialize_with_mode(&mut writer, compress)?;
+        // self.untrusted_advice_proof
+        //     .serialize_with_mode(&mut writer, compress)?;
+        // self.reduced_opening_proof
+        //     .serialize_with_mode(&mut writer, compress)?;
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
         self.twist_sumcheck_switch_index
@@ -102,11 +102,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.stage2_sumcheck_proof.serialized_size(compress)
             + self.stage3_sumcheck_proof.serialized_size(compress)
             + self.stage4_sumcheck_proof.serialized_size(compress)
-            + self.stage5_sumcheck_proof.serialized_size(compress)
-            + self.stage6_sumcheck_proof.serialized_size(compress)
-            + self.trusted_advice_proof.serialized_size(compress)
-            + self.untrusted_advice_proof.serialized_size(compress)
-            + self.reduced_opening_proof.serialized_size(compress)
+            // + self.stage5_sumcheck_proof.serialized_size(compress)
+            // + self.stage6_sumcheck_proof.serialized_size(compress)
+            // + self.trusted_advice_proof.serialized_size(compress)
+            // + self.untrusted_advice_proof.serialized_size(compress)
+            // + self.reduced_opening_proof.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
             + self.bytecode_d.serialized_size(compress)
@@ -127,11 +127,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
         self.stage2_sumcheck_proof.check()?;
         self.stage3_sumcheck_proof.check()?;
         self.stage4_sumcheck_proof.check()?;
-        self.stage5_sumcheck_proof.check()?;
-        self.stage6_sumcheck_proof.check()?;
-        self.trusted_advice_proof.check()?;
-        self.untrusted_advice_proof.check()?;
-        self.reduced_opening_proof.check()?;
+        // self.stage5_sumcheck_proof.check()?;
+        // self.stage6_sumcheck_proof.check()?;
+        // self.trusted_advice_proof.check()?;
+        // self.untrusted_advice_proof.check()?;
+        // self.reduced_opening_proof.check()?;
         self.trace_length.check()?;
         self.ram_K.check()?;
         self.bytecode_d.check()?;
@@ -185,11 +185,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             stage2_sumcheck_proof,
             stage3_sumcheck_proof,
             stage4_sumcheck_proof,
-            stage5_sumcheck_proof,
-            stage6_sumcheck_proof,
-            trusted_advice_proof,
-            untrusted_advice_proof,
-            reduced_opening_proof,
+            // stage5_sumcheck_proof,
+            // stage6_sumcheck_proof,
+            // trusted_advice_proof,
+            // untrusted_advice_proof,
+            // reduced_opening_proof,
             trace_length,
             ram_K,
             bytecode_d,
