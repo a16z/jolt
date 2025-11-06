@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# Usage: ./jolt_benchmarks.sh [MIN_TRACE_LENGTH] [MAX_TRACE_LENGTH] [--benchmarks "bench1 bench2"] [--resume]
+# Usage: ./jolt_benchmarks.sh [MIN_TRACE_LENGTH] [MAX_TRACE_LENGTH] [--benchmarks "bench1 bench2"] [--resume] [--monitor]
 # Defaults: MAX=21, MIN=18
 # --resume: Skip benchmarks that already exist
+# --monitor: Enable memory/CPU monitoring (may impact performance)
 
 set -euo pipefail
 
@@ -15,6 +16,7 @@ MAX_TRACE_LENGTH=${2:-21}
 MIN_TRACE_LENGTH=${1:-18}
 BENCHMARKS="fibonacci sha2-chain sha3-chain btreemap"
 RESUME=false
+MONITOR=false
 
 # Parse optional flags
 shift 2 2>/dev/null || shift $# 2>/dev/null
@@ -28,6 +30,10 @@ while [[ $# -gt 0 ]]; do
             RESUME=true
             shift
             ;;
+        --monitor)
+            MONITOR=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -39,6 +45,9 @@ echo "Running benchmarks with TRACE_LENGTH=$MIN_TRACE_LENGTH..$MAX_TRACE_LENGTH"
 echo "Benchmarks: $BENCHMARKS"
 if [ "$RESUME" = true ]; then
     echo "Resume mode: enabled (will skip existing results)"
+fi
+if [ "$MONITOR" = true ]; then
+    echo "Monitoring: enabled (memory/CPU tracking)"
 fi
 
 # Set stack size for Rust
@@ -56,8 +65,13 @@ if [ ! -f "benchmark-runs/results/timings.csv" ]; then
 fi
 
 # Build once
-echo "Building jolt-core (release)..."
-cargo build --release -p jolt-core
+if [ "$MONITOR" = true ]; then
+    echo "Building jolt-core (release with monitor feature)..."
+    cargo build --release -p jolt-core --features monitor
+else
+    echo "Building jolt-core (release)..."
+    cargo build --release -p jolt-core
+fi
 JOLT_BIN="./target/release/jolt-core"
 
 # Track failures
@@ -135,6 +149,17 @@ for csv_file in benchmark-runs/results/*_*.csv; do
     [ -f "$csv_file" ] && cat "$csv_file" >> benchmark-runs/results/timings.csv
 done
 
+# Postprocess perfetto traces to convert monitor.rs events to counter tracks
+if [ "$MONITOR" = true ]; then
+    echo ""
+    echo "Postprocessing perfetto traces..."
+    if [ -d "benchmark-runs/perfetto_traces" ] && [ "$(ls -A benchmark-runs/perfetto_traces/*.json 2>/dev/null)" ]; then
+        python3 scripts/postprocess_trace.py benchmark-runs/perfetto_traces/*.json
+    else
+        echo "No perfetto traces found to postprocess"
+    fi
+fi
+
 
 # Generate summary and plots
 if [ -f "benchmark-runs/results/timings.csv" ]; then
@@ -142,6 +167,12 @@ if [ -f "benchmark-runs/results/timings.csv" ]; then
     python3 scripts/benchmark_summary.py --csv benchmark-runs/results/timings.csv
     echo ""
     python3 scripts/plot_benchmarks.py --csv benchmark-runs/results/timings.csv --output-dir benchmark-runs
+
+    # Only generate memory plot if monitoring was enabled
+    if [ "$MONITOR" = true ]; then
+        echo ""
+        python3 scripts/plot_memory_usage.py --traces-dir benchmark-runs/perfetto_traces --output-dir benchmark-runs
+    fi
 fi
 
 [ $TOTAL_FAILED -gt 0 ] && exit 1
