@@ -133,11 +133,12 @@ impl<F: JoltField> EqPlusOnePrefixSuffixPoly<F> {
         let is_max_eval = EqPolynomial::mle(&vec![F::one(); r_lo.len()], &r_lo.r);
         let mut prefix_1_evals = vec![F::zero(); 1 << r_lo.len()];
         prefix_1_evals[0] = is_max_eval;
+        let (suffix_0, suffix_1) = EqPlusOnePolynomial::<F>::evals(&r_hi.r, None);
         Self {
             prefix_0: EqPlusOnePolynomial::<F>::evals(&r_lo.r, None).1,
-            suffix_0: EqPolynomial::evals(&r_hi.r),
+            suffix_0,
             prefix_1: prefix_1_evals,
-            suffix_1: EqPlusOnePolynomial::<F>::evals(&r_hi.r, None).1,
+            suffix_1,
         }
     }
 }
