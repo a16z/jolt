@@ -703,7 +703,6 @@ mod tests {
         let mut trusted_advice = postcard::to_stdvec(&leaf2).unwrap();
         trusted_advice.extend(postcard::to_stdvec(&leaf3).unwrap());
 
-        // We can trace with minimal inputs just to obtain IO layout for preprocessing
         let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
@@ -717,18 +716,18 @@ mod tests {
 
         let max_trusted_advice_size = preprocessing.shared.memory_layout.max_trusted_advice_size;
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
-        populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);        
-        let trusted_advice_commitment = 
-        {let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(
-            1,
-            (max_trusted_advice_size as usize) / 8,
-        );
-        let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
-        let (trusted_advice_commitment, _hint) =
-            <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
-                &poly,
-                &preprocessing.generators,
+        populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
+        let trusted_advice_commitment = {
+            let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(
+                1,
+                (max_trusted_advice_size as usize) / 8,
             );
+            let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
+            let (trusted_advice_commitment, _hint) =
+                <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
+                    &poly,
+                    &preprocessing.generators,
+                );
             trusted_advice_commitment
         };
 
@@ -754,15 +753,16 @@ mod tests {
             "Verification failed with error: {:?}",
             verification_result.err()
         );
-        // Basic IO sanity checks
         assert_eq!(
             io_device.inputs, inputs,
             "Inputs mismatch: expected {:?}, got {:?}",
             inputs, io_device.inputs
         );
-        assert_eq!(io_device.outputs.len(), 32, "Output length must be 32 bytes");
-        // Placeholder correctness check; replace with actual expected root later
-        let expected_output = &[0x42u8; 32];
+        let expected_output = &[
+            0xb4, 0x37, 0x0f, 0x3a, 0xb, 0x3d, 0x38, 0xa8, 0x7a, 0x6c, 0x4c, 0x46, 0x9, 0xe7, 0x83,
+            0xb3, 0xcc, 0xb7, 0x1c, 0x30, 0x1f, 0xf8, 0x54, 0xd, 0xf7, 0xdd, 0xc8, 0x42, 0x32,
+            0xbb, 0x16, 0xd7,
+        ];
         assert_eq!(
             io_device.outputs, expected_output,
             "Outputs mismatch: expected {:?}, got {:?}",
