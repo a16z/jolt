@@ -236,7 +236,7 @@ impl Emulator {
                 } else {
                     PROGRAM_MEMORY_CAPACITY
                 };
-            self.cpu.get_mut_mmu().init_memory(memory_capcity);
+            self.cpu.get_mut_mmu().init_memory(memory_capacity);
         }
 
         // Copy program data sections to CPU memory.
