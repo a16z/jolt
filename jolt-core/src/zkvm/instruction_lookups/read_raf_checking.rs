@@ -319,7 +319,7 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
             is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
-            v: std::array::from_fn(|_| ExpandingTable::new(M)),
+            v: std::array::from_fn(|_| ExpandingTable::new(M, BindingOrder::HighToLow)),
             u_evals_rv,
             u_evals_raf: eq_r_spartan,
             right_operand_ps,

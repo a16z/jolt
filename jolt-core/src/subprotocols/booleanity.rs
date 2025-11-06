@@ -21,10 +21,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    utils::{
-        math::Math,
-        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-    },
+    utils::{expanding_table::ExpandingTable, math::Math, thread::drop_in_background_thread},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -43,7 +40,7 @@ pub struct BooleanitySumcheckProver<F: JoltField> {
     /// H as in the Twist and Shout paper
     H: Vec<RaPolynomial<u8, F>>,
     /// F: Expanding table
-    F: Vec<F>,
+    F: ExpandingTable<F>,
     /// eq_r_r
     eq_r_r: F,
     /// Indices for H polynomials
@@ -62,8 +59,8 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         let D_poly = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
 
         let k_chunk = 1 << params.log_k_chunk;
-        let mut F_vec: Vec<F> = unsafe_allocate_zero_vec(k_chunk);
-        F_vec[0] = F::one();
+        let mut F = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
+        F.reset(F::one());
 
         Self {
             B,
@@ -71,7 +68,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             G,
             H_indices,
             H: vec![],
-            F: F_vec,
+            F,
             eq_r_r: F::zero(),
             params,
         }
@@ -375,15 +372,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
             // Phase 1: Bind B and update F
             self.B.bind(r_j);
 
-            // Update F for this round (see Equation 55)
-            let (F_left, F_right) = self.F.split_at_mut(1 << round);
-            F_left
-                .par_iter_mut()
-                .zip(F_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * r_j;
-                    *x -= *y;
-                });
+            // Update F for this round
+            self.F.update(r_j);
 
             // If transitioning to phase 2, prepare H polynomials
             if round == self.params.log_k_chunk - 1 {
@@ -394,7 +384,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
                 let H_indices = std::mem::take(&mut self.H_indices);
                 self.H = H_indices
                     .into_iter()
-                    .map(|indices| RaPolynomial::new(Arc::new(indices), F.clone()))
+                    .map(|indices| RaPolynomial::new(Arc::new(indices), F.clone_values()))
                     .collect();
 
                 // Drop G arrays as they're no longer needed
