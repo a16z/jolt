@@ -19,7 +19,7 @@ pub fn main() {
 
     let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
         TrustedAdvice::new(leaf2),
-        TrustedAdvice::new(leaf3),
+        TrustedAdvice::new(leaf4),
         &prover_preprocessing,
     );
 
@@ -30,8 +30,8 @@ pub fn main() {
     let (output, proof, program_io) = prove_merkle_tree(
         leaf1,
         TrustedAdvice::new(leaf2),
-        TrustedAdvice::new(leaf3),
-        UntrustedAdvice::new(leaf4),
+        UntrustedAdvice::new(leaf3),
+        TrustedAdvice::new(leaf4),
         trusted_advice_commitment.clone(),
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
