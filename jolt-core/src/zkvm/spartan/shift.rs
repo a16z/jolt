@@ -7,7 +7,8 @@ use tracer::instruction::Cycle;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::{EqPlusOnePolynomial, EqPolynomial};
+use crate::poly::eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffixPoly};
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
@@ -20,7 +21,8 @@ use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::instruction::{CircuitFlags, Flags, InstructionFlags};
+use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use crate::zkvm::r1cs::inputs::CycleState;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
@@ -681,71 +683,15 @@ impl<F: JoltField> Phase2Prover<F> {
     }
 }
 
-// eq+1((r_hi, r_lo), (y_hi, y_lo)) =
-//   prefix_0(r_lo, y_lo) * suffix_0(r_hi, y_hi) +
-//   prefix_1(r_lo, y_lo) * suffix_1(r_hi, y_hi)
-#[derive(Allocative)]
-struct EqPlusOnePrefixSuffixPoly<F: JoltField> {
-    // Evals of `eq+1(r_lo, j)` for all j in the hypercube.
-    prefix_0: Vec<F>,
-    // Evals of `eq(r_hi, j)` for all j in the hypercube.
-    suffix_0: Vec<F>,
-    // Evals of `is_max(r_lo) * is_min(j)` for all j in the hypercube.
-    // Where `is_max(x) = eq((1)^n, x)`, `is_min(x) = eq((0)^n, x)`.
-    // Note: This is non-zero in 1 position but doesn't matter for perf.
-    prefix_1: Vec<F>,
-    // Evals of `eq+1(r_hi, j)` for all j in the hypercube.
-    suffix_1: Vec<F>,
-}
-
-impl<F: JoltField> EqPlusOnePrefixSuffixPoly<F> {
-    fn new(r: &OpeningPoint<BIG_ENDIAN, F>) -> Self {
-        let (r_hi, r_lo) = r.split_at(r.len() / 2);
-        let is_max_eval = EqPolynomial::mle(&vec![F::one(); r_lo.len()], &r_lo.r);
-        let mut prefix_1_evals = vec![F::zero(); 1 << r_lo.len()];
-        prefix_1_evals[0] = is_max_eval;
-        Self {
-            prefix_0: EqPlusOnePolynomial::<F>::evals(&r_lo.r, None).1,
-            suffix_0: EqPolynomial::evals(&r_hi.r),
-            prefix_1: prefix_1_evals,
-            suffix_1: EqPlusOnePolynomial::<F>::evals(&r_hi.r, None).1,
-        }
-    }
-}
-
-struct CycleState {
-    unexpanded_pc: u64,
-    pc: u64,
-    is_virtual: bool,
-    is_first_in_sequence: bool,
-    is_noop: bool,
-}
-
-impl CycleState {
-    fn new(cycle: &Cycle, bytecode_preprocessing: &BytecodePreprocessing) -> Self {
-        let instruction = cycle.instruction();
-        let circuit_flags = instruction.circuit_flags();
-        Self {
-            unexpanded_pc: instruction.normalize().address as u64,
-            pc: bytecode_preprocessing.get_pc(cycle) as u64,
-            is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
-            is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
-            is_noop: instruction.instruction_flags()[InstructionFlags::IsNoop],
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
 
     use crate::poly::{
-        eq_poly::EqPlusOnePolynomial,
+        eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffixPoly},
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{OpeningPoint, BIG_ENDIAN},
     };
-
-    use super::EqPlusOnePrefixSuffixPoly;
 
     #[test]
     fn test_eq_prefix_suffix() {
