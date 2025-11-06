@@ -26,8 +26,7 @@ use crate::zkvm::dag::stage::SumcheckStagesVerifier;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction_lookups::LookupsDagProver;
 use crate::zkvm::instruction_lookups::LookupsDagVerifier;
-use crate::zkvm::ram::RamDagProver;
-use crate::zkvm::ram::RamDagVerifier;
+use crate::zkvm::ram::{populate_memory_states, RamDagProver, RamDagVerifier};
 use crate::zkvm::registers::RegistersDagProver;
 use crate::zkvm::registers::RegistersDagVerifier;
 use crate::zkvm::spartan::SpartanDagProver;
@@ -318,162 +317,162 @@ pub fn prove_jolt_dag<
     drop(_guard);
     drop(span);
 
-    // // Stage 5:
-    // #[cfg(not(target_arch = "wasm32"))]
-    // print_current_memory_usage("Stage 5 baseline");
-    // let span = tracing::span!(tracing::Level::INFO, "Stage 5 sumchecks");
-    // let _guard = span.enter();
+    // Stage 5:
+    #[cfg(not(target_arch = "wasm32"))]
+    print_current_memory_usage("Stage 5 baseline");
+    let span = tracing::span!(tracing::Level::INFO, "Stage 5 sumchecks");
+    let _guard = span.enter();
 
-    // let mut stage5_instances: Vec<_> = std::iter::empty()
-    //     .chain(registers_dag.stage5_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator, transcript))
-    //     .chain(lookups_dag.stage5_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .collect();
+    let mut stage5_instances: Vec<_> = std::iter::empty()
+        .chain(registers_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .collect();
 
-    // #[cfg(feature = "allocative")]
-    // {
-    //     let mut flamegraph = FlameGraphBuilder::default();
-    //     for sumcheck in stage5_instances.iter() {
-    //         sumcheck.update_flamegraph(&mut flamegraph);
-    //     }
-    //     write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
-    // }
+    #[cfg(feature = "allocative")]
+    {
+        let mut flamegraph = FlameGraphBuilder::default();
+        for sumcheck in stage5_instances.iter() {
+            sumcheck.update_flamegraph(&mut flamegraph);
+        }
+        write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
+    }
 
-    // let stage5_instances_mut = stage5_instances
-    //     .iter_mut()
-    //     .map(|instance| &mut **instance as _)
-    //     .collect();
+    let stage5_instances_mut = stage5_instances
+        .iter_mut()
+        .map(|instance| &mut **instance as _)
+        .collect();
 
-    // tracing::info!("Stage 5 proving");
-    // let (stage5_sumcheck_proof, _r_stage5) =
-    //     BatchedSumcheck::prove(stage5_instances_mut, &mut opening_accumulator, transcript);
+    tracing::info!("Stage 5 proving");
+    let (stage5_sumcheck_proof, _r_stage5) =
+        BatchedSumcheck::prove(stage5_instances_mut, &mut opening_accumulator, transcript);
 
-    // #[cfg(feature = "allocative")]
-    // {
-    //     let mut flamegraph = FlameGraphBuilder::default();
-    //     for sumcheck in stage5_instances.iter() {
-    //         sumcheck.update_flamegraph(&mut flamegraph);
-    //     }
-    //     write_flamegraph_svg(flamegraph, "stage5_end_flamechart.svg");
-    // }
+    #[cfg(feature = "allocative")]
+    {
+        let mut flamegraph = FlameGraphBuilder::default();
+        for sumcheck in stage5_instances.iter() {
+            sumcheck.update_flamegraph(&mut flamegraph);
+        }
+        write_flamegraph_svg(flamegraph, "stage5_end_flamechart.svg");
+    }
 
-    // drop_in_background_thread(stage5_instances);
+    drop_in_background_thread(stage5_instances);
 
-    // drop(_guard);
-    // drop(span);
+    drop(_guard);
+    drop(span);
 
-    // // Stage 6:
-    // #[cfg(not(target_arch = "wasm32"))]
-    // print_current_memory_usage("Stage 6 baseline");
-    // let span = tracing::span!(tracing::Level::INFO, "Stage 6 sumchecks");
-    // let _guard = span.enter();
+    // Stage 6:
+    #[cfg(not(target_arch = "wasm32"))]
+    print_current_memory_usage("Stage 6 baseline");
+    let span = tracing::span!(tracing::Level::INFO, "Stage 6 sumchecks");
+    let _guard = span.enter();
 
-    // let mut stage6_instances: Vec<_> = std::iter::empty()
-    //     .chain(bytecode_dag.stage6_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator, transcript))
-    //     .chain(lookups_dag.stage6_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .collect();
+    let mut stage6_instances: Vec<_> = std::iter::empty()
+        .chain(bytecode_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .collect();
 
-    // #[cfg(feature = "allocative")]
-    // {
-    //     let mut flamegraph = FlameGraphBuilder::default();
-    //     for sumcheck in stage6_instances.iter() {
-    //         sumcheck.update_flamegraph(&mut flamegraph);
-    //     }
-    //     write_flamegraph_svg(flamegraph, "stage6_start_flamechart.svg");
-    // }
+    #[cfg(feature = "allocative")]
+    {
+        let mut flamegraph = FlameGraphBuilder::default();
+        for sumcheck in stage6_instances.iter() {
+            sumcheck.update_flamegraph(&mut flamegraph);
+        }
+        write_flamegraph_svg(flamegraph, "stage6_start_flamechart.svg");
+    }
 
-    // let stage6_instances_mut = stage6_instances
-    //     .iter_mut()
-    //     .map(|inst| &mut **inst as &mut _)
-    //     .collect();
+    let stage6_instances_mut = stage6_instances
+        .iter_mut()
+        .map(|inst| &mut **inst as &mut _)
+        .collect();
 
-    // tracing::info!("Stage 6 proving");
-    // let (stage6_sumcheck_proof, _r_stage6) =
-    //     BatchedSumcheck::prove(stage6_instances_mut, &mut opening_accumulator, transcript);
+    tracing::info!("Stage 6 proving");
+    let (stage6_sumcheck_proof, _r_stage6) =
+        BatchedSumcheck::prove(stage6_instances_mut, &mut opening_accumulator, transcript);
 
-    // #[cfg(feature = "allocative")]
-    // {
-    //     let mut flamegraph = FlameGraphBuilder::default();
-    //     for sumcheck in stage6_instances.iter() {
-    //         sumcheck.update_flamegraph(&mut flamegraph);
-    //     }
-    //     write_flamegraph_svg(flamegraph, "stage6_end_flamechart.svg");
-    // }
+    #[cfg(feature = "allocative")]
+    {
+        let mut flamegraph = FlameGraphBuilder::default();
+        for sumcheck in stage6_instances.iter() {
+            sumcheck.update_flamegraph(&mut flamegraph);
+        }
+        write_flamegraph_svg(flamegraph, "stage6_end_flamechart.svg");
+    }
 
-    // drop_in_background_thread(stage6_instances);
+    drop_in_background_thread(stage6_instances);
 
-    // drop(_guard);
-    // drop(span);
+    drop(_guard);
+    drop(span);
 
-    // // Batch-prove all openings (Stage 7)
-    // let (_, _, trace, _, _) = state_manager.get_prover_data();
+    // Batch-prove all openings (Stage 7)
+    let (_, _, trace, _, _) = state_manager.get_prover_data();
 
-    // let all_polys: Vec<CommittedPolynomial> = AllCommittedPolynomials::iter().copied().collect();
-    // let polynomials_map =
-    //     CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
+    let all_polys: Vec<CommittedPolynomial> = AllCommittedPolynomials::iter().copied().collect();
+    let polynomials_map =
+        CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
 
-    // #[cfg(feature = "allocative")]
-    // print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
+    #[cfg(feature = "allocative")]
+    print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
-    // #[cfg(not(target_arch = "wasm32"))]
-    // print_current_memory_usage("Stage 7 baseline");
+    #[cfg(not(target_arch = "wasm32"))]
+    print_current_memory_usage("Stage 7 baseline");
 
-    // tracing::info!("Stage 7 proving");
+    tracing::info!("Stage 7 proving");
 
-    // // Generate trusted_advice opening proofs
-    // let trusted_advice_proof = (!state_manager.program_io.trusted_advice.is_empty()).then(|| {
-    //     generate_trusted_advice_proof(
-    //         &mut state_manager,
-    //         &opening_accumulator,
-    //         transcript,
-    //         &preprocessing.generators,
-    //     )
-    // });
+    // Generate trusted_advice opening proofs
+    let trusted_advice_proof = (!state_manager.program_io.trusted_advice.is_empty()).then(|| {
+        generate_trusted_advice_proof(
+            &mut state_manager,
+            &opening_accumulator,
+            transcript,
+            &preprocessing.generators,
+        )
+    });
 
-    // // Generate untrusted_advice opening proofs
-    // let untrusted_advice_proof =
-    //     (!state_manager.program_io.untrusted_advice.is_empty()).then(|| {
-    //         generate_untrusted_advice_proof(
-    //             &mut state_manager,
-    //             &opening_accumulator,
-    //             transcript,
-    //             &preprocessing.generators,
-    //         )
-    //     });
+    // Generate untrusted_advice opening proofs
+    let untrusted_advice_proof =
+        (!state_manager.program_io.untrusted_advice.is_empty()).then(|| {
+            generate_untrusted_advice_proof(
+                &mut state_manager,
+                &opening_accumulator,
+                transcript,
+                &preprocessing.generators,
+            )
+        });
 
-    // let reduced_opening_proof = opening_accumulator.reduce_and_prove(
-    //     polynomials_map,
-    //     opening_proof_hints,
-    //     &preprocessing.generators,
-    //     transcript,
-    // );
+    let reduced_opening_proof = opening_accumulator.reduce_and_prove(
+        polynomials_map,
+        opening_proof_hints,
+        &preprocessing.generators,
+        transcript,
+    );
 
-    // #[cfg(test)]
-    // assert!(
-    //     opening_accumulator
-    //         .appended_virtual_openings
-    //         .borrow()
-    //         .is_empty(),
-    //     "Not all virtual openings have been proven, missing: {:?}",
-    //     opening_accumulator.appended_virtual_openings.borrow()
-    // );
+    #[cfg(test)]
+    assert!(
+        opening_accumulator
+            .appended_virtual_openings
+            .borrow()
+            .is_empty(),
+        "Not all virtual openings have been proven, missing: {:?}",
+        opening_accumulator.appended_virtual_openings.borrow()
+    );
 
     #[cfg(test)]
     let debug_info = Some(ProverDebugInfo {
@@ -495,11 +494,11 @@ pub fn prove_jolt_dag<
         stage2_sumcheck_proof,
         stage3_sumcheck_proof,
         stage4_sumcheck_proof,
-        // stage5_sumcheck_proof,
-        // stage6_sumcheck_proof,
-        // trusted_advice_proof,
-        // untrusted_advice_proof,
-        // reduced_opening_proof,
+        stage5_sumcheck_proof,
+        stage6_sumcheck_proof,
+        trusted_advice_proof,
+        untrusted_advice_proof,
+        reduced_opening_proof,
         trace_length: prover_state.trace.len(),
         ram_K: state_manager.ram_K,
         bytecode_d: prover_state.preprocessing.shared.bytecode.d,
@@ -661,107 +660,107 @@ pub fn verify_jolt_dag<
     )
     .context("Stage 4")?;
 
-    // // Stage 5:
-    // let stage5_instances: Vec<_> = std::iter::empty()
-    //     .chain(registers_dag.stage5_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator, transcript))
-    //     .chain(lookups_dag.stage5_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .collect();
-    // let stage5_instances_ref = stage5_instances.iter().map(|inst| &**inst as _).collect();
+    // Stage 5:
+    let stage5_instances: Vec<_> = std::iter::empty()
+        .chain(registers_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage5_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage5_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .collect();
+    let stage5_instances_ref = stage5_instances.iter().map(|inst| &**inst as _).collect();
 
-    // let _r_stage5 = BatchedSumcheck::verify(
-    //     &proof.stage5_sumcheck_proof,
-    //     stage5_instances_ref,
-    //     &mut opening_accumulator,
-    //     transcript,
-    // )
-    // .context("Stage 5")?;
+    let _r_stage5 = BatchedSumcheck::verify(
+        &proof.stage5_sumcheck_proof,
+        stage5_instances_ref,
+        &mut opening_accumulator,
+        transcript,
+    )
+    .context("Stage 5")?;
 
-    // // Stage 6:
-    // let stage6_instances: Vec<_> = std::iter::empty()
-    //     .chain(bytecode_dag.stage6_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator, transcript))
-    //     .chain(lookups_dag.stage6_instances(
-    //         &mut state_manager,
-    //         &mut opening_accumulator,
-    //         transcript,
-    //     ))
-    //     .collect();
-    // let stage6_instances_ref = stage6_instances.iter().map(|inst| &**inst as _).collect();
+    // Stage 6:
+    let stage6_instances: Vec<_> = std::iter::empty()
+        .chain(bytecode_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .chain(ram_dag.stage6_instances(&mut state_manager, &mut opening_accumulator, transcript))
+        .chain(lookups_dag.stage6_instances(
+            &mut state_manager,
+            &mut opening_accumulator,
+            transcript,
+        ))
+        .collect();
+    let stage6_instances_ref = stage6_instances.iter().map(|inst| &**inst as _).collect();
 
-    // let _r_stage6 = BatchedSumcheck::verify(
-    //     &proof.stage6_sumcheck_proof,
-    //     stage6_instances_ref,
-    //     &mut opening_accumulator,
-    //     transcript,
-    // )
-    // .context("Stage 6")?;
+    let _r_stage6 = BatchedSumcheck::verify(
+        &proof.stage6_sumcheck_proof,
+        stage6_instances_ref,
+        &mut opening_accumulator,
+        transcript,
+    )
+    .context("Stage 6")?;
 
-    // // Verify trusted_advice opening proofs
-    // if let Some(ref commitment) = state_manager.trusted_advice_commitment {
-    //     let Some(ref proof) = proof.trusted_advice_proof else {
-    //         return Err(anyhow::anyhow!("Trusted advice proof not found"));
-    //     };
-    //     let Some((point, eval)) = opening_accumulator.get_trusted_advice_opening() else {
-    //         return Err(anyhow::anyhow!("Trusted advice opening not found"));
-    //     };
-    //     PCS::verify(
-    //         proof,
-    //         &preprocessing.generators,
-    //         transcript,
-    //         &point.r,
-    //         &eval,
-    //         commitment,
-    //     )
-    //     .map_err(|e| anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}"))?;
-    // }
+    // Verify trusted_advice opening proofs
+    if let Some(ref commitment) = state_manager.trusted_advice_commitment {
+        let Some(ref proof) = proof.trusted_advice_proof else {
+            return Err(anyhow::anyhow!("Trusted advice proof not found"));
+        };
+        let Some((point, eval)) = opening_accumulator.get_trusted_advice_opening() else {
+            return Err(anyhow::anyhow!("Trusted advice opening not found"));
+        };
+        PCS::verify(
+            proof,
+            &preprocessing.generators,
+            transcript,
+            &point.r,
+            &eval,
+            commitment,
+        )
+        .map_err(|e| anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}"))?;
+    }
 
-    // // Verify untrusted_advice opening proofs
-    // if let Some(ref commitment) = state_manager.untrusted_advice_commitment {
-    //     let Some(ref proof) = proof.untrusted_advice_proof else {
-    //         return Err(anyhow::anyhow!("Untrusted advice proof not found"));
-    //     };
-    //     let Some((point, eval)) = opening_accumulator.get_untrusted_advice_opening() else {
-    //         return Err(anyhow::anyhow!("Untrusted advice opening not found"));
-    //     };
-    //     PCS::verify(
-    //         proof,
-    //         &preprocessing.generators,
-    //         transcript,
-    //         &point.r,
-    //         &eval,
-    //         commitment,
-    //     )
-    //     .map_err(|e| {
-    //         anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
-    //     })?;
-    // }
+    // Verify untrusted_advice opening proofs
+    if let Some(ref commitment) = state_manager.untrusted_advice_commitment {
+        let Some(ref proof) = proof.untrusted_advice_proof else {
+            return Err(anyhow::anyhow!("Untrusted advice proof not found"));
+        };
+        let Some((point, eval)) = opening_accumulator.get_untrusted_advice_opening() else {
+            return Err(anyhow::anyhow!("Untrusted advice opening not found"));
+        };
+        PCS::verify(
+            proof,
+            &preprocessing.generators,
+            transcript,
+            &point.r,
+            &eval,
+            commitment,
+        )
+        .map_err(|e| {
+            anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
+        })?;
+    }
 
-    // // Batch-prove all openings (Stage 7)
-    // let mut commitments_map = HashMap::new();
-    // for (polynomial, commitment) in AllCommittedPolynomials::iter().zip_eq(&proof.commitments) {
-    //     commitments_map.insert(*polynomial, commitment.clone());
-    // }
-    // opening_accumulator
-    //     .reduce_and_verify(
-    //         &preprocessing.generators,
-    //         &mut commitments_map,
-    //         &proof.reduced_opening_proof,
-    //         transcript,
-    //     )
-    //     .context("Stage 7")?;
+    // Batch-prove all openings (Stage 7)
+    let mut commitments_map = HashMap::new();
+    for (polynomial, commitment) in AllCommittedPolynomials::iter().zip_eq(&proof.commitments) {
+        commitments_map.insert(*polynomial, commitment.clone());
+    }
+    opening_accumulator
+        .reduce_and_verify(
+            &preprocessing.generators,
+            &mut commitments_map,
+            &proof.reduced_opening_proof,
+            transcript,
+        )
+        .context("Stage 7")?;
 
     Ok(())
 }
@@ -832,21 +831,17 @@ fn commit_untrusted_advice<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
         return None;
     }
 
-    let mut initial_memory_state =
+    let mut untrusted_advice_vec =
         vec![0; program_io.memory_layout.max_untrusted_advice_size as usize / 8];
 
-    let mut index = 1;
-    for chunk in program_io.untrusted_advice.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        let word = u64::from_le_bytes(word);
-        initial_memory_state[index] = word;
-        index += 1;
-    }
+    populate_memory_states(
+        0,
+        &program_io.untrusted_advice,
+        Some(&mut untrusted_advice_vec),
+        None,
+    );
 
-    let poly = MultilinearPolynomial::from(initial_memory_state);
+    let poly = MultilinearPolynomial::from(untrusted_advice_vec);
     let (commitment, hint) = PCS::commit(&poly, &preprocessing.generators);
 
     if let Some(ref mut prover_state) = state_manager.prover_state {
@@ -866,21 +861,17 @@ fn compute_trusted_advice_poly<'a, F: JoltField, PCS: CommitmentScheme<Field = F
         return;
     }
 
-    let mut initial_memory_state =
+    let mut trusted_advice_vec =
         vec![0; program_io.memory_layout.max_trusted_advice_size as usize / 8];
 
-    let mut index = 1;
-    for chunk in program_io.trusted_advice.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        let word = u64::from_le_bytes(word);
-        initial_memory_state[index] = word;
-        index += 1;
-    }
+    populate_memory_states(
+        0,
+        &program_io.trusted_advice,
+        Some(&mut trusted_advice_vec),
+        None,
+    );
 
-    let poly = MultilinearPolynomial::from(initial_memory_state);
+    let poly = MultilinearPolynomial::from(trusted_advice_vec);
 
     if let Some(ref mut prover_state) = state_manager.prover_state {
         prover_state.trusted_advice_polynomial = Some(poly);

@@ -80,40 +80,9 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         );
         let (r_address, r_cycle) = r.split_at(K.log_2());
 
-        let total_memory_vars = K.log_2();
-        
-        // Calculate advice contributions (for debugging)
-        let untrusted_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_untrusted_advice_opening(),
-            (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
-                .next_power_of_two()
-                .log_2(),
-            program_io.memory_layout.untrusted_advice_start,
-            &program_io.memory_layout,
-            &r_address.r,
-            total_memory_vars,
-        );
-
-        let trusted_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_trusted_advice_opening(),
-            (program_io.memory_layout.max_trusted_advice_size as usize / 8)
-                .next_power_of_two()
-                .log_2(),
-            program_io.memory_layout.trusted_advice_start,
-            &program_io.memory_layout,
-            &r_address.r,
-            total_memory_vars,
-        );
-
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
-
-        println!("===== PROVER =====");
-        println!("Prover untrusted_contribution: {}", untrusted_contribution);
-        println!("Prover trusted_contribution: {}", trusted_contribution);
-        println!("Prover init_eval (full memory): {}", init_eval);
-        println!("==================");
 
         let params = ValEvaluationSumcheckParams { init_eval, T, K };
 
@@ -302,12 +271,6 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
         // Combine all contributions: untrusted + trusted + public
         let init_eval =
             untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
-        println!("===== VERIFIER =====");
-        println!("Verifier untrusted_contribution: {}", untrusted_contribution);
-        println!("Verifier trusted_contribution: {}", trusted_contribution);
-        println!("Verifier val_init_public: {}", val_init_public.evaluate(&r_address.r));
-        println!("Verifier init_eval (sum of all contributions): {}", init_eval);
-        println!("==================");
 
         let params = ValEvaluationSumcheckParams { init_eval, T, K };
 

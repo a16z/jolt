@@ -591,29 +591,26 @@ impl MacroBuilder {
                 #imports
                 use jolt::CommitmentScheme;
                 use jolt::MultilinearPolynomial;
+                use jolt::populate_memory_states;
 
                 let mut trusted_advice_bytes = vec![];
                 #(#set_trusted_advice_args;)*
 
                 let max_trusted_advice_size = preprocessing.shared.memory_layout.max_trusted_advice_size;
 
-                let mut initial_memory_state = vec![0u64; (max_trusted_advice_size as usize) / 8];
+                let mut trusted_advice_vec = vec![0u64; (max_trusted_advice_size as usize) / 8];
 
-                let mut index = 1;
-                for chunk in trusted_advice_bytes.chunks(8) {
-                    let mut word = [0u8; 8];
-                    for (i, byte) in chunk.iter().enumerate() {
-                        word[i] = *byte;
-                    }
-                    let word = u64::from_le_bytes(word);
-                    initial_memory_state[index] = word;
-                    index += 1;
-                }
+                populate_memory_states(
+                    0,
+                    &trusted_advice_bytes,
+                    Some(&mut trusted_advice_vec),
+                    None,
+                );
 
                 // Initialize Dory globals with specified parameters
                 let _guard = jolt::DoryGlobals::initialize(1, max_trusted_advice_size as usize / 8);
 
-                let poly = MultilinearPolynomial::<jolt::F>::from(initial_memory_state);
+                let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);
                 let (commitment, hint) = jolt::PCS::commit(&poly, &preprocessing.generators);
 
                 (Some(commitment), Some(hint))
