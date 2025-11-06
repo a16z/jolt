@@ -94,7 +94,7 @@ impl<F: JoltField> RaSumcheckProver<F> {
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
-                            &preprocessing.shared.memory_layout,
+                            &preprocessing.memory_layout,
                         )
                         .map(|address| {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk

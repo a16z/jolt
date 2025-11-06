@@ -1204,10 +1204,7 @@ mod tests {
     use crate::transcripts::Blake2bTranscript;
     use crate::{
         poly::commitment::mock::MockCommitScheme,
-        zkvm::{
-            bytecode::BytecodePreprocessing, ram::RAMPreprocessing, JoltProverPreprocessing,
-            JoltSharedPreprocessing,
-        },
+        zkvm::{bytecode::BytecodePreprocessing, ram::RAMPreprocessing, JoltProverPreprocessing},
     };
     use ark_bn254::Fr;
     use ark_std::Zero;
@@ -1302,15 +1299,12 @@ mod tests {
         let bytecode = vec![];
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let memory_layout = MemoryLayout::default();
-        let shared_preprocessing = JoltSharedPreprocessing {
-            bytecode: bytecode_preprocessing,
-            ram: RAMPreprocessing::preprocess(vec![]),
-            memory_layout: memory_layout.clone(),
-        };
         let prover_preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
             JoltProverPreprocessing {
                 generators: (),
-                shared: shared_preprocessing.clone(),
+                bytecode: bytecode_preprocessing,
+                ram: RAMPreprocessing::preprocess(vec![]),
+                memory_layout: memory_layout.clone(),
             };
 
         let program_io = JoltDevice {

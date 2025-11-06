@@ -171,7 +171,7 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
     let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-    let bytecode_preprocessing = &preprocessing.shared.bytecode;
+    let bytecode_preprocessing = &preprocessing.bytecode;
 
     let r_cycle: Vec<F::Challenge> = opening_accumulator
         .get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter)

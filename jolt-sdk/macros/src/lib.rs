@@ -267,13 +267,13 @@ impl MacroBuilder {
                 let verify_closure = move |#(#public_inputs,)* output, panic, #commitment_param_in_closure proof: jolt::RV64IMACJoltProof| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
-                        max_input_size: preprocessing.shared.memory_layout.max_input_size,
-                        max_output_size: preprocessing.shared.memory_layout.max_output_size,
-                        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
-                        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
-                        stack_size: preprocessing.shared.memory_layout.stack_size,
-                        memory_size: preprocessing.shared.memory_layout.memory_size,
-                        program_size: Some(preprocessing.shared.memory_layout.program_size),
+                        max_input_size: preprocessing.memory_layout.max_input_size,
+                        max_output_size: preprocessing.memory_layout.max_output_size,
+                        max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
+                        max_trusted_advice_size: preprocessing.memory_layout.max_trusted_advice_size,
+                        stack_size: preprocessing.memory_layout.stack_size,
+                        memory_size: preprocessing.memory_layout.memory_size,
+                        program_size: Some(preprocessing.memory_layout.program_size),
                     };
                     let mut io_device = JoltDevice::new(&memory_config);
 
@@ -595,7 +595,7 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_trusted_advice_args;)*
 
-                let max_trusted_advice_size = preprocessing.shared.memory_layout.max_trusted_advice_size;
+                let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
 
                 let mut initial_memory_state = vec![0u64; (max_trusted_advice_size as usize) / 8];
 
@@ -630,7 +630,7 @@ impl MacroBuilder {
             },
             ReturnType::Type(_, ty) => quote! {
                 let mut outputs = io_device.outputs.clone();
-                outputs.resize(preprocessing.shared.memory_layout.max_output_size as usize, 0);
+                outputs.resize(preprocessing.memory_layout.max_output_size as usize, 0);
                 let ret_val = jolt::postcard::from_bytes::<#ty>(&outputs).unwrap();
             },
         };

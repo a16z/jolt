@@ -45,13 +45,13 @@ where
 {
     use common::jolt_device::JoltDevice;
     let memory_config = MemoryConfig {
-        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
-        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
-        max_input_size: preprocessing.shared.memory_layout.max_input_size,
-        max_output_size: preprocessing.shared.memory_layout.max_output_size,
-        stack_size: preprocessing.shared.memory_layout.stack_size,
-        memory_size: preprocessing.shared.memory_layout.memory_size,
-        program_size: Some(preprocessing.shared.memory_layout.program_size),
+        max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
+        max_trusted_advice_size: preprocessing.memory_layout.max_trusted_advice_size,
+        max_input_size: preprocessing.memory_layout.max_input_size,
+        max_output_size: preprocessing.memory_layout.max_output_size,
+        stack_size: preprocessing.memory_layout.stack_size,
+        memory_size: preprocessing.memory_layout.memory_size,
+        program_size: Some(preprocessing.memory_layout.program_size),
     };
     let mut io_device = JoltDevice::new(&memory_config);
 

@@ -31,7 +31,6 @@ use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
 use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
 use crate::zkvm::witness::VirtualPolynomial;
-use crate::zkvm::JoltSharedPreprocessing;
 use ark_ff::biginteger::S128;
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -393,8 +392,6 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceParams<F> {
 #[derive(Allocative)]
 pub struct ProductVirtualRemainderProver<F: JoltField> {
     #[allocative(skip)]
-    preprocess: Arc<JoltSharedPreprocessing>,
-    #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
     left: DensePolynomial<F>,
@@ -411,7 +408,7 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
         num_cycle_vars: usize,
         uni: &UniSkipState<F>,
     ) -> Self {
-        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let (_, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
@@ -438,7 +435,6 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
 
         Self {
             split_eq_poly,
-            preprocess: Arc::new(preprocessing.shared.clone()),
             trace: Arc::new(trace.to_vec()),
             left: DensePolynomial::default(),
             right: DensePolynomial::default(),

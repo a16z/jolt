@@ -124,7 +124,9 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
-    pub shared: JoltSharedPreprocessing,
+    pub bytecode: BytecodePreprocessing,
+    pub ram: RAMPreprocessing,
+    pub memory_layout: MemoryLayout,
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -164,7 +166,9 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::ProverSetup,
-    pub shared: JoltSharedPreprocessing,
+    pub bytecode: BytecodePreprocessing,
+    pub ram: RAMPreprocessing,
+    pub memory_layout: MemoryLayout,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -206,7 +210,9 @@ where
         let generators = PCS::setup_verifier(&preprocessing.generators);
         JoltVerifierPreprocessing {
             generators,
-            shared: preprocessing.shared.clone(),
+            bytecode: preprocessing.bytecode.clone(),
+            ram: preprocessing.ram.clone(),
+            memory_layout: preprocessing.memory_layout.clone(),
         }
     }
 }
@@ -224,21 +230,6 @@ where
 }
 
 pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript> {
-    fn shared_preprocess(
-        bytecode: Vec<Instruction>,
-        memory_layout: MemoryLayout,
-        memory_init: Vec<(u64, u8)>,
-    ) -> JoltSharedPreprocessing {
-        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
-        let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
-
-        JoltSharedPreprocessing {
-            memory_layout,
-            bytecode: bytecode_preprocessing,
-            ram: ram_preprocessing,
-        }
-    }
-
     #[tracing::instrument(skip_all, name = "Jolt::prover_preprocess")]
     fn prover_preprocess(
         bytecode: Vec<Instruction>,
@@ -246,13 +237,18 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
+        let bytecode = BytecodePreprocessing::preprocess(bytecode);
+        let ram = RAMPreprocessing::preprocess(memory_init);
 
         let max_T: usize = max_trace_length.next_power_of_two();
-
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        JoltProverPreprocessing { generators, shared }
+        JoltProverPreprocessing {
+            generators,
+            bytecode,
+            ram,
+            memory_layout,
+        }
     }
 
     #[allow(clippy::type_complexity)]
@@ -276,13 +272,13 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         use tracer::instruction::Cycle;
 
         let memory_config = MemoryConfig {
-            max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
-            max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
-            max_input_size: preprocessing.shared.memory_layout.max_input_size,
-            max_output_size: preprocessing.shared.memory_layout.max_output_size,
-            stack_size: preprocessing.shared.memory_layout.stack_size,
-            memory_size: preprocessing.shared.memory_layout.memory_size,
-            program_size: Some(preprocessing.shared.memory_layout.program_size),
+            max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: preprocessing.memory_layout.max_trusted_advice_size,
+            max_input_size: preprocessing.memory_layout.max_input_size,
+            max_output_size: preprocessing.memory_layout.max_output_size,
+            stack_size: preprocessing.memory_layout.stack_size,
+            memory_size: preprocessing.memory_layout.memory_size,
+            program_size: Some(preprocessing.memory_layout.program_size),
         };
 
         let (lazy_trace, mut trace, final_memory_state, mut program_io) = {
@@ -382,13 +378,13 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
 
         // Memory layout checks
-        if program_io.memory_layout != preprocessing.shared.memory_layout {
+        if program_io.memory_layout != preprocessing.memory_layout {
             return Err(ProofVerifyError::MemoryLayoutMismatch);
         }
-        if program_io.inputs.len() > preprocessing.shared.memory_layout.max_input_size as usize {
+        if program_io.inputs.len() > preprocessing.memory_layout.max_input_size as usize {
             return Err(ProofVerifyError::InputTooLarge);
         }
-        if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
+        if program_io.outputs.len() > preprocessing.memory_layout.max_output_size as usize {
             return Err(ProofVerifyError::OutputTooLarge);
         }
 

@@ -118,7 +118,7 @@ impl RamDagProver {
         state_manager: &StateManager<'_, F, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let (preprocessing, _, _, program_io, final_memory) = state_manager.get_prover_data();
-        let ram_preprocessing = &preprocessing.shared.ram;
+        let ram_preprocessing = &preprocessing.ram;
 
         let K = state_manager.ram_K;
 
@@ -600,16 +600,16 @@ fn gen_ra_booleanity_prover<F: JoltField>(
     state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckProver<F> {
+    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
     let K = state_manager.ram_K;
 
     let log_k_chunk = DTH_ROOT_OF_K.log_2();
-    let log_t = state_manager.get_trace_len().log_2();
+    let log_t = trace.len().log_2();
 
     let r_cycle = transcript.challenge_vector_optimized::<F>(log_t);
     let r_address = transcript.challenge_vector_optimized::<F>(log_k_chunk);
 
     // Compute G and H for RAM
-    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
     let memory_layout = &program_io.memory_layout;
     let d = compute_d_parameter(K);
     let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);

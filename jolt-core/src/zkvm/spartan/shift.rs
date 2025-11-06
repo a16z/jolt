@@ -57,11 +57,11 @@ impl<F: JoltField> ShiftSumcheckProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, _, _, _) = state_manager.get_prover_data();
+        let trace = state_manager.get_trace_arc();
         let n_cycle_vars = trace.len().ilog2() as usize;
         let params = ShiftSumcheckParams::new(n_cycle_vars, opening_accumulator, transcript);
-        let trace = state_manager.get_trace_arc();
-        let bytecode_preprocessing = preprocessing.shared.bytecode.clone();
+        let bytecode_preprocessing = preprocessing.bytecode.clone();
         Self::Phase1(Phase1Prover::gen(trace, bytecode_preprocessing, params))
     }
 }

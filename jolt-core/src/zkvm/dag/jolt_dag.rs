@@ -88,9 +88,9 @@ pub fn prove_jolt_dag<
     let trace_length = trace.len();
     let padded_trace_length = trace_length.next_power_of_two();
 
-    tracing::info!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
+    tracing::info!("bytecode size: {}", preprocessing.bytecode.code_size);
 
-    let bytecode_d = preprocessing.shared.bytecode.d;
+    let bytecode_d = preprocessing.bytecode.d;
 
     // Commit to untrusted_advice
     let _untrusted_advice_opening_proof_hints =
@@ -524,7 +524,7 @@ pub fn prove_jolt_dag<
         reduced_opening_proof,
         trace_length: prover_state.trace.len(),
         ram_K: state_manager.ram_K,
-        bytecode_d: prover_state.preprocessing.shared.bytecode.d,
+        bytecode_d: prover_state.preprocessing.bytecode.d,
         twist_sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
     };
 
@@ -554,7 +554,7 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
         self.state_manager.fiat_shamir_preamble(self.transcript);
 
         let ram_K = self.proof.ram_K;
-        let bytecode_d = self.state_manager.get_verifier_data().0.shared.bytecode.d;
+        let bytecode_d = self.preprocessing.bytecode.d;
         let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
 
         // Append commitments to transcript
@@ -712,7 +712,7 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
         );
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
-            &self.preprocessing.shared.ram,
+            &self.preprocessing.ram,
             &self.state_manager.program_io,
         );
         let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
@@ -777,13 +777,13 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
     fn verify_stage6(&mut self) -> Result<(), anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.bytecode,
             n_cycle_vars,
             &self.opening_accumulator,
             self.transcript,
         );
         let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::new_ra_one_hot_verifiers(
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.bytecode,
             n_cycle_vars,
             self.transcript,
         );
