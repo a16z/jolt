@@ -15,7 +15,7 @@ fn allocate_stack_with_increased_size() -> u32 {
     overflow_stack()
 }
 
-#[jolt::provable(memory_size = 4096, memory_size = 65536, max_trace_length = 65536)]
+#[jolt::provable(stack_size = 4096, memory_size = 65536, max_trace_length = 65536)]
 fn overflow_heap() -> u32 {
     let mut vectors = Vec::new();
 
