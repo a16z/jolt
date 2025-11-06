@@ -16,8 +16,8 @@ use core::ops::Deref;
 fn merkle_tree(
     leaf1: &[u8],
     leaf2: jolt::TrustedAdvice<[u8; 32]>,
-    leaf3: jolt::UntrustedAdvice<[u8; 32]>,
-    leaf4: jolt::TrustedAdvice<[u8; 32]>,
+    leaf3: jolt::TrustedAdvice<[u8; 32]>,
+    leaf4: jolt::UntrustedAdvice<[u8; 32]>,
 ) -> [u8; 32] {
     let h0 = jolt_inlines_sha2::Sha256::digest(leaf1);
     let h1 = jolt_inlines_sha2::Sha256::digest(leaf2.deref());
