@@ -685,6 +685,93 @@ mod tests {
 
     #[test]
     #[serial]
+    fn advice_e2e_dory() {
+        use crate::poly::{
+            commitment::commitment_scheme::CommitmentScheme,
+            multilinear_polynomial::MultilinearPolynomial,
+        };
+        use crate::zkvm::ram::populate_memory_states;
+
+        let mut program = host::Program::new("merkle-tree-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let leaf1: [u8; 32] = [5u8; 32];
+        let leaf2: [u8; 32] = [6u8; 32];
+        let leaf3: [u8; 32] = [7u8; 32];
+        let leaf4: [u8; 32] = [8u8; 32];
+        let inputs = postcard::to_stdvec(&leaf1.as_slice()).unwrap();
+        let untrusted_advice = postcard::to_stdvec(&leaf4).unwrap();
+        let mut trusted_advice = postcard::to_stdvec(&leaf2).unwrap();
+        trusted_advice.extend(postcard::to_stdvec(&leaf3).unwrap());
+
+        // We can trace with minimal inputs just to obtain IO layout for preprocessing
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+
+        let max_trusted_advice_size = preprocessing.shared.memory_layout.max_trusted_advice_size;
+        let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
+        populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);        
+        let trusted_advice_commitment = 
+        {let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(
+            1,
+            (max_trusted_advice_size as usize) / 8,
+        );
+        let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
+        let (trusted_advice_commitment, _hint) =
+            <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
+                &poly,
+                &preprocessing.generators,
+            );
+            trusted_advice_commitment
+        };
+
+        let (jolt_proof, io_device, debug_info, _) = JoltRV64IMAC::prove(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &untrusted_advice,
+            &trusted_advice,
+            Some(trusted_advice_commitment.clone()),
+        );
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            Some(trusted_advice_commitment.clone()),
+            debug_info,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+        // Basic IO sanity checks
+        assert_eq!(
+            io_device.inputs, inputs,
+            "Inputs mismatch: expected {:?}, got {:?}",
+            inputs, io_device.inputs
+        );
+        assert_eq!(io_device.outputs.len(), 32, "Output length must be 32 bytes");
+        // Placeholder correctness check; replace with actual expected root later
+        let expected_output = &[0x42u8; 32];
+        assert_eq!(
+            io_device.outputs, expected_output,
+            "Outputs mismatch: expected {:?}, got {:?}",
+            expected_output, io_device.outputs
+        );
+    }
+
+    #[test]
+    #[serial]
     fn memory_ops_e2e_dory() {
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _) = program.decode();
