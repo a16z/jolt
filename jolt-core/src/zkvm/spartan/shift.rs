@@ -22,7 +22,7 @@ use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::CycleState;
+use crate::zkvm::r1cs::inputs::ShiftSumcheckCycleState;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
@@ -421,13 +421,13 @@ impl<F: JoltField> Phase1Prover<F> {
                 )| {
                     for x1 in 0..1 << suffix_n_vars {
                         let x = x0 + (x1 << prefix_n_vars);
-                        let CycleState {
+                        let ShiftSumcheckCycleState {
                             unexpanded_pc,
                             pc,
                             is_virtual,
                             is_first_in_sequence,
                             is_noop,
-                        } = CycleState::new(&trace[x], &bytecode_preprocessing);
+                        } = ShiftSumcheckCycleState::new(&trace[x], &bytecode_preprocessing);
 
                         let mut v = F::from_u64(unexpanded_pc) + params.gamma_powers[1].mul_u64(pc);
                         if is_virtual {
@@ -587,13 +587,13 @@ impl<F: JoltField> Phase2Prover<F> {
                     trace_chunk,
                 )| {
                     for (i, cycle) in trace_chunk.iter().enumerate() {
-                        let CycleState {
+                        let ShiftSumcheckCycleState {
                             unexpanded_pc,
                             pc,
                             is_virtual,
                             is_first_in_sequence,
                             is_noop,
-                        } = CycleState::new(cycle, bytecode_preprocessing);
+                        } = ShiftSumcheckCycleState::new(cycle, bytecode_preprocessing);
                         let eq_eval = eq_evals[i];
                         *unexpanded_pc_eval += eq_eval.mul_u64(unexpanded_pc);
                         *pc_eval += eq_eval.mul_u64(pc);

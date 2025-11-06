@@ -501,7 +501,7 @@ impl ProductCycleInputs {
 }
 
 /// State extracted from a cycle for use in shift sumcheck
-pub struct CycleState {
+pub struct ShiftSumcheckCycleState {
     pub unexpanded_pc: u64,
     pub pc: u64,
     pub is_virtual: bool,
@@ -509,7 +509,7 @@ pub struct CycleState {
     pub is_noop: bool,
 }
 
-impl CycleState {
+impl ShiftSumcheckCycleState {
     pub fn new(cycle: &Cycle, bytecode_preprocessing: &BytecodePreprocessing) -> Self {
         let instruction = cycle.instruction();
         let circuit_flags = instruction.circuit_flags();
