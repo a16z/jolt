@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
@@ -14,17 +16,10 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{jolt_dag::DagVerifier, proof_serialization::JoltProof, state_manager::StateManager},
+        dag::{jolt_dag::DagVerifier, proof_serialization::JoltProof},
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
-};
-use crate::{
-    poly::commitment::commitment_scheme::CommitmentScheme, zkvm::witness::AllCommittedPolynomials,
-};
-use crate::{
-    poly::commitment::commitment_scheme::StreamingCommitmentScheme,
-    zkvm::dag::state_manager::VerifierState,
 };
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -415,22 +410,9 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }
         }
 
-        let state_manager = StateManager {
-            untrusted_advice_commitment: proof.untrusted_advice_commitment.clone(),
+        DagVerifier {
             trusted_advice_commitment,
             program_io,
-            ram_K: proof.ram_K,
-            ram_d: AllCommittedPolynomials::ram_d_from_K(proof.ram_K),
-            twist_sumcheck_switch_index: proof.twist_sumcheck_switch_index,
-            prover_state: None,
-            verifier_state: Some(VerifierState {
-                preprocessing,
-                trace_length: proof.trace_length,
-            }),
-        };
-
-        DagVerifier {
-            state_manager,
             proof,
             opening_accumulator,
             transcript,

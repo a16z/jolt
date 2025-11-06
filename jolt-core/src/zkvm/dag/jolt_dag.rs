@@ -25,6 +25,7 @@ use crate::zkvm::bytecode::BytecodeDagProver;
 use crate::zkvm::dag::proof_serialization::Claims;
 use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStagesProver;
+use crate::zkvm::dag::state_manager::fiat_shamir_preamble;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction_lookups;
 use crate::zkvm::instruction_lookups::ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier;
@@ -63,6 +64,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 use tracer::ChunksIterator;
+use tracer::JoltDevice;
 
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all)]
@@ -81,12 +83,12 @@ pub fn prove_jolt_dag<
     ),
     anyhow::Error,
 > {
-    state_manager.fiat_shamir_preamble(transcript);
-
     // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
-    let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+    let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
     let trace_length = trace.len();
     let padded_trace_length = trace_length.next_power_of_two();
+
+    fiat_shamir_preamble(program_io, state_manager.ram_K, trace_length, transcript);
 
     tracing::info!("bytecode size: {}", preprocessing.bytecode.code_size);
 
@@ -534,24 +536,29 @@ pub fn prove_jolt_dag<
 pub struct DagVerifier<
     'a,
     'b,
-    'c,
     F: JoltField,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 > {
-    pub state_manager: StateManager<'a, F, PCS>,
+    pub trusted_advice_commitment: Option<PCS::Commitment>,
+    pub program_io: JoltDevice,
     pub proof: JoltProof<F, PCS, ProofTranscript>,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
-    pub transcript: &'b mut ProofTranscript,
-    pub preprocessing: &'c JoltVerifierPreprocessing<F, PCS>,
+    pub transcript: &'a mut ProofTranscript,
+    pub preprocessing: &'b JoltVerifierPreprocessing<F, PCS>,
 }
 
-impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    DagVerifier<'a, 'b, 'c, F, ProofTranscript, PCS>
+impl<'a, 'b, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+    DagVerifier<'a, 'b, F, ProofTranscript, PCS>
 {
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
-        self.state_manager.fiat_shamir_preamble(self.transcript);
+        fiat_shamir_preamble(
+            &self.program_io,
+            self.proof.ram_K,
+            self.proof.trace_length,
+            self.transcript,
+        );
 
         let ram_K = self.proof.ram_K;
         let bytecode_d = self.preprocessing.bytecode.d;
@@ -562,14 +569,12 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
             self.transcript.append_serializable(commitment);
         }
         // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) =
-            self.state_manager.untrusted_advice_commitment
-        {
+        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
             self.transcript
                 .append_serializable(untrusted_advice_commitment);
         }
         // Append trusted advice commitment to transcript
-        if let Some(ref trusted_advice_commitment) = self.state_manager.trusted_advice_commitment {
+        if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             self.transcript
                 .append_serializable(trusted_advice_commitment);
         }
@@ -627,7 +632,7 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
             &product_virtual_uni_skip_state,
         );
         let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
-            &self.state_manager.program_io,
+            &self.program_io,
             self.proof.ram_K,
             &self.opening_accumulator,
         );
@@ -638,11 +643,8 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
             &self.opening_accumulator,
             self.transcript,
         );
-        let ram_output_check = OutputSumcheckVerifier::new(
-            self.proof.ram_K,
-            &self.state_manager.program_io,
-            self.transcript,
-        );
+        let ram_output_check =
+            OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, self.transcript);
 
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
@@ -699,9 +701,9 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
         );
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,
-            &self.state_manager.program_io,
-            self.state_manager.untrusted_advice_commitment.is_some(),
-            self.state_manager.trusted_advice_commitment.is_some(),
+            &self.program_io,
+            self.proof.untrusted_advice_commitment.is_some(),
+            self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
             self.transcript,
         );
@@ -713,18 +715,18 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
             &self.preprocessing.ram,
-            &self.state_manager.program_io,
+            &self.program_io,
         );
         let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
             &initial_ram_state,
-            &self.state_manager.program_io,
+            &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
             &self.opening_accumulator,
         );
         let ram_val_final = ValFinalSumcheckVerifier::new(
             &initial_ram_state,
-            &self.state_manager.program_io,
+            &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
             &self.opening_accumulator,
@@ -812,7 +814,7 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
     }
 
     fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
-        if let Some(ref commitment) = self.state_manager.trusted_advice_commitment {
+        if let Some(ref commitment) = self.trusted_advice_commitment {
             let Some(ref proof) = self.proof.trusted_advice_proof else {
                 return Err(anyhow::anyhow!("Trusted advice proof not found"));
             };
@@ -837,7 +839,7 @@ impl<'a, 'b, 'c, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentSchem
 
     fn verify_untrusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
         // Verify untrusted_advice opening proofs
-        if let Some(ref commitment) = self.state_manager.untrusted_advice_commitment {
+        if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
             let Some(ref proof) = self.proof.untrusted_advice_proof else {
                 return Err(anyhow::anyhow!("Untrusted advice proof not found"));
             };
