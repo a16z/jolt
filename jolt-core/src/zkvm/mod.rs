@@ -14,9 +14,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{
-            jolt_dag::verify_jolt_dag, proof_serialization::JoltProof, state_manager::StateManager,
-        },
+        dag::{jolt_dag::DagVerifier, proof_serialization::JoltProof, state_manager::StateManager},
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
@@ -435,8 +433,15 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }),
         };
 
-        verify_jolt_dag(&proof, state_manager, opening_accumulator, transcript)
-            .expect("Verification failed");
+        DagVerifier {
+            state_manager,
+            proof,
+            opening_accumulator,
+            transcript,
+            preprocessing,
+        }
+        .verify()
+        .expect("Verification failed");
 
         Ok(())
     }

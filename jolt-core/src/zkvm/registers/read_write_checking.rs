@@ -118,10 +118,14 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params =
-            RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
-
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+
+        let params = RegistersReadWriteCheckingParams::new(
+            state_manager.twist_sumcheck_switch_index,
+            trace.len().log_2(),
+            opening_accumulator,
+            transcript,
+        );
 
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -1388,12 +1392,17 @@ pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        twist_sumcheck_switch_index: usize,
+        n_cycle_vars: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params =
-            RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
+        let params = RegistersReadWriteCheckingParams::new(
+            twist_sumcheck_switch_index,
+            n_cycle_vars,
+            opening_accumulator,
+            transcript,
+        );
         Self { params }
     }
 }
@@ -1502,7 +1511,7 @@ struct RegistersReadWriteCheckingParams<F: JoltField> {
     gamma: F,
     /// Equals `gamma^3`.
     gamma_cub: F,
-    sumcheck_switch_index: usize,
+    twist_sumcheck_switch_index: usize,
     n_cycle_vars: usize, // = log(T)
     r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
     r_cycle_stage_3: OpeningPoint<BIG_ENDIAN, F>,
@@ -1510,26 +1519,23 @@ struct RegistersReadWriteCheckingParams<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        twist_sumcheck_switch_index: usize,
+        n_cycle_vars: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_cub = gamma.square() * gamma;
-        let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
-        let n_cycle_vars = state_manager.get_trace_len().log_2();
-
         let (r_cycle_stage_1, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
         let (r_cycle_stage_3, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
         );
-
         Self {
             gamma,
             gamma_cub,
-            sumcheck_switch_index,
+            twist_sumcheck_switch_index,
             n_cycle_vars,
             r_cycle_stage_1,
             r_cycle_stage_3,
@@ -1569,7 +1575,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let sumcheck_switch_index = self.sumcheck_switch_index;
+        let sumcheck_switch_index = self.twist_sumcheck_switch_index;
         let n_cycle_vars = self.n_cycle_vars;
         // The high-order cycle variables are bound after the switch
         let mut r_cycle = sumcheck_challenges[sumcheck_switch_index..n_cycle_vars].to_vec();

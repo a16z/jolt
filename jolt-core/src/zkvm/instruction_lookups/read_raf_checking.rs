@@ -185,8 +185,9 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ReadRafSumcheckParams::new(sm, transcript);
         let trace = sm.get_prover_data().2;
+        let log_T = trace.len().log_2();
+        let params = ReadRafSumcheckParams::new(log_T, transcript);
         let (r_branch, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
@@ -1008,11 +1009,8 @@ pub struct ReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
-        transcript: &mut impl Transcript,
-    ) -> Self {
-        let params = ReadRafSumcheckParams::new(state_manager, transcript);
+    pub fn new(n_cycle_vars: usize, transcript: &mut impl Transcript) -> Self {
+        let params = ReadRafSumcheckParams::new(n_cycle_vars, transcript);
         Self { params }
     }
 }
@@ -1153,17 +1151,13 @@ struct ReadRafSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
-    fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
-        transcript: &mut impl Transcript,
-    ) -> Self {
+    fn new(n_cycle_vars: usize, transcript: &mut impl Transcript) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
-        let log_T = state_manager.get_trace_len().log_2();
         Self {
             gamma,
             gamma_sqr,
-            log_T,
+            log_T: n_cycle_vars,
         }
     }
 
@@ -1212,7 +1206,7 @@ mod tests {
         poly::commitment::mock::MockCommitScheme,
         zkvm::{
             bytecode::BytecodePreprocessing, ram::RAMPreprocessing, JoltProverPreprocessing,
-            JoltSharedPreprocessing, JoltVerifierPreprocessing,
+            JoltSharedPreprocessing,
         },
     };
     use ark_bn254::Fr;
@@ -1319,11 +1313,6 @@ mod tests {
                 shared: shared_preprocessing.clone(),
             };
 
-        let verifier_preprocessing: JoltVerifierPreprocessing<Fr, MockCommitScheme<Fr>> =
-            JoltVerifierPreprocessing {
-                generators: (),
-                shared: shared_preprocessing,
-            };
         let program_io = JoltDevice {
             memory_layout,
             untrusted_advice: vec![],
@@ -1341,19 +1330,12 @@ mod tests {
             &prover_preprocessing,
             lazy_trace,
             trace.clone(),
-            program_io.clone(),
+            program_io,
             None,
             final_memory_state,
         );
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
         let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
-        let mut verifier_sm = StateManager::<'_, Fr, _>::new_verifier(
-            &verifier_preprocessing,
-            program_io,
-            trace.len(),
-            1 << 8,
-            prover_sm.twist_sumcheck_switch_index,
-        );
 
         let r_cycle: Vec<<Fr as JoltField>::Challenge> =
             prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);
@@ -1466,7 +1448,7 @@ mod tests {
         );
 
         let mut verifier_sumcheck =
-            ReadRafSumcheckVerifier::new(&mut verifier_sm, verifier_transcript);
+            ReadRafSumcheckVerifier::new(trace.len().log_2(), verifier_transcript);
 
         let r_sumcheck_verif = BatchedSumcheck::verify(
             &proof,
