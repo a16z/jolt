@@ -266,8 +266,8 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
     let memory_config = MemoryConfig {
-        max_input_size: 4096u64,
-        max_output_size: 4096u64,
+        max_input_size: 16384u64,
+        max_output_size: 16384u64,
         max_untrusted_advice_size: 0u64,
         max_trusted_advice_size: 0u64,
         stack_size: 4096u64,

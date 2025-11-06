@@ -1,6 +1,6 @@
 const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
 
-const PROGRAM_MEMORY_CAPACITY: u64 = EMULATOR_MEMORY_CAPACITY; // big enough to run Linux and xv6
+const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_MEMORY_SIZE; // big enough to run Linux and xv6
 
 extern crate fnv;
 
@@ -31,7 +31,7 @@ use self::cpu::{Cpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
-use common::constants::{EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS};
+use common::constants::{DEFAULT_MEMORY_SIZE, RAM_START_ADDRESS};
 use std::io::Write;
 use std::path::Path;
 
@@ -232,7 +232,7 @@ impl Emulator {
             self.is_test = false;
             let memory_capacity =
                 if let Some(jolt_device) = self.cpu.get_mut_mmu().jolt_device.as_ref() {
-                    jolt_device.memory_layout.memory_size
+                    jolt_device.memory_layout.get_total_memory_size()
                 } else {
                     PROGRAM_MEMORY_CAPACITY
                 };
