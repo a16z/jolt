@@ -230,7 +230,13 @@ impl Emulator {
             self.cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
         } else {
             self.is_test = false;
-            self.cpu.get_mut_mmu().init_memory(PROGRAM_MEMORY_CAPACITY);
+            let memory_capcity =
+                if let Some(jolt_device) = self.cpu.get_mut_mmu().jolt_device.as_ref() {
+                    jolt_device.memory_layout.memory_size
+                } else {
+                    PROGRAM_MEMORY_CAPACITY
+                };
+            self.cpu.get_mut_mmu().init_memory(memory_capcity);
         }
 
         // Copy program data sections to CPU memory.
