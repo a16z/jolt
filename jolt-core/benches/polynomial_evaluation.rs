@@ -1,6 +1,6 @@
 //! Benchmarks comparing algorithms for multilinear polynomial evaluation
 //!
-//! Source: https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+//! Source: https://randomwalks.xyz/posts/fast_polynomial_evaluation.html
 //!
 //! This benchmark suite tests:
 //! 1. Single polynomial evaluation with three algorithms across varying sparsity
@@ -79,7 +79,7 @@ fn setup_batch_inputs(
 /// Tests across different polynomial sizes (2^14, 2^16) and sparsity levels (20%, 50%, 75% zeros)
 ///  2^14 is configured to be serial and 2^16 is configured to parallel.
 ///
-/// See: https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+/// See: https://randomwalks.xyz/posts/fast_polynomial_evaluation.html
 fn benchmark_single_evaluation(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_polynomial");
 
@@ -135,7 +135,7 @@ fn benchmark_single_evaluation(c: &mut Criterion) {
 /// Tests with 50 polynomials of size 2^16 at varying sparsity levels.
 /// Batch evaluation can amortize work across polynomials for better efficiency.
 ///
-/// See: https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+/// See: https://randomwalks.xyz/posts/fast_polynomial_evaluation.html
 fn benchmark_batch_evaluation(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_polynomial");
     fn batch_dot_product(polys: &[DensePolynomial<Fr>], eval_point: &[Fr]) -> Vec<Fr> {
