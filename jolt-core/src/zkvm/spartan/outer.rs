@@ -355,49 +355,49 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
 
         // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
         let (t0_acc_unr, t_inf_acc_unr) = az_bound
-                .par_chunks_exact_mut(2 * num_x_in_vals)
-                .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
-                .enumerate()
-                .fold(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
-                        let mut inner_sum0 = F::Unreduced::<9>::zero();
-                        let mut inner_sum_inf = F::Unreduced::<9>::zero();
-                        for x_in_val in 0..num_x_in_vals {
-                            let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                bytecode_preprocessing,
-                                trace,
-                                current_step_idx,
-                            );
-                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                            let az0 = eval.az_at_r_first_group(lagrange_evals_r);
-                            let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
-                            let az1 = eval.az_at_r_second_group(lagrange_evals_r);
-                            let bz1 = eval.bz_at_r_second_group(lagrange_evals_r);
-                            let p0 = az0 * bz0;
-                            let slope = (az1 - az0) * (bz1 - bz0);
-                            let e_in = split_eq_poly.E_in_current()[x_in_val];
-                            inner_sum0 += e_in.mul_unreduced::<9>(p0);
-                            inner_sum_inf += e_in.mul_unreduced::<9>(slope);
-                            let off = 2 * x_in_val;
-                            az_chunk[off] = az0;
-                            az_chunk[off + 1] = az1;
-                            bz_chunk[off] = bz0;
-                            bz_chunk[off + 1] = bz1;
-                        }
-                        let e_out = split_eq_poly.E_out_current()[x_out_val];
-                        let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
-                        let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-                        acc0 += e_out.mul_unreduced::<9>(reduced0);
-                        acci += e_out.mul_unreduced::<9>(reduced_inf);
-                        (acc0, acci)
-                    },
-                )
-                .reduce(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |a, b| (a.0 + b.0, a.1 + b.1),
-                );
+            .par_chunks_exact_mut(2 * num_x_in_vals)
+            .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
+            .enumerate()
+            .fold(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
+                    let mut inner_sum0 = F::Unreduced::<9>::zero();
+                    let mut inner_sum_inf = F::Unreduced::<9>::zero();
+                    for x_in_val in 0..num_x_in_vals {
+                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            bytecode_preprocessing,
+                            trace,
+                            current_step_idx,
+                        );
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        let az0 = eval.az_at_r_first_group(lagrange_evals_r);
+                        let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
+                        let az1 = eval.az_at_r_second_group(lagrange_evals_r);
+                        let bz1 = eval.bz_at_r_second_group(lagrange_evals_r);
+                        let p0 = az0 * bz0;
+                        let slope = (az1 - az0) * (bz1 - bz0);
+                        let e_in = split_eq_poly.E_in_current()[x_in_val];
+                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
+                        inner_sum_inf += e_in.mul_unreduced::<9>(slope);
+                        let off = 2 * x_in_val;
+                        az_chunk[off] = az0;
+                        az_chunk[off + 1] = az1;
+                        bz_chunk[off] = bz0;
+                        bz_chunk[off + 1] = bz1;
+                    }
+                    let e_out = split_eq_poly.E_out_current()[x_out_val];
+                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
+                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
+                    acc0 += e_out.mul_unreduced::<9>(reduced0);
+                    acci += e_out.mul_unreduced::<9>(reduced_inf);
+                    (acc0, acci)
+                },
+            )
+            .reduce(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            );
 
         (
             F::from_montgomery_reduce::<9>(t0_acc_unr),

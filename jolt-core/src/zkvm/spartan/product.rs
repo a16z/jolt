@@ -482,55 +482,55 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
 
         // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
         let (t0_acc_unr, t_inf_acc_unr) = left_bound
-                .par_chunks_exact_mut(2 * num_x_in_vals)
-                .zip(right_bound.par_chunks_exact_mut(2 * num_x_in_vals))
-                .enumerate()
-                .fold(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |(mut acc0, mut acci), (x_out_val, (left_chunk, right_chunk))| {
-                        let mut inner_sum0 = F::Unreduced::<9>::zero();
-                        let mut inner_sum_inf = F::Unreduced::<9>::zero();
-                        for x_in_val in 0..num_x_in_vals {
-                            let base_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                            let idx_lo = base_idx << 1;
-                            let idx_hi = idx_lo + 1;
+            .par_chunks_exact_mut(2 * num_x_in_vals)
+            .zip(right_bound.par_chunks_exact_mut(2 * num_x_in_vals))
+            .enumerate()
+            .fold(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |(mut acc0, mut acci), (x_out_val, (left_chunk, right_chunk))| {
+                    let mut inner_sum0 = F::Unreduced::<9>::zero();
+                    let mut inner_sum_inf = F::Unreduced::<9>::zero();
+                    for x_in_val in 0..num_x_in_vals {
+                        let base_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+                        let idx_lo = base_idx << 1;
+                        let idx_hi = idx_lo + 1;
 
-                            // Materialize rows for lo and hi once
-                            let row_lo = ProductCycleInputs::from_trace::<F>(trace, idx_lo);
-                            let row_hi = ProductCycleInputs::from_trace::<F>(trace, idx_hi);
+                        // Materialize rows for lo and hi once
+                        let row_lo = ProductCycleInputs::from_trace::<F>(trace, idx_lo);
+                        let row_hi = ProductCycleInputs::from_trace::<F>(trace, idx_hi);
 
-                            let (left0, right0) = ProductVirtualEval::fused_left_right_at_r::<F>(
-                                &row_lo,
-                                &weights_at_r0[..],
-                            );
-                            let (left1, right1) = ProductVirtualEval::fused_left_right_at_r::<F>(
-                                &row_hi,
-                                &weights_at_r0[..],
-                            );
+                        let (left0, right0) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_lo,
+                            &weights_at_r0[..],
+                        );
+                        let (left1, right1) = ProductVirtualEval::fused_left_right_at_r::<F>(
+                            &row_hi,
+                            &weights_at_r0[..],
+                        );
 
-                            let p0 = left0 * right0;
-                            let slope = (left1 - left0) * (right1 - right0);
-                            let e_in = split_eq_poly.E_in_current()[x_in_val];
-                            inner_sum0 += e_in.mul_unreduced::<9>(p0);
-                            inner_sum_inf += e_in.mul_unreduced::<9>(slope);
-                            let off = 2 * x_in_val;
-                            left_chunk[off] = left0;
-                            left_chunk[off + 1] = left1;
-                            right_chunk[off] = right0;
-                            right_chunk[off + 1] = right1;
-                        }
-                        let e_out = split_eq_poly.E_out_current()[x_out_val];
-                        let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
-                        let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-                        acc0 += e_out.mul_unreduced::<9>(reduced0);
-                        acci += e_out.mul_unreduced::<9>(reduced_inf);
-                        (acc0, acci)
-                    },
-                )
-                .reduce(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |a, b| (a.0 + b.0, a.1 + b.1),
-                );
+                        let p0 = left0 * right0;
+                        let slope = (left1 - left0) * (right1 - right0);
+                        let e_in = split_eq_poly.E_in_current()[x_in_val];
+                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
+                        inner_sum_inf += e_in.mul_unreduced::<9>(slope);
+                        let off = 2 * x_in_val;
+                        left_chunk[off] = left0;
+                        left_chunk[off + 1] = left1;
+                        right_chunk[off] = right0;
+                        right_chunk[off + 1] = right1;
+                    }
+                    let e_out = split_eq_poly.E_out_current()[x_out_val];
+                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
+                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
+                    acc0 += e_out.mul_unreduced::<9>(reduced0);
+                    acci += e_out.mul_unreduced::<9>(reduced_inf);
+                    (acc0, acci)
+                },
+            )
+            .reduce(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            );
 
         (
             F::from_montgomery_reduce::<9>(t0_acc_unr),
