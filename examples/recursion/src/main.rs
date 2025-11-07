@@ -97,10 +97,14 @@ impl GuestProgram {
         }
     }
 
-    fn inputs(&self) -> Vec<u32> {
+    fn inputs(&self) -> Vec<Vec<u8>> {
         match self {
-            GuestProgram::Fibonacci => vec![2],
-            GuestProgram::Muldiv => vec![10, 5],
+            GuestProgram::Fibonacci => {
+                vec![postcard::to_stdvec(&2u32).unwrap()]
+            }
+            GuestProgram::Muldiv => {
+                vec![postcard::to_stdvec(&(10u32, 5u32, 2u32)).unwrap()]
+            }
         }
     }
 
@@ -113,18 +117,18 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 33554432,
-                        stack_size: 1048576,
+                        memory_size: 134217728,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 200000,
+                        max_input_size: 2000000,
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 200000,
-                        stack_size: 131072,
+                        memory_size: 33554432,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 }
@@ -136,18 +140,18 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 8192,
-                        stack_size: 65536,
+                        memory_size: 134217728,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 200000,
+                        max_input_size: 2000000,
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 200000,
-                        stack_size: 131072,
+                        memory_size: 33554432,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 }
@@ -309,13 +313,19 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
 
     info!("Starting {} recursion with {}", guest.name(), n);
 
-    for (i, &input) in inputs.iter().enumerate() {
-        info!("Processing input {i}: {input}");
+    for (i, input_bytes) in inputs.into_iter().enumerate() {
+        info!("Processing input {i}: {:#?}", &input_bytes);
 
         let now = Instant::now();
 
-        let input_bytes = postcard::to_stdvec(&input).unwrap();
         let mut output_bytes = vec![0; 4096];
+
+        // Running tracing allows things like JOLT_BACKTRACE=1 to work properly
+        info!("  Tracing...");
+        guest_prog.memory_config.program_size =
+            Some(guest_verifier_preprocessing.memory_layout.program_size);
+        let (_, _, _, device_io) = guest_prog.trace(&input_bytes, &[], &[]);
+        assert!(!device_io.panic, "Guest program panicked during tracing");
 
         info!("  Proving...");
         let (proof, io_device, _debug) = jolt_sdk::guest::prover::prove(
@@ -575,17 +585,12 @@ fn verify_proofs(
         input_bytes.append(&mut postcard::to_stdvec(&all_groups_data.as_slice()).unwrap());
 
         info!("Serialized input size: {} bytes", input_bytes.len());
-
-        let actual_input_size = (input_bytes.len() + 7) & !7; // Align to 8
         let memory_config = guest.get_memory_config(use_embed);
 
         assert!(
             input_bytes.len() < memory_config.max_input_size as usize,
             "Input size is too large"
         );
-        assert!(memory_config.memory_size >= memory_config.max_input_size);
-
-        info!("Using max_input_size: {actual_input_size} bytes");
 
         run_recursion_proof(
             guest,
