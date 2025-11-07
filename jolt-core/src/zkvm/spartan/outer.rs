@@ -349,14 +349,9 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
             .checked_mul(num_x_in_vals)
             .expect("overflow computing groups_exact");
 
-        let (mut az_bound, mut bz_bound) = {
-            let span = tracing::span!(tracing::Level::INFO, "allocate buffers");
-            let _guard = span.enter();
-            // Preallocate interleaved buffers once ([lo, hi] per entry)
-            let az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-            let bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-            (az_bound, bz_bound)
-        };
+        // Preallocate interleaved buffers once ([lo, hi] per entry)
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
 
         // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
         let (t0_acc_unr, t_inf_acc_unr) = az_bound

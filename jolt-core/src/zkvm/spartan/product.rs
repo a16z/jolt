@@ -476,14 +476,9 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
             .checked_mul(num_x_in_vals)
             .expect("overflow computing groups_exact");
 
-        let (mut left_bound, mut right_bound) = {
-            let span = tracing::span!(tracing::Level::INFO, "allocate buffers");
-            let _guard = span.enter();
-            // Preallocate interleaved buffers once ([lo, hi] per entry)
-            let left_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-            let right_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-            (left_bound, right_bound)
-        };
+        // Preallocate interleaved buffers once ([lo, hi] per entry)
+        let mut left_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+        let mut right_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
 
         // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
         let (t0_acc_unr, t_inf_acc_unr) = left_bound
