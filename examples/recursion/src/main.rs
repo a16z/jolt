@@ -8,10 +8,8 @@ use std::time::Instant;
 use tracing::{error, info};
 
 fn get_guest_src_dir() -> PathBuf {
-    let current_file = file!();
-    let current_dir = std::path::Path::new(current_file).parent().unwrap();
-
-    let guest_src_dir = current_dir.join("..").join("guest").join("src");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let guest_src_dir = manifest_dir.join("guest").join("src");
 
     guest_src_dir.canonicalize().unwrap_or(guest_src_dir)
 }
@@ -187,6 +185,8 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
         #[jolt::provable(
             max_input_size = {},
             max_output_size = {},
+            max_untrusted_advice_size = {},
+            max_trusted_advice_size = {},
             memory_size = {},
             stack_size = {},
             max_trace_length = {}
@@ -196,6 +196,8 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
 }}"#,
         memory_config.max_input_size,
         memory_config.max_output_size,
+        memory_config.max_untrusted_advice_size,
+        memory_config.max_trusted_advice_size,
         memory_config.memory_size,
         memory_config.stack_size,
         max_trace_length
@@ -265,14 +267,10 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     info!("Starting collect_guest_proofs for {}", guest.name());
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
+    // This should match the example being run, it can cause layout issues if the guest's macro and our assumption here differ
     let memory_config = MemoryConfig {
-        max_input_size: 16384u64,
-        max_output_size: 16384u64,
-        max_untrusted_advice_size: 0u64,
-        max_trusted_advice_size: 0u64,
-        stack_size: 4096u64,
-        memory_size: 10240u64,
-        program_size: None,
+        memory_size: 32768u64,
+        ..Default::default()
     };
 
     info!("Creating program...");
