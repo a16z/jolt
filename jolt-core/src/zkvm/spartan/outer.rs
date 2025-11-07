@@ -271,73 +271,41 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
         let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
         let bytecode_preprocessing = preprocessing.bytecode.clone();
 
-        let lagrange_evals_r = {
-            let span = tracing::span!(tracing::Level::INFO, "compute lagrange_evals_r");
-            let _guard = span.enter();
-            LagrangePolynomial::<F>::evals::<F::Challenge, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(
-                &uni.r0,
-            )
-        };
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&uni.r0);
 
-        let (tau_high, tau_low) = {
-            let span = tracing::span!(tracing::Level::INFO, "compute tau_high and tau_low");
-            let _guard = span.enter();
-            let tau_high = uni.tau[uni.tau.len() - 1];
-            let tau_low = &uni.tau[..uni.tau.len() - 1];
-            (tau_high, tau_low)
-        };
+        let tau_high = uni.tau[uni.tau.len() - 1];
+        let tau_low = &uni.tau[..uni.tau.len() - 1];
 
-        let lagrange_tau_r0 = {
-            let span = tracing::span!(
-                tracing::Level::INFO,
-                "compute lagrange_tau_r0 (lagrange_kernel)"
-            );
-            let _guard = span.enter();
-            LagrangePolynomial::<F>::lagrange_kernel::<
-                F::Challenge,
-                OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-            >(&uni.r0, &tau_high)
-        };
+        let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&uni.r0, &tau_high);
 
-        let split_eq_poly: GruenSplitEqPolynomial<F> = {
-            let span = tracing::span!(tracing::Level::INFO, "build split_eq_poly");
-            let _guard = span.enter();
+        let split_eq_poly: GruenSplitEqPolynomial<F> =
             GruenSplitEqPolynomial::<F>::new_with_scaling(
                 tau_low,
                 BindingOrder::LowToHigh,
                 Some(lagrange_tau_r0),
-            )
-        };
-
-        let (t0, t_inf, az_bound, bz_bound) = {
-            let span = tracing::span!(
-                tracing::Level::INFO,
-                "compute first quadratic evals and bound polys"
             );
-            let _guard = span.enter();
-            Self::compute_first_quadratic_evals_and_bound_polys(
-                &bytecode_preprocessing,
-                trace,
-                &lagrange_evals_r,
-                &split_eq_poly,
-            )
-        };
 
-        {
-            let span = tracing::span!(
-                tracing::Level::INFO,
-                "assemble OuterRemainingSumcheckProver"
-            );
-            let _guard = span.enter();
-            Self {
-                split_eq_poly,
-                bytecode_preprocessing,
-                trace: state_manager.get_trace_arc(),
-                az: az_bound,
-                bz: bz_bound,
-                first_round_evals: (t0, t_inf),
-                params: OuterRemainingSumcheckParams::new(num_cycles_bits, uni),
-            }
+        let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
+            &bytecode_preprocessing,
+            trace,
+            &lagrange_evals_r,
+            &split_eq_poly,
+        );
+
+        Self {
+            split_eq_poly,
+            bytecode_preprocessing,
+            trace: state_manager.get_trace_arc(),
+            az: az_bound,
+            bz: bz_bound,
+            first_round_evals: (t0, t_inf),
+            params: OuterRemainingSumcheckParams::new(num_cycles_bits, uni),
         }
     }
 
@@ -373,14 +341,9 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
         lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
     ) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {
-        let (num_x_out_vals, num_x_in_vals, iter_num_x_in_vars) = {
-            let span = tracing::span!(tracing::Level::INFO, "compute dimensions");
-            let _guard = span.enter();
-            let num_x_out_vals = split_eq_poly.E_out_current_len();
-            let num_x_in_vals = split_eq_poly.E_in_current_len();
-            let iter_num_x_in_vars = num_x_in_vals.log_2();
-            (num_x_out_vals, num_x_in_vals, iter_num_x_in_vars)
-        };
+        let num_x_out_vals = split_eq_poly.E_out_current_len();
+        let num_x_in_vals = split_eq_poly.E_in_current_len();
+        let iter_num_x_in_vars = num_x_in_vals.log_2();
 
         let groups_exact = num_x_out_vals
             .checked_mul(num_x_in_vals)
@@ -395,11 +358,8 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
             (az_bound, bz_bound)
         };
 
-        let (t0_acc_unr, t_inf_acc_unr) = {
-            let span = tracing::span!(tracing::Level::INFO, "parallel streaming computation");
-            let _guard = span.enter();
-            // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
-            az_bound
+        // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
+        let (t0_acc_unr, t_inf_acc_unr) = az_bound
                 .par_chunks_exact_mut(2 * num_x_in_vals)
                 .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
                 .enumerate()
@@ -442,8 +402,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                 .reduce(
                     || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
                     |a, b| (a.0 + b.0, a.1 + b.1),
-                )
-        };
+                );
 
         (
             F::from_montgomery_reduce::<9>(t0_acc_unr),
