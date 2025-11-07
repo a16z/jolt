@@ -311,7 +311,7 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     // Faster evaluation based on
-    // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+    // https://randomwalks.xyz/posts/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
     pub fn inside_out_evaluate<C>(&self, r: &[C]) -> F
     where
