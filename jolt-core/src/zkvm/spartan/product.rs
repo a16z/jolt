@@ -435,7 +435,7 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
 
         Self {
             split_eq_poly,
-            trace: Arc::new(trace.to_vec()),
+            trace: state_manager.get_trace_arc(),
             left: DensePolynomial::default(),
             right: DensePolynomial::default(),
             streaming_cache: Some(streaming_cache),

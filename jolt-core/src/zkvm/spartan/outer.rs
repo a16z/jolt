@@ -301,7 +301,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
         Self {
             split_eq_poly,
             bytecode_preprocessing,
-            trace: Arc::new(trace.to_vec()),
+            trace: state_manager.get_trace_arc(),
             az: az_bound,
             bz: bz_bound,
             first_round_evals: (t0, t_inf),
