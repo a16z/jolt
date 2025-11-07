@@ -26,7 +26,6 @@ This section is comprised of the following subsections:
     - [Batched sumcheck](./optimizations/batched-sumcheck.md)
     - [Batched openings](./optimizations/batched-openings.md)
     - [Inlines](./optimizations/inlines.md)
-    - [Leveraging uniformity in Spartan](./optimizations/uniform-spartan.md)
     - [Small value optimizations](./optimizations/small-value.md)
     - [EQ optimizations](./optimizations/eq.md)
 - [Appendix](./appendix/appendix.md)
