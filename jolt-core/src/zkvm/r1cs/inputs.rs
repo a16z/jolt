@@ -14,11 +14,11 @@
 //! (typed evaluators and claim computation).
 
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
+use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
 use crate::zkvm::witness::VirtualPolynomial;
-use crate::zkvm::JoltSharedPreprocessing;
 
 use crate::field::JoltField;
 use ark_ff::biginteger::{S128, S64};
@@ -266,7 +266,11 @@ pub struct R1CSCycleInputs {
 impl R1CSCycleInputs {
     /// Build directly from the execution trace and preprocessing,
     /// mirroring the optimized semantics used in `compute_claimed_r1cs_input_evals`.
-    pub fn from_trace<F>(preprocessing: &JoltSharedPreprocessing, trace: &[Cycle], t: usize) -> Self
+    pub fn from_trace<F>(
+        bytecode_preprocessing: &BytecodePreprocessing,
+        trace: &[Cycle],
+        t: usize,
+    ) -> Self
     where
         F: JoltField,
     {
@@ -314,9 +318,9 @@ impl R1CSCycleInputs {
         };
 
         // PCs
-        let pc = preprocessing.bytecode.get_pc(cycle) as u64;
+        let pc = bytecode_preprocessing.get_pc(cycle) as u64;
         let next_pc = if let Some(nc) = next_cycle {
-            preprocessing.bytecode.get_pc(nc) as u64
+            bytecode_preprocessing.get_pc(nc) as u64
         } else {
             0u64
         };

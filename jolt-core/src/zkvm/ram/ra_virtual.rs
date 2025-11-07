@@ -60,7 +60,14 @@ impl<F: JoltField> RaSumcheckProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaSumcheckParams::new(state_manager, opening_accumulator, transcript);
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+
+        let params = RaSumcheckParams::new(
+            trace.len(),
+            state_manager.ram_K,
+            opening_accumulator,
+            transcript,
+        );
 
         // Precompute EQ tables for each chunk
         let eq_tables: Vec<Vec<F>> = params
@@ -78,7 +85,6 @@ impl<F: JoltField> RaSumcheckProver<F> {
             DensePolynomial::linear_combination(&eq_polys.each_ref(), &params.gamma_powers).Z,
         );
 
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..params.d)
             .into_par_iter()
             .zip(eq_tables.into_par_iter())
@@ -88,7 +94,7 @@ impl<F: JoltField> RaSumcheckProver<F> {
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
-                            &preprocessing.shared.memory_layout,
+                            &preprocessing.memory_layout,
                         )
                         .map(|address| {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
@@ -211,11 +217,12 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        trace_len: usize,
+        ram_K: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaSumcheckParams::new(state_manager, opening_accumulator, transcript);
+        let params = RaSumcheckParams::new(trace_len, ram_K, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -289,15 +296,14 @@ struct RaSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckParams<F> {
     fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        trace_len: usize,
+        ram_K: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         // Calculate d dynamically such that 2^8 = K^(1/D)
-        let d = compute_d_parameter(state_manager.ram_K);
-        let log_K = state_manager.ram_K.log_2();
-
-        let T = state_manager.get_trace_len();
+        let d = compute_d_parameter(ram_K);
+        let log_K = ram_K.log_2();
 
         // These two sumchecks have the same binding order and number of rounds,
         // and they're run in parallel, so the openings are the same.
@@ -360,7 +366,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
 
         Self {
             gamma_powers,
-            T,
+            T: trace_len,
             d,
             r_cycle,
             r_address_chunks,

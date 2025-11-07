@@ -5,26 +5,20 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        opening_proof::{
-            OpeningAccumulator, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-        },
+        opening_proof::{OpeningAccumulator, ProverOpeningAccumulator, SumcheckId},
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
-        BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
-        HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
+        sumcheck_prover::SumcheckInstanceProver, BooleanitySumcheckParams,
+        BooleanitySumcheckProver, BooleanitySumcheckVerifier, HammingWeightSumcheckParams,
+        HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
-        dag::{
-            stage::{SumcheckStagesProver, SumcheckStagesVerifier},
-            state_manager::StateManager,
-        },
+        dag::{stage::SumcheckStagesProver, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
-            ra_virtual::{RaSumcheckProver, RaSumcheckVerifier},
-            read_raf_checking::{ReadRafSumcheckProver, ReadRafSumcheckVerifier},
+            ra_virtual::RaSumcheckProver, read_raf_checking::ReadRafSumcheckProver,
         },
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -132,43 +126,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     }
 }
 
-pub struct LookupsDagVerifier;
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
-    SumcheckStagesVerifier<F, T, PCS> for LookupsDagVerifier
-{
-    fn stage3_instances(
-        &mut self,
-        _sm: &mut StateManager<'_, F, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let hamming_weight = new_ra_hamming_weight_verifier(transcript);
-        vec![Box::new(hamming_weight)]
-    }
-
-    fn stage5_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let read_raf = ReadRafSumcheckVerifier::new(sm, transcript);
-        vec![Box::new(read_raf)]
-    }
-
-    fn stage6_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let ra_virtual = RaSumcheckVerifier::new(opening_accumulator);
-        let booleanity = new_ra_booleanity_verifier(sm, transcript);
-        vec![Box::new(ra_virtual), Box::new(booleanity)]
-    }
-}
-
 fn gen_ra_booleanity_prover<F: JoltField>(
     state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
@@ -225,26 +182,19 @@ fn gen_ra_hamming_weight_prover<F: JoltField, T: Transcript>(
     HammingWeightSumcheckProver::gen(params, ra_evals.to_vec())
 }
 
-fn new_ra_booleanity_verifier<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+pub fn new_ra_booleanity_verifier<F: JoltField>(
+    n_cycle_vars: usize,
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckVerifier<F> {
-    let (_, _, T_val) = state_manager.get_verifier_data();
-    let log_t = T_val.log_2();
-
-    let gammas: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(D);
-
-    let r_address: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(LOG_K_CHUNK);
-
+    let gammas = transcript.challenge_vector_optimized::<F>(D);
+    let r_address = transcript.challenge_vector_optimized::<F>(LOG_K_CHUNK);
     let r_cycle = Vec::new();
-
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..D).map(CommittedPolynomial::InstructionRa).collect();
-
     let params = BooleanitySumcheckParams {
         d: D,
         log_k_chunk: LOG_K_CHUNK,
-        log_t,
+        log_t: n_cycle_vars,
         gammas,
         r_address,
         r_cycle,
@@ -256,7 +206,7 @@ fn new_ra_booleanity_verifier<F: JoltField>(
     BooleanitySumcheckVerifier::new(params)
 }
 
-fn new_ra_hamming_weight_verifier<F: JoltField, T: Transcript>(
+pub fn new_ra_hamming_weight_verifier<F: JoltField, T: Transcript>(
     transcript: &mut T,
 ) -> HammingWeightSumcheckVerifier<F> {
     let gamma_powers = transcript.challenge_scalar_powers(D);

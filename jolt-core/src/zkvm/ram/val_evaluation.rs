@@ -1,6 +1,7 @@
 use itertools::chain;
 use num_traits::Zero;
 use std::{array, iter::zip, sync::Arc};
+use tracer::JoltDevice;
 
 use crate::{
     field::JoltField,
@@ -226,19 +227,18 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        program_io: &JoltDevice,
+        trace_len: usize,
+        ram_K: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let (_, program_io, T) = state_manager.get_verifier_data();
-        let K = state_manager.ram_K;
-
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, _) = r.split_at(K.log_2());
+        let (r_address, _) = r.split_at(ram_K.log_2());
 
-        let total_memory_vars = K.log_2();
+        let n_memory_vars = ram_K.log_2();
 
         // Calculate untrusted advice contribution
         let untrusted_contribution = super::calculate_advice_memory_evaluation(
@@ -249,7 +249,7 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
             program_io.memory_layout.untrusted_advice_start,
             &program_io.memory_layout,
             &r_address.r,
-            total_memory_vars,
+            n_memory_vars,
         );
 
         // Calculate trusted advice contribution
@@ -261,7 +261,7 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
             program_io.memory_layout.trusted_advice_start,
             &program_io.memory_layout,
             &r_address.r,
-            total_memory_vars,
+            n_memory_vars,
         );
 
         // Compute the public part of val_init evaluation
@@ -272,7 +272,11 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
         let init_eval =
             untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
 
-        let params = ValEvaluationSumcheckParams { init_eval, T, K };
+        let params = ValEvaluationSumcheckParams {
+            init_eval,
+            T: trace_len,
+            K: ram_K,
+        };
 
         Self { params }
     }

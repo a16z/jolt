@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
@@ -14,19 +16,10 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{
-            jolt_dag::verify_jolt_dag, proof_serialization::JoltProof, state_manager::StateManager,
-        },
+        dag::{jolt_dag::DagVerifier, proof_serialization::JoltProof},
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
-};
-use crate::{
-    poly::commitment::commitment_scheme::CommitmentScheme, zkvm::witness::AllCommittedPolynomials,
-};
-use crate::{
-    poly::commitment::commitment_scheme::StreamingCommitmentScheme,
-    zkvm::dag::state_manager::VerifierState,
 };
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -126,7 +119,9 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
-    pub shared: JoltSharedPreprocessing,
+    pub bytecode: BytecodePreprocessing,
+    pub ram: RAMPreprocessing,
+    pub memory_layout: MemoryLayout,
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -166,7 +161,9 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::ProverSetup,
-    pub shared: JoltSharedPreprocessing,
+    pub bytecode: BytecodePreprocessing,
+    pub ram: RAMPreprocessing,
+    pub memory_layout: MemoryLayout,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -208,7 +205,9 @@ where
         let generators = PCS::setup_verifier(&preprocessing.generators);
         JoltVerifierPreprocessing {
             generators,
-            shared: preprocessing.shared.clone(),
+            bytecode: preprocessing.bytecode.clone(),
+            ram: preprocessing.ram.clone(),
+            memory_layout: preprocessing.memory_layout.clone(),
         }
     }
 }
@@ -226,21 +225,6 @@ where
 }
 
 pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript> {
-    fn shared_preprocess(
-        bytecode: Vec<Instruction>,
-        memory_layout: MemoryLayout,
-        memory_init: Vec<(u64, u8)>,
-    ) -> JoltSharedPreprocessing {
-        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
-        let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
-
-        JoltSharedPreprocessing {
-            memory_layout,
-            bytecode: bytecode_preprocessing,
-            ram: ram_preprocessing,
-        }
-    }
-
     #[tracing::instrument(skip_all, name = "Jolt::prover_preprocess")]
     fn prover_preprocess(
         bytecode: Vec<Instruction>,
@@ -248,13 +232,18 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
+        let bytecode = BytecodePreprocessing::preprocess(bytecode);
+        let ram = RAMPreprocessing::preprocess(memory_init);
 
         let max_T: usize = max_trace_length.next_power_of_two();
-
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        JoltProverPreprocessing { generators, shared }
+        JoltProverPreprocessing {
+            generators,
+            bytecode,
+            ram,
+            memory_layout,
+        }
     }
 
     #[allow(clippy::type_complexity)]
@@ -278,13 +267,13 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         use tracer::instruction::Cycle;
 
         let memory_config = MemoryConfig {
-            max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
-            max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
-            max_input_size: preprocessing.shared.memory_layout.max_input_size,
-            max_output_size: preprocessing.shared.memory_layout.max_output_size,
-            stack_size: preprocessing.shared.memory_layout.stack_size,
-            memory_size: preprocessing.shared.memory_layout.memory_size,
-            program_size: Some(preprocessing.shared.memory_layout.program_size),
+            max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: preprocessing.memory_layout.max_trusted_advice_size,
+            max_input_size: preprocessing.memory_layout.max_input_size,
+            max_output_size: preprocessing.memory_layout.max_output_size,
+            stack_size: preprocessing.memory_layout.stack_size,
+            memory_size: preprocessing.memory_layout.memory_size,
+            program_size: Some(preprocessing.memory_layout.program_size),
         };
 
         let (lazy_trace, mut trace, final_memory_state, mut program_io) = {
@@ -384,13 +373,13 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
 
         // Memory layout checks
-        if program_io.memory_layout != preprocessing.shared.memory_layout {
+        if program_io.memory_layout != preprocessing.memory_layout {
             return Err(ProofVerifyError::MemoryLayoutMismatch);
         }
-        if program_io.inputs.len() > preprocessing.shared.memory_layout.max_input_size as usize {
+        if program_io.inputs.len() > preprocessing.memory_layout.max_input_size as usize {
             return Err(ProofVerifyError::InputTooLarge);
         }
-        if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
+        if program_io.outputs.len() > preprocessing.memory_layout.max_output_size as usize {
             return Err(ProofVerifyError::OutputTooLarge);
         }
 
@@ -421,22 +410,16 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }
         }
 
-        let state_manager = StateManager {
-            untrusted_advice_commitment: proof.untrusted_advice_commitment.clone(),
+        DagVerifier {
             trusted_advice_commitment,
             program_io,
-            ram_K: proof.ram_K,
-            ram_d: AllCommittedPolynomials::ram_d_from_K(proof.ram_K),
-            twist_sumcheck_switch_index: proof.twist_sumcheck_switch_index,
-            prover_state: None,
-            verifier_state: Some(VerifierState {
-                preprocessing,
-                trace_length: proof.trace_length,
-            }),
-        };
-
-        verify_jolt_dag(&proof, state_manager, opening_accumulator, transcript)
-            .expect("Verification failed");
+            proof,
+            opening_accumulator,
+            transcript,
+            preprocessing,
+        }
+        .verify()
+        .expect("Verification failed");
 
         Ok(())
     }
@@ -714,7 +697,7 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
-        let max_trusted_advice_size = preprocessing.shared.memory_layout.max_trusted_advice_size;
+        let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
         let trusted_advice_commitment = {

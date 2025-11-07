@@ -198,9 +198,10 @@ pub struct HammingBooleanitySumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
-    pub fn new(state_manager: &mut StateManager<F, impl CommitmentScheme<Field = F>>) -> Self {
+    pub fn new(n_cycle_vars: usize) -> Self {
         Self {
-            log_T: state_manager.get_trace_len().log_2(),
+            // TODO: Make the name for this consistent across the codebase.
+            log_T: n_cycle_vars,
             _phantom: PhantomData,
         }
     }
