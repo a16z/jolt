@@ -3,6 +3,7 @@ use rayon::prelude::*;
 use std::ops::Index;
 
 use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
@@ -10,6 +11,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 /// course of sumcheck.
 #[derive(Clone, Debug, Allocative, Default)]
 pub struct ExpandingTable<F: JoltField> {
+    binding_order: BindingOrder,
     len: usize,
     values: Vec<F>,
     scratch_space: Vec<F>,
@@ -22,12 +24,16 @@ impl<F: JoltField> ExpandingTable<F> {
 
     /// Initializes an `ExpandingTable` with the given `capacity`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, binding_order: BindingOrder) -> Self {
         let (values, scratch_space) = rayon::join(
             || unsafe_allocate_zero_vec(capacity),
-            || unsafe_allocate_zero_vec(capacity),
+            || match binding_order {
+                BindingOrder::LowToHigh => Vec::with_capacity(0),
+                BindingOrder::HighToLow => unsafe_allocate_zero_vec(capacity),
+            },
         );
         Self {
+            binding_order,
             len: 0,
             values,
             scratch_space,
@@ -48,15 +54,29 @@ impl<F: JoltField> ExpandingTable<F> {
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
     pub fn update(&mut self, r_j: F::Challenge) {
-        self.values[..self.len]
-            .par_iter()
-            .zip(self.scratch_space.par_chunks_mut(2))
-            .for_each(|(&v_i, dest)| {
-                let eval_1 = r_j * v_i;
-                dest[0] = v_i - eval_1;
-                dest[1] = eval_1;
-            });
-        std::mem::swap(&mut self.values, &mut self.scratch_space);
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                let (values_left, values_right) = self.values.split_at_mut(self.len);
+                values_left
+                    .par_iter_mut()
+                    .zip(values_right.par_iter_mut())
+                    .for_each(|(x, y)| {
+                        *y = *x * r_j;
+                        *x -= *y;
+                    });
+            }
+            BindingOrder::HighToLow => {
+                self.values[..self.len]
+                    .par_iter()
+                    .zip(self.scratch_space.par_chunks_mut(2))
+                    .for_each(|(&v_i, dest)| {
+                        let eval_1 = r_j * v_i;
+                        dest[0] = v_i - eval_1;
+                        dest[1] = eval_1;
+                    });
+                std::mem::swap(&mut self.values, &mut self.scratch_space);
+            }
+        }
         self.len *= 2;
     }
 }

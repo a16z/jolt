@@ -12,6 +12,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
 use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -63,7 +64,7 @@ pub struct EqAddressState<F: JoltField> {
     pub B: MultilinearPolynomial<F>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
-    pub F: Vec<F>,
+    pub F: ExpandingTable<F>,
     /// The number of variables that have been bound during sumcheck so far
     pub num_variables_bound: usize,
 }
@@ -86,9 +87,8 @@ impl<F: JoltField> EqAddressState<F> {
         let K = 1 << r_address.len();
         // F will maintain an array that, at the end of sumcheck round m, has size 2^m
         // and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
-        // See Equation (55)
-        let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
-        F[0] = F::one();
+        let mut F = ExpandingTable::new(K, BindingOrder::LowToHigh);
+        F.reset(F::one());
 
         Self {
             B: MultilinearPolynomial::from(EqPolynomial::<F>::evals(r_address)),
@@ -309,14 +309,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     .B
                     .bind_parallel(r, BindingOrder::LowToHigh);
 
-                let (F_left, F_right) = shared_eq_address.F.split_at_mut(1 << round);
-                F_left
-                    .par_iter_mut()
-                    .zip(F_right.par_iter_mut())
-                    .for_each(|(x, y)| {
-                        *y = *x * r;
-                        *x -= *y;
-                    });
+                shared_eq_address.F.update(r);
                 shared_eq_address.num_variables_bound += 1;
             } else {
                 shared_eq_cycle.D.bind(r);
@@ -330,7 +323,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
             let mut lock = polynomial.H.write().unwrap();
             if matches!(*lock, RaPolynomial::None) {
-                *lock = RaPolynomial::new(nonzero_indices.clone(), shared_eq_address.F.clone());
+                *lock =
+                    RaPolynomial::new(nonzero_indices.clone(), shared_eq_address.F.clone_values());
             }
 
             let g = mem::take(&mut polynomial.G);
