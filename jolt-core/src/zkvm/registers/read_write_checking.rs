@@ -1236,17 +1236,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eq_r_cycle_stage_1 = eq_r_cycle_stage_1.as_mut().unwrap();
         let eq_r_cycle_stage_3 = eq_r_cycle_stage_3.as_mut().unwrap();
 
-        [
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
-            inc_cycle,
-            eq_r_cycle_stage_1,
-            eq_r_cycle_stage_3,
-        ]
-        .into_par_iter()
-        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+        rs1_ra.bind_parallel(r_j, BindingOrder::HighToLow);
+        rs2_ra.bind_parallel(r_j, BindingOrder::HighToLow);
+        rd_wa.bind_parallel(r_j, BindingOrder::HighToLow);
+        val.bind_parallel(r_j, BindingOrder::HighToLow);
+        inc_cycle.bind_parallel(r_j, BindingOrder::HighToLow);
+        eq_r_cycle_stage_1.bind_parallel(r_j, BindingOrder::HighToLow);
+        eq_r_cycle_stage_3.bind_parallel(r_j, BindingOrder::HighToLow);
     }
 
     fn phase3_bind(&mut self, r_j: F::Challenge) {

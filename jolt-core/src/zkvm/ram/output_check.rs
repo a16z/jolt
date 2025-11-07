@@ -209,9 +209,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
 
         // We bind Val_init here despite the fact that it is not used in `compute_prover_message`
         // because we'll need Val_init(r) in `ValFinalSumcheck`
-        [val_init, val_final, val_io, eq_poly, io_mask]
-            .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+        val_init.bind_parallel(r_j, BindingOrder::LowToHigh);
+        val_final.bind_parallel(r_j, BindingOrder::LowToHigh);
+        val_io.bind_parallel(r_j, BindingOrder::LowToHigh);
+        eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        io_mask.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn cache_openings(

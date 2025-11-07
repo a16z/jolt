@@ -461,31 +461,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         }
 
         if round < self.params.log_K {
-            rayon::scope(|s| {
-                s.spawn(|_| {
-                    self.params
-                        .val_polys
-                        .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh))
-                });
-                s.spawn(|_| {
-                    self.params
-                        .int_poly
-                        .bind_parallel(r_j, BindingOrder::LowToHigh);
-                });
-                s.spawn(|_| {
-                    self.F
-                        .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-                });
-                self.r_address_prime.push(r_j);
-            });
+            self.params
+                .val_polys
+                .iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            self.params
+                .int_poly
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.F
+                .iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            self.r_address_prime.push(r_j);
             if round == self.params.log_K - 1 {
                 self.init_log_t_rounds();
             }
         } else {
             self.ra
-                .par_iter_mut()
+                .iter_mut()
                 .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
             self.gruen_eq_polys
                 .iter_mut()

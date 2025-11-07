@@ -124,7 +124,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         self.ra_i_polys
-            .par_iter_mut()
+            .iter_mut()
             .for_each(|p| p.bind_parallel(r_j, BindingOrder::LowToHigh));
         self.eq_poly.bind(r_j);
     }
