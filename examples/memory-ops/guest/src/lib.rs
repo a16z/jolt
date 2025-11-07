@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 #![allow(unused_assignments, asm_sub_register)]
 
-#[jolt::provable(guest_only, memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(guest_only, memory_size = 65536, max_trace_length = 65536)]
 fn memory_ops() -> (i32, u32, i32, u32) {
     use core::arch::asm;
 

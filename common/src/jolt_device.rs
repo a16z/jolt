@@ -9,6 +9,7 @@ use std::vec::Vec;
 use crate::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
     DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
+    STACK_CANARY_SIZE,
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]
@@ -238,6 +239,7 @@ impl core::fmt::Debug for MemoryLayout {
             .field("memory_end", &format_args!("{:#X}", self.memory_end))
             .field("panic", &format_args!("{:#X}", self.panic))
             .field("termination", &format_args!("{:#X}", self.termination))
+            .field("io_end", &format_args!("{:#X}", self.io_end))
             .finish()
     }
 }
@@ -388,5 +390,10 @@ impl MemoryLayout {
     /// Returns the start address memory.
     pub fn get_lowest_address(&self) -> u64 {
         self.trusted_advice_start.min(self.untrusted_advice_start)
+    }
+
+    /// Returns the total emulator memory
+    pub fn get_total_memory_size(&self) -> u64 {
+        self.memory_size + self.stack_size + STACK_CANARY_SIZE
     }
 }

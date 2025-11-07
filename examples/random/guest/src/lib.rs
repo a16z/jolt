@@ -18,7 +18,7 @@ fn rand_v09(a: u32, b: u32) -> u32 {
     rng.random_range(a..b)
 }
 
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(memory_size = 65536, max_trace_length = 65536)]
 fn rand(a: u32, b: u32) -> u32 {
     use jolt::{end_cycle_tracking, start_cycle_tracking};
 

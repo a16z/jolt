@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 use core::hint::black_box;
 
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(memory_size = 32768, max_trace_length = 65536)]
 fn muldiv(a: u32, b: u32, c: u32) -> u32 {
     use jolt::{end_cycle_tracking, start_cycle_tracking};
 
