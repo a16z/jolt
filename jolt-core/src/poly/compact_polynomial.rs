@@ -105,7 +105,7 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     }
 
     // Faster evaluation based on
-    // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+    // https://randomwalks.xyz/posts/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
     pub fn inside_out_evaluate(&self, r: &[F]) -> F {
         // Copied over from eq_poly
