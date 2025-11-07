@@ -13,6 +13,9 @@ use sysinfo::System;
 use build_wasm::{build_wasm, modify_cargo_toml};
 use jolt_core::host::toolchain;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(version = version(), about, long_about = None)]
 struct Cli {

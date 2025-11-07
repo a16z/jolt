@@ -698,10 +698,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         if round == 0 {
             self.bind_streaming_round(r_j);
         } else {
-            rayon::join(
-                || self.left.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || self.right.bind_parallel(r_j, BindingOrder::LowToHigh),
-            );
+            self.left.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.right.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
 
         // Bind eq_poly for next round

@@ -2,7 +2,6 @@ use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::{JoltField, OptimizedMul};
 use crate::utils::math::Math;
 use crate::utils::small_scalar::SmallScalar;
-use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
@@ -22,7 +21,6 @@ pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     len: usize,
     pub coeffs: Vec<T>,
     pub bound_coeffs: Vec<F>,
-    binding_scratch_space: Option<Vec<F>>,
 }
 
 impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
@@ -38,7 +36,6 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
             len: coeffs.len(),
             coeffs,
             bound_coeffs: vec![],
-            binding_scratch_space: None,
         }
     }
 
@@ -253,6 +250,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 }
             }
         }
+
         self.num_vars -= 1;
         self.len = n;
     }
@@ -263,24 +261,22 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
         if self.is_bound() {
             match order {
                 BindingOrder::LowToHigh => {
-                    if self.binding_scratch_space.is_none() {
-                        self.binding_scratch_space = Some(unsafe_allocate_zero_vec(n));
-                    }
-                    let binding_scratch_space = self.binding_scratch_space.as_mut().unwrap();
-
-                    binding_scratch_space
-                        .par_iter_mut()
-                        .take(n)
-                        .enumerate()
-                        .for_each(|(i, new_coeff)| {
-                            if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
-                                *new_coeff = self.bound_coeffs[2 * i];
+                    let mut bound_coeffs = Vec::with_capacity(n);
+                    (
+                        bound_coeffs.spare_capacity_mut(),
+                        self.bound_coeffs.par_chunks_exact(2),
+                    )
+                        .into_par_iter()
+                        .with_min_len(512)
+                        .for_each(|(bound_coeff, coeffs)| {
+                            bound_coeff.write(if coeffs[1] == coeffs[0] {
+                                coeffs[0]
                             } else {
-                                *new_coeff = self.bound_coeffs[2 * i]
-                                    + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
-                            }
+                                (coeffs[1] - coeffs[0]) * r + coeffs[0]
+                            });
                         });
-                    std::mem::swap(&mut self.bound_coeffs, binding_scratch_space);
+                    unsafe { bound_coeffs.set_len(n) };
+                    self.bound_coeffs = bound_coeffs;
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
