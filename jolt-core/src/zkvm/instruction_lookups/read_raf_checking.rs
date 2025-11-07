@@ -423,8 +423,6 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
         let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
 
         let new_suffix_polys: Vec<_> = {
-            let span = tracing::span!(tracing::Level::INFO, "build new_suffix_polys");
-            let _guard = span.enter();
             LookupTables::<XLEN>::iter()
                 .collect::<Vec<_>>()
                 .iter()
@@ -602,17 +600,22 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
         let (prev_claim_spartan, prev_claim_branch) = {
             let span = tracing::span!(tracing::Level::INFO, "Compute prev_claims");
             let _guard = span.enter();
-            let prev_claim_spartan: F = self
-                .eq_r_spartan
-                .par_iter_low_to_high()
-                .map(|(j, eq)| eq * ra[j] * (combined_val_poly[j] + combined_raf_val_poly[j]))
-                .sum();
-            let prev_claim_branch: F = self
-                .eq_r_branch
-                .par_iter_low_to_high()
-                .map(|(j, eq)| eq * ra[j] * combined_val_poly[j])
-                .sum();
-            (prev_claim_spartan, prev_claim_branch)
+            rayon::join(
+                || {
+                    self.eq_r_spartan
+                        .par_iter_low_to_high()
+                        .map(|(j, eq)| {
+                            eq * ra[j] * (combined_val_poly[j] + combined_raf_val_poly[j])
+                        })
+                        .sum()
+                },
+                || {
+                    self.eq_r_branch
+                        .par_iter_low_to_high()
+                        .map(|(j, eq)| eq * ra[j] * combined_val_poly[j])
+                        .sum()
+                },
+            )
         };
 
         self.prev_claim_spartan = Some(prev_claim_spartan);
