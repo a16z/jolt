@@ -145,27 +145,69 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         // Compute G without materializing the dense eq(r_cycle, j) table:
         // G[k] = sum_{j: nonzero_indices[j] = k} eq(r_cycle, j).
         // (described in Section 6.3 of the Twist/Shout paper)
-        // We stream eq(r_cycle, j) from the split representation.
-        let G =
-            eq.D.par_iter_low_to_high()
-                .fold(
-                    || unsafe_allocate_zero_vec(polynomial.K),
-                    |mut local_g, (j, d_j)| {
-                        if let Some(k) = nonzero_indices[j] {
-                            local_g[k as usize] += d_j;
+        // Custom parallelization: parallel over E_out, sequential over E_in and the last bit.
+        // This avoids nested Rayon layers while still computing d_j on-the-fly from the split representation.
+        let E_in = eq.D.E_in_current();
+        let E_out = eq.D.E_out_current();
+        let x_in_bits = E_in.len().log_2();
+        let w_current = eq.D.get_current_w();
+        let factor_0 = F::one() - w_current;
+        let factor_1: F = w_current.into();
+
+        let G = E_out
+            .par_iter()
+            .enumerate()
+            .map(|(x_out, &high)| {
+                let mut local_unreduced: Vec<F::Unreduced<9>> =
+                    unsafe_allocate_zero_vec(polynomial.K);
+                let mut touched_indices: Vec<usize> = Vec::new();
+                let mut touched_flags: Vec<u8> = vec![0u8; polynomial.K];
+                let x_out_base = x_out << (x_in_bits + 1);
+
+                for (x_in, &low) in E_in.iter().enumerate() {
+                    let j0 = x_out_base + (x_in << 1);
+                    let j1 = j0 + 1;
+                    let add0_unr = low.mul_unreduced::<9>(factor_0);
+                    let add1_unr = low.mul_unreduced::<9>(factor_1);
+
+                    if let Some(k0) = nonzero_indices[j0] {
+                        let idx = k0 as usize;
+                        if touched_flags[idx] == 0 {
+                            touched_flags[idx] = 1;
+                            touched_indices.push(idx);
                         }
-                        local_g
-                    },
-                )
-                .reduce(
-                    || unsafe_allocate_zero_vec(polynomial.K),
-                    |mut a, b| {
-                        for (x, y) in a.iter_mut().zip(b) {
-                            *x += y;
+                        local_unreduced[idx] += add0_unr;
+                    }
+                    if let Some(k1) = nonzero_indices[j1] {
+                        let idx = k1 as usize;
+                        if touched_flags[idx] == 0 {
+                            touched_flags[idx] = 1;
+                            touched_indices.push(idx);
                         }
-                        a
-                    },
-                );
+                        local_unreduced[idx] += add1_unr;
+                    }
+                }
+                // Materialize as reduced F and apply the high factor only for touched indices
+                let mut local_g: Vec<F> = unsafe_allocate_zero_vec(polynomial.K);
+                if high.is_zero() {
+                    return local_g;
+                }
+                let apply_high = high != F::one();
+                for idx in touched_indices {
+                    let reduced = F::from_montgomery_reduce::<9>(local_unreduced[idx]);
+                    local_g[idx] = if apply_high { high * reduced } else { reduced };
+                }
+                local_g
+            })
+            .reduce(
+                || unsafe_allocate_zero_vec(polynomial.K),
+                |mut a, b| {
+                    for (x, y) in a.iter_mut().zip(b) {
+                        *x += y;
+                    }
+                    a
+                },
+            );
 
         polynomial.G = G;
         self.polynomial = polynomial;
