@@ -4,12 +4,12 @@ use std::iter::zip;
 use rayon::prelude::*;
 
 use crate::{
-    field::{JoltField, MulU64WithCarry},
+    field::{BarrettReduce, FMAdd, JoltField},
     poly::{
         eq_poly::EqPolynomial, ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
-    utils::math::Math,
+    utils::{accumulation::Acc5S, math::Math},
 };
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
@@ -354,21 +354,20 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
 #[inline(always)]
 fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     // P(9) from f[i]=P(i+1): 8(f[1]+f[7]) + 56(f[3]+f[5]) - 28(f[2]+f[6]) - 70 f[4] - f[0] + f_inf40320
-    let a1: F::Unreduced<4> = *f[1].as_unreduced_ref() + f[7].as_unreduced_ref();
-    let mut pos_acc: F::Unreduced<5> = a1.mul_u64_w_carry::<5>(8);
-    let a2: F::Unreduced<4> = *f[3].as_unreduced_ref() + f[5].as_unreduced_ref();
-    pos_acc += a2.mul_u64_w_carry::<5>(56);
-    pos_acc += f_inf40320.mul_u64_unreduced(1);
+    // Use signed accumulator to reduce only once.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+    let t1 = f[1] + f[7];
+    acc.fmadd(&t1, &8u64);
+    let t2 = f[3] + f[5];
+    acc.fmadd(&t2, &56u64);
+    acc.fmadd(&f_inf40320, &1u64);
 
-    let n1: F::Unreduced<4> = *f[2].as_unreduced_ref() + f[6].as_unreduced_ref();
-    let mut neg_acc: F::Unreduced<5> = n1.mul_u64_w_carry::<5>(28);
-    neg_acc += f[4].as_unreduced_ref().mul_u64_w_carry::<5>(70);
-    neg_acc += f[0].mul_u64_unreduced(1);
+    let t3 = f[2] + f[6];
+    acc.fmadd(&t3, &(-28i64));
+    acc.fmadd(&f[4], &(-70i64));
+    acc.fmadd(&f[0], &(-1i64));
 
-    let reduced_pos = F::from_barrett_reduce(pos_acc);
-    let reduced_neg = F::from_barrett_reduce(neg_acc);
-
-    reduced_pos - reduced_neg
+    acc.barrett_reduce()
 }
 
 #[inline]
@@ -403,6 +402,54 @@ mod tests {
         },
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
+
+    #[test]
+    fn test_naive_eval_matches_optimized_with_4_mles() {
+        const N_MLE: usize = 4;
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let base_mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
+        let claim = gen_product_mle(&base_mles).evaluate(r);
+        let challenge_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &challenge_whole;
+        // Direct definition computed before consuming base_mles
+        let mle_challenge_product = base_mles
+            .iter()
+            .map(|p| p.evaluate(challenge))
+            .product::<Fr>();
+        let rhs = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = base_mles.map(RaPolynomial::RoundN);
+
+        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
+        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+        let lhs = sum_poly.evaluate(&challenge[0]);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_naive_eval_matches_optimized_with_8_mles() {
+        const N_MLE: usize = 8;
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let base_mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
+        let claim = gen_product_mle(&base_mles).evaluate(r);
+        let challenge_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &challenge_whole;
+        // Direct definition computed before consuming base_mles
+        let mle_challenge_product = base_mles
+            .iter()
+            .map(|p| p.evaluate(challenge))
+            .product::<Fr>();
+        let rhs = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = base_mles.map(RaPolynomial::RoundN);
+
+        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
+        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+        let lhs = sum_poly.evaluate(&challenge[0]);
+        assert_eq!(lhs, rhs);
+    }
 
     #[test]
     fn test_compute_mles_product_sum_with_2_mles() {
