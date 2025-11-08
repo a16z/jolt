@@ -160,9 +160,9 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 .reduce(
                     || unsafe_allocate_zero_vec(polynomial.K),
                     |mut a, b| {
-                        a.par_iter_mut()
-                            .zip(b.into_par_iter())
-                            .for_each(|(x, y)| *x += y);
+                        for (x, y) in a.iter_mut().zip(b) {
+                            *x += y;
+                        }
                         a
                     },
                 );
