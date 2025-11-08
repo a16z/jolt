@@ -255,7 +255,8 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
             let span = tracing::span!(tracing::Level::INFO, "par_extend basic vectors");
             let _guard = span.enter();
             lookup_indices.par_extend(cycle_data.par_iter().map(|data| data.lookup_index));
-            is_interleaved_operands.par_extend(cycle_data.par_iter().map(|data| data.is_interleaved));
+            is_interleaved_operands
+                .par_extend(cycle_data.par_iter().map(|data| data.is_interleaved));
             lookup_tables.par_extend(cycle_data.par_iter().map(|data| data.table));
         }
 
@@ -437,8 +438,10 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
 
                             for j in chunk {
                                 let k = self.lookup_indices[*j];
-                                let (prefix_bits, suffix_bits) = k.split((PHASES - 1 - phase) * LOG_M);
-                                for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
+                                let (prefix_bits, suffix_bits) =
+                                    k.split((PHASES - 1 - phase) * LOG_M);
+                                for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut())
+                                {
                                     let t = suffix.suffix_mle::<XLEN>(suffix_bits);
                                     if t != 0 {
                                         let u = self.u_evals_rv[*j];
@@ -453,7 +456,8 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
                             || vec![unsafe_allocate_zero_vec(M); suffixes.len()],
                             |mut acc, new| {
                                 for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
-                                    for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                                    for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter())
+                                    {
                                         *acc_coeff += new_coeff;
                                     }
                                 }
@@ -541,7 +545,9 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
                         let suffixes: Vec<_> = table
                             .suffixes()
                             .iter()
-                            .map(|suffix| F::from_u64(suffix.suffix_mle::<XLEN>(LookupBits::new(0, 0))))
+                            .map(|suffix| {
+                                F::from_u64(suffix.suffix_mle::<XLEN>(LookupBits::new(0, 0)))
+                            })
                             .collect();
                         *val += table.combine(&prefixes, &suffixes);
                     }
