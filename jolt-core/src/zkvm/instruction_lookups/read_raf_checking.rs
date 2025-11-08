@@ -425,8 +425,8 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
         let new_suffix_polys: Vec<_> = {
             LookupTables::<XLEN>::iter()
                 .collect::<Vec<_>>()
-                .iter()
-                .zip(self.lookup_indices_by_table.iter())
+                .par_iter()
+                .zip(self.lookup_indices_by_table.par_iter())
                 .map(|(table, lookup_indices)| {
                     let suffixes = table.suffixes();
                     let unreduced_polys = lookup_indices
