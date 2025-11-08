@@ -318,6 +318,7 @@ fn ex2<F: JoltField>(f: &[F; 2], f_inf: &F) -> F {
     dbl(f[1] + f_inf) - f[0]
 }
 
+#[inline]
 fn ex4<F: JoltField>(f: &[F; 4], f_inf6: &F) -> F {
     // Natural-grid coeffs for target x+4: [1, -4, 6, -4] and 4!*a4 = 24*a4.
     let mut t = *f_inf6;
@@ -331,7 +332,7 @@ fn ex4<F: JoltField>(f: &[F; 4], f_inf6: &F) -> F {
     t
 }
 
-#[inline(always)]
+#[inline]
 fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
     let f3m2 = f[3] - f[2];
     let mut f4 = *f_inf6;
@@ -351,7 +352,7 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
     (f4, f5)
 }
 
-#[inline(always)]
+#[inline]
 fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     // P(9) from f[i]=P(i+1): 8(f[1]+f[7]) + 56(f[3]+f[5]) - 28(f[2]+f[6]) - 70 f[4] - f[0] + f_inf40320
     // Use signed accumulator to reduce only once.
@@ -370,15 +371,17 @@ fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     acc.barrett_reduce()
 }
 
-#[inline]
+#[inline(always)]
 fn dbl<F: JoltField>(x: F) -> F {
     x + x
 }
 
+#[inline(always)]
 fn dbl_assign<F: JoltField>(x: &mut F) {
     *x += *x;
 }
 
+#[inline(always)]
 fn assign<T: Sized>(dst: &mut T, src: T) {
     *dst = src;
 }
