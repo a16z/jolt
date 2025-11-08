@@ -7,6 +7,7 @@ use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
+#[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
@@ -75,8 +76,6 @@ pub struct EqAddressState<F: JoltField> {
 pub struct EqCycleState<F: JoltField> {
     /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
     pub D: GruenSplitEqPolynomial<F>,
-    /// Merged D polynomial, used to compute G
-    pub merged_D: Option<DensePolynomial<F>>,
     /// The number of variables that have been bound during sumcheck so far
     pub num_variables_bound: usize,
 }
@@ -104,18 +103,8 @@ impl<F: JoltField> EqCycleState<F> {
         let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh);
         Self {
             D,
-            merged_D: None,
             num_variables_bound: 0,
         }
-    }
-
-    pub fn merge_D(&mut self) {
-        self.merged_D = Some(self.D.merge());
-    }
-
-    pub fn drop_merged_D(&mut self) {
-        let merged_D = std::mem::take(&mut self.merged_D);
-        drop_in_background_thread(merged_D);
     }
 }
 
@@ -151,37 +140,32 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     pub fn initialize(&mut self, mut polynomial: OneHotPolynomial<F>) {
         let nonzero_indices = &polynomial.nonzero_indices;
         let T = nonzero_indices.len();
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = (T / num_chunks).max(1);
 
         let eq = self.eq_cycle_state.read().unwrap();
-        let D_coeffs_for_G = &eq.merged_D.as_ref().unwrap();
-
-        // Compute G as described in Section 6.3
-        let G = nonzero_indices
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, chunk)| {
-                let mut result = unsafe_allocate_zero_vec(polynomial.K);
-                let mut j = chunk_index * chunk_size;
-                for k in chunk {
-                    if let Some(k) = k {
-                        result[*k as usize] += D_coeffs_for_G[j];
-                    }
-                    j += 1;
-                }
-                result
-            })
-            .reduce(
-                || unsafe_allocate_zero_vec(polynomial.K),
-                |mut running, new| {
-                    running
-                        .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running
-                },
-            );
+        // Compute G without materializing the dense eq(r_cycle, j) table:
+        // G[k] = sum_{j: nonzero_indices[j] = k} eq(r_cycle, j).
+        // (described in Section 6.3 of the Twist/Shout paper)
+        // We stream eq(r_cycle, j) from the split representation.
+        let G =
+            eq.D.par_iter_low_to_high()
+                .fold(
+                    || unsafe_allocate_zero_vec(polynomial.K),
+                    |mut local_g, (j, d_j)| {
+                        if let Some(k) = nonzero_indices[j] {
+                            local_g[k as usize] += d_j;
+                        }
+                        local_g
+                    },
+                )
+                .reduce(
+                    || unsafe_allocate_zero_vec(polynomial.K),
+                    |mut a, b| {
+                        a.par_iter_mut()
+                            .zip(b.into_par_iter())
+                            .for_each(|(x, y)| *x += y);
+                        a
+                    },
+                );
 
         polynomial.G = G;
         self.polynomial = polynomial;
@@ -717,8 +701,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let eq_address_state = EqAddressState::new(&r_address);
-        let mut eq_cycle_state = EqCycleState::new(&r_cycle);
-        eq_cycle_state.merge_D();
+        let eq_cycle_state = EqCycleState::new(&r_cycle);
 
         let mut one_hot_opening = OneHotPolynomialProverOpening::new(
             Arc::new(RwLock::new(eq_address_state)),
