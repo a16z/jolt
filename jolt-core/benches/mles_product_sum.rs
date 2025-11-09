@@ -31,15 +31,15 @@ fn product_eval_univariate_naive_accumulate<F: JoltField>(pairs: &[(F, F)], sums
         pinfs.push(pinf);
     }
     // Evaluate at x = 1..(d-1)
-    for idx in 0..(d - 1) {
+    for sums_slot in sums.iter_mut().take(d - 1) {
         let mut acc = F::one();
         for v in cur_vals.iter() {
             acc *= *v;
         }
-        sums[idx] += acc;
+        *sums_slot += acc;
         // advance all to next x
-        for i in 0..d {
-            cur_vals[i] += pinfs[i];
+        for (cur_val, pinf) in cur_vals.iter_mut().zip(pinfs.iter()) {
+            *cur_val += *pinf;
         }
     }
     // Evaluate at infinity (product of leading coefficients)
@@ -94,7 +94,7 @@ fn compute_mles_product_sum_naive<F: JoltField>(
                 |running, new: Vec<F::Unreduced<4>>| {
                     running
                         .into_iter()
-                        .zip(new.into_iter())
+                        .zip(new)
                         .map(|(a, b)| a + b)
                         .collect()
                 },
@@ -104,7 +104,7 @@ fn compute_mles_product_sum_naive<F: JoltField>(
                 |running, new| {
                     running
                         .into_iter()
-                        .zip(new.into_iter())
+                        .zip(new)
                         .map(|(a, b)| a + b)
                         .collect()
                 },
@@ -123,7 +123,7 @@ fn compute_mles_product_sum_naive<F: JoltField>(
                 let mut partial_evals = vec![F::zero(); mles.len()];
                 let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
 
-                for j_in in 0..num_x_in {
+                for (j_in, eq_in_eval) in eq_in_evals.iter().take(num_x_in).enumerate() {
                     let j = (j_out << num_x_in_bits) | j_in;
 
                     for (i, mle) in mles.iter().enumerate() {
@@ -132,7 +132,7 @@ fn compute_mles_product_sum_naive<F: JoltField>(
                         mle_eval_pairs[i] = (v0, v1);
                     }
 
-                    let scale = eq_in_evals[j_in] * current_scalar;
+                    let scale = *eq_in_eval * current_scalar;
                     mle_eval_pairs[0].0 *= scale;
                     mle_eval_pairs[0].1 *= scale;
                     product_eval_univariate_naive_accumulate(&mle_eval_pairs, &mut partial_evals);
@@ -151,7 +151,7 @@ fn compute_mles_product_sum_naive<F: JoltField>(
                 |running, new: Vec<F::Unreduced<4>>| {
                     running
                         .into_iter()
-                        .zip(new.into_iter())
+                        .zip(new)
                         .map(|(a, b)| a + b)
                         .collect()
                 },
@@ -161,7 +161,7 @@ fn compute_mles_product_sum_naive<F: JoltField>(
                 |running, new| {
                     running
                         .into_iter()
-                        .zip(new.into_iter())
+                        .zip(new)
                         .map(|(a, b)| a + b)
                         .collect()
                 },
