@@ -454,10 +454,12 @@ fn eval_inter32_final_op<F: JoltField>(
         f
     }
     // First 16 polynomials → half A
-    let (a16_base, a_inf) = eval_half_16_base::<F>(unsafe { *(p[0..16].as_ptr() as *const [(F, F); 16]) });
+    let (a16_base, a_inf) =
+        eval_half_16_base::<F>(unsafe { *(p[0..16].as_ptr() as *const [(F, F); 16]) });
     let a_full = expand16_to_u32::<F>(&a16_base, a_inf);
     // Second 16 polynomials → half B
-    let (b16_base, b_inf) = eval_half_16_base::<F>(unsafe { *(p[16..32].as_ptr() as *const [(F, F); 16]) });
+    let (b16_base, b_inf) =
+        eval_half_16_base::<F>(unsafe { *(p[16..32].as_ptr() as *const [(F, F); 16]) });
     let b_full = expand16_to_u32::<F>(&b16_base, b_inf);
     // Combine
     for i in 0..32 {
@@ -692,6 +694,26 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_16_mles() {
         const N_MLE: usize = 16;
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
+
+        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
+        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
+    }
+
+    #[test]
+    fn test_compute_mles_product_sum_with_32_mles() {
+        const N_MLE: usize = 32;
         let mut rng = &mut test_rng();
         let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
         let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
