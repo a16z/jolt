@@ -165,7 +165,8 @@ fn product_eval_univariate_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut
         4 => eval_inter4_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
         8 => eval_inter8_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
         16 => eval_inter16_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
-        _ => unimplemented!(),
+        32 => eval_inter32_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        _ => product_eval_univariate_naive_accumulate(pairs, sums),
     }
 }
 
@@ -183,7 +184,8 @@ pub fn product_eval_univariate_assign<F: JoltField>(pairs: &[(F, F)], evals: &mu
         4 => eval_inter4_final_op(pairs.try_into().unwrap(), evals, assign),
         8 => eval_inter8_final_op(pairs.try_into().unwrap(), evals, assign),
         16 => eval_inter16_final_op(pairs.try_into().unwrap(), evals, assign),
-        _ => unimplemented!(),
+        32 => eval_inter32_final_op(pairs.try_into().unwrap(), evals, assign),
+        _ => product_eval_univariate_naive_assign(pairs, evals),
     }
 }
 
@@ -371,6 +373,100 @@ fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     acc.barrett_reduce()
 }
 
+#[inline]
+fn ex16<F: JoltField>(f: &[F; 16], f_inf16_fact: F) -> F {
+    // P(17) from f[i]=P(i+1), i=0..15, using 16th-row binomial weights with alternating signs:
+    // Coeffs on f[0..15]: [-1, +16, -120, +560, -1820, +4368, -8008, +11440, -12870, +11440, -8008, +4368, -1820, +560, -120, +16]
+    // Plus + 16! * a16 (passed as f_inf16_fact).
+    //
+    // Group symmetric terms with equal coefficients and signs to minimize fmadd calls:
+    // +16  : (f[1] + f[15])
+    // -120 : (f[2] + f[14])
+    // +560 : (f[3] + f[13])
+    // -1820: (f[4] + f[12])
+    // +4368: (f[5] + f[11])
+    // -8008: (f[6] + f[10])
+    // +11440: (f[7] + f[9])
+    // Center and edges:
+    // -12870 f[8], -1 f[0], + f_inf16_fact
+    let mut acc: Acc5S<F> = Acc5S::zero();
+    let s16 = f[1] + f[15];
+    acc.fmadd(&s16, &16u64);
+    let s120 = f[2] + f[14];
+    acc.fmadd(&s120, &(-120i64));
+    let s560 = f[3] + f[13];
+    acc.fmadd(&s560, &560u64);
+    let s1820 = f[4] + f[12];
+    acc.fmadd(&s1820, &(-1820i64));
+    let s4368 = f[5] + f[11];
+    acc.fmadd(&s4368, &4368u64);
+    let s8008 = f[6] + f[10];
+    acc.fmadd(&s8008, &(-8008i64));
+    let s11440 = f[7] + f[9];
+    acc.fmadd(&s11440, &11440u64);
+    acc.fmadd(&f[8], &(-12870i64));
+    acc.fmadd(&f[0], &(-1i64));
+    acc.fmadd(&f_inf16_fact, &1u64);
+    acc.barrett_reduce()
+}
+
+fn eval_inter32_final_op<F: JoltField>(
+    p: &[(F, F); 32],
+    outputs: &mut [F],
+    op: impl Fn(&mut F, F),
+) {
+    #[inline]
+    fn eval_half_16_base<F: JoltField>(p: [(F, F); 16]) -> ([F; 16], F) {
+        // Compute two 8-sized halves
+        let a8 = eval_inter8(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
+        let b8 = eval_inter8(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
+        // Expand each 8 to 16 using ex8 sliding (compute 9..16)
+        #[inline]
+        fn expand8_to16<F: JoltField>(vals: &[F; 9]) -> ([F; 16], F) {
+            let mut f = [F::zero(); 16]; // f[1..16]
+            f[..8].copy_from_slice(&vals[..8]);
+            let f_inf = vals[8];
+            let f_inf40320 = f_inf.mul_u64(40320);
+            for i in 0..8 {
+                f[8 + i] = ex8(&f[i..i + 8].try_into().unwrap(), f_inf40320);
+            }
+            (f, f_inf)
+        }
+        let (a16_vals, a_inf) = expand8_to16::<F>(&a8);
+        let (b16_vals, b_inf) = expand8_to16::<F>(&b8);
+        // Pointwise product to get the 16-base for the half and its inf
+        let mut base = [F::zero(); 16];
+        for i in 0..16 {
+            base[i] = a16_vals[i] * b16_vals[i];
+        }
+        (base, a_inf * b_inf)
+    }
+    #[inline]
+    fn expand16_to_u32<F: JoltField>(base16: &[F; 16], inf: F) -> [F; 32] {
+        // Build [1..31, inf] for a degree-16 product using ex16 sliding
+        let mut f = [F::zero(); 32];
+        f[..16].copy_from_slice(base16);
+        f[31] = inf;
+        let f_inf16_fact = inf.mul_u64(20922789888000u64); // 16!
+        for i in 0..15 {
+            f[16 + i] = ex16(&f[i..i + 16].try_into().unwrap(), f_inf16_fact);
+        }
+        f
+    }
+    // First 16 polynomials → half A
+    let (a16_base, a_inf) = eval_half_16_base::<F>(unsafe { *(p[0..16].as_ptr() as *const [(F, F); 16]) });
+    let a_full = expand16_to_u32::<F>(&a16_base, a_inf);
+    // Second 16 polynomials → half B
+    let (b16_base, b_inf) = eval_half_16_base::<F>(unsafe { *(p[16..32].as_ptr() as *const [(F, F); 16]) });
+    let b_full = expand16_to_u32::<F>(&b16_base, b_inf);
+    // Combine
+    for i in 0..32 {
+        let mut v = a_full[i];
+        v *= b_full[i];
+        op(&mut outputs[i], v);
+    }
+}
+
 #[inline(always)]
 fn dbl<F: JoltField>(x: F) -> F {
     x + x
@@ -384,6 +480,84 @@ fn dbl_assign<F: JoltField>(x: &mut F) {
 #[inline(always)]
 fn assign<T: Sized>(dst: &mut T, src: T) {
     *dst = src;
+}
+
+/// Naive evaluator for the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
+///
+/// The evaluations on `U_D` are accumulated into `sums`.
+///
+/// Inputs:
+/// - `pairs[j] = (p_j(0), p_j(1))`
+/// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
+fn product_eval_univariate_naive_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
+    let d = pairs.len();
+    debug_assert_eq!(sums.len(), d);
+    if d == 0 {
+        return;
+    }
+    // Memoize p(1)=p1, then p(2)=p(1)+pinf, p(3)=p(2)+pinf, ...
+    let mut cur_vals = Vec::with_capacity(d);
+    let mut pinfs = Vec::with_capacity(d);
+    for &(p0, p1) in pairs.iter() {
+        let pinf = p1 - p0;
+        cur_vals.push(p1);
+        pinfs.push(pinf);
+    }
+    // Evaluate at x = 1..(d-1)
+    for idx in 0..(d - 1) {
+        let mut acc = F::one();
+        for v in cur_vals.iter() {
+            acc *= *v;
+        }
+        sums[idx] += acc;
+        // advance all to next x
+        for i in 0..d {
+            cur_vals[i] += pinfs[i];
+        }
+    }
+    // Evaluate at infinity (product of leading coefficients)
+    let mut acc_inf = F::one();
+    for pinf in pinfs.iter() {
+        acc_inf *= *pinf;
+    }
+    sums[d - 1] += acc_inf;
+}
+
+/// Naive evaluator for the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
+///
+/// The evaluations on `U_D` are assigned to `evals`.
+///
+/// Inputs:
+/// - `pairs[j] = (p_j(0), p_j(1))`
+/// - `evals`: output slice with layout `[1, 2, ..., D - 1, ∞]`
+fn product_eval_univariate_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
+    let d = pairs.len();
+    debug_assert_eq!(evals.len(), d);
+    if d == 0 {
+        return;
+    }
+    let mut cur_vals = Vec::with_capacity(d);
+    let mut pinfs = Vec::with_capacity(d);
+    for &(p0, p1) in pairs.iter() {
+        let pinf = p1 - p0;
+        cur_vals.push(p1);
+        pinfs.push(pinf);
+    }
+    for idx in 0..(d - 1) {
+        let mut acc = F::one();
+        for v in cur_vals.iter() {
+            acc *= *v;
+        }
+        evals[idx] = acc;
+        for i in 0..d {
+            cur_vals[i] += pinfs[i];
+        }
+    }
+    let mut acc_inf = F::one();
+    for pinf in pinfs.iter() {
+        acc_inf *= *pinf;
+    }
+    evals[d - 1] = acc_inf;
 }
 
 #[cfg(test)]
