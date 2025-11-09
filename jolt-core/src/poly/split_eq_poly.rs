@@ -6,6 +6,7 @@ use rayon::prelude::*;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
@@ -159,6 +160,27 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 }
             }
         }
+    }
+
+    /// Returns an interleaved vector merging the current bit `w` with `E_in_current()`.
+    ///
+    /// For each entry `low = E_in_current()[x_in]`, produces the pair:
+    ///   [ low * (1 - w), low * w ]
+    ///
+    /// The returned vector has length `2 * E_in_current_len()`, laid out as
+    ///   [low0_0, low0_1, low1_0, low1_1, ...] matching index pairs (j, j+1).
+    pub fn merged_in_with_current_w(&self) -> Vec<F> {
+        let e_in = self.E_in_current();
+        let w = self.get_current_w();
+        let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
+        for (i, &low) in e_in.iter().enumerate() {
+            let eval1 = low * w;
+            let eval0 = low - eval1;
+            let off = 2 * i;
+            merged[off] = eval0;
+            merged[off + 1] = eval1;
+        }
+        merged
     }
 
     /// Compute the cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
