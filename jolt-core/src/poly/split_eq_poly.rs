@@ -85,6 +85,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
     pub fn new(w: &[F::Challenge], binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(w, binding_order, None)
     }
