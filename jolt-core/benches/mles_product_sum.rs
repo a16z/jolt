@@ -92,22 +92,12 @@ fn compute_mles_product_sum_naive<F: JoltField>(
             .fold_with(
                 vec![F::Unreduced::<5>::zero(); mles.len()],
                 |running, new: Vec<F::Unreduced<4>>| {
-                    running
-                        .into_iter()
-                        .zip(new)
-                        .map(|(a, b)| a + b)
-                        .collect()
+                    running.into_iter().zip(new).map(|(a, b)| a + b).collect()
                 },
             )
             .reduce(
                 || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| {
-                    running
-                        .into_iter()
-                        .zip(new)
-                        .map(|(a, b)| a + b)
-                        .collect()
-                },
+                |running, new| running.into_iter().zip(new).map(|(a, b)| a + b).collect(),
             )
             .into_iter()
             .map(F::from_barrett_reduce)
@@ -149,22 +139,12 @@ fn compute_mles_product_sum_naive<F: JoltField>(
             .fold_with(
                 vec![F::Unreduced::<5>::zero(); mles.len()],
                 |running, new: Vec<F::Unreduced<4>>| {
-                    running
-                        .into_iter()
-                        .zip(new)
-                        .map(|(a, b)| a + b)
-                        .collect()
+                    running.into_iter().zip(new).map(|(a, b)| a + b).collect()
                 },
             )
             .reduce(
                 || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| {
-                    running
-                        .into_iter()
-                        .zip(new)
-                        .map(|(a, b)| a + b)
-                        .collect()
-                },
+                |running, new| running.into_iter().zip(new).map(|(a, b)| a + b).collect(),
             )
             .into_iter()
             .map(F::from_barrett_reduce)
