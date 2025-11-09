@@ -21,8 +21,8 @@ use crate::{
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
     utils::math::Math,
     zkvm::{
-        instruction_lookups, lookup_table::LookupTables, ram::remap_address,
-        JoltProverPreprocessing,
+        instruction_lookups, instruction_lookups::D as INSTRUCTION_LOOKUPS_D,
+        lookup_table::LookupTables, ram::remap_address, JoltProverPreprocessing,
     },
 };
 
@@ -32,6 +32,9 @@ struct SharedWitnessData(UnsafeCell<WitnessData>);
 unsafe impl Sync for SharedWitnessData {}
 
 /// K^{1/d}
+#[cfg(feature = "small_cycles")]
+pub const DTH_ROOT_OF_K: usize = 1 << 4;
+#[cfg(not(feature = "small_cycles"))]
 pub const DTH_ROOT_OF_K: usize = 1 << 8;
 
 pub fn compute_d_parameter_from_log_K(log_K: usize) -> usize {
@@ -120,26 +123,10 @@ impl AllCommittedPolynomials {
                 }
             }
         };
-        let mut polynomials = vec![
-            CommittedPolynomial::RdInc,
-            CommittedPolynomial::RamInc,
-            CommittedPolynomial::InstructionRa(0),
-            CommittedPolynomial::InstructionRa(1),
-            CommittedPolynomial::InstructionRa(2),
-            CommittedPolynomial::InstructionRa(3),
-            CommittedPolynomial::InstructionRa(4),
-            CommittedPolynomial::InstructionRa(5),
-            CommittedPolynomial::InstructionRa(6),
-            CommittedPolynomial::InstructionRa(7),
-            CommittedPolynomial::InstructionRa(8),
-            CommittedPolynomial::InstructionRa(9),
-            CommittedPolynomial::InstructionRa(10),
-            CommittedPolynomial::InstructionRa(11),
-            CommittedPolynomial::InstructionRa(12),
-            CommittedPolynomial::InstructionRa(13),
-            CommittedPolynomial::InstructionRa(14),
-            CommittedPolynomial::InstructionRa(15),
-        ];
+        let mut polynomials = vec![CommittedPolynomial::RdInc, CommittedPolynomial::RamInc];
+        for i in 0..INSTRUCTION_LOOKUPS_D {
+            polynomials.push(CommittedPolynomial::InstructionRa(i));
+        }
         for i in 0..ram_d {
             polynomials.push(CommittedPolynomial::RamRa(i));
         }

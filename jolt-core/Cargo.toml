@@ -49,6 +49,7 @@ monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
+small_cycles = []
 
 [dependencies]
 ark-bn254.workspace = true
