@@ -93,10 +93,8 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     ) -> Self {
         let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
-        let tau_low = &tau[0..tau.len() - 1];
-
         let extended =
-            Self::compute_univariate_skip_extended_evals(&preprocessing.bytecode, trace, tau_low);
+            Self::compute_univariate_skip_extended_evals(&preprocessing.bytecode, trace, tau);
 
         let instance = Self {
             tau: tau.to_vec(),
@@ -125,88 +123,54 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     fn compute_univariate_skip_extended_evals(
         bytecode_preprocessing: &BytecodePreprocessing,
         trace: &[Cycle],
-        tau_low: &[F::Challenge],
+        tau: &[F::Challenge],
     ) -> [F; OUTER_UNIVARIATE_SKIP_DEGREE] {
-        let m = tau_low.len() / 2;
-        let (tau_out, tau_in) = tau_low.split_at(m);
-        // Compute the split eq polynomial, one scaled by R^2 in order to balance against
-        // Montgomery (not Barrett) reduction later on in 8-limb signed accumulation
-        // of e_in * (az * bz)
-        let (E_out, E_in) = rayon::join(
-            || EqPolynomial::evals_with_scaling(tau_out, Some(F::MONTGOMERY_R_SQUARE)),
-            || EqPolynomial::evals(tau_in),
+        // Build split-eq over full τ; new_with_scaling drops the last variable (τ_high) for the split,
+        // and we carry an outer scaling factor (R^2) via current_scalar.
+        let split_eq = GruenSplitEqPolynomial::<F>::new_with_scaling(
+            tau,
+            BindingOrder::LowToHigh,
+            Some(F::MONTGOMERY_R_SQUARE),
         );
+        let outer_scale = split_eq.get_current_scalar(); // = R^2 at this stage
 
-        let num_x_out_vals = E_out.len();
-        let num_x_in_vals = E_in.len();
-        assert!(
-            num_x_in_vals >= 2,
-            "univariate skip expects at least 2 x_in values (last bit is group index)"
-        );
-        // The last x_in bit is the group selector: even indices -> group 0, odd -> group 1
-        let num_x_in_half = num_x_in_vals >> 1;
+        let num_x_in_bits = split_eq.E_in_current_len().log_2();
+        let num_x_in_prime_bits = num_x_in_bits.saturating_sub(1); // ignore last bit (group index)
 
-        let num_parallel_chunks = core::cmp::min(
-            num_x_out_vals,
-            rayon::current_num_threads().next_power_of_two() * 8,
-        );
-        let x_out_chunk_size = if num_x_out_vals > 0 {
-            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
-        } else {
-            0
-        };
-        let iter_num_x_in_vars = num_x_in_vals.log_2();
-        let iter_num_x_in_prime_vars = iter_num_x_in_vars - 1; // ignore last bit (group index)
+        split_eq
+            .par_fold_out_in(
+                || [Acc8S::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
+                |inner, g, x_in, e_in| {
+                    // Decode (x_out, x_in') from g and choose group by the last x_in bit
+                    let x_out = g >> num_x_in_bits;
+                    let x_in_prime = x_in >> 1;
+                    let base_step_idx = (x_out << num_x_in_prime_bits) | x_in_prime;
 
-        (0..num_parallel_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let x_out_start = chunk_idx * x_out_chunk_size;
-                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let mut acc_unreduced: [F::Unreduced<9>; OUTER_UNIVARIATE_SKIP_DEGREE] =
-                    [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                        bytecode_preprocessing,
+                        trace,
+                        base_step_idx,
+                    );
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
 
-                for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [Acc8S<F>; OUTER_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
-                    for x_in_prime in 0..num_x_in_half {
-                        // Materialize row once for both groups (ignores last bit)
-                        let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            bytecode_preprocessing,
-                            trace,
-                            base_step_idx,
-                        );
-
-                        // Group 0 (even index)
-                        let x_in_even = x_in_prime << 1;
-                        let e_in_even = E_in[x_in_even];
-
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                            let prod_s192 = eval.extended_azbz_product_first_group(j);
-                            inner_acc[j].fmadd(&e_in_even, &prod_s192);
-                        }
-
-                        // Group 1 (odd index) using same row inputs
-                        let x_in_odd = x_in_even + 1;
-                        let e_in_odd = E_in[x_in_odd];
-
-                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                            let prod_s192 = eval.extended_azbz_product_second_group(j);
-                            inner_acc[j].fmadd(&e_in_odd, &prod_s192);
-                        }
-                    }
-                    let e_out = E_out[x_out_val];
+                    let is_group1 = (x_in & 1) == 1;
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner_acc[j].montgomery_reduce();
-                        acc_unreduced[j] += e_out.mul_unreduced::<9>(reduced);
+                        let prod_s192 = if !is_group1 {
+                            eval.extended_azbz_product_first_group(j)
+                        } else {
+                            eval.extended_azbz_product_second_group(j)
+                        };
+                        inner[j].fmadd(&e_in, &prod_s192);
                     }
-                }
-                acc_unreduced
-            })
-            .reduce(
-                || [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
+                },
+                |_x_out, e_out, inner| {
+                    let mut out = [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                    for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
+                        let reduced = inner[j].montgomery_reduce();
+                        out[j] = e_out.mul_unreduced::<9>(reduced);
+                    }
+                    out
+                },
                 |mut a, b| {
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                         a[j] += b[j];
@@ -214,7 +178,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                     a
                 },
             )
-            .map(F::from_montgomery_reduce::<9>)
+            .map(|x| F::from_montgomery_reduce::<9>(x) * outer_scale)
     }
 }
 

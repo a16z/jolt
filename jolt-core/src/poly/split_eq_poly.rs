@@ -2,8 +2,8 @@
 //! https://eprint.iacr.org/2024/1210.pdf
 
 use allocative::Allocative;
-use rayon::prelude::*;
 use ark_ff::Zero;
+use rayon::prelude::*;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
@@ -420,7 +420,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             |inner, g, _x_in, e_in| {
                 let vals = per_g_values(g);
                 for k in 0..K {
-                    inner[k] = inner[k] + e_in.mul_unreduced::<LIMBS>(vals[k]);
+                    inner[k] += e_in.mul_unreduced::<LIMBS>(vals[k]);
                 }
             },
             |_x_out, e_out, inner| {
@@ -433,7 +433,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             },
             |mut a, b| {
                 for k in 0..K {
-                    a[k] = a[k] + b[k];
+                    a[k] += b[k];
                 }
                 a
             },

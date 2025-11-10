@@ -79,8 +79,8 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         let B = &self.B;
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
-        let quadratic_coeffs: [F; DEGREE_BOUND - 1] =
-            B.par_fold_out_in_montgomery::<9, { DEGREE_BOUND - 1 }>(&|k_prime| {
+        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = B
+            .par_fold_out_in_montgomery::<9, { DEGREE_BOUND - 1 }>(&|k_prime| {
                 let coeffs = (0..self.params.d)
                     .into_par_iter()
                     .map(|i| {
@@ -96,8 +96,11 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                                 // For c in {0, infty}:
                                 // G[k] * (F(..., c)^2 - F(..., c))
                                 let eval_infty = G_times_F * F_k;
-                                let eval_0 =
-                                    if k_m == 0 { eval_infty - G_times_F } else { F::zero() };
+                                let eval_0 = if k_m == 0 {
+                                    eval_infty - G_times_F
+                                } else {
+                                    F::zero()
+                                };
                                 [eval_0, eval_infty]
                             })
                             .fold_with(
@@ -135,9 +138,9 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         let D_poly = &self.D;
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
-        let quadratic_coeffs_f: [F; DEGREE_BOUND - 1] =
-            D_poly.par_fold_out_in_montgomery::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
-                let coeffs = zip(&self.H, &self.params.gammas)
+        let quadratic_coeffs_f: [F; DEGREE_BOUND - 1] = D_poly
+            .par_fold_out_in_montgomery::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
+                zip(&self.H, &self.params.gammas)
                     .map(|(h, gamma)| {
                         let h_0 = h.get_bound_coeff(2 * j_prime);
                         let h_1 = h.get_bound_coeff(2 * j_prime + 1);
@@ -146,8 +149,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                     })
                     .fold([F::zero(); 2], |running, new| {
                         [running[0] + new[0], running[1] + new[1]]
-                    });
-                coeffs
+                    })
             });
 
         // previous_claim is s(0)+s(1) of the scaled polynomial; divide out eq_r_r to get inner claim
