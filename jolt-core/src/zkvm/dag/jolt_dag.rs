@@ -36,6 +36,7 @@ use crate::zkvm::ram;
 use crate::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheckVerifier;
 use crate::zkvm::ram::output_check::OutputSumcheckVerifier;
 use crate::zkvm::ram::output_check::ValFinalSumcheckVerifier;
+use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::ram::ra_virtual::RaSumcheckVerifier as RamRaSumcheckVerifier;
 use crate::zkvm::ram::raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier;
 use crate::zkvm::ram::read_write_checking::RamReadWriteCheckingVerifier;
@@ -950,21 +951,17 @@ fn commit_untrusted_advice<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
         return None;
     }
 
-    let mut initial_memory_state =
+    let mut untrusted_advice_vec =
         vec![0; program_io.memory_layout.max_untrusted_advice_size as usize / 8];
 
-    let mut index = 1;
-    for chunk in program_io.untrusted_advice.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        let word = u64::from_le_bytes(word);
-        initial_memory_state[index] = word;
-        index += 1;
-    }
+    populate_memory_states(
+        0,
+        &program_io.untrusted_advice,
+        Some(&mut untrusted_advice_vec),
+        None,
+    );
 
-    let poly = MultilinearPolynomial::from(initial_memory_state);
+    let poly = MultilinearPolynomial::from(untrusted_advice_vec);
     let (commitment, hint) = PCS::commit(&poly, &preprocessing.generators);
 
     if let Some(ref mut prover_state) = state_manager.prover_state {
@@ -984,21 +981,17 @@ fn compute_trusted_advice_poly<'a, F: JoltField, PCS: CommitmentScheme<Field = F
         return;
     }
 
-    let mut initial_memory_state =
+    let mut trusted_advice_vec =
         vec![0; program_io.memory_layout.max_trusted_advice_size as usize / 8];
 
-    let mut index = 1;
-    for chunk in program_io.trusted_advice.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        let word = u64::from_le_bytes(word);
-        initial_memory_state[index] = word;
-        index += 1;
-    }
+    populate_memory_states(
+        0,
+        &program_io.trusted_advice,
+        Some(&mut trusted_advice_vec),
+        None,
+    );
 
-    let poly = MultilinearPolynomial::from(initial_memory_state);
+    let poly = MultilinearPolynomial::from(trusted_advice_vec);
 
     if let Some(ref mut prover_state) = state_manager.prover_state {
         prover_state.trusted_advice_polynomial = Some(poly);
