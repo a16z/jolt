@@ -265,7 +265,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
         Self {
             split_eq_poly,
             bytecode_preprocessing,
-            trace: Arc::new(trace.to_vec()),
+            trace: state_manager.get_trace_arc(),
             az: az_bound,
             bz: bz_bound,
             first_round_evals: (t0, t_inf),
@@ -450,8 +450,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        self.az.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.bz.bind_parallel(r_j, BindingOrder::LowToHigh);
+        rayon::join(
+            || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+        );
 
         // Bind eq_poly for next round
         self.split_eq_poly.bind(r_j);
