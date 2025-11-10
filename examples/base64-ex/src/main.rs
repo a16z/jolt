@@ -26,7 +26,11 @@ pub fn main() {
     let mut out = [0u8; 64];
     out[..32].copy_from_slice(&chunk1);
     out[32..].copy_from_slice(&chunk2);
-    let encoded = out.iter().take_while(|&&b| b != 0).copied().collect::<Vec<_>>();
+    let encoded = out
+        .iter()
+        .take_while(|&&b| b != 0)
+        .copied()
+        .collect::<Vec<_>>();
     info!("output: {}", String::from_utf8_lossy(&encoded));
     info!("valid: {is_valid}");
 }

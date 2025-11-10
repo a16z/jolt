@@ -10,3 +10,4 @@ extend-exclude = ["patches/*.patch"]
 "thre" = "thre"
 "numer" = "numer"
 "Toom" = "Toom"
+"gam" = "gam"
