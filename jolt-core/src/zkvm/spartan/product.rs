@@ -104,8 +104,8 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
 
         let (_, _, trace, _, _) = state_manager.get_prover_data();
 
-        let tau_low = &tau[..tau.len() - 1];
-        let extended_evals = Self::compute_univariate_skip_extended_evals(trace, tau_low);
+        // Compute extended univariate-skip evals using split-eq fold-in-out (includes R^2 scaling)
+        let extended_evals = Self::compute_univariate_skip_extended_evals(trace, tau);
 
         let instance = Self {
             extended_evals,
@@ -139,22 +139,16 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
     /// - ShouldJump: Jump flag (left) is bool/u8 → i32; Right^eff = (1 − NextIsNoop) is bool/u8 → i32.
     fn compute_univariate_skip_extended_evals(
         trace: &[Cycle],
-        tau_low: &[F::Challenge],
+        tau: &[F::Challenge],
     ) -> [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] {
-        // Split-Eq over cycle variables
-        let m = tau_low.len() / 2;
-        let (tau_out, tau_in) = tau_low.split_at(m);
-        // Compute the split eq polynomial, one scaled by R^2 in order to balance against
-        // Montgomery (not Barrett) reduction later on in 8-limb signed accumulation
-        // of e_in * (left * right)
-        let (E_out, E_in) = rayon::join(
-            || EqPolynomial::evals_with_scaling(tau_out, Some(F::MONTGOMERY_R_SQUARE)),
-            || EqPolynomial::evals(tau_in),
+        // Build split-eq over full τ; new_with_scaling drops τ_high from the split and
+        // carries a global R^2 scaling via current_scalar for balanced Montgomery reduction.
+        let split_eq = GruenSplitEqPolynomial::<F>::new_with_scaling(
+            tau,
+            BindingOrder::LowToHigh,
+            Some(F::MONTGOMERY_R_SQUARE),
         );
-
-        let num_x_out_vals = E_out.len();
-        let num_x_in_vals = E_in.len();
-        let iter_num_x_in_vars = num_x_in_vals.log_2();
+        let outer_scale = split_eq.get_current_scalar(); // = R^2
 
         // Precompute per-target Lagrange integer coefficient vectors for extended targets
         let base_left: i64 = -((PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
@@ -168,131 +162,86 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
             LagrangeHelper::shift_coeffs_i32::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(shift)
         });
 
-        // Parallelize across x_out chunks
-        let num_parallel_chunks = if num_x_out_vals > 0 {
-            core::cmp::min(
-                num_x_out_vals,
-                rayon::current_num_threads().next_power_of_two() * 8,
-            )
-        } else {
-            1
-        };
-        let x_out_chunk_size = if num_x_out_vals > 0 {
-            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
-        } else {
-            0
-        };
+        // Fold-out-in across (x_out, x_in) using signed Montgomery accumulators, mirroring outer.rs
+        split_eq
+            .par_fold_out_in(
+                || [Acc8S::<F>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
+                |inner, g, _x_in, e_in| {
+                    // Materialize product-cycle row with raw types for this group index
+                    let row = ProductCycleInputs::from_trace::<F>(trace, g);
 
-        let extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] = (0..num_parallel_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let x_out_start = chunk_idx * x_out_chunk_size;
-                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let mut local_acc_unr: [F::Unreduced<9>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                    [F::Unreduced::<9>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
-
-                for x_out_val in x_out_start..x_out_end {
-                    let e_out = E_out[x_out_val];
-                    // Accumulate across x_in using 8-limb signed accumulators per j
-                    let mut inner_acc: [Acc8S<F>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
-                    for x_in_val in 0..num_x_in_vals {
-                        let e_in = if num_x_in_vals == 1 {
-                            E_in[0]
-                        } else {
-                            E_in[x_in_val]
-                        };
-                        let idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-
-                        // Materialize product-cycle row with raw types
-                        let row = ProductCycleInputs::from_trace::<F>(trace, idx);
-
-                        // For each extended target j, compute per-product weighted left/right via integer lifting
-                        for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
-                            let c = &coeffs_per_j[j];
-
-                            // Declare per-product weighted components upfront
-                            let mut left_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
-                            let mut right_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
-
-                            // Instruction: LeftInstructionInput × RightInstructionInput
-                            // left: u64 -> i128; right: S64 -> i128
-                            left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
-                            right_w[0] = (c[0] as i128) * row.instruction_right_input;
-
-                            // WriteLookupOutputToRD: is_rd_zero × WriteLookupOutputToRD_flag
-                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[1] = (c[1] as i128)
-                                * (if row.is_rd_not_zero { 1i32 } else { 0i32 } as i128);
-                            right_w[1] = (c[1] as i128)
-                                * (if row.write_lookup_output_to_rd_flag {
-                                    1i32
-                                } else {
-                                    0i32
-                                } as i128);
-
-                            // WritePCtoRD: is_rd_zero × Jump_flag
-                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[2] = (c[2] as i128) * (row.is_rd_not_zero as i32 as i128);
-                            right_w[2] =
-                                (c[2] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
-
-                            // ShouldBranch: lookup_output × Branch_flag
-                            // left: u64 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
-                            right_w[3] = (c[3] as i128)
-                                * (if row.should_branch_flag { 1i32 } else { 0i32 } as i128);
-
-                            // ShouldJump: Jump_flag × (1 − NextIsNoop)
-                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[4] =
-                                (c[4] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
-                            right_w[4] = (c[4] as i128)
-                                * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
-
-                            // Fuse by summing over i in i128 and multiply in bigints first
-                            let mut left_sum_i128: i128 = 0;
-                            let mut right_sum_i128: i128 = 0;
-                            for i in 0..NUM_PRODUCT_VIRTUAL {
-                                left_sum_i128 += left_w[i];
-                                right_sum_i128 += right_w[i];
-                            }
-                            // Compute S256 = S128 × S128
-                            let left_s128 = S128::from_i128(left_sum_i128);
-                            let right_s128 = S128::from_i128(right_sum_i128);
-                            let prod_s256 = left_s128.mul_trunc::<2, 4>(&right_s128);
-
-                            // Fold e_in into signed 8-limb accumulator for this j
-                            inner_acc[j].fmadd(&e_in, &prod_s256);
-                        }
-                    }
-                    // Reduce inner accumulators (pos-neg Montgomery) and multiply by E_out
-                    // NOTE: needs a R^2 correction factor, applied when initializing E_out
+                    // For each extended target j, compute per-product weighted left/right via integer lifting
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner_acc[j].montgomery_reduce();
-                        local_acc_unr[j] += e_out.mul_unreduced::<9>(reduced);
-                    }
-                }
+                        let c = &coeffs_per_j[j];
 
-                // Reduce once per target for this chunk
-                let mut local_acc: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                    [F::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
-                for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
-                    local_acc[j] = F::from_montgomery_reduce::<9>(local_acc_unr[j]);
-                }
-                local_acc
-            })
-            .reduce(
-                || [F::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
+                        // Declare per-product weighted components upfront
+                        let mut left_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
+                        let mut right_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
+
+                        // Instruction: LeftInstructionInput × RightInstructionInput
+                        // left: u64 -> i128; right: S64 -> i128
+                        left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
+                        right_w[0] = (c[0] as i128) * row.instruction_right_input;
+
+                        // WriteLookupOutputToRD: is_rd_zero × WriteLookupOutputToRD_flag
+                        left_w[1] =
+                            (c[1] as i128) * (if row.is_rd_not_zero { 1i32 } else { 0i32 } as i128);
+                        right_w[1] = (c[1] as i128)
+                            * (if row.write_lookup_output_to_rd_flag {
+                                1i32
+                            } else {
+                                0i32
+                            } as i128);
+
+                        // WritePCtoRD: is_rd_zero × Jump_flag
+                        left_w[2] = (c[2] as i128) * (row.is_rd_not_zero as i32 as i128);
+                        right_w[2] =
+                            (c[2] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
+
+                        // ShouldBranch: lookup_output × Branch_flag
+                        left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
+                        right_w[3] = (c[3] as i128)
+                            * (if row.should_branch_flag { 1i32 } else { 0i32 } as i128);
+
+                        // ShouldJump: Jump_flag × (1 − NextIsNoop)
+                        left_w[4] =
+                            (c[4] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
+                        right_w[4] =
+                            (c[4] as i128) * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
+
+                        // Fuse by summing over i in i128 and multiply in bigints first
+                        let mut left_sum_i128: i128 = 0;
+                        let mut right_sum_i128: i128 = 0;
+                        for i in 0..NUM_PRODUCT_VIRTUAL {
+                            left_sum_i128 += left_w[i];
+                            right_sum_i128 += right_w[i];
+                        }
+                        // Compute S256 = S128 × S128
+                        let left_s128 = S128::from_i128(left_sum_i128);
+                        let right_s128 = S128::from_i128(right_sum_i128);
+                        let prod_s256 = left_s128.mul_trunc::<2, 4>(&right_s128);
+
+                        // Fold e_in into signed 8-limb accumulator for this j
+                        inner[j].fmadd(&e_in, &prod_s256);
+                    }
+                },
+                |_x_out, e_out, inner| {
+                    let mut out =
+                        [F::Unreduced::<9>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                    for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
+                        let reduced = inner[j].montgomery_reduce();
+                        out[j] = e_out.mul_unreduced::<9>(reduced);
+                    }
+                    out
+                },
                 |mut a, b| {
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
                         a[j] += b[j];
                     }
                     a
                 },
-            );
-
-        extended_evals
+            )
+            .map(|x| F::from_montgomery_reduce::<9>(x) * outer_scale)
     }
 }
 
