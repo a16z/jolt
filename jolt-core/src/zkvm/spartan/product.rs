@@ -17,9 +17,7 @@ use crate::subprotocols::sumcheck_prover::{
     SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
 };
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::subprotocols::univariate_skip::{
-    build_uniskip_first_round_poly, UniSkipState,
-};
+use crate::subprotocols::univariate_skip::{build_uniskip_first_round_poly, UniSkipState};
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc8S;
 use crate::utils::math::Math;
@@ -214,10 +212,8 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceParams<F> {
     pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>, tau: &[F::Challenge]) -> Self {
         let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
         for (i, cons) in PRODUCT_CONSTRAINTS.iter().enumerate() {
-            let (_, eval) = opening_accumulator.get_virtual_polynomial_opening(
-                cons.output,
-                SumcheckId::SpartanOuter,
-            );
+            let (_, eval) = opening_accumulator
+                .get_virtual_polynomial_opening(cons.output, SumcheckId::SpartanOuter);
             base_evals[i] = eval;
         }
         Self {
