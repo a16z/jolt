@@ -361,6 +361,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// - and merge outer accumulator items across x_out in parallel.
     ///
     /// When E_in is fully bound (len == 0 or 1), we invoke `inner_step` exactly once with e_in = 1 at x_in = 0.
+    ///
+    /// Parallelizes over `x_out` (outer loop); inner loop over `x_in` is sequential.
     #[inline]
     pub fn par_fold_out_in<
         OuterAcc: Send,
