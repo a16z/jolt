@@ -20,7 +20,7 @@ Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` as the D
 For the purposes of the memory checking argument, we remap the memory address to a witness index:
 
 ```rust
-(address - memory_layout.lowest_address) / 8 + 1
+(address - memory_layout.lowest_address) / 8
 ```
 
 where `lowest_address` is the left-most address depicted in the diagram above.
@@ -112,7 +112,7 @@ Consider a concrete example with:
 
 The memory layout would be:
 - Addresses with the 3 MSBs as `000`: trusted advice region (all combinations of the remaining 10 bits)
-- Addresses with the MSBs as `000100`: untrusted advice region (all combinations of the remaining 7 LSBs)
+- Addresses with the MSBs as `001000`: untrusted advice region (all combinations of the remaining 7 LSBs)
 
 This arrangement minimizes verifier computation. If we placed untrusted advice first, the verifier would need to check multiple bit patterns (`000001`, `000010`, etc.) for the trusted section, resulting in significantly more field multiplications.
 
