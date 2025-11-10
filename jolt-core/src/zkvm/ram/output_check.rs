@@ -14,7 +14,6 @@ use crate::{
         },
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
-        split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
@@ -70,8 +69,8 @@ pub struct OutputSumcheckProver<F: JoltField> {
     /// Equivalently, Val_io(k) = Val(k, T) * io_mask(k) for
     /// k \in {0, 1}^log(K)
     val_io: MultilinearPolynomial<F>,
-    /// Split-eq over address variables EQ(k, r_address) (LowToHigh)
-    split_eq_poly: GruenSplitEqPolynomial<F>,
+    /// EQ(k, r_address)
+    eq_poly: MultilinearPolynomial<F>,
     /// io_mask(k) serves as a "mask" for the IO region of memory,
     /// i.e. io_mask(k) = 1 if k is in the "IO" region of memory,
     /// and 0 otherwise.
@@ -122,10 +121,7 @@ impl<F: JoltField> OutputSumcheckProver<F> {
             val_init: initial_ram_state.to_vec().into(),
             val_final: final_ram_state.to_vec().into(),
             val_io: val_io.into(),
-            split_eq_poly: GruenSplitEqPolynomial::<F>::new(
-                &params.r_address,
-                BindingOrder::LowToHigh,
-            ),
+            eq_poly: EqPolynomial::<F>::evals(&params.r_address).into(),
             io_mask: io_mask.into(),
             params,
         }
@@ -146,29 +142,57 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _: usize, previous_claim: F) -> Vec<F> {
-        // Compute quadratic endpoints for q(X) = io_mask(X) · (val_final(X) − val_io(X))
-        let [t0, t_inf] = self.split_eq_poly.par_fold_out_in_unreduced::<9, 2>(&|g| {
-            // Endpoints for the two linear factors at this group index
-            let io = self
-                .io_mask
-                .sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(g, BindingOrder::LowToHigh);
-            let vf = self
-                .val_final
-                .sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(g, BindingOrder::LowToHigh);
-            let vio = self
-                .val_io
-                .sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(g, BindingOrder::LowToHigh);
-            let d0 = vf[0] - vio[0];
-            let d1 = vf[1] - vio[1];
-            let p0 = io[0] * d0;
-            let slope = (io[1] - io[0]) * (d1 - d0);
-            [p0, slope]
-        });
-        let evals = self
-            .split_eq_poly
-            .gruen_evals_deg_3(t0, t_inf, previous_claim);
-        vec![evals[0], evals[1], evals[2]]
+    fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
+        let Self {
+            eq_poly,
+            io_mask,
+            val_final,
+            val_io,
+            ..
+        } = self;
+
+        (0..eq_poly.len() / 2)
+            .into_par_iter()
+            .map(|k| {
+                let eq_evals = eq_poly.sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
+                    k,
+                    BindingOrder::LowToHigh,
+                );
+                let io_mask_evals = io_mask.sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
+                    k,
+                    BindingOrder::LowToHigh,
+                );
+                let val_final_evals = val_final
+                    .sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
+                        k,
+                        BindingOrder::LowToHigh,
+                    );
+                let val_io_evals = val_io.sumcheck_evals_array::<OUTPUT_SUMCHECK_DEGREE_BOUND>(
+                    k,
+                    BindingOrder::LowToHigh,
+                );
+                [
+                    (eq_evals[0] * io_mask_evals[0])
+                        .mul_unreduced::<9>(val_final_evals[0] - val_io_evals[0]),
+                    (eq_evals[1] * io_mask_evals[1])
+                        .mul_unreduced::<9>(val_final_evals[1] - val_io_evals[1]),
+                    (eq_evals[2] * io_mask_evals[2])
+                        .mul_unreduced::<9>(val_final_evals[2] - val_io_evals[2]),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::zero(); OUTPUT_SUMCHECK_DEGREE_BOUND],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::bind")]
@@ -178,7 +202,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             val_init,
             val_final,
             val_io,
-            split_eq_poly,
+            eq_poly,
             io_mask,
             ..
         } = self;
@@ -188,7 +212,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         val_init.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_final.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_io.bind_parallel(r_j, BindingOrder::LowToHigh);
-        split_eq_poly.bind(r_j);
+        eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         io_mask.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
@@ -263,11 +287,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
             .1;
 
         let r_address = &self.params.r_address;
-        let r_address_prime = &sumcheck_challenges[..self.params.r_address.len()]
-            .iter()
-            .cloned()
-            .rev()
-            .collect::<Vec<_>>();
+        // Derive r' using the same endianness conversion as used when caching openings
+        let r_address_prime = get_output_sumcheck_opening_point::<F>(sumcheck_challenges).r;
         let program_io = &self.params.program_io;
 
         // let io_mask = RangeMaskPolynomial::new(
@@ -291,9 +312,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
         );
         let val_io = ProgramIOPolynomial::new(program_io);
 
-        let eq_eval: F = EqPolynomial::<F>::mle(r_address, r_address_prime);
-        let io_mask_eval = io_mask.evaluate_mle(r_address_prime);
-        let val_io_eval: F = val_io.evaluate(r_address_prime);
+        let eq_eval: F = EqPolynomial::<F>::mle(r_address, &r_address_prime);
+        let io_mask_eval = io_mask.evaluate_mle(&r_address_prime);
+        let val_io_eval: F = val_io.evaluate(&r_address_prime);
 
         // Recall that the sumcheck expression is:
         //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
