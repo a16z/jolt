@@ -5,7 +5,7 @@ use crate::field::{FMAdd, JoltField, MontgomeryReduce};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
+use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -18,7 +18,7 @@ use crate::subprotocols::sumcheck_prover::{
 };
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::univariate_skip::{
-    build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
+    build_uniskip_first_round_poly, UniSkipState,
 };
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc8S;
@@ -28,56 +28,44 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use crate::zkvm::r1cs::constraints::{
+    NUM_PRODUCT_VIRTUAL, PRODUCT_CONSTRAINTS, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+};
 use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
 use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
 use crate::zkvm::witness::VirtualPolynomial;
-use ark_ff::biginteger::S128;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-/// Product virtualization with univariate skip
-///
-/// We define a "combined" left and right polynomial
-/// Left(x, y) = \sum_i L(y, i) * Left_i(x),
-/// Right(x, y) = \sum_i R(y, i) * Right_i(x),
-/// where Left_i(x) = one of the five left polynomials, Right_i(x) = one of the five right polynomials
-/// Indexing is over i \in {-2, -1, 0, 1, 2}, though this gets mapped to the 0th, 1st, ..., 4th polynomial
-///
-/// We also need to define the combined claim:
-/// claim(y) = \sum_i L(y, i) * claim_i,
-/// where claim_i is the claim of the i-th product virtualization sumcheck
-///
-/// The product virtualization sumcheck is then:
-/// \sum_y L(tau_high, y) * \sum_x eq(tau_low, x) * Left(x, y) * Right(x, y)
-///   = claim(tau_high)
-///
-/// Final claim is:
-/// L(tau_high, r0) * Eq(tau_low, r_tail^rev) * Left(r_tail, r0) * Right(r_tail, r0)
-///
-/// After this, we also need to check the consistency of the Left and Right evaluations with the
-/// claimed evaluations of the factor polynomials. This is done in the ProductVirtualInner sumcheck.
-///
-/// TODO (Quang): this is essentially Spartan with non-zero claims. We should unify this with Spartan outer/inner.
-/// Only complication is to generalize the splitting strategy
-/// (i.e. Spartan outer currently does uni skip for half of the constraints,
-/// whereas here we do it for all of them)
-/// Fixed list of product virtual polynomials, in canonical order
-pub const PRODUCT_VIRTUAL_TERMS: [VirtualPolynomial; NUM_PRODUCT_VIRTUAL] = [
-    VirtualPolynomial::Product,               // Instruction
-    VirtualPolynomial::WriteLookupOutputToRD, // WriteLookupOutputToRD
-    VirtualPolynomial::WritePCtoRD,           // WritePCtoRD
-    VirtualPolynomial::ShouldBranch,          // ShouldBranch
-    VirtualPolynomial::ShouldJump,            // ShouldJump
-];
-
-pub const NUM_PRODUCT_VIRTUAL: usize = 5;
-pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
-pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
-pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
-    2 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
-pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS: usize =
-    3 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
+// Product virtualization with univariate skip
+//
+// We define a "combined" left and right polynomial
+// Left(x, y) = \sum_i L(y, i) * Left_i(x),
+// Right(x, y) = \sum_i R(y, i) * Right_i(x),
+// where Left_i(x) = one of the five left polynomials, Right_i(x) = one of the five right polynomials
+// Indexing is over i \in {-2, -1, 0, 1, 2}, though this gets mapped to the 0th, 1st, ..., 4th polynomial
+//
+// We also need to define the combined claim:
+// claim(y) = \sum_i L(y, i) * claim_i,
+// where claim_i is the claim of the i-th product virtualization sumcheck
+//
+// The product virtualization sumcheck is then:
+// \sum_y L(tau_high, y) * \sum_x eq(tau_low, x) * Left(x, y) * Right(x, y)
+//   = claim(tau_high)
+//
+// Final claim is:
+// L(tau_high, r0) * Eq(tau_low, r_tail^rev) * Left(r_tail, r0) * Right(r_tail, r0)
+//
+// After this, we also need to check the consistency of the Left and Right evaluations with the
+// claimed evaluations of the factor polynomials. This is done in the ProductVirtualInner sumcheck.
+//
+// TODO (Quang): this is essentially Spartan with non-zero claims. We should unify this with Spartan outer/inner.
+// Only complication is to generalize the splitting strategy
+// (i.e. Spartan outer currently does uni skip for half of the constraints,
+// whereas here we do it for all of them)
 
 /// Degree of the sumcheck round polynomials for [`ProductVirtualRemainderVerifier`].
 const PRODUCT_VIRTUAL_REMAINDER_DEGREE: usize = 3;
@@ -150,18 +138,6 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
         );
         let outer_scale = split_eq.get_current_scalar(); // = R^2
 
-        // Precompute per-target Lagrange integer coefficient vectors for extended targets
-        let base_left: i64 = -((PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
-        let targets = uniskip_targets::<
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
-        >();
-        let coeffs_per_j: [[i32; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE];
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] = core::array::from_fn(|j| {
-            let shift = targets[j] - base_left;
-            LagrangeHelper::shift_coeffs_i32::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(shift)
-        });
-
         // Fold-out-in across (x_out, x_in) using signed Montgomery accumulators, mirroring outer.rs
         split_eq
             .par_fold_out_in(
@@ -170,56 +146,10 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
                     // Materialize product-cycle row with raw types for this group index
                     let row = ProductCycleInputs::from_trace::<F>(trace, g);
 
-                    // For each extended target j, compute per-product weighted left/right via integer lifting
+                    // For each extended target j, compute fused left·right integer product using shared evaluator
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
-                        let c = &coeffs_per_j[j];
-
-                        // Declare per-product weighted components upfront
-                        let mut left_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
-                        let mut right_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
-
-                        // Instruction: LeftInstructionInput × RightInstructionInput
-                        // left: u64 -> i128; right: S64 -> i128
-                        left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
-                        right_w[0] = (c[0] as i128) * row.instruction_right_input;
-
-                        // WriteLookupOutputToRD: is_rd_zero × WriteLookupOutputToRD_flag
-                        left_w[1] =
-                            (c[1] as i128) * (if row.is_rd_not_zero { 1i32 } else { 0i32 } as i128);
-                        right_w[1] = (c[1] as i128)
-                            * (if row.write_lookup_output_to_rd_flag {
-                                1i32
-                            } else {
-                                0i32
-                            } as i128);
-
-                        // WritePCtoRD: is_rd_zero × Jump_flag
-                        left_w[2] = (c[2] as i128) * (row.is_rd_not_zero as i32 as i128);
-                        right_w[2] =
-                            (c[2] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
-
-                        // ShouldBranch: lookup_output × Branch_flag
-                        left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
-                        right_w[3] = (c[3] as i128)
-                            * (if row.should_branch_flag { 1i32 } else { 0i32 } as i128);
-
-                        // ShouldJump: Jump_flag × (1 − NextIsNoop)
-                        left_w[4] =
-                            (c[4] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
-                        right_w[4] =
-                            (c[4] as i128) * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
-
-                        // Fuse by summing over i in i128 and multiply in bigints first
-                        let mut left_sum_i128: i128 = 0;
-                        let mut right_sum_i128: i128 = 0;
-                        for i in 0..NUM_PRODUCT_VIRTUAL {
-                            left_sum_i128 += left_w[i];
-                            right_sum_i128 += right_w[i];
-                        }
-                        // Compute S256 = S128 × S128
-                        let left_s128 = S128::from_i128(left_sum_i128);
-                        let right_s128 = S128::from_i128(right_sum_i128);
-                        let prod_s256 = left_s128.mul_trunc::<2, 4>(&right_s128);
+                        let prod_s256 =
+                            ProductVirtualEval::extended_fused_product_at_j::<F>(&row, j);
 
                         // Fold e_in into signed 8-limb accumulator for this j
                         inner[j].fmadd(&e_in, &prod_s256);
@@ -283,9 +213,11 @@ pub struct ProductVirtualUniSkipInstanceParams<F: JoltField> {
 impl<F: JoltField> ProductVirtualUniSkipInstanceParams<F> {
     pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>, tau: &[F::Challenge]) -> Self {
         let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
-        for (i, vp) in PRODUCT_VIRTUAL_TERMS.iter().enumerate() {
-            let (_, eval) =
-                opening_accumulator.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
+        for (i, cons) in PRODUCT_CONSTRAINTS.iter().enumerate() {
+            let (_, eval) = opening_accumulator.get_virtual_polynomial_opening(
+                cons.output,
+                SumcheckId::SpartanOuter,
+            );
             base_evals[i] = eval;
         }
         Self {
