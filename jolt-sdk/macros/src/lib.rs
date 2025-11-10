@@ -148,21 +148,9 @@ impl MacroBuilder {
         let prove_output_ty = self.get_prove_output_type();
 
         // Include public, trusted_advice, and untrusted_advice arguments for the prover
-        let all_names: Vec<_> = self
-            .pub_func_args
-            .iter()
-            .chain(&self.trusted_func_args)
-            .chain(&self.untrusted_func_args)
-            .map(|(name, _)| name)
-            .collect();
-
-        let all_types: Vec<_> = self
-            .pub_func_args
-            .iter()
-            .chain(&self.trusted_func_args)
-            .chain(&self.untrusted_func_args)
-            .map(|(_, ty)| ty)
-            .collect();
+        let ordered_func_args = self.get_all_func_args_in_order();
+        let all_names: Vec<_> = ordered_func_args.iter().map(|(name, _)| name).collect();
+        let all_types: Vec<_> = ordered_func_args.iter().map(|(_, ty)| ty).collect();
 
         let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
         let inputs = quote! { #(#inputs_vec),* };
@@ -591,29 +579,26 @@ impl MacroBuilder {
                 #imports
                 use jolt::CommitmentScheme;
                 use jolt::MultilinearPolynomial;
+                use jolt::populate_memory_states;
 
                 let mut trusted_advice_bytes = vec![];
                 #(#set_trusted_advice_args;)*
 
                 let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
 
-                let mut initial_memory_state = vec![0u64; (max_trusted_advice_size as usize) / 8];
+                let mut trusted_advice_vec = vec![0u64; (max_trusted_advice_size as usize) / 8];
 
-                let mut index = 1;
-                for chunk in trusted_advice_bytes.chunks(8) {
-                    let mut word = [0u8; 8];
-                    for (i, byte) in chunk.iter().enumerate() {
-                        word[i] = *byte;
-                    }
-                    let word = u64::from_le_bytes(word);
-                    initial_memory_state[index] = word;
-                    index += 1;
-                }
+                populate_memory_states(
+                    0,
+                    &trusted_advice_bytes,
+                    Some(&mut trusted_advice_vec),
+                    None,
+                );
 
                 // Initialize Dory globals with specified parameters
                 let _guard = jolt::DoryGlobals::initialize(1, max_trusted_advice_size as usize / 8);
 
-                let poly = MultilinearPolynomial::<jolt::F>::from(initial_memory_state);
+                let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);
                 let (commitment, hint) = jolt::PCS::commit(&poly, &preprocessing.generators);
 
                 (Some(commitment), Some(hint))
@@ -981,6 +966,25 @@ impl MacroBuilder {
                 (#ty, jolt::RV64IMACJoltProof, jolt::JoltDevice)
             },
         }
+    }
+
+    fn get_all_func_args_in_order(&self) -> Vec<(Ident, Box<Type>)> {
+        self.func
+            .sig
+            .inputs
+            .iter()
+            .map(|arg| {
+                if let syn::FnArg::Typed(PatType { pat, ty, .. }) = arg {
+                    if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
+                        (pat_ident.ident.clone(), ty.clone())
+                    } else {
+                        panic!("cannot parse arg");
+                    }
+                } else {
+                    panic!("cannot parse arg");
+                }
+            })
+            .collect()
     }
 
     #[allow(clippy::type_complexity)]

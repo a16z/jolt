@@ -113,6 +113,36 @@ pub struct RamDagProver {
     final_memory_state: Vec<u64>,
 }
 
+/// Populate memory states
+///
+/// # Arguments
+/// * `index` - Where to start writing
+/// * `bytes` - Input bytes to be written
+/// * `initial_state` - Memory state at program start
+/// * `final_state` - Memory state at program end
+pub fn populate_memory_states(
+    mut index: usize,
+    bytes: &[u8],
+    mut initial_state: Option<&mut Vec<u64>>,
+    mut final_state: Option<&mut Vec<u64>>,
+) {
+    for chunk in bytes.chunks(8) {
+        let mut word = [0u8; 8];
+        for (i, byte) in chunk.iter().enumerate() {
+            word[i] = *byte;
+        }
+        let word = u64::from_le_bytes(word);
+
+        if let Some(ref mut initial) = initial_state {
+            initial[index] = word;
+        }
+        if let Some(ref mut final_st) = final_state {
+            final_st[index] = word;
+        }
+        index += 1;
+    }
+}
+
 impl RamDagProver {
     pub fn new<F: JoltField>(
         state_manager: &StateManager<'_, F, impl CommitmentScheme<Field = F>>,
@@ -152,67 +182,48 @@ impl RamDagProver {
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        for chunk in program_io.trusted_advice.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            final_memory_state[index] = word;
-            index += 1;
-        }
+        populate_memory_states(
+            index,
+            &program_io.trusted_advice,
+            Some(&mut initial_memory_state),
+            Some(&mut final_memory_state),
+        );
 
         index = remap_address(
             program_io.memory_layout.untrusted_advice_start,
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        for chunk in program_io.untrusted_advice.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            final_memory_state[index] = word;
-            index += 1;
-        }
+        populate_memory_states(
+            index,
+            &program_io.untrusted_advice,
+            Some(&mut initial_memory_state),
+            Some(&mut final_memory_state),
+        );
 
         index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        // Convert input bytes into words and populate
-        // `initial_memory_state` and `final_memory_state`
-        for chunk in program_io.inputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            final_memory_state[index] = word;
-            index += 1;
-        }
+        populate_memory_states(
+            index,
+            &program_io.inputs,
+            Some(&mut initial_memory_state),
+            Some(&mut final_memory_state),
+        );
 
-        // Convert output bytes into words and populate
-        // `final_memory_state`
         index = remap_address(
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        for chunk in program_io.outputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            final_memory_state[index] = word;
-            index += 1;
-        }
+        populate_memory_states(
+            index,
+            &program_io.outputs,
+            None,
+            Some(&mut final_memory_state),
+        );
 
         // Copy panic bit
         let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout)

@@ -20,10 +20,10 @@ Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` as the D
 For the purposes of the memory checking argument, we remap the memory address to a witness index:
 
 ```rust
-(address - memory_layout.input_start) / 8 + 1
+(address - memory_layout.lowest_address) / 8
 ```
 
-where `input_start` is the left-most address depicted in the diagram above.
+where `lowest_address` is the left-most address depicted in the diagram above.
 The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
 Any load or store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) that use the `LD` or `SD` instead.
 
@@ -73,6 +73,49 @@ $$
 \widetilde{\textsf{ra}}(r, r') = \sum_{j \in \{0, 1\}^{\log(T)}} \widetilde{\textsf{eq}}(r', j) \cdot \left( \prod_{i=1}^d \widetilde{\textsf{ra}}_i(r_i, j) \right)
 $$
 
+### Advice Inputs
+
+The $\widetilde{\textsf{Val}}$ evaluation sumcheck in Twist requires both the prover and verifier to know the initial state of the lookup table.
+When advice inputs are present in the RAM lookup table, the verifier doesn't have direct access to these values.
+To address this, the prover provides evaluations of the advice inputs and later proves their correctness against commitments held by the verifier.
+
+For trusted advice, the commitment is generated externally; for untrusted advice, the prover generates the commitment.
+All advice inputs are placed at the lowest addresses of the RAM lookup table, with the larger advice type placed first to minimize field multiplications during verification.
+
+We represent advice inputs and the RAM lookup table as multi-linear polynomials, assuming their sizes are powers of two.
+
+Let:
+- $\widetilde{\textsf{ram}}_{\text{init-p}}(k)$ be the prover's RAM lookup table polynomial (including advice)
+- $\widetilde{\textsf{ram}}_{\text{init-v}}(k)$ be the verifier's RAM lookup table polynomial (zeros in advice section, otherwise identical to prover's)
+- $\widetilde{\textsf{trusted}}(m)$ be the trusted advice polynomial
+- $\widetilde{\textsf{untrusted}}(n)$ be the untrusted advice polynomial
+
+where $m \geq n$ (if this condition isn't met, we reorder the advice types to ensure the larger one comes first).
+
+Let $i$ be the position of the single set bit in $(m + n) / m$ within its $\log k$-bit representation.
+This position corresponds to bit $\log m$ when $n < m$, or $\log m + 1$ when $n = m$.
+
+The relationship between these polynomials is:
+
+$$
+\widetilde{\textsf{ram}}_{\text{init-p}}(k) = \widetilde{\textsf{ram}}_{\text{init-v}}(k) + \left( \prod_{j=0}^{\log k - \log m - 1}(1-k_j) \right) \cdot \widetilde{\textsf{trusted}}(k_{\log k - \log m} , \dots, k_{(\log k) - 1})  + \left( \prod_{j=0, j \neq i}^{\log k - \log n - 1}(1-k_j) \right) \cdot k_i \cdot \widetilde{\textsf{untrusted}}(k_{\log k - \log n}, \dots, k_{(\log n)-1})
+$$
+
+Since the verifier only needs to evaluate $\widetilde{\textsf{ram}}_{\text{init-p}}$ at a random point, it can compute this value efficiently using $\widetilde{\textsf{ram}}_{\text{init-v}}$ and the evaluations of the trusted and untrusted components.
+
+#### Example
+
+Consider a concrete example with:
+- Total memory: 8192 elements ($2^{13}$)
+- Trusted advice: 1024 elements ($2^{10}$)
+- Untrusted advice: 128 elements ($2^7$)
+
+The memory layout would be:
+- Addresses with the 3 MSBs as `000`: trusted advice region (all combinations of the remaining 10 bits)
+- Addresses with the MSBs as `001000`: untrusted advice region (all combinations of the remaining 7 LSBs)
+
+This arrangement minimizes verifier computation. If we placed untrusted advice first, the verifier would need to check multiple bit patterns (`000001`, `000010`, etc.) for the trusted section, resulting in significantly more field multiplications.
+
 
 ## Output Check
 
@@ -107,6 +150,11 @@ $$
 $$
 
 Intuitively, the delta between the final and initial state of some memory cell is the sum of all increments to that cell.
+
+The verifier also requires evaluations of the advice sections to compute $\widetilde{\textsf{Val}}_\text{init}$.
+As with the $\widetilde{\textsf{Val}}$ evaluation described above, the prover provides these evaluations.
+Since both sumchecks use the same randomness, the prover only needs to provide one evaluation proof per advice type.
+If different randomness were used, separate proofs would be required for each sumcheck.
 
 You may have noticed in the above expression that $\widetilde{\textsf{Inc}}(j)$ if a polynomial only over cyclce variables, while the book describes $\widetilde{\textsf{Inc}}: \mathbb{F}^{\log K} \times \mathbb{F}^{\log T} \rightarrow \mathbb{F}$.
 This change is explained in [wv virtualization](../twist-shout.md#wv-virtualization).
