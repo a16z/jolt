@@ -280,6 +280,7 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
             let _guard = span.enter();
             cycle_data
                 .par_iter()
+                .with_min_len(4096)
                 .fold(
                     || vec![Vec::new(); num_tables],
                     |mut buckets, data| {
