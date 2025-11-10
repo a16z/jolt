@@ -1,0 +1,13 @@
+[package]
+name = "modexp-chain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+tracing-subscriber = "0.3"
+tracing = "0.1"
+guest = { package = "modexp-chain-guest", path = "./guest" }
+num-bigint = { version = "0.4", default-features = false, features = ["std"] }
+num-traits = "0.2"
+hex = "0.4.3"
