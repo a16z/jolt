@@ -924,9 +924,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         // Note that `eq_r_prime` and `inc` are polynomials over only the cycle
         // variables, so they are not bound here
-        [ra, val]
-            .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+        ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+        val.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 }
 

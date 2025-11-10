@@ -7,8 +7,8 @@ use crate::host::TOOLCHAIN_VERSION;
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
+    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
+    STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use std::fs::File;
@@ -342,10 +342,10 @@ impl Program {
             fs::create_dir_all(parent).expect("could not create linker file");
         }
 
+        let emulator_memory_size = self.memory_size + STACK_CANARY_SIZE + self.stack_size;
         let linker_script = LINKER_SCRIPT_TEMPLATE
-            .replace("{EMULATOR_MEMORY}", &EMULATOR_MEMORY_CAPACITY.to_string())
+            .replace("{EMULATOR_MEMORY}", &emulator_memory_size.to_string())
             .replace("{STACK_CANARY}", &STACK_CANARY_SIZE.to_string())
-            .replace("{MEMORY_SIZE}", &self.memory_size.to_string())
             .replace("{STACK_SIZE}", &self.stack_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");

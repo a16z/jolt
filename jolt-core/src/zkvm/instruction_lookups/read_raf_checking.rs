@@ -320,7 +320,7 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
             is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
-            v: std::array::from_fn(|_| ExpandingTable::new(M)),
+            v: std::array::from_fn(|_| ExpandingTable::new(M, BindingOrder::HighToLow)),
             u_evals_rv,
             u_evals_raf: eq_r_spartan,
             right_operand_ps,
@@ -761,7 +761,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                 self.combined_val_polynomial.as_mut().unwrap(),
                 self.combined_raf_val_polynomial.as_mut().unwrap(),
             ]
-            .par_iter_mut()
+            .iter_mut()
             .for_each(|poly| {
                 poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             });

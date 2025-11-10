@@ -19,7 +19,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    utils::{expanding_table::ExpandingTable, math::Math},
+    utils::math::Math,
     zkvm::{
         dag::state_manager::StateManager,
         ram::remap_address,
@@ -75,10 +75,6 @@ pub struct OutputSumcheckProver<F: JoltField> {
     /// i.e. io_mask(k) = 1 if k is in the "IO" region of memory,
     /// and 0 otherwise.
     io_mask: MultilinearPolynomial<F>,
-    /// Updated to contain the table of evaluations
-    /// EQ(x_1, ..., x_k, r_1, ..., r_k), where r_i is the
-    /// random challenge for the i'th round of sumcheck.
-    eq_table: ExpandingTable<F>,
     #[allocative(skip)]
     params: OutputSumcheckParams<F>,
 }
@@ -121,17 +117,12 @@ impl<F: JoltField> OutputSumcheckProver<F> {
             .par_iter_mut()
             .for_each(|k| *k = true);
 
-        // Initialize the EQ table
-        let mut eq_table = ExpandingTable::new(K);
-        eq_table.reset(F::one());
-
         Self {
             val_init: initial_ram_state.to_vec().into(),
             val_final: final_ram_state.to_vec().into(),
             val_io: val_io.into(),
             eq_poly: EqPolynomial::<F>::evals(&params.r_address).into(),
             io_mask: io_mask.into(),
-            eq_table,
             params,
         }
     }
@@ -213,16 +204,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             val_io,
             eq_poly,
             io_mask,
-            eq_table,
             ..
         } = self;
 
         // We bind Val_init here despite the fact that it is not used in `compute_prover_message`
         // because we'll need Val_init(r) in `ValFinalSumcheck`
-        [val_init, val_final, val_io, eq_poly, io_mask]
-            .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-        eq_table.update(r_j);
+        val_init.bind_parallel(r_j, BindingOrder::LowToHigh);
+        val_final.bind_parallel(r_j, BindingOrder::LowToHigh);
+        val_io.bind_parallel(r_j, BindingOrder::LowToHigh);
+        eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        io_mask.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn cache_openings(

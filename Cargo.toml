@@ -88,6 +88,7 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
+mimalloc.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 syn.workspace = true
@@ -149,7 +150,9 @@ clap = { version = "4.5.4", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
 thiserror = "1.0.58"
-derive_more = { version = "2.0.1", features = ["from"], default-features = false }
+derive_more = { version = "2.0.1", features = [
+    "from",
+], default-features = false }
 strum = { version = "0.26.3", default-features = false }
 strum_macros = "0.26.4"
 itertools = "0.10.0"
@@ -184,6 +187,7 @@ sysinfo = "0.30.8"
 target-lexicon = { version = "0.12.14" }
 dirs = { version = "5.0.1" }
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
+mimalloc = "0.1"
 
 # Async and Networking
 tokio = { version = "1.38.0" }

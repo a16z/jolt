@@ -149,7 +149,7 @@ pub fn prove_jolt_dag<
     let mut ram_dag = RamDagProver::new(&state_manager);
     let mut bytecode_dag = BytecodeDagProver;
 
-    tracing::info!("Stage 1 proving (univariate skip first round)");
+    tracing::info!("Stage 1 proving");
     let stage1_uni_skip_first_round_proof =
         spartan_dag.stage1_uni_skip(&mut state_manager, &mut opening_accumulator, transcript);
 
@@ -163,7 +163,6 @@ pub fn prove_jolt_dag<
         .map(|instance| &mut **instance as _)
         .collect();
 
-    tracing::info!("Stage 1 proving (remainder batch)");
     let (stage1_sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
         remainder_instances_mut,
         &mut opening_accumulator,
