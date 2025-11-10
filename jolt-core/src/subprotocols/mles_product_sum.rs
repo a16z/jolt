@@ -18,42 +18,44 @@ pub fn compute_mles_product_sum<F: JoltField>(
     // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, ∞] using split-eq fold.
     let d = mles.len();
     let current_scalar = eq_poly.get_current_scalar();
-    let sum_evals: Vec<F> = eq_poly.par_fold_out_in(
-        || vec![F::Unreduced::<9>::zero(); d],
-        |inner, g, _x_in, e_in| {
-            // Build per-g pairs [(p0, p1); D]
-            let mut pairs: Vec<(F, F)> = Vec::with_capacity(d);
-            for mle in mles.iter() {
-                let p0 = mle.get_bound_coeff(2 * g);
-                let p1 = mle.get_bound_coeff(2 * g + 1);
-                pairs.push((p0, p1));
-            }
-            // Compute endpoints on U_D into a small Vec<F>
-            let mut endpoints = vec![F::zero(); d];
-            product_eval_univariate_assign(&pairs, &mut endpoints);
-            // Accumulate with unreduced arithmetic
-            for k in 0..d {
-                inner[k] += e_in.mul_unreduced::<9>(endpoints[k]);
-            }
-        },
-        |_x_out, e_out, inner| {
-            // Reduce inner lanes, scale by e_out, fully reduce and apply global scalar
-            let mut out = vec![F::zero(); d];
-            for k in 0..d {
-                let reduced_k = F::from_montgomery_reduce::<9>(inner[k]);
-                let unreduced_scaled = e_out.mul_unreduced::<9>(reduced_k);
-                let reduced = F::from_montgomery_reduce::<9>(unreduced_scaled);
-                out[k] = reduced * current_scalar;
-            }
-            out
-        },
-        |mut a, b| {
-            for k in 0..d {
-                a[k] += b[k];
-            }
-            a
-        },
-    );
+    let sum_evals: Vec<F> = eq_poly
+        .par_fold_out_in(
+            || vec![F::Unreduced::<9>::zero(); d],
+            |inner, g, _x_in, e_in| {
+                // Build per-g pairs [(p0, p1); D]
+                let mut pairs: Vec<(F, F)> = Vec::with_capacity(d);
+                for mle in mles.iter() {
+                    let p0 = mle.get_bound_coeff(2 * g);
+                    let p1 = mle.get_bound_coeff(2 * g + 1);
+                    pairs.push((p0, p1));
+                }
+                // Compute endpoints on U_D into a small Vec<F>
+                let mut endpoints = vec![F::zero(); d];
+                product_eval_univariate_assign(&pairs, &mut endpoints);
+                // Accumulate with unreduced arithmetic
+                for k in 0..d {
+                    inner[k] += e_in.mul_unreduced::<9>(endpoints[k]);
+                }
+            },
+            |_x_out, e_out, inner| {
+                // Reduce inner lanes, scale by e_out (unreduced), return outer acc vector
+                let mut out = vec![F::Unreduced::<9>::zero(); d];
+                for k in 0..d {
+                    let reduced_k = F::from_montgomery_reduce::<9>(inner[k]);
+                    out[k] = e_out.mul_unreduced::<9>(reduced_k);
+                }
+                out
+            },
+            |mut a, b| {
+                for k in 0..d {
+                    a[k] += b[k];
+                }
+                a
+            },
+        )
+        .into_iter()
+        .map(|x| F::from_montgomery_reduce::<9>(x) * current_scalar)
+        .collect();
 
     // Get r[round] from the eq polynomial
     let r_round = eq_poly.get_current_w();
