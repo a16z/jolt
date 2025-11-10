@@ -344,9 +344,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 })
             })
     }
-}
 
-impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[inline(always)]
     pub fn group_index(&self, x_out: usize, x_in: usize) -> usize {
         let num_x_in_bits = self.E_in_current_len().log_2();
