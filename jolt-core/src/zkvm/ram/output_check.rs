@@ -118,8 +118,7 @@ impl<F: JoltField> OutputSumcheckProver<F> {
             .par_iter_mut()
             .for_each(|k| *k = true);
 
-        let eq_r_address =
-            GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
+        let eq_r_address = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
 
         Self {
             val_init: initial_ram_state.to_vec().into(),
