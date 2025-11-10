@@ -1,6 +1,6 @@
+use guest::B64Array;
 use std::time::Instant;
-use tracing::info;
-use guest::B64Array; // <-- import the new-type
+use tracing::info; // <-- import the new-type
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -22,7 +22,11 @@ pub fn main() {
 
     let is_valid = verify(input, B64Array(output), program_io.panic, proof);
 
-    let encoded = output.iter().take_while(|&&b| b != 0).copied().collect::<Vec<_>>();
+    let encoded = output
+        .iter()
+        .take_while(|&&b| b != 0)
+        .copied()
+        .collect::<Vec<_>>();
     info!("output: {}", String::from_utf8_lossy(&encoded));
     info!("valid: {is_valid}");
 }

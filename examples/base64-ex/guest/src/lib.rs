@@ -1,6 +1,6 @@
 #![no_main]
 
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// New-type so we can impl Serialize/Deserialize for 64-byte arrays
 #[derive(Copy, Clone)]
@@ -8,7 +8,8 @@ pub struct B64Array(pub [u8; 64]);
 
 impl Serialize for B64Array {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer,
+    where
+        S: Serializer,
     {
         serializer.serialize_bytes(&self.0)
     }
@@ -16,7 +17,8 @@ impl Serialize for B64Array {
 
 impl<'de> Deserialize<'de> for B64Array {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         let slice: &[u8] = serde_bytes::deserialize(deserializer)?;
         if slice.len() != 64 {
