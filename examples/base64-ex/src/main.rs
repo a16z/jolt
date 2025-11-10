@@ -1,5 +1,6 @@
 use std::time::Instant;
 use tracing::info;
+use guest::B64Array; // <-- import the new-type
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -16,21 +17,12 @@ pub fn main() {
 
     let input = b"hello jolt base64!";
     let now = Instant::now();
-    let (chunks, proof, program_io) = prove(input);
+    let (B64Array(output), proof, program_io) = prove(input);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
-    let is_valid = verify(input, chunks, program_io.panic, proof);
+    let is_valid = verify(input, B64Array(output), program_io.panic, proof);
 
-    // merge chunks and trim zero tail
-    let (chunk1, chunk2) = chunks;
-    let mut out = [0u8; 64];
-    out[..32].copy_from_slice(&chunk1);
-    out[32..].copy_from_slice(&chunk2);
-    let encoded = out
-        .iter()
-        .take_while(|&&b| b != 0)
-        .copied()
-        .collect::<Vec<_>>();
+    let encoded = output.iter().take_while(|&&b| b != 0).copied().collect::<Vec<_>>();
     info!("output: {}", String::from_utf8_lossy(&encoded));
     info!("valid: {is_valid}");
 }
