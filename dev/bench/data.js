@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1762804051871,
+  "lastUpdate": 1762805289821,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -32878,6 +32878,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 965116,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4633847+protoben@users.noreply.github.com",
+            "name": "Ben Hamlin",
+            "username": "protoben"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "88821842c3d0e63584fe2e012157aab6b46a014a",
+          "message": "Update ZkLean extractor to work with 64-bit Twist & Shout (#1060)\n\n* Re-enable zklean-extractor and minimally make it compile\n\n* Extract T&S instruction MLEs\n\nThis commit replaces the `RV32I` struct from L&S jolt with the\n`RV32IMInstruction` struct from T&S Jolt and updates the basic iteration,\nextraction, and printing functions. This additionally requires adding a\nderivation for `EnumIter` to `RV32IMinstruction`, in order to allow iteration.\n\n* Add evaluation tests for MLEs\n\nThis also entails temporarily disabling some additional instructions, due to\nthe different profile used for tests. These will be re-enabled as part of\nhttps://gitlab-ext.galois.com/jb4/jolt-fork/-/issues/14\n\n* Extract operand interleaving for instruction MLEs\n\nThe determines how the two input operands of an instruction are combined into a\nsingle vector. Due to the requirement of Twist & Shout that each instruction\nMLE be decomposable into prefix and suffix MLEs, some instructions require\ntheir operands to be interleaved, and others concatenated. Jolt determines the\noperand interleaving using the circuit flags, so we do the same, here.\n\n* Clean up some cruft\n\n* Make R1CS printing compile with new codebase\n\nThis removes cross-step constraints and updates the extraction to use the new\ntypes, module structure, etc.\n\n* Fix incorrectly named test\n\n* Remove subtable-extraction cruft\n\n* Extract Jolt lookup-table MLEs\n\nT&S Jolt associates MLEs with lookup-tables, rather than directly with\ninstructions. This adds a ZkLeanLookupTable type to the extractor and extracts\nthe MLE for each variant of LookupTables from jolt_core.\n\n* Replace per-instruction MLEs with references to lookup tables\n\nNow that we extract lookup tables, along with their MLEs, we can avoid printing\nout the MLE for each instruction, and refer to the relevant lookup table,\ninstead. This reduces repetition (since multiple instructions have the same\nMLE), reduces the number instructions we need to skip (instructions without\nlookup tables can simply indicate this), and better matches the Jolt codebase.\nWe also remove the tests for instruction-MLE evaluation, since these are now\nhandled in `lookup.rs`.\n\n* Extract circuit flags set for each instruction\n\nEach instruction sets some of the `R1CSInputs::OpFlags` Boolean R1CS input\nvariables. This extracts those flags. We currently print them in a comment,\npending a decision on how to incorporate them into ZkLean.\n\nNote that *all* instructions conditionally set the `DoNotUpdateUnexpandedPC`\nand `InlineSequenceInstruction` flags when they are part of an inline sequence.\nWe do not extract these, since they depend on the trace, not the instruction,\nitself.\n\n* Incorporate `Var` and `Scalar` nodes into parent node in `MleAst`\n\nThis reduces the number of nodes required in ASTs by putting scalars and\nvariables in the branches of their parent nodes, rather than making separate\nnodes for them. Since manyvariables and constants such as 0 and 1 tend to be\nreused many times. The cost of this is that the size of each node is increased,\ndue to needing to contain space for two scalars, as well as additional overhead\nfor enum tags. We work on compressing node sizes next.\n\n* Reduce size of atomic MLE AST elements\n\nThis reduces the size of an AST node by reducing the size of an atomic element\n(a scalar or a variable). In particular, we\n* store an array of all unique constants in an AST, so that a scalar can be\n  represented as an index into this array; and\n* store the register name in the AST, rather than in each variable node.\nDoing so brings the size of an atom down to 4 bytes and the size of a node down\nto 10 bytes (due to the overhead of the enum tags). This is sufficient to\nenable all 32-bit lookup tables (which we also do).\n\n* Use current revision of ZkLean in extractor\n\n* Increase max heartbeats in extracted Lean file for lookup tables\n\nThis is necessary because many of the MLEs are too large for Lean to\nprocess within the default value of `maxHeartbeats`. We could potentially\neliminate the need for this by separating the lookup tables into separate\nfiles.\n\n* Use `sorry` instead of `panic` for instructions w/o MLEs in extractor\n\nUsing `panic` causes errors in which Lean can't prove that the\ncorresponding type is inhabited.\n\n* Update extractor dependencies\n\n* Remove undefined-symbol cruft from extractor package template\n\n* Avoid using identifiers for MLEs we currently can't extract\n\n* Add comment with old Lasso memops in extractor package template\n\nThe memops need to be updated to use the new Twist & Shout R1CS\ninput variables. We put them in a comment for now so we can refer\nto them when we do that.\n\n* Use arena allocation for MLE AST nodes in zklean extractor\n\nOur approach to extracting lookup-table MLEs is to have an AST data\nstructure that implements `JoltField` and keeps track of the\npolynomial computation. However, naively, the `Sized` and `Copy`\nconstraints on `JoltField` means that we are unable to use variably\nsized collections in this data structure, and many ASTs get\nallocated on the stack over the course of computations. This runs\ninto scalability issues, since stack space is limited. This commit\navoids this problem by using a static reference to a locked\nallocation arena for AST nodes stored on the heap.\n\n* Update instruction types for upstream codebase in extractor\n\nThe instruction type has changed in the upstream codebase. This\ncommit fixes that up in the extractor, post merge. In addition, the\nsubset of instructions that are \"supported\" by Jolt has changed,\ndue to the move to 64 bit. We fix that here, too.\n\n* Update MleAst to fully implement JoltField given upstream changes\n\nThere are new constraints, methods, associated types, etc. for\nJoltField in the upstream codebase. This commit ensures that MleAst\nfully implements the new rendition of the trait. Non-trivial\nmethods that are not needed for extraction are left as stubs.\n\n* Update cargo lock file\n\n* Update R1CS-constraint data structure in extractor\n\nThe data structure for R1CS constraints has changed upstream, in particular, allowing R1CS constraints to be expressed in a constant array, rather than a builder pattern. This commit brings the extractor up to date with that data structure.\n\nOne thing to note is that the terms and constants of a linear combination within an R1CS constraint does not seem to be directly accessible. For that reason, we make the `LC::decompose` function public in this commit.\n\n* Make size of extracted lookup tables depend on parameter set\n\n* Implement additional traits on MleAst needed by JoltField\n\nPost merge, there are some additional constraints on JoltField and\nits associated types. This commit implements them on MleAst. Since\nthey're not needed for extraction, they're mostly stubs.\n\n* Fix extraction of the R1CS constraints for current Jolt\n\nThis updates our extraction of R1CS constraints to match the\ncurrent codebase in 2 ways:\n* coefficients and constant terms in LCs are now `i128`\n* R1CS constraints are now represented as just `a` and `b` LCs,\n  with the `c` LC being (implicitly) always 0\n\n* introduce common subexpression elimination to reduce output term size\n\n* introduce definitions rather than let-bindings to help performance\n\nLean does not handle let-bound sub-expressions efficiently (e.g. a\ngraph), instead performance degrades exponentially in the presence of\nmany shared let-bindings.\n\nUsing top-level definitions enforce a linear behavior wrt. the number of\nintroduced sub-definitions.  For our purposes, this change makes the\nruntime of compiling the output go from well over 2 years to just about\n10 minutes.\n\n* add a comment to format_for_lean\n\n* Add evaluation tests in Lean for extracted lookup-table MLEs\n\nWe test the lookup tables in Lean as follows:\n* Generate 2 * WORD_SIZE random field elements to use as input\n* For each lookup-table MLE, compute output := evaluate_mle(input)\n  in Rust\n* Generate a Tests module in Lean with a #guard statement for each\n  MLE that checks mle(input) = output\nThis commit implements the above tests. The field is hard-coded to\nbe the scalar field of BN254 for now, implemented using ZMod p in\nLean. This requires showing that p is prime, which we sorry out for\nnow. Proving this or using BN254 from arklib is todo.\n\n* have the Display instance print the whole AST as it used to\n\n* Avoid hard-coding list of non-inline-sequence instructions in extractor\n\nWhen extracting instructions with lookup tables / circuit flags, we\nwant to avoid inline sequences, because the functions that return\nthese things panic on inline-sequence instructions. Previously, we\nhard-coded the list of supported instructions in the extractor,\nwhich is bad because it requires manual curation. This commit\nchecks the `inline_sequence` instruction and filters out\ninstructionst that return non-empty vectors, instead.\n\n* Remove increase to maxHeartbeats in extracted lookup-table module\n\nSince the scaling issue with compiling large MLEs is now solved, we\nno longer need to increase maxHeartbeats.\n\n* remove src/ directory from Lean template\n\n* Copy BN254.ScalarField from ArkLib for use in extracted Lean tests\n\nThis commit allows us to use the BN254 scalar field as if we were\nimporting it from ArkLib. For now, there is a Lean4 version\nmismatch preventing us from actually depending on ArkLib. Once\nthat's fixed, we can remove our copy and substitute in the ArkLib\ndependency without otherwise changing the Lean code.\n\n* Increase maxHeartbeats in Lean for MLE evaluation tests\n\nThe Lean evaluation tests for the extracted MLEs time out with the\ndefault Lean heartbeat limit. This increases it so they can\ncomplete.\n\n* Move Lean tests into separate module in generated package\n\nThe Lean tests take a long time to run, since they need to evaluate\nlarge polynomials. We move them into a separate module here so that\nthey don't automatically run when running `lake build`. They can\nnow be run with `lake test`.\n\n* Re-enable CI tests for extractor and add `lake test`\n\n* Fix clippy and formatter warnings in extractor\n\n* Remove unused flags module in extractor\n\n* Fix extractor output source directory in CI\n\n* Remove `lake test` from CI for now; Lean tests are too slow\n\n* Removing both Lean compilation and Lean tests from CI for now\n\nCompiling the larger 64-bit MLEs in Lean works locally, but\noverflows the stack in lake on CI. We will remove it from CI for\nnow, until we can find a way to make them more performant.\n\n* Rename WORD_SIZE to XLEN in extractor\n\n---------\n\nCo-authored-by: Valentin Robert <val@galois.com>",
+          "timestamp": "2025-11-10T14:23:06-05:00",
+          "tree_id": "43858ccc12990376e8dc47a053f638622f89ebe5",
+          "url": "https://github.com/a16z/jolt/commit/88821842c3d0e63584fe2e012157aab6b46a014a"
+        },
+        "date": 1762805288454,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 887716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3444200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 854592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 880672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 11125936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 930644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 1034160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 967280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 348328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 3813900,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 906496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 909820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 962784,
             "unit": "KB",
             "extra": ""
           }
