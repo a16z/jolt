@@ -93,7 +93,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let H = &self.H;
 
         // Accumulate constant (c0) and quadratic (e) coefficients via generic split-eq fold.
-        let [c0, e] = eq.par_fold_out_in_montgomery::<9, 2>(&|g| {
+        let [c0, e] = eq.par_fold_out_in_unreduced::<9, 2>(&|g| {
             let h0 = H.get_bound_coeff(2 * g);
             let h1 = H.get_bound_coeff(2 * g + 1);
             let delta = h1 - h0;

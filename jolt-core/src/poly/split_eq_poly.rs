@@ -405,53 +405,40 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             .expect("par_fold_out_in: empty E_out; invariant violation")
     }
 
-    /// Common Montgomery pattern:
-    /// - inner accumulates with e_in.mul_unreduced over K outputs,
-    /// - reduce once,
+    /// Common delayed reduction with Montgomery reduction pattern:
+    /// - inner accumulates with e_in.mul_unreduced over NUM_OUT outputs,
+    /// - reduce once with Montgomery reduction,
     /// - outer scales by e_out.mul_unreduced,
-    /// - reduce at end and return [F; K].
+    /// - reduce at end and return [F; NUM_OUT] with Montgomery reduction.
     #[inline]
-    pub fn par_fold_out_in_montgomery<const LIMBS: usize, const K: usize>(
+    pub fn par_fold_out_in_unreduced<const LIMBS: usize, const NUM_OUT: usize>(
         &self,
-        per_g_values: &(impl Fn(usize) -> [F; K] + Sync + Send),
-    ) -> [F; K] {
+        per_g_values: &(impl Fn(usize) -> [F; NUM_OUT] + Sync + Send),
+    ) -> [F; NUM_OUT] {
         self.par_fold_out_in(
-            || [F::Unreduced::<LIMBS>::zero(); K],
+            || [F::Unreduced::<LIMBS>::zero(); NUM_OUT],
             |inner, g, _x_in, e_in| {
                 let vals = per_g_values(g);
-                for k in 0..K {
+                for k in 0..NUM_OUT {
                     inner[k] += e_in.mul_unreduced::<LIMBS>(vals[k]);
                 }
             },
             |_x_out, e_out, inner| {
-                let mut outer = [F::Unreduced::<LIMBS>::zero(); K];
-                for k in 0..K {
+                let mut outer = [F::Unreduced::<LIMBS>::zero(); NUM_OUT];
+                for k in 0..NUM_OUT {
                     let inner_red = F::from_montgomery_reduce::<LIMBS>(inner[k]);
                     outer[k] = e_out.mul_unreduced::<LIMBS>(inner_red);
                 }
                 outer
             },
             |mut a, b| {
-                for k in 0..K {
+                for k in 0..NUM_OUT {
                     a[k] += b[k];
                 }
                 a
             },
         )
         .map(F::from_montgomery_reduce::<LIMBS>)
-    }
-
-    /// Ergonomic wrapper for the very common quadratic endpoints (t0, t_inf).
-    #[inline]
-    pub fn par_fold_quadratic_pairs<const LIMBS: usize>(
-        &self,
-        compute_pair: &(impl Fn(usize) -> (F, F) + Sync + Send),
-    ) -> (F, F) {
-        let [t0, tinf] = self.par_fold_out_in_montgomery::<LIMBS, 2>(&|g| {
-            let (a, b) = compute_pair(g);
-            [a, b]
-        });
-        (t0, tinf)
     }
 }
 

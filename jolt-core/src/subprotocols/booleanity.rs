@@ -80,7 +80,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = B
-            .par_fold_out_in_montgomery::<9, { DEGREE_BOUND - 1 }>(&|k_prime| {
+            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|k_prime| {
                 let coeffs = (0..self.params.d)
                     .into_par_iter()
                     .map(|i| {
@@ -139,7 +139,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
         let quadratic_coeffs_f: [F; DEGREE_BOUND - 1] = D_poly
-            .par_fold_out_in_montgomery::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
+            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
                 zip(&self.H, &self.params.gammas)
                     .map(|(h, gamma)| {
                         let h_0 = h.get_bound_coeff(2 * j_prime);

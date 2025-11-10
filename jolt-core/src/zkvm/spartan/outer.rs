@@ -392,15 +392,16 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     fn remaining_quadratic_evals(&self) -> (F, F) {
         let n = self.az.len();
         debug_assert_eq!(n, self.bz.len());
-        self.split_eq_poly.par_fold_quadratic_pairs::<9>(&|g| {
+        let [t0, tinf] = self.split_eq_poly.par_fold_out_in_unreduced::<9, 2>(&|g| {
             let az0 = self.az[2 * g];
             let az1 = self.az[2 * g + 1];
             let bz0 = self.bz[2 * g];
             let bz1 = self.bz[2 * g + 1];
             let p0 = az0 * bz0;
             let slope = (az1 - az0) * (bz1 - bz0);
-            (p0, slope)
-        })
+            [p0, slope]
+        });
+        (t0, tinf)
     }
 
     pub fn final_sumcheck_evals(&self) -> [F; 2] {

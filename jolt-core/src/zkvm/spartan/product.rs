@@ -454,15 +454,16 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
     fn remaining_quadratic_evals(&self) -> (F, F) {
         let n = self.left.len();
         debug_assert_eq!(n, self.right.len());
-        self.split_eq_poly.par_fold_quadratic_pairs::<9>(&|g| {
+        let [t0, tinf] = self.split_eq_poly.par_fold_out_in_unreduced::<9, 2>(&|g| {
             let l0 = self.left[2 * g];
             let l1 = self.left[2 * g + 1];
             let r0 = self.right[2 * g];
             let r1 = self.right[2 * g + 1];
             let p0 = l0 * r0;
             let slope = (l1 - l0) * (r1 - r0);
-            (p0, slope)
-        })
+            [p0, slope]
+        });
+        (t0, tinf)
     }
 
     /// Returns final per-virtual-polynomial evaluations needed for openings.
