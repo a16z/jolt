@@ -575,71 +575,17 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
 
     /// Compute the quadratic endpoints for remaining rounds.
     fn remaining_quadratic_evals(&self) -> (F, F) {
-        let eq_poly = &self.split_eq_poly;
-
         let n = self.left.len();
         debug_assert_eq!(n, self.right.len());
-        if eq_poly.E_in_current_len() == 1 {
-            let groups = n / 2;
-            let (t0_unr, tinf_unr) = (0..groups)
-                .into_par_iter()
-                .map(|g| {
-                    let l0 = self.left[2 * g];
-                    let l1 = self.left[2 * g + 1];
-                    let r0 = self.right[2 * g];
-                    let r1 = self.right[2 * g + 1];
-                    let eq = eq_poly.E_out_current()[g];
-                    let p0 = l0 * r0;
-                    let slope = (l1 - l0) * (r1 - r0);
-                    let t0_unr = eq.mul_unreduced::<9>(p0);
-                    let tinf_unr = eq.mul_unreduced::<9>(slope);
-                    (t0_unr, tinf_unr)
-                })
-                .reduce(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |a, b| (a.0 + b.0, a.1 + b.1),
-                );
-            (
-                F::from_montgomery_reduce::<9>(t0_unr),
-                F::from_montgomery_reduce::<9>(tinf_unr),
-            )
-        } else {
-            let num_x1_bits = eq_poly.E_in_current_len().log_2();
-            let x1_len = eq_poly.E_in_current_len();
-            let x2_len = eq_poly.E_out_current_len();
-            let (sum0_unr, suminf_unr) = (0..x2_len)
-                .into_par_iter()
-                .map(|x2| {
-                    let mut inner0_unr = F::Unreduced::<9>::zero();
-                    let mut inner_inf_unr = F::Unreduced::<9>::zero();
-                    for x1 in 0..x1_len {
-                        let g = (x2 << num_x1_bits) | x1;
-                        let l0 = self.left[2 * g];
-                        let l1 = self.left[2 * g + 1];
-                        let r0 = self.right[2 * g];
-                        let r1 = self.right[2 * g + 1];
-                        let e_in = eq_poly.E_in_current()[x1];
-                        let p0 = l0 * r0;
-                        let slope = (l1 - l0) * (r1 - r0);
-                        inner0_unr += e_in.mul_unreduced::<9>(p0);
-                        inner_inf_unr += e_in.mul_unreduced::<9>(slope);
-                    }
-                    let e_out = eq_poly.E_out_current()[x2];
-                    let inner0_red = F::from_montgomery_reduce::<9>(inner0_unr);
-                    let inner_inf_red = F::from_montgomery_reduce::<9>(inner_inf_unr);
-                    let t0_unr = e_out.mul_unreduced::<9>(inner0_red);
-                    let tinf_unr = e_out.mul_unreduced::<9>(inner_inf_red);
-                    (t0_unr, tinf_unr)
-                })
-                .reduce(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |a, b| (a.0 + b.0, a.1 + b.1),
-                );
-            (
-                F::from_montgomery_reduce::<9>(sum0_unr),
-                F::from_montgomery_reduce::<9>(suminf_unr),
-            )
-        }
+        self.split_eq_poly.par_fold_quadratic_pairs::<9>(&|g| {
+            let l0 = self.left[2 * g];
+            let l1 = self.left[2 * g + 1];
+            let r0 = self.right[2 * g];
+            let r1 = self.right[2 * g + 1];
+            let p0 = l0 * r0;
+            let slope = (l1 - l0) * (r1 - r0);
+            (p0, slope)
+        })
     }
 
     /// Returns final per-virtual-polynomial evaluations needed for openings.

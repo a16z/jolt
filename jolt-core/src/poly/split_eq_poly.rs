@@ -3,6 +3,7 @@
 
 use allocative::Allocative;
 use rayon::prelude::*;
+use ark_ff::Zero;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
@@ -342,6 +343,115 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                     })
                 })
             })
+    }
+}
+
+impl<F: JoltField> GruenSplitEqPolynomial<F> {
+    #[inline(always)]
+    pub fn group_index(&self, x_out: usize, x_in: usize) -> usize {
+        let num_x_in_bits = self.E_in_current_len().log_2();
+        (x_out << num_x_in_bits) | x_in
+    }
+
+    /// Parallel fold over current split-eq weights:
+    ///   Σ_{x_out} E_out[x_out] · fold_{x_in}(E_in[x_in] · custom(x_out, x_in))
+    ///
+    /// The caller supplies how to:
+    /// - create an inner accumulator,
+    /// - step the inner accumulator with (g, x_in, e_in),
+    /// - turn the finished inner accumulator into an outer accumulator item given (x_out, e_out),
+    /// - and merge outer accumulator items across x_out in parallel.
+    ///
+    /// When E_in is fully bound (len == 0 or 1), we invoke `inner_step` exactly once with e_in = 1 at x_in = 0.
+    #[inline]
+    pub fn par_fold_out_in<
+        OuterAcc: Send,
+        InnerAcc: Send,
+        MakeInner: Fn() -> InnerAcc + Sync + Send,
+        InnerStep: Fn(&mut InnerAcc, usize, usize, F) + Sync + Send,
+        OuterStep: Fn(usize, F, InnerAcc) -> OuterAcc + Sync + Send,
+        Merge: Fn(OuterAcc, OuterAcc) -> OuterAcc + Sync + Send,
+    >(
+        &self,
+        make_inner: MakeInner,
+        inner_step: InnerStep,
+        outer_step: OuterStep,
+        merge: Merge,
+    ) -> OuterAcc {
+        let e_out = self.E_out_current();
+        let e_in = self.E_in_current();
+        let out_len = e_out.len();
+        let in_len = e_in.len();
+
+        (0..out_len)
+            .into_par_iter()
+            .map(|x_out| {
+                let mut inner_acc = make_inner();
+
+                if in_len <= 1 {
+                    // Fully bound inner (including zero): single logical contribution with e_in = 1
+                    let g = self.group_index(x_out, 0);
+                    inner_step(&mut inner_acc, g, 0, F::one());
+                } else {
+                    for x_in in 0..in_len {
+                        let g = self.group_index(x_out, x_in);
+                        inner_step(&mut inner_acc, g, x_in, e_in[x_in]);
+                    }
+                }
+
+                outer_step(x_out, e_out[x_out], inner_acc)
+            })
+            .reduce_with(merge)
+            .expect("par_fold_out_in: empty E_out; invariant violation")
+    }
+
+    /// Common Montgomery pattern:
+    /// - inner accumulates with e_in.mul_unreduced over K outputs,
+    /// - reduce once,
+    /// - outer scales by e_out.mul_unreduced,
+    /// - reduce at end and return [F; K].
+    #[inline]
+    pub fn par_fold_out_in_montgomery<const LIMBS: usize, const K: usize>(
+        &self,
+        per_g_values: &(impl Fn(usize) -> [F; K] + Sync + Send),
+    ) -> [F; K] {
+        self.par_fold_out_in(
+            || [F::Unreduced::<LIMBS>::zero(); K],
+            |inner, g, _x_in, e_in| {
+                let vals = per_g_values(g);
+                for k in 0..K {
+                    inner[k] = inner[k] + e_in.mul_unreduced::<LIMBS>(vals[k]);
+                }
+            },
+            |_x_out, e_out, inner| {
+                let mut outer = [F::Unreduced::<LIMBS>::zero(); K];
+                for k in 0..K {
+                    let inner_red = F::from_montgomery_reduce::<LIMBS>(inner[k]);
+                    outer[k] = e_out.mul_unreduced::<LIMBS>(inner_red);
+                }
+                outer
+            },
+            |mut a, b| {
+                for k in 0..K {
+                    a[k] = a[k] + b[k];
+                }
+                a
+            },
+        )
+        .map(F::from_montgomery_reduce::<LIMBS>)
+    }
+
+    /// Ergonomic wrapper for the very common quadratic endpoints (t0, t_inf).
+    #[inline]
+    pub fn par_fold_quadratic_pairs<const LIMBS: usize>(
+        &self,
+        compute_pair: &(impl Fn(usize) -> (F, F) + Sync + Send),
+    ) -> (F, F) {
+        let [t0, tinf] = self.par_fold_out_in_montgomery::<LIMBS, 2>(&|g| {
+            let (a, b) = compute_pair(g);
+            [a, b]
+        });
+        (t0, tinf)
     }
 }
 
