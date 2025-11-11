@@ -1,9 +1,11 @@
 //! Dory polynomial commitment scheme implementation
 
 use super::dory_globals::DoryGlobals;
-use super::dory_serialize::{ArkworksProverSetup, ArkworksVerifierSetup, DoryProofData};
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
-use super::wrappers::{jolt_to_ark, ArkFr, ArkG1, ArkGT, JoltToDoryTranscript, BN254};
+use super::wrappers::{
+    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
+    JoltToDoryTranscript, BN254,
+};
 use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
@@ -30,8 +32,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type ProverSetup = ArkworksProverSetup;
     type VerifierSetup = ArkworksVerifierSetup;
     type Commitment = ArkGT;
-    type Proof = DoryProofData;
-    type BatchedProof = Vec<DoryProofData>;
+    type Proof = ArkDoryProof;
+    type BatchedProof = Vec<ArkDoryProof>;
     type OpeningProofHint = Vec<ArkG1>;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
@@ -113,7 +115,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        let proof = dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _>(
+        dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _>(
             poly,
             &ark_point,
             row_commitments,
@@ -122,9 +124,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             setup,
             &mut dory_transcript,
         )
-        .expect("proof generation should succeed");
-
-        DoryProofData { proof }
+        .expect("proof generation should succeed")
     }
 
     fn verify<ProofTranscript: Transcript>(
@@ -154,7 +154,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             *commitment,
             ark_eval,
             &ark_point,
-            &proof.proof,
+            proof,
             setup.clone().into_inner(),
             &mut dory_transcript,
         )

@@ -22,7 +22,9 @@ use dory::{
 use num_traits::One;
 use rayon::prelude::*;
 
-pub use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, ArkGT, BN254};
+pub use dory::backends::arkworks::{
+    ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup, BN254,
+};
 
 pub type JoltFieldWrapper = ArkFr;
 
@@ -33,6 +35,18 @@ impl AppendToTranscript for ArkGT {
 }
 
 impl AppendToTranscript for &ArkGT {
+    fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
+        transcript.append_serializable(*self);
+    }
+}
+
+impl AppendToTranscript for ArkDoryProof {
+    fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
+        transcript.append_serializable(self);
+    }
+}
+
+impl AppendToTranscript for &ArkDoryProof {
     fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
         transcript.append_serializable(*self);
     }

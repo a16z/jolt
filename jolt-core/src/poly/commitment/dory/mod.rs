@@ -5,7 +5,6 @@
 
 mod commitment_scheme;
 mod dory_globals;
-mod dory_serialize;
 mod jolt_dory_routines;
 mod wrappers;
 
@@ -14,6 +13,8 @@ mod tests;
 
 pub use commitment_scheme::DoryCommitmentScheme;
 pub use dory_globals::DoryGlobals;
-pub use dory_serialize::{ArkworksProverSetup, ArkworksVerifierSetup, DoryProofData};
 pub use jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
-pub use wrappers::{ArkFr, ArkG1, ArkG2, ArkGT, JoltFieldWrapper, BN254};
+pub use wrappers::{
+    ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
+    JoltFieldWrapper, BN254,
+};
