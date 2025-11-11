@@ -918,6 +918,7 @@ dependencies = [
  "bincode",
  "blake2",
  "digest",
+ "dirs",
  "dory-derive",
  "once_cell",
  "rand_core 0.6.4",

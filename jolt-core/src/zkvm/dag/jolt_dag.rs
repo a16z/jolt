@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -510,7 +509,7 @@ pub fn verify_jolt_dag<
     'a,
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 >(
     proof: &JoltProof<F, PCS, ProofTranscript>,
     mut state_manager: StateManager<'a, F, PCS>,
@@ -762,42 +761,45 @@ pub fn verify_jolt_dag<
     Ok(())
 }
 
-fn generate_and_commit_polynomials<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+fn generate_and_commit_polynomials<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
     prover_state_manager: &mut StateManager<F, PCS>,
 ) -> (
     Vec<PCS::Commitment>,
     HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
 ) {
-    let (preprocessing, _lazy_trace, trace, _program_io, _final_memory_state) =
+    let (preprocessing, lazy_trace_opt, _trace, _program_io, _final_memory_state) =
         prover_state_manager.get_prover_data();
 
+    let mut lazy_trace = lazy_trace_opt
+        .clone()
+        .expect("LazyTraceIterator should be available for streaming commit");
+
     let polys = AllCommittedPolynomials::iter().copied().collect::<Vec<_>>();
-    let mut all_polys = CommittedPolynomial::generate_witness_batch(&polys, preprocessing, trace);
 
-    let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
-        .filter_map(|poly| all_polys.remove(poly))
-        .collect();
-
-    let span = tracing::span!(tracing::Level::INFO, "commit to polynomials");
+    let span = tracing::span!(tracing::Level::INFO, "streaming commit to polynomials");
     let _guard = span.enter();
 
-    let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
+    let commit_results = PCS::streaming_batch_commit(
+        &polys,
+        &mut lazy_trace,
+        preprocessing,
+        &preprocessing.generators,
+    );
 
     let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
         commit_results.into_iter().unzip();
     drop(_guard);
     drop(span);
-    let mut hint_map = HashMap::with_capacity(committed_polys.len());
+
+    let mut hint_map = HashMap::with_capacity(polys.len());
     for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
         hint_map.insert(*poly, hint);
     }
 
-    drop_in_background_thread(committed_polys);
-
     (commitments, hint_map)
 }
 
-fn commit_untrusted_advice<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
+fn commit_untrusted_advice<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
     state_manager: &mut StateManager<'a, F, PCS>,
 ) -> Option<PCS::OpeningProofHint> {
     let (preprocessing, _, _, program_io, _) = state_manager.get_prover_data();
@@ -831,7 +833,7 @@ fn commit_untrusted_advice<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
     Some(hint)
 }
 
-fn compute_trusted_advice_poly<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
+fn compute_trusted_advice_poly<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
     state_manager: &mut StateManager<'a, F, PCS>,
 ) {
     let (_, _, _, program_io, _) = state_manager.get_prover_data();
@@ -864,7 +866,7 @@ fn compute_trusted_advice_poly<'a, F: JoltField, PCS: CommitmentScheme<Field = F
 fn generate_trusted_advice_proof<
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 >(
     state_manager: &mut StateManager<'_, F, PCS>,
     opening_accumulator: &ProverOpeningAccumulator<F>,
@@ -880,7 +882,7 @@ fn generate_trusted_advice_proof<
 fn generate_untrusted_advice_proof<
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 >(
     state_manager: &mut StateManager<'_, F, PCS>,
     opening_accumulator: &ProverOpeningAccumulator<F>,

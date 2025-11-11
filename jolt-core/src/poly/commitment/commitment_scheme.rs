@@ -143,4 +143,28 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
         tier_1_commitments: &[Self::Tier1Commitment],
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint);
+
+    /// Perform streaming batch commit on multiple polynomials
+    ///
+    /// This method processes polynomials row-by-row using a lazy trace iterator,
+    /// maintaining sqrt(n) space complexity by only holding one row in memory at a time.
+    ///
+    /// # Arguments
+    /// * `polynomial_specs` - List of polynomials to commit to
+    /// * `lazy_trace` - Iterator providing trace chunks
+    /// * `preprocessing` - Preprocessed data for witness generation
+    /// * `setup` - Prover setup containing generators
+    ///
+    /// # Returns
+    /// Vector of (commitment, opening proof hint) pairs for each polynomial
+    fn streaming_batch_commit<F, PCS>(
+        polys: &[crate::zkvm::witness::CommittedPolynomial],
+        lazy_trace: &mut tracer::LazyTraceIterator,
+        preprocessing: &crate::zkvm::JoltProverPreprocessing<F, PCS>,
+        setup: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
+    where
+        F: crate::field::JoltField,
+        PCS: CommitmentScheme<Field = F>,
+        Self: Sized;
 }

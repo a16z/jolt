@@ -9,7 +9,7 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::CommitmentScheme,
+    commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field::JoltField;
@@ -505,6 +505,65 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"hyperkzg"
+    }
+}
+
+impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
+where
+    <P as Pairing>::ScalarField: JoltField,
+{
+    type Tier1Commitment = ();
+
+    fn compute_tier_2_commit(
+        _tier_1_commitments: &[Self::Tier1Commitment],
+        _setup: &Self::ProverSetup,
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        // HyperKZG doesn't use a two-tier commitment structure
+        panic!("HyperKZG does not support streaming commitment")
+    }
+
+    fn streaming_batch_commit<F, PCS>(
+        polynomial_specs: &[crate::zkvm::witness::CommittedPolynomial],
+        lazy_trace: &mut tracer::LazyTraceIterator,
+        preprocessing: &crate::zkvm::JoltProverPreprocessing<F, PCS>,
+        setup: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
+    where
+        F: crate::field::JoltField,
+        PCS: CommitmentScheme<Field = F>,
+        Self: Sized,
+    {
+        // For HyperKZG, fall back to non-streaming approach
+        // This is not memory-efficient but HyperKZG is not the primary commitment scheme
+        let trace: Vec<_> = lazy_trace.collect();
+        let polys = polynomial_specs.to_vec();
+        let mut all_polys = crate::zkvm::witness::CommittedPolynomial::generate_witness_batch(
+            &polys,
+            preprocessing,
+            &trace,
+        );
+
+        let committed_polys: Vec<_> = polys
+            .iter()
+            .filter_map(|poly| all_polys.remove(poly))
+            .collect();
+
+        // Convert to the correct field type
+        let converted_polys: Vec<_> = committed_polys
+            .into_iter()
+            .map(|poly| {
+                // This unsafe transmute is necessary because we know F and P::ScalarField
+                // are the same type in practice when using HyperKZG
+                unsafe {
+                    std::mem::transmute::<
+                        MultilinearPolynomial<F>,
+                        MultilinearPolynomial<P::ScalarField>,
+                    >(poly)
+                }
+            })
+            .collect();
+
+        Self::batch_commit(&converted_polys, setup)
     }
 }
 

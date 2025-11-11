@@ -125,4 +125,22 @@ where
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         (MockCommitment::default(), ())
     }
+
+    fn streaming_batch_commit<F2, PCS>(
+        polynomial_specs: &[crate::zkvm::witness::CommittedPolynomial],
+        _lazy_trace: &mut tracer::LazyTraceIterator,
+        _preprocessing: &crate::zkvm::JoltProverPreprocessing<F2, PCS>,
+        _setup: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
+    where
+        F2: crate::field::JoltField,
+        PCS: CommitmentScheme<Field = F2>,
+        Self: Sized,
+    {
+        // For mock implementation, just return default commitments
+        polynomial_specs
+            .iter()
+            .map(|_| (MockCommitment::default(), ()))
+            .collect()
+    }
 }

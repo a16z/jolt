@@ -117,7 +117,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         // Use GLV-based optimization for G2
         let base_proj = base.0;
 
-        //TODO (markosg04) this can be optimized
+        //TODO (markosg04) this can be optimized heavily?
         let results_proj: Vec<G2Projective> = raw_scalars
             .par_iter()
             .map(|&scalar| jolt_optimizations::glv_four_scalar_mul_online(scalar, &[base_proj])[0])
