@@ -1,5 +1,5 @@
 use jolt_core::zkvm::r1cs::{
-    constraints::{Constraint, NamedConstraint, UNIFORM_R1CS},
+    constraints::{NamedR1CSConstraint, R1CSConstraint, R1CS_CONSTRAINTS},
     inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS},
     ops::{Term, LC},
 };
@@ -13,14 +13,14 @@ use crate::{
 
 pub struct ZkLeanR1CSConstraints<J> {
     inputs: Vec<JoltR1CSInputs>,
-    uniform_constraints: Vec<NamedConstraint>,
+    uniform_constraints: Vec<NamedR1CSConstraint>,
     phantom: std::marker::PhantomData<J>,
 }
 
 impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
     pub fn extract() -> Self {
         let inputs = ALL_R1CS_INPUTS.to_vec();
-        let uniform_constraints = UNIFORM_R1CS.to_vec();
+        let uniform_constraints = R1CS_CONSTRAINTS.to_vec();
 
         Self {
             inputs,
@@ -100,9 +100,9 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
             // all constraints are conditional equalities:
             //   if <condition> { <left> - <right> == 0 }
             // Thus `a` = <condition>, `b` = <left> - <right>, and (implicitly) `c` = 0.
-            let Constraint { a, b } = &constraint.cons;
+            let R1CSConstraint { a, b } = &constraint.cons;
             let c = &LC::zero();
-            let name = format!("{:?}", constraint.name);
+            let name = format!("{:?}", constraint.label);
 
             f.write_fmt(format_args!("{}-- {name}\n", indent(indent_level)))?;
             f.write_fmt(format_args!(

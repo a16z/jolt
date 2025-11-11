@@ -660,20 +660,6 @@ impl jolt_core::field::MulTrunc for MleAst {
     }
 }
 
-impl jolt_core::field::FmaddTrunc for MleAst {
-    type Other<const M: usize> = Self;
-
-    type Acc<const P: usize> = Self;
-
-    fn fmadd_trunc<const M: usize, const P: usize>(
-        &self,
-        _other: &Self::Other<M>,
-        _acc: &mut Self::Acc<P>,
-    ) {
-        unimplemented!("Not needed for constructing ASTs");
-    }
-}
-
 impl jolt_core::field::MulU64WithCarry for MleAst {
     type Output<const NPLUS1: usize> = Self;
 
