@@ -10,7 +10,7 @@ use crate::{
         multilinear_polynomial::MultilinearPolynomial,
     },
     transcripts::{AppendToTranscript, Transcript},
-    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
+    utils::errors::ProofVerifyError,
 };
 
 use super::commitment_scheme::CommitmentScheme;
@@ -117,34 +117,11 @@ impl<F> StreamingCommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
 {
-    type ChunkState = ();
-    type CachedData = ();
+    type Tier1Commitment = ();
 
-    fn prepare_cached_data(_setup: &Self::ProverSetup) -> Self::CachedData {}
-
-    fn process_chunk<T: SmallScalar>(
-        _cached_data: &Self::CachedData,
-        _chunk: &[T],
-    ) -> Self::ChunkState {
-    }
-
-    fn process_chunk_field(
-        _cached_data: &Self::CachedData,
-        _chunk: &[Self::Field],
-    ) -> Self::ChunkState {
-    }
-
-    fn process_chunk_onehot(
-        _cached_data: &Self::CachedData,
-        _onehot_k: usize,
-        _chunk: &[Option<usize>],
-    ) -> Self::ChunkState {
-    }
-
-    fn finalize(
-        _cached_data: &Self::CachedData,
-        _onehot_k: Option<usize>,
-        _chunks: &[Self::ChunkState],
+    fn compute_tier_2_commit(
+        _tier_1_commitments: &[Self::Tier1Commitment],
+        _setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         (MockCommitment::default(), ())
     }

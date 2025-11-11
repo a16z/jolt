@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -117,12 +117,12 @@ impl<F: JoltField> RLCPolynomial<F> {
     pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
         &self,
         bases: &[G::Affine],
-    ) -> Vec<JoltGroupWrapper<G>> {
+    ) -> Vec<G> {
         let num_rows = DoryGlobals::get_max_num_rows();
         tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
 
-        let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
+        let mut row_commitments = vec![G::zero(); num_rows];
 
         // Compute the row commitments for dense submatrix
         self.dense_rlc
@@ -132,18 +132,18 @@ impl<F: JoltField> RLCPolynomial<F> {
                 let msm_result: G =
                     VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)
                         .unwrap();
-                *commitment = JoltGroupWrapper(commitment.0 + msm_result)
+                *commitment += msm_result
             });
 
         // Compute the row commitments for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
-            let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = match poly.as_ref() {
+            let mut new_row_commitments: Vec<G> = match poly.as_ref() {
                 MultilinearPolynomial::OneHot(one_hot) => one_hot.commit_rows(bases),
                 _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
             };
 
             // TODO(moodlezoup): Avoid resize
-            new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
+            new_row_commitments.resize(num_rows, G::zero());
 
             let updated_row_commitments: &mut [G1Projective] = unsafe {
                 std::slice::from_raw_parts_mut(
@@ -184,38 +184,29 @@ impl<F: JoltField> RLCPolynomial<F> {
     /// polynomials comprising the linear combination, and taking the
     /// linear combination of the resulting products.
     #[tracing::instrument(skip_all, name = "RLCPolynomial::vector_matrix_product")]
-    pub fn vector_matrix_product(
-        &self,
-        left_vec: &[JoltFieldWrapper<F>],
-    ) -> Vec<JoltFieldWrapper<F>> {
-        let left_vec: &[F] =
-            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
+    pub fn vector_matrix_product(&self, left_vec: &[F]) -> Vec<F> {
         let num_columns = DoryGlobals::get_num_columns();
 
         // Compute the vector-matrix product for dense submatrix
         // TODO(moodlezoup): better parallelism
-        let mut result: Vec<_> = (0..num_columns)
+        let mut result: Vec<F> = (0..num_columns)
             .into_par_iter()
             .map(|col_index| {
-                JoltFieldWrapper(
-                    self.dense_rlc
-                        .iter()
-                        .skip(col_index)
-                        .step_by(num_columns)
-                        .zip(left_vec.iter())
-                        .map(|(&a, &b)| -> F { a * b })
-                        .sum::<F>(),
-                )
+                self.dense_rlc
+                    .iter()
+                    .skip(col_index)
+                    .step_by(num_columns)
+                    .zip(left_vec.iter())
+                    .map(|(&a, &b)| -> F { a * b })
+                    .sum::<F>()
             })
             .collect();
-        let result_slice: &mut [F] =
-            unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut F, result.len()) };
 
         // Compute the vector-matrix product for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
             match poly.as_ref() {
                 MultilinearPolynomial::OneHot(one_hot) => {
-                    one_hot.vector_matrix_product(left_vec, *coeff, result_slice);
+                    one_hot.vector_matrix_product(left_vec, *coeff, &mut result);
                 }
                 _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
             }

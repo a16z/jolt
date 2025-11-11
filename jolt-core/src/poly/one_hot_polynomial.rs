@@ -6,7 +6,7 @@
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
@@ -16,7 +16,7 @@ use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
-use ark_bn254::{G1Affine, G1Projective};
+use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
 use num_traits::Zero;
 use rayon::prelude::*;
@@ -423,7 +423,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
     pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
         &self,
         bases: &[G::Affine],
-    ) -> Vec<JoltGroupWrapper<G>> {
+    ) -> Vec<G> {
         let num_rows = self.num_rows();
         tracing::debug!("Committing to one-hot polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
@@ -455,21 +455,20 @@ impl<F: JoltField> OneHotPolynomial<F> {
                         jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
 
                     // Convert results to row_commitments
-                    let mut row_commitments = vec![JoltGroupWrapper(G::zero()); self.K];
+                    let mut row_commitments = vec![G::zero(); self.K];
                     for (k, result) in results.into_iter().enumerate() {
                         if !indices_per_k[k].is_empty() {
-                            let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective
-                            row_commitments[k].0 = unsafe {
-                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                            };
+                            // Convert G1Affine to G1Projective, then cast to G
+                            let projective = ark_bn254::G1Projective::from(result);
+                            // Safety: We know G is G1Projective in practice when called from dory
+                            row_commitments[k] = unsafe { std::mem::transmute_copy(&projective) };
                         }
                     }
 
                     row_commitments
                 })
                 .collect();
-            let mut result = vec![JoltGroupWrapper(G::zero()); num_rows];
+            let mut result = vec![G::zero(); num_rows];
             for (chunk_index, commitments) in chunk_commitments.iter().enumerate() {
                 result
                     .par_iter_mut()
@@ -485,7 +484,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             let chunk_size = std::cmp::max(1, num_rows / num_chunks);
 
             // Iterate over chunks of contiguous rows in parallel
-            let mut result: Vec<JoltGroupWrapper<G>> = vec![JoltGroupWrapper(G::zero()); num_rows];
+            let mut result: Vec<G> = vec![G::zero(); num_rows];
 
             // First, collect indices for each row
             let mut row_indices: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
@@ -515,11 +514,10 @@ impl<F: JoltField> OneHotPolynomial<F> {
                         .zip(indices_chunk.iter().zip(results.into_iter()))
                     {
                         if !indices.is_empty() {
-                            let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective
-                            row_result.0 = unsafe {
-                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                            };
+                            // Convert G1Affine to G1Projective, then cast to G
+                            let projective = ark_bn254::G1Projective::from(result);
+                            // Safety: We know G is G1Projective in practice when called from dory
+                            *row_result = unsafe { std::mem::transmute_copy(&projective) };
                         }
                     }
                 });
@@ -531,7 +529,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
     pub fn commit_one_hot_batch<U, G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
         one_hot_polys: &[U],
         bases: &[G::Affine],
-    ) -> Vec<Vec<JoltGroupWrapper<G>>>
+    ) -> Vec<Vec<G>>
     where
         U: std::borrow::Borrow<OneHotPolynomial<F>> + Sync,
     {
@@ -594,13 +592,13 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
 
                 // Convert results to row_commitments
-                let mut row_commitments = vec![JoltGroupWrapper(G::zero()); work.K];
+                let mut row_commitments = vec![G::zero(); work.K];
                 for (k, result) in results.into_iter().enumerate() {
                     if !indices_per_k[k].is_empty() {
-                        let sum_projective: G1Projective = result.into();
-                        row_commitments[k].0 = unsafe {
-                            std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                        };
+                        // Convert G1Affine to G1Projective, then cast to G
+                        let projective = ark_bn254::G1Projective::from(result);
+                        // Safety: We know G is G1Projective in practice when called from dory
+                        row_commitments[k] = unsafe { std::mem::transmute_copy(&projective) };
                     }
                 }
 
@@ -609,9 +607,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .collect();
 
         // Phase 3: Reassemble results by polynomial
-        let mut poly_results: Vec<Vec<JoltGroupWrapper<G>>> = one_hot_polys
+        let mut poly_results: Vec<Vec<G>> = one_hot_polys
             .iter()
-            .map(|poly| vec![JoltGroupWrapper(G::zero()); poly.borrow().num_rows()])
+            .map(|poly| vec![G::zero(); poly.borrow().num_rows()])
             .collect();
 
         // Group results by polynomial
