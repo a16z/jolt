@@ -481,7 +481,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 .map(|((I_chunk, buffers), checkpoint)| {
                     let mut evals = [F::Unreduced::<9>::zero(); 2];
 
-                    let mut evals_for_current_E_out = [F::zero(), F::zero()];
+                    let mut evals_for_current_E_out =
+                        [F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()];
                     let mut x_out_prev: Option<usize> = None;
 
                     let DataBuffers {
@@ -568,12 +569,15 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                     x_out_prev = Some(x_out);
 
                                     let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                                    evals[0] +=
-                                        E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[0]);
-                                    evals[1] +=
-                                        E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[1]);
+                                    let red0 =
+                                        F::from_montgomery_reduce::<9>(evals_for_current_E_out[0]);
+                                    let red1 =
+                                        F::from_montgomery_reduce::<9>(evals_for_current_E_out[1]);
+                                    evals[0] += E_out_eval.mul_unreduced::<9>(red0);
+                                    evals[1] += E_out_eval.mul_unreduced::<9>(red1);
 
-                                    evals_for_current_E_out = [F::zero(), F::zero()];
+                                    evals_for_current_E_out =
+                                        [F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()];
                                 }
                                 _ => (),
                             }
@@ -600,16 +604,20 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 val_j_r[1][k] = F::zero();
                             }
 
-                            evals_for_current_E_out[0] += E_in_eval * inner_sum_evals[0];
-                            evals_for_current_E_out[1] += E_in_eval * inner_sum_evals[1];
+                            evals_for_current_E_out[0] +=
+                                E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]);
+                            evals_for_current_E_out[1] +=
+                                E_in_eval.mul_unreduced::<9>(inner_sum_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
                     // result to the total.
                     if let Some(x) = x_out_prev {
                         let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                        evals[0] += E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[0]);
-                        evals[1] += E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[1]);
+                        let red0 = F::from_montgomery_reduce::<9>(evals_for_current_E_out[0]);
+                        let red1 = F::from_montgomery_reduce::<9>(evals_for_current_E_out[1]);
+                        evals[0] += E_out_eval.mul_unreduced::<9>(red0);
+                        evals[1] += E_out_eval.mul_unreduced::<9>(red1);
                     }
                     evals
                 })
