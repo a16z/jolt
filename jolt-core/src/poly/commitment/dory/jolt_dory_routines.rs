@@ -22,7 +22,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Only use the first scalars.len() bases to match the scalar count
-        let result = VariableBaseMSM::msm_field_elements(&affines, &raw_scalars)
+        let result = VariableBaseMSM::msm_field_elements(&affines, raw_scalars)
             .expect("msm_field_elements should not fail");
 
         ArkG1(result)

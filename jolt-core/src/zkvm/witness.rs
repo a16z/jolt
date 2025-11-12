@@ -188,7 +188,10 @@ impl AllCommittedPolynomials {
 
 impl CommittedPolynomial {
     /// Returns the onehot_k value for one-hot polynomials
-    pub fn get_onehot_k<F, PCS>(&self, preprocessing: &JoltProverPreprocessing<F, PCS>) -> Option<usize>
+    pub fn get_onehot_k<F, PCS>(
+        &self,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
+    ) -> Option<usize>
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
@@ -206,9 +209,9 @@ impl CommittedPolynomial {
     }
 
     /// Generate witness data and compute tier 1 commitment for a single row
-    pub fn generate_witness_and_commit_row<F, PCS>(
+    pub fn stream_witness_and_commit_rows<F, PCS>(
         &self,
-        cached_data: &PCS::CachedData,
+        setup: &PCS::ProverSetup,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         row_cycles: &[tracer::instruction::Cycle],
         ram_d: usize,
@@ -226,7 +229,7 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
-                PCS::compute_tier1_commitment(cached_data, &row)
+                PCS::compute_tier1_commitment(setup, &row)
             }
             CommittedPolynomial::RamInc => {
                 let row: Vec<i128> = row_cycles
@@ -238,7 +241,7 @@ impl CommittedPolynomial {
                         _ => 0,
                     })
                     .collect();
-                PCS::compute_tier1_commitment(cached_data, &row)
+                PCS::compute_tier1_commitment(setup, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -252,7 +255,7 @@ impl CommittedPolynomial {
                         Some(k as usize)
                     })
                     .collect();
-                PCS::compute_tier1_commitment_onehot(cached_data, instruction_lookups::K_CHUNK, &row)
+                PCS::compute_tier1_commitment_onehot(setup, instruction_lookups::K_CHUNK, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let d = preprocessing.shared.bytecode.d;
@@ -267,7 +270,7 @@ impl CommittedPolynomial {
                         Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
                     })
                     .collect();
-                PCS::compute_tier1_commitment_onehot(cached_data, K_chunk, &row)
+                PCS::compute_tier1_commitment_onehot(setup, K_chunk, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -283,7 +286,7 @@ impl CommittedPolynomial {
                         })
                     })
                     .collect();
-                PCS::compute_tier1_commitment_onehot(cached_data, DTH_ROOT_OF_K, &row)
+                PCS::compute_tier1_commitment_onehot(setup, DTH_ROOT_OF_K, &row)
             }
         }
     }

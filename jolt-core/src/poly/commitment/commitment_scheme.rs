@@ -137,34 +137,22 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 pub trait StreamingCommitmentScheme: CommitmentScheme {
     /// The type representing chunk state (tier 1 commitments)
     type ChunkState: Send + Sync + Clone + PartialEq + Debug;
-    /// Cached data prepared once and reused across all chunks
-    type CachedData: Sync;
-
-    /// Prepare cached data that will be shared across all polynomial commitments
-    fn prepare_cached_data(setup: &Self::ProverSetup) -> Self::CachedData;
 
     /// Compute tier 1 commitment for a chunk of small scalar values
     fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
-        cached_data: &Self::CachedData,
+        setup: &Self::ProverSetup,
         chunk: &[T],
-    ) -> Self::ChunkState;
-
-    /// Compute tier 1 commitment for a chunk of field elements
-    fn compute_tier1_commitment_field(
-        cached_data: &Self::CachedData,
-        chunk: &[Self::Field],
     ) -> Self::ChunkState;
 
     /// Compute tier 1 commitment for a chunk of one-hot values
     fn compute_tier1_commitment_onehot(
-        cached_data: &Self::CachedData,
+        setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState;
 
     /// Compute tier 2 commitment from accumulated tier 1 commitments
     fn compute_tier2_commitment(
-        cached_data: &Self::CachedData,
         setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
         tier1_commitments: &[Self::ChunkState],

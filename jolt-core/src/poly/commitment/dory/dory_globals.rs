@@ -74,7 +74,7 @@ impl DoryGlobals {
             (side, side)
         } else {
             // Odd total vars: almost square (columns = 2*rows)
-            let sigma = (total_vars + 1) / 2;
+            let sigma = total_vars.div_ceil(2);
             let nu = total_vars - sigma;
             (1 << sigma, 1 << nu)
         };

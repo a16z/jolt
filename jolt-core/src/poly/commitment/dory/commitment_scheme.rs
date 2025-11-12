@@ -8,7 +8,6 @@ use super::wrappers::{
 };
 use crate::{
     field::JoltField,
-    msm::VariableBaseMSM,
     poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::Transcript,
@@ -25,12 +24,6 @@ use rand_core::OsRng;
 use rayon::prelude::*;
 use std::borrow::Borrow;
 use tracing::trace_span;
-
-/// Simplified cached data for Dory streaming commitments
-pub struct DoryCachedData {
-    /// Pre-computed G1 bases in affine form
-    pub g1_bases: Vec<G1Affine>,
-}
 
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
@@ -234,75 +227,62 @@ impl CommitmentScheme for DoryCommitmentScheme {
                 let ark_coeff = jolt_to_ark(coeff);
                 ark_coeff * **commitment
             })
-            .reduce(|| ArkGT::identity(), |a, b| a + b)
+            .reduce(ArkGT::identity, |a, b| a + b)
     }
 }
 
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
-    type ChunkState = Vec<ArkG1>; // Row commitments for this chunk
-    type CachedData = DoryCachedData;
-
-    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prepare_cached_data")]
-    fn prepare_cached_data(setup: &Self::ProverSetup) -> Self::CachedData {
-        let row_len = DoryGlobals::get_num_columns();
-        let g1_slice = unsafe {
-            std::slice::from_raw_parts(setup.g1_vec.as_ptr() as *const ArkG1, setup.g1_vec.len())
-        };
-
-        let g1_bases: Vec<G1Affine> = g1_slice[..row_len]
-            .par_iter()
-            .map(|g| g.0.into_affine())
-            .collect();
-
-        DoryCachedData { g1_bases }
-    }
+    type ChunkState = Vec<ArkG1>; // Tier 1 commitment chunks
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment")]
     fn compute_tier1_commitment<T: SmallScalar>(
-        cached_data: &Self::CachedData,
+        setup: &Self::ProverSetup,
         chunk: &[T],
     ) -> Self::ChunkState {
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
-        let row_commitment = ArkG1(
-            T::msm(&cached_data.g1_bases[..chunk.len()], chunk).expect("MSM calculation failed."),
-        );
+        let row_len = DoryGlobals::get_num_columns();
+        let g1_slice =
+            unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
+
+        let g1_bases: Vec<G1Affine> = g1_slice[..row_len]
+            .iter()
+            .map(|g| g.0.into_affine())
+            .collect();
+
+        let row_commitment =
+            ArkG1(T::msm(&g1_bases[..chunk.len()], chunk).expect("MSM calculation failed."));
         vec![row_commitment]
     }
 
-    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment_field")]
-    fn compute_tier1_commitment_field(
-        cached_data: &Self::CachedData,
-        chunk: &[Self::Field],
-    ) -> Self::ChunkState {
-        debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
-
-        let row_commitment = ArkG1(
-            VariableBaseMSM::msm_field_elements(&cached_data.g1_bases[..chunk.len()], chunk)
-                .expect("MSM calculation failed."),
-        );
-        vec![row_commitment]
-    }
-
-    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment_onehot")]
+    #[tracing::instrument(
+        skip_all,
+        name = "DoryCommitmentScheme::compute_tier1_commitment_onehot"
+    )]
     fn compute_tier1_commitment_onehot(
-        cached_data: &Self::CachedData,
+        setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState {
         let K = onehot_k;
 
+        let row_len = DoryGlobals::get_num_columns();
+        let g1_slice =
+            unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
+
+        let g1_bases: Vec<G1Affine> = g1_slice[..row_len]
+            .iter()
+            .map(|g| g.0.into_affine())
+            .collect();
+
         let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); K];
         for (col_index, k) in chunk.iter().enumerate() {
-            // All the nonzero coefficients are 1, so we simply add
-            // the associated base to the result.
             if let Some(k) = k {
                 indices_per_k[*k].push(col_index);
             }
         }
 
-        let results =
-            jolt_optimizations::batch_g1_additions_multi(&cached_data.g1_bases, &indices_per_k);
+        let results = jolt_optimizations::batch_g1_additions_multi(&g1_bases, &indices_per_k);
 
         let mut row_commitments = vec![ArkG1(G1Projective::zero()); K];
         for (k, result) in results.into_iter().enumerate() {
@@ -315,14 +295,11 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier2_commitment")]
     fn compute_tier2_commitment(
-        _cached_data: &Self::CachedData,
         setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-
         if let Some(K) = onehot_k {
-            // Handle one-hot polynomial case with transpose logic
             let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
             let rows_per_k = T / row_len;
@@ -339,16 +316,15 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             }
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = <BN254 as PairingCurve>::multi_pair(&row_commitments, g2_bases);
+            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
             (tier_2, row_commitments)
         } else {
-            // Regular polynomial case - just flatten the chunks
             let row_commitments: Vec<ArkG1> =
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = <BN254 as PairingCurve>::multi_pair(&row_commitments, g2_bases);
+            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
             (tier_2, row_commitments)
         }

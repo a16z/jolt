@@ -31,13 +31,16 @@ use crate::zkvm::registers::RegistersDagVerifier;
 use crate::zkvm::spartan::SpartanDagProver;
 use crate::zkvm::spartan::SpartanDagVerifier;
 use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
-use rayon::iter::{ParallelBridge, ParallelIterator, IntoParallelRefIterator, IntoParallelIterator, IndexedParallelIterator};
-use tracer::{ChunksIterator, instruction::Cycle};
 use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use itertools::Itertools;
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelBridge,
+    ParallelIterator,
+};
+use tracer::{instruction::Cycle, ChunksIterator};
 
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all)]
@@ -775,12 +778,9 @@ fn generate_and_commit_polynomials<F: JoltField, PCS: StreamingCommitmentScheme<
 
     let T = DoryGlobals::get_T();
 
-    let cached_data = PCS::prepare_cached_data(&preprocessing.generators);
-
     let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
     let row_len = DoryGlobals::get_num_columns();
-    let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
-        vec![vec![]; T / row_len];
+    let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> = vec![vec![]; T / row_len];
 
     lazy_trace
         .as_ref()
@@ -794,8 +794,8 @@ fn generate_and_commit_polynomials<F: JoltField, PCS: StreamingCommitmentScheme<
             let res: Vec<_> = polys
                 .par_iter()
                 .map(|poly| {
-                    poly.generate_witness_and_commit_row::<_, PCS>(
-                        &cached_data,
+                    poly.stream_witness_and_commit_rows::<_, PCS>(
+                        &preprocessing.generators,
                         preprocessing,
                         &chunk,
                         prover_state_manager.ram_d,
@@ -805,7 +805,7 @@ fn generate_and_commit_polynomials<F: JoltField, PCS: StreamingCommitmentScheme<
             *row_commitments = res;
         });
 
-    // Custom transpose for irregular matrix (one-hot polys have K commitments, others have 1)
+    // We have to transpose in this bespoke way because we have rectangular matrix
     let mut poly_commitments: Vec<Vec<PCS::ChunkState>> = vec![Vec::new(); polys.len()];
 
     for chunk_commitments in row_commitments {
@@ -819,10 +819,9 @@ fn generate_and_commit_polynomials<F: JoltField, PCS: StreamingCommitmentScheme<
         .zip(polys.into_par_iter())
         .map(|(rc, poly)| {
             PCS::compute_tier2_commitment(
-                &cached_data,
                 &preprocessing.generators,
                 poly.get_onehot_k(preprocessing),
-                &rc
+                &rc,
             )
         })
         .unzip();

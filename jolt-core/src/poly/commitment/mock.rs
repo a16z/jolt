@@ -118,28 +118,16 @@ where
     F: JoltField,
 {
     type ChunkState = ();
-    type CachedData = ();
-
-    fn prepare_cached_data(_setup: &Self::ProverSetup) -> Self::CachedData {
-        ()
-    }
 
     fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
-        _cached_data: &Self::CachedData,
+        _setup: &Self::ProverSetup,
         _chunk: &[T],
     ) -> Self::ChunkState {
         ()
     }
 
-    fn compute_tier1_commitment_field(
-        _cached_data: &Self::CachedData,
-        _chunk: &[Self::Field],
-    ) -> Self::ChunkState {
-        ()
-    }
-
     fn compute_tier1_commitment_onehot(
-        _cached_data: &Self::CachedData,
+        _setup: &Self::ProverSetup,
         _onehot_k: usize,
         _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
@@ -147,7 +135,6 @@ where
     }
 
     fn compute_tier2_commitment(
-        _cached_data: &Self::CachedData,
         _setup: &Self::ProverSetup,
         _onehot_k: Option<usize>,
         _tier1_commitments: &[Self::ChunkState],

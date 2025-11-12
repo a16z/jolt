@@ -95,7 +95,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         let num_cols = 1 << sigma;
 
         // Perform an MSM per row of the polynomial's matrix representation
-        let row_commitments = commit_tier_1::<E, M1>(self, &setup.g1_vec, num_cols)?;
+        let row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
 
         let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
@@ -187,14 +187,13 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
     }
 }
 
-fn commit_tier_1<E, M1>(
+fn commit_tier_1<E>(
     poly: &MultilinearPolynomial<Fr>,
     g1_generators: &[E::G1],
     row_len: usize,
 ) -> Result<Vec<E::G1>, DoryError>
 where
     E: PairingCurve,
-    M1: DoryRoutines<E::G1>,
     E::G1: DoryGroup<Scalar = ArkFr>,
 {
     // SAFETY: E::G1 and ArkG1 have the same memory layout when E = BN254.
