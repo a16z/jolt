@@ -31,6 +31,8 @@ use crate::zkvm::registers::RegistersDagVerifier;
 use crate::zkvm::spartan::SpartanDagProver;
 use crate::zkvm::spartan::SpartanDagVerifier;
 use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
+use rayon::iter::{ParallelBridge, ParallelIterator, IntoParallelRefIterator, IntoParallelIterator, IndexedParallelIterator};
+use tracer::{ChunksIterator, instruction::Cycle};
 use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -761,37 +763,71 @@ pub fn verify_jolt_dag<
     Ok(())
 }
 
+#[tracing::instrument(skip_all, name = "generate_and_commit_polynomials")]
 fn generate_and_commit_polynomials<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
     prover_state_manager: &mut StateManager<F, PCS>,
 ) -> (
     Vec<PCS::Commitment>,
     HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
 ) {
-    let (preprocessing, lazy_trace_opt, _trace, _program_io, _final_memory_state) =
+    let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
         prover_state_manager.get_prover_data();
 
-    let mut lazy_trace = lazy_trace_opt
+    let T = DoryGlobals::get_T();
+
+    let cached_data = PCS::prepare_cached_data(&preprocessing.generators);
+
+    let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
+    let row_len = DoryGlobals::get_num_columns();
+    let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
+        vec![vec![]; T / row_len];
+
+    lazy_trace
+        .as_ref()
+        .expect("Lazy trace not found!")
         .clone()
-        .expect("LazyTraceIterator should be available for streaming commit");
+        .pad_using(T, |_| Cycle::NoOp)
+        .iter_chunks(row_len)
+        .zip(row_commitments.iter_mut())
+        .par_bridge()
+        .for_each(|(chunk, row_commitments)| {
+            let res: Vec<_> = polys
+                .par_iter()
+                .map(|poly| {
+                    poly.generate_witness_and_commit_row::<_, PCS>(
+                        &cached_data,
+                        preprocessing,
+                        &chunk,
+                        prover_state_manager.ram_d,
+                    )
+                })
+                .collect();
+            *row_commitments = res;
+        });
 
-    let polys = AllCommittedPolynomials::iter().copied().collect::<Vec<_>>();
+    // Custom transpose for irregular matrix (one-hot polys have K commitments, others have 1)
+    let mut poly_commitments: Vec<Vec<PCS::ChunkState>> = vec![Vec::new(); polys.len()];
 
-    let span = tracing::span!(tracing::Level::INFO, "streaming commit to polynomials");
-    let _guard = span.enter();
+    for chunk_commitments in row_commitments {
+        for (poly_idx, chunk_state) in chunk_commitments.into_iter().enumerate() {
+            poly_commitments[poly_idx].push(chunk_state);
+        }
+    }
 
-    let commit_results = PCS::streaming_batch_commit(
-        &polys,
-        &mut lazy_trace,
-        preprocessing,
-        &preprocessing.generators,
-    );
+    let (commitments, hints): (Vec<_>, Vec<_>) = poly_commitments
+        .into_par_iter()
+        .zip(polys.into_par_iter())
+        .map(|(rc, poly)| {
+            PCS::compute_tier2_commitment(
+                &cached_data,
+                &preprocessing.generators,
+                poly.get_onehot_k(preprocessing),
+                &rc
+            )
+        })
+        .unzip();
 
-    let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
-        commit_results.into_iter().unzip();
-    drop(_guard);
-    drop(span);
-
-    let mut hint_map = HashMap::with_capacity(polys.len());
+    let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
     for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
         hint_map.insert(*poly, hint);
     }

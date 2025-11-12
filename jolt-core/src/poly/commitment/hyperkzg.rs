@@ -512,58 +512,42 @@ impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
 {
-    type Tier1Commitment = ();
+    type ChunkState = ();
+    type CachedData = ();
 
-    fn compute_tier_2_commit(
-        _tier_1_commitments: &[Self::Tier1Commitment],
-        _setup: &Self::ProverSetup,
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
-        // HyperKZG doesn't use a two-tier commitment structure
-        panic!("HyperKZG does not support streaming commitment")
+    fn prepare_cached_data(_setup: &Self::ProverSetup) -> Self::CachedData {
+        unimplemented!("HyperKZG does not support streaming commitments")
     }
 
-    fn streaming_batch_commit<F, PCS>(
-        polynomial_specs: &[crate::zkvm::witness::CommittedPolynomial],
-        lazy_trace: &mut tracer::LazyTraceIterator,
-        preprocessing: &crate::zkvm::JoltProverPreprocessing<F, PCS>,
-        setup: &Self::ProverSetup,
-    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
-    where
-        F: crate::field::JoltField,
-        PCS: CommitmentScheme<Field = F>,
-        Self: Sized,
-    {
-        // For HyperKZG, fall back to non-streaming approach
-        // This is not memory-efficient but HyperKZG is not the primary commitment scheme
-        let trace: Vec<_> = lazy_trace.collect();
-        let polys = polynomial_specs.to_vec();
-        let mut all_polys = crate::zkvm::witness::CommittedPolynomial::generate_witness_batch(
-            &polys,
-            preprocessing,
-            &trace,
-        );
+    fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
+        _cached_data: &Self::CachedData,
+        _chunk: &[T],
+    ) -> Self::ChunkState {
+        unimplemented!("HyperKZG does not support tier 1 commitments")
+    }
 
-        let committed_polys: Vec<_> = polys
-            .iter()
-            .filter_map(|poly| all_polys.remove(poly))
-            .collect();
+    fn compute_tier1_commitment_field(
+        _cached_data: &Self::CachedData,
+        _chunk: &[Self::Field],
+    ) -> Self::ChunkState {
+        unimplemented!("HyperKZG does not support tier 1 commitments")
+    }
 
-        // Convert to the correct field type
-        let converted_polys: Vec<_> = committed_polys
-            .into_iter()
-            .map(|poly| {
-                // This unsafe transmute is necessary because we know F and P::ScalarField
-                // are the same type in practice when using HyperKZG
-                unsafe {
-                    std::mem::transmute::<
-                        MultilinearPolynomial<F>,
-                        MultilinearPolynomial<P::ScalarField>,
-                    >(poly)
-                }
-            })
-            .collect();
+    fn compute_tier1_commitment_onehot(
+        _cached_data: &Self::CachedData,
+        _onehot_k: usize,
+        _chunk: &[Option<usize>],
+    ) -> Self::ChunkState {
+        unimplemented!("HyperKZG does not support tier 1 commitments")
+    }
 
-        Self::batch_commit(&converted_polys, setup)
+    fn compute_tier2_commitment(
+        _cached_data: &Self::CachedData,
+        _setup: &Self::ProverSetup,
+        _onehot_k: Option<usize>,
+        _tier1_commitments: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        unimplemented!("HyperKZG does not support tier 2 commitments")
     }
 }
 

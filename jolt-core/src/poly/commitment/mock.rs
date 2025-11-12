@@ -117,30 +117,41 @@ impl<F> StreamingCommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
 {
-    type Tier1Commitment = ();
+    type ChunkState = ();
+    type CachedData = ();
 
-    fn compute_tier_2_commit(
-        _tier_1_commitments: &[Self::Tier1Commitment],
-        _setup: &Self::ProverSetup,
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
-        (MockCommitment::default(), ())
+    fn prepare_cached_data(_setup: &Self::ProverSetup) -> Self::CachedData {
+        ()
     }
 
-    fn streaming_batch_commit<F2, PCS>(
-        polynomial_specs: &[crate::zkvm::witness::CommittedPolynomial],
-        _lazy_trace: &mut tracer::LazyTraceIterator,
-        _preprocessing: &crate::zkvm::JoltProverPreprocessing<F2, PCS>,
+    fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
+        _cached_data: &Self::CachedData,
+        _chunk: &[T],
+    ) -> Self::ChunkState {
+        ()
+    }
+
+    fn compute_tier1_commitment_field(
+        _cached_data: &Self::CachedData,
+        _chunk: &[Self::Field],
+    ) -> Self::ChunkState {
+        ()
+    }
+
+    fn compute_tier1_commitment_onehot(
+        _cached_data: &Self::CachedData,
+        _onehot_k: usize,
+        _chunk: &[Option<usize>],
+    ) -> Self::ChunkState {
+        ()
+    }
+
+    fn compute_tier2_commitment(
+        _cached_data: &Self::CachedData,
         _setup: &Self::ProverSetup,
-    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
-    where
-        F2: crate::field::JoltField,
-        PCS: CommitmentScheme<Field = F2>,
-        Self: Sized,
-    {
-        // For mock implementation, just return default commitments
-        polynomial_specs
-            .iter()
-            .map(|_| (MockCommitment::default(), ()))
-            .collect()
+        _onehot_k: Option<usize>,
+        _tier1_commitments: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        (MockCommitment::default(), ())
     }
 }
