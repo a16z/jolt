@@ -22,6 +22,7 @@ use crate::utils::transpose;
 use crate::zkvm::bytecode;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier;
 use crate::zkvm::bytecode::BytecodeDagProver;
+use crate::zkvm::config;
 use crate::zkvm::dag::proof_serialization::Claims;
 use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStagesProver;
@@ -55,7 +56,7 @@ use crate::zkvm::spartan::shift::ShiftSumcheckVerifier;
 use crate::zkvm::spartan::verify_stage1_uni_skip;
 use crate::zkvm::spartan::verify_stage2_uni_skip;
 use crate::zkvm::spartan::SpartanDagProver;
-use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
+use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial};
 use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
@@ -112,8 +113,9 @@ pub fn prove_jolt_dag<
             None
         };
 
+    let one_hot_size = config::params().one_hot.chunk_size;
     let _guard = (
-        DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
+        DoryGlobals::initialize(one_hot_size, padded_trace_length),
         AllCommittedPolynomials::initialize(state_manager.ram_K, bytecode_d),
     );
 

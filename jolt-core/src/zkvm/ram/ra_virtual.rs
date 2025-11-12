@@ -13,8 +13,9 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::ram::remap_address;
-use crate::zkvm::witness::{
-    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
+use crate::zkvm::{
+    config,
+    witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use crate::{
     field::JoltField,
@@ -46,7 +47,7 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct RaSumcheckProver<F: JoltField> {
     /// `ra` polys to be constructed based addresses
-    ra_i_polys: Vec<RaPolynomial<u8, F>>,
+    ra_i_polys: Vec<RaPolynomial<u16, F>>,
     /// eq poly
     eq_poly: MultilinearPolynomial<F>,
     #[allocative(skip)]
@@ -85,11 +86,15 @@ impl<F: JoltField> RaSumcheckProver<F> {
             DensePolynomial::linear_combination(&eq_polys.each_ref(), &params.gamma_powers).Z,
         );
 
-        let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..params.d)
+        let global_params = config::params();
+        let ram_cfg = &global_params.ram;
+        let chunk_log = ram_cfg.log_chunk;
+        let chunk_size = ram_cfg.chunk_size as u64;
+        let ra_i_polys: Vec<RaPolynomial<u16, F>> = (0..params.d)
             .into_par_iter()
             .zip(eq_tables.into_par_iter())
             .map(|(i, eq_table)| {
-                let ra_i_indices: Vec<Option<u8>> = trace
+                let ra_i_indices: Vec<Option<u16>> = trace
                     .par_iter()
                     .map(|cycle| {
                         remap_address(
@@ -99,11 +104,10 @@ impl<F: JoltField> RaSumcheckProver<F> {
                         .map(|address| {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
                             // This maintains the property that sum of all ra values for an address equals 1
-                            let address_i = (address
-                                >> (DTH_ROOT_OF_K.log_2() * (params.d - 1 - i)))
-                                % DTH_ROOT_OF_K as u64;
+                            let address_i =
+                                (address >> (chunk_log * (params.d - 1 - i))) % chunk_size;
 
-                            address_i as u8
+                            address_i as u16
                         })
                     })
                     .collect();
@@ -302,7 +306,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         transcript: &mut impl Transcript,
     ) -> Self {
         // Calculate d dynamically such that 2^8 = K^(1/D)
-        let d = compute_d_parameter(ram_K);
+        let d = config::params().one_hot.compute_d(ram_K);
         let log_K = ram_K.log_2();
 
         // These two sumchecks have the same binding order and number of rounds,
@@ -336,22 +340,20 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
+        let log_chunk = config::params().ram.log_chunk;
+        let r_address = if r_address.len().is_multiple_of(log_chunk) {
             r_address.to_vec()
         } else {
             // Pad with zeros
             [
-                &vec![
-                    F::Challenge::from(0_u128);
-                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
-                ],
+                &vec![F::Challenge::from(0_u128); log_chunk - (r_address.len() % log_chunk)],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
         let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(DTH_ROOT_OF_K.log_2())
+            .chunks(log_chunk)
             .map(|chunk| chunk.to_vec())
             .collect();
         debug_assert_eq!(r_address_chunks.len(), d);

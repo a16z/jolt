@@ -27,13 +27,14 @@ use crate::{
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         bytecode::BytecodePreprocessing,
+        config,
         dag::state_manager::StateManager,
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
-        witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
@@ -104,7 +105,7 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     F: [MultilinearPolynomial<F>; N_STAGES],
     /// Chunked RA polynomials over address variables (one per dimension `d`), used to form
     /// the product ∏_i ra_i during the cycle-binding phase.
-    ra: Vec<RaPolynomial<u8, F>>,
+    ra: Vec<RaPolynomial<u16, F>>,
     /// Binding challenges for the first log_K variables of the sumcheck
     r_address_prime: Vec<F::Challenge>,
     /// Per-stage Gruen-split eq polynomials over cycle vars (low-to-high binding order).
@@ -268,18 +269,20 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .unwrap(),
         );
 
-        let log_K_chunk = DTH_ROOT_OF_K.log_2();
+        let bytecode_cfg = &config::params().bytecode;
+        let log_K_chunk = bytecode_cfg.log_chunk;
+        let chunk_length = bytecode_cfg.chunk_size;
         self.r_address_prime
             .par_chunks_mut(log_K_chunk)
             .rev()
             .enumerate()
             .map(|(i, r_address_prime)| {
-                let ra_i: Vec<Option<u8>> = self
+                let ra_i: Vec<Option<u16>> = self
                     .pc
                     .par_iter()
                     .map(|k| {
-                        let k = (k >> (log_K_chunk * (self.params.d - i - 1))) % DTH_ROOT_OF_K;
-                        Some(k as u8)
+                        let k = (k >> (log_K_chunk * (self.params.d - i - 1))) % chunk_length;
+                        Some(k as u16)
                     })
                     .collect();
                 r_address_prime.reverse();
@@ -494,9 +497,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         let opening_point = self.params.get_opening_point(sumcheck_challenges);
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
 
+        let bytecode_chunk = config::params().bytecode.log_chunk;
         for i in 0..self.params.d {
-            let r_address =
-                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
+            let r_address = &r_address.r[bytecode_chunk * i..bytecode_chunk * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -610,14 +613,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
     ) {
         let opening_point = self.params.get_opening_point(sumcheck_challenges);
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
+        let bytecode_chunk = config::params().bytecode.log_chunk;
         (0..self.params.d).for_each(|i| {
-            let r_address =
-                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
+            let r_slice = &r_address.r[bytecode_chunk * i..bytecode_chunk * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
-                [r_address, &r_cycle.r].concat(),
+                [r_slice, &r_cycle.r].concat(),
             );
         });
     }

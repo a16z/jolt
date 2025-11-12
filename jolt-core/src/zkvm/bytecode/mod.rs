@@ -10,8 +10,9 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheckProver;
 use crate::zkvm::dag::stage::SumcheckStagesProver;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::{
-    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
+use crate::zkvm::{
+    config,
+    witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use crate::{
     field::JoltField,
@@ -43,14 +44,17 @@ impl BytecodePreprocessing {
         bytecode.insert(0, Instruction::NoOp);
         let pc_map = BytecodePCMapper::new(&bytecode);
 
+        let params = config::params();
+        let bytecode_cfg = &params.bytecode;
+        let chunk_bits = bytecode_cfg.log_chunk;
         let code_size = (bytecode
             .len()
             .next_power_of_two()
             .log_2()
-            .div_ceil(DTH_ROOT_OF_K.log_2())
-            * DTH_ROOT_OF_K.log_2())
-        .pow2();
-        let d = compute_d_parameter(code_size);
+            .div_ceil(chunk_bits)
+            * chunk_bits)
+            .pow2();
+        let d = params.one_hot.compute_d(code_size);
 
         // Bytecode: Pad to nearest power of 2
         bytecode.resize(code_size, Instruction::NoOp);
@@ -171,6 +175,8 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
     let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+    let params = config::params();
+    let bytecode_cfg = &params.bytecode;
     let bytecode_preprocessing = &preprocessing.bytecode;
 
     let r_cycle: Vec<F::Challenge> = opening_accumulator
@@ -192,7 +198,7 @@ fn gen_ra_one_hot_provers<F: JoltField>(
 
     let hamming_weight_params = HammingWeightSumcheckParams {
         d,
-        num_rounds: DTH_ROOT_OF_K.log_2(),
+        num_rounds: bytecode_cfg.log_chunk,
         gamma_powers: hamming_weight_gamma_powers,
         polynomial_types: polynomial_types.clone(),
         sumcheck_id: SumcheckId::BytecodeHammingWeight,
@@ -203,11 +209,11 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
 
     let r_address: Vec<F::Challenge> =
-        transcript.challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
+        transcript.challenge_vector_optimized::<F>(bytecode_cfg.log_chunk);
 
     let booleanity_params = BooleanitySumcheckParams {
         d,
-        log_k_chunk: DTH_ROOT_OF_K.log_2(),
+        log_k_chunk: bytecode_cfg.log_chunk,
         log_t,
         gammas: booleanity_gammas,
         r_address,
@@ -236,9 +242,10 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
     let hamming_weight_gamma_powers = transcript.challenge_scalar_powers(d);
 
+    let bytecode_cfg = &config::params().bytecode;
     let hamming_weight_params = HammingWeightSumcheckParams {
         d,
-        num_rounds: DTH_ROOT_OF_K.log_2(),
+        num_rounds: bytecode_cfg.log_chunk,
         gamma_powers: hamming_weight_gamma_powers,
         polynomial_types: polynomial_types.clone(),
         sumcheck_id: SumcheckId::BytecodeHammingWeight,
@@ -248,11 +255,11 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
 
     let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
     let r_address: Vec<F::Challenge> =
-        transcript.challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
+        transcript.challenge_vector_optimized::<F>(bytecode_cfg.log_chunk);
 
     let booleanity_params = BooleanitySumcheckParams {
         d,
-        log_k_chunk: DTH_ROOT_OF_K.log_2(),
+        log_k_chunk: bytecode_cfg.log_chunk,
         log_t: n_cycle_vars,
         gammas: booleanity_gammas,
         r_address,
@@ -273,7 +280,7 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
 fn compute_bytecode_h_indices(
     preprocessing: &BytecodePreprocessing,
     trace: &[Cycle],
-) -> Vec<Vec<Option<u8>>> {
+) -> Vec<Vec<Option<u16>>> {
     let d = preprocessing.d;
     let log_K = preprocessing.code_size.log_2();
     let log_K_chunk = log_K.div_ceil(d);
@@ -285,7 +292,7 @@ fn compute_bytecode_h_indices(
                 .par_iter()
                 .map(|cycle| {
                     let k = preprocessing.get_pc(cycle);
-                    Some(((k >> (log_K_chunk * (d - i - 1))) % (1 << log_K_chunk)) as u8)
+                    Some(((k >> (log_K_chunk * (d - i - 1))) % (1 << log_K_chunk)) as u16)
                 })
                 .collect()
         })
@@ -298,6 +305,7 @@ fn compute_ra_evals<F: JoltField>(
     trace: &[Cycle],
     eq_r_cycle: &[F],
 ) -> Vec<Vec<F>> {
+    let bytecode_cfg = &config::params().bytecode;
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
@@ -308,15 +316,15 @@ fn compute_ra_evals<F: JoltField>(
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
             let mut result: Vec<Vec<F>> = (0..d)
-                .map(|_| unsafe_allocate_zero_vec(DTH_ROOT_OF_K))
+                .map(|_| unsafe_allocate_zero_vec(bytecode_cfg.chunk_size))
                 .collect();
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
                 let mut pc = preprocessing.get_pc(cycle);
                 for i in (0..d).rev() {
-                    let k = pc % DTH_ROOT_OF_K;
+                    let k = pc % bytecode_cfg.chunk_size;
                     result[i][k] += eq_r_cycle[j];
-                    pc >>= DTH_ROOT_OF_K.log_2();
+                    pc >>= bytecode_cfg.log_chunk;
                 }
                 j += 1;
             }
@@ -325,7 +333,7 @@ fn compute_ra_evals<F: JoltField>(
         .reduce(
             || {
                 (0..d)
-                    .map(|_| unsafe_allocate_zero_vec(DTH_ROOT_OF_K))
+                    .map(|_| unsafe_allocate_zero_vec(bytecode_cfg.chunk_size))
                     .collect::<Vec<_>>()
             },
             |mut running, new| {

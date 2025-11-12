@@ -51,7 +51,7 @@ fn product_eval_univariate_naive_accumulate<F: JoltField>(pairs: &[(F, F)], sums
 }
 
 fn compute_mles_product_sum_naive<F: JoltField>(
-    mles: &[RaPolynomial<u8, F>],
+    mles: &[RaPolynomial<u16, F>],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {

@@ -13,7 +13,7 @@ use num_traits::Zero;
 ///
 /// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[RaPolynomial<u8, F>],
+    mles: &[RaPolynomial<u16, F>],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
@@ -97,6 +97,8 @@ pub fn product_eval_univariate_assign<F: JoltField>(pairs: &[(F, F)], evals: &mu
         2 => eval_inter2_final_op(pairs.try_into().unwrap(), evals, assign),
         3 => eval_inter3_final_op(pairs.try_into().unwrap(), evals, assign),
         4 => eval_inter4_final_op(pairs.try_into().unwrap(), evals, assign),
+        5 => eval_inter5_final_op(pairs.try_into().unwrap(), evals, assign),
+        6 => eval_inter6_final_op(pairs.try_into().unwrap(), evals, assign),
         8 => eval_inter8_final_op(pairs.try_into().unwrap(), evals, assign),
         16 => eval_inter16_final_op(pairs.try_into().unwrap(), evals, assign),
         32 => eval_inter32_final_op(pairs.try_into().unwrap(), evals, assign),
@@ -153,6 +155,44 @@ fn eval_inter4_final_op<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F], op: im
     op(&mut outputs[1], a2 * b2); // 2
     op(&mut outputs[2], a3 * b3); // 3
     op(&mut outputs[3], a_inf * b_inf); // ∞
+}
+
+fn eval_inter5_final_op<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F], op: impl Fn(&mut F, F)) {
+    debug_assert!(outputs.len() >= 5);
+    // Left: first 4 polynomials → degree-4 base [1..4] and ∞
+    let (a1, a2, a3, a4, a_inf) = eval_inter4(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
+    // Right: single polynomial evaluated on [1..4] and ∞
+    let (b0, b1) = p[4];
+    let b_inf = b1 - b0;
+    let b2 = b1 + b_inf;
+    let b3 = b2 + b_inf;
+    let b4 = b3 + b_inf;
+    // Combine
+    op(&mut outputs[0], a1 * b1); // 1
+    op(&mut outputs[1], a2 * b2); // 2
+    op(&mut outputs[2], a3 * b3); // 3
+    op(&mut outputs[3], a4 * b4); // 4
+    op(&mut outputs[4], a_inf * b_inf); // ∞
+}
+
+fn eval_inter6_final_op<F: JoltField>(p: &[(F, F); 6], outputs: &mut [F], op: impl Fn(&mut F, F)) {
+    debug_assert!(outputs.len() >= 6);
+    // Left: first 4 polynomials → degree-4 base [1..4] and ∞, plus compute position 5 via ex4_2
+    let (a1, a2, a3, a4, a_inf) = eval_inter4(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
+    let a_inf6 = a_inf.mul_u64(6); // 4!/4 = 6 scaling used by ex4_2
+    let (a5, _a6) = ex4_2(&[a1, a2, a3, a4], &a_inf6);
+    // Right: last 2 polynomials → degree-2 base [1,2] and ∞; expand to 3,4,5 via ex2 sliding
+    let (b1, b2, b_inf) = eval_inter2(p[4], p[5]);
+    let b3 = ex2(&[b1, b2], &b_inf);
+    let b4 = ex2(&[b2, b3], &b_inf);
+    let b5 = ex2(&[b3, b4], &b_inf);
+    // Combine
+    op(&mut outputs[0], a1 * b1); // 1
+    op(&mut outputs[1], a2 * b2); // 2
+    op(&mut outputs[2], a3 * b3); // 3
+    op(&mut outputs[3], a4 * b4); // 4
+    op(&mut outputs[4], a5 * b5); // 5
+    op(&mut outputs[5], a_inf * b_inf); // ∞
 }
 
 fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {

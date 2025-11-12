@@ -5,8 +5,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::witness::compute_d_parameter;
-use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use crate::zkvm::{config, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::Cycle;
@@ -78,7 +77,7 @@ where
             )
             .next_power_of_two() as usize;
 
-        let ram_d = compute_d_parameter(ram_K);
+        let ram_d = config::params().one_hot.compute_d(ram_K);
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;

@@ -18,7 +18,6 @@ use crate::{
         bytecode::BytecodePreprocessing,
         dag::{jolt_dag::DagVerifier, proof_serialization::JoltProof},
         ram::RAMPreprocessing,
-        witness::DTH_ROOT_OF_K,
     },
 };
 use ark_bn254::Fr;
@@ -27,6 +26,7 @@ use common::jolt_device::MemoryLayout;
 use tracer::{instruction::Instruction, JoltDevice};
 
 pub mod bytecode;
+pub mod config;
 pub mod dag;
 pub mod instruction;
 pub mod instruction_lookups;
@@ -232,11 +232,14 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
+        let max_T: usize = max_trace_length.next_power_of_two();
+        let _ = config::JoltParams::initialize(max_T);
+
         let bytecode = BytecodePreprocessing::preprocess(bytecode);
         let ram = RAMPreprocessing::preprocess(memory_init);
 
-        let max_T: usize = max_trace_length.next_power_of_two();
-        let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
+        let one_hot = &config::params().one_hot;
+        let generators = PCS::setup_prover(one_hot.log_chunk + max_T.log_2());
 
         JoltProverPreprocessing {
             generators,
@@ -365,12 +368,18 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
     ) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
 
+        let padded_trace_length = proof.trace_length.next_power_of_two();
+        let _ = config::JoltParams::initialize(padded_trace_length);
+
         #[cfg(test)]
         let T = proof.trace_length.next_power_of_two();
         // Need to initialize globals because the verifier computes commitments
         // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
         #[cfg(test)]
-        let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
+        {
+            let one_hot = &config::params().one_hot;
+            let _guard = DoryGlobals::initialize(one_hot.chunk_size, T);
+        }
 
         // Memory layout checks
         if program_io.memory_layout != preprocessing.memory_layout {

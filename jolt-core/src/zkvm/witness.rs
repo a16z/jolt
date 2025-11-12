@@ -5,7 +5,6 @@ use common::constants::XLEN;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use std::array;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,32 +19,13 @@ use crate::{
     field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
     utils::math::Math,
-    zkvm::{
-        instruction_lookups, instruction_lookups::D as INSTRUCTION_LOOKUPS_D,
-        lookup_table::LookupTables, ram::remap_address, JoltProverPreprocessing,
-    },
+    zkvm::{config, lookup_table::LookupTables, ram::remap_address, JoltProverPreprocessing},
 };
 
 use super::instruction::{CircuitFlags, LookupQuery};
 
 struct SharedWitnessData(UnsafeCell<WitnessData>);
 unsafe impl Sync for SharedWitnessData {}
-
-/// K^{1/d}
-#[cfg(feature = "small_cycles")]
-pub const DTH_ROOT_OF_K: usize = 1 << 4;
-#[cfg(not(feature = "small_cycles"))]
-pub const DTH_ROOT_OF_K: usize = 1 << 8;
-
-pub fn compute_d_parameter_from_log_K(log_K: usize) -> usize {
-    log_K.div_ceil(DTH_ROOT_OF_K.log_2())
-}
-
-pub fn compute_d_parameter(K: usize) -> usize {
-    // Calculate D dynamically such that 2^8 = K^(1/D)
-    let log_K = K.log_2();
-    log_K.div_ceil(DTH_ROOT_OF_K.log_2())
-}
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
@@ -75,23 +55,23 @@ struct WitnessData {
     ram_inc: Vec<i128>,
 
     // One-hot polynomial indices
-    instruction_ra: [Vec<Option<u8>>; instruction_lookups::D],
-    bytecode_ra: Vec<Vec<Option<u8>>>,
-    ram_ra: Vec<Vec<Option<u8>>>,
+    instruction_ra: Vec<Vec<Option<u16>>>,
+    bytecode_ra: Vec<Vec<Option<u16>>>,
+    ram_ra: Vec<Vec<Option<u16>>>,
 }
 
 unsafe impl Send for WitnessData {}
 unsafe impl Sync for WitnessData {}
 
 impl WitnessData {
-    fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
+    fn new(trace_len: usize, instruction_d: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![0; trace_len],
             rd_inc: vec![0; trace_len],
             ram_inc: vec![0; trace_len],
 
-            instruction_ra: array::from_fn(|_| vec![None; trace_len]),
+            instruction_ra: (0..instruction_d).map(|_| vec![None; trace_len]).collect(),
             bytecode_ra: (0..bytecode_d).map(|_| vec![None; trace_len]).collect(),
             ram_ra: (0..ram_d).map(|_| vec![None; trace_len]).collect(),
         }
@@ -114,7 +94,15 @@ impl AllCommittedPolynomials {
                     .filter(|p| matches!(p, CommittedPolynomial::BytecodeRa(_)))
                     .count();
 
-                if existing_ram_d == ram_d && existing_bytecode_d == bytecode_d {
+                let existing_instruction_d = existing
+                    .iter()
+                    .filter(|p| matches!(p, CommittedPolynomial::InstructionRa(_)))
+                    .count();
+
+                if existing_instruction_d == config::params().instruction.d
+                    && existing_ram_d == ram_d
+                    && existing_bytecode_d == bytecode_d
+                {
                     // Parameters match, reuse existing polynomials
                     return AllCommittedPolynomials();
                 } else {
@@ -123,8 +111,10 @@ impl AllCommittedPolynomials {
                 }
             }
         };
+        let instruction_d = config::params().instruction.d;
+
         let mut polynomials = vec![CommittedPolynomial::RdInc, CommittedPolynomial::RamInc];
-        for i in 0..INSTRUCTION_LOOKUPS_D {
+        for i in 0..instruction_d {
             polynomials.push(CommittedPolynomial::InstructionRa(i));
         }
         for i in 0..ram_d {
@@ -170,7 +160,7 @@ impl AllCommittedPolynomials {
         }
     }
     pub fn ram_d_from_K(ram_K: usize) -> usize {
-        compute_d_parameter(ram_K)
+        config::params().one_hot.compute_d(ram_K)
     }
 }
 
@@ -230,16 +220,19 @@ impl CommittedPolynomial {
                 _ => {}
             }
         }
-        let batch = WitnessData::new(trace.len(), ram_d, bytecode_d);
-
-        let dth_root_log = if ram_d > 0 {
-            Some(DTH_ROOT_OF_K.log_2())
+        let params = config::params();
+        let one_hot = &params.one_hot;
+        let one_hot_num_bits = if ram_d > 0 {
+            Some(one_hot.log_chunk)
         } else {
             None
         };
-
-        let instruction_ra_shifts: [usize; instruction_lookups::D] =
-            array::from_fn(|i| instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i));
+        let instruction_params = &params.instruction;
+        let instruction_d = instruction_params.d;
+        let batch = WitnessData::new(trace.len(), instruction_d, ram_d, bytecode_d);
+        let instruction_ra_shifts: Vec<usize> = (0..instruction_d)
+            .map(|i| instruction_params.log_k_chunk * (instruction_d - 1 - i))
+            .collect();
         let batch_cell = Arc::new(SharedWitnessData(UnsafeCell::new(batch)));
 
         // #SAFETY: Each thread writes to a unique index of a pre-allocated vector
@@ -267,24 +260,24 @@ impl CommittedPolynomial {
 
                 // InstructionRa indices
                 let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                for j in 0..instruction_lookups::D {
-                    let k = (lookup_index >> instruction_ra_shifts[j])
-                        % instruction_lookups::K_CHUNK as u128;
-                    batch_ref.instruction_ra[j][i] = Some(k as u8);
+                for (j, shift) in instruction_ra_shifts.iter().enumerate() {
+                    let k = (lookup_index >> shift) % instruction_params.k_chunk as u128;
+                    batch_ref.instruction_ra[j][i] = Some(k as u16);
                 }
 
                 // BytecodeRa indices
-                if let Some(dth_root_log) = dth_root_log {
+                if let Some(dth_root_log) = one_hot_num_bits {
                     let pc = preprocessing.bytecode.get_pc(cycle);
 
                     for j in 0..bytecode_d {
-                        let index = (pc >> (dth_root_log * (bytecode_d - 1 - j))) % DTH_ROOT_OF_K;
-                        batch_ref.bytecode_ra[j][i] = Some(index as u8);
+                        let index =
+                            (pc >> (dth_root_log * (bytecode_d - 1 - j))) % one_hot.chunk_size;
+                        batch_ref.bytecode_ra[j][i] = Some(index as u16);
                     }
                 }
 
                 // RamRa indices
-                if let Some(dth_log) = dth_root_log {
+                if let Some(dth_log) = one_hot_num_bits {
                     let address_opt = remap_address(
                         cycle.ram_access().address() as u64,
                         &preprocessing.memory_layout,
@@ -292,8 +285,8 @@ impl CommittedPolynomial {
 
                     for j in 0..ram_d {
                         let index = address_opt.map(|address| {
-                            ((address as usize >> (dth_log * (ram_d - 1 - j))) % DTH_ROOT_OF_K)
-                                as u8
+                            ((address as usize >> (dth_log * (ram_d - 1 - j))) % one_hot.chunk_size)
+                                as u16
                         });
                         batch_ref.ram_ra[j][i] = index;
                     }
@@ -321,24 +314,24 @@ impl CommittedPolynomial {
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
                 }
                 CommittedPolynomial::InstructionRa(i) => {
-                    if *i < instruction_lookups::D {
+                    if *i < batch.instruction_ra.len() {
                         let indices = std::mem::take(&mut batch.instruction_ra[*i]);
                         let one_hot =
-                            OneHotPolynomial::from_indices(indices, instruction_lookups::K_CHUNK);
+                            OneHotPolynomial::from_indices(indices, instruction_params.k_chunk);
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
                 CommittedPolynomial::BytecodeRa(i) => {
                     if *i < bytecode_d {
                         let indices = std::mem::take(&mut batch.bytecode_ra[*i]);
-                        let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
+                        let one_hot = OneHotPolynomial::from_indices(indices, one_hot.chunk_size);
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
                 CommittedPolynomial::RamRa(i) => {
                     if *i < ram_d {
                         let indices = std::mem::take(&mut batch.ram_ra[*i]);
-                        let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
+                        let one_hot = OneHotPolynomial::from_indices(indices, one_hot.chunk_size);
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
@@ -358,28 +351,35 @@ impl CommittedPolynomial {
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
     {
+        let params = config::params();
+        let one_hot = &params.one_hot;
+
         match self {
             CommittedPolynomial::BytecodeRa(i) => {
                 let d = preprocessing.bytecode.d;
                 if *i > d {
                     panic!("Invalid index for bytecode ra: {i}");
                 }
+                let one_hot_length = one_hot.chunk_size;
+                let one_hot_num_bits = one_hot.log_chunk;
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
                         let pc = preprocessing.bytecode.get_pc(cycle);
-                        Some(((pc >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i))) % DTH_ROOT_OF_K) as u8)
+                        Some(((pc >> (one_hot_num_bits * (d - 1 - i))) % one_hot_length) as u16)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
-                    DTH_ROOT_OF_K,
+                    one_hot_length,
                 ))
             }
             CommittedPolynomial::RamRa(i) => {
                 let d = ram_d;
 
                 debug_assert!(*i < d);
+                let one_hot_length = one_hot.chunk_size;
+                let one_hot_num_bits = one_hot.log_chunk;
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
@@ -388,14 +388,14 @@ impl CommittedPolynomial {
                             &preprocessing.memory_layout,
                         )
                         .map(|address| {
-                            ((address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-                                % DTH_ROOT_OF_K) as u8
+                            ((address as usize >> (one_hot_num_bits * (d - 1 - i)))
+                                % one_hot_length) as u16
                         })
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
-                    DTH_ROOT_OF_K,
+                    one_hot_length,
                 ))
             }
             CommittedPolynomial::RdInc => {
@@ -424,23 +424,24 @@ impl CommittedPolynomial {
                 coeffs.into()
             }
             CommittedPolynomial::InstructionRa(i) => {
-                if *i > instruction_lookups::D {
+                let instruction_params = &params.instruction;
+                let instruction_d = instruction_params.d;
+                let idx = *i;
+                if idx >= instruction_d {
                     panic!("Unexpected i: {i}");
                 }
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
                         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                        let k = (lookup_index
-                            >> (instruction_lookups::LOG_K_CHUNK
-                                * (instruction_lookups::D - 1 - i)))
-                            % instruction_lookups::K_CHUNK as u128;
-                        Some(k as u8)
+                        let shift = instruction_params.log_k_chunk * (instruction_d - 1 - idx);
+                        let k = (lookup_index >> shift) % instruction_params.k_chunk as u128;
+                        Some(k as u16)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
-                    instruction_lookups::K_CHUNK,
+                    instruction_params.k_chunk,
                 ))
             }
         }
@@ -454,8 +455,11 @@ impl CommittedPolynomial {
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
     {
+        let params = config::params();
+        let one_hot = &params.one_hot;
+
         match self {
-            CommittedPolynomial::InstructionRa(_) => Some(instruction_lookups::K_CHUNK),
+            CommittedPolynomial::InstructionRa(_) => Some(params.instruction.k_chunk),
             CommittedPolynomial::BytecodeRa(_) => {
                 // TODO: Compute this up front?
                 let d = preprocessing.bytecode.d;
@@ -464,7 +468,7 @@ impl CommittedPolynomial {
                 let K_chunk = 1 << log_K_chunk;
                 Some(K_chunk)
             }
-            CommittedPolynomial::RamRa(_) => Some(DTH_ROOT_OF_K),
+            CommittedPolynomial::RamRa(_) => Some(one_hot.chunk_size),
             _ => None,
         }
     }
@@ -479,6 +483,9 @@ impl CommittedPolynomial {
     where
         PCS: StreamingCommitmentScheme<Field = F>,
     {
+        let params = config::params();
+        let one_hot = &params.one_hot;
+
         match self {
             CommittedPolynomial::RdInc => {
                 let row: Vec<i128> = row_cycles
@@ -506,18 +513,20 @@ impl CommittedPolynomial {
                 PCS::process_chunk(cached_data, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
+                let instruction_params = &params.instruction;
+                let instruction_d = instruction_params.d;
+                debug_assert!(*idx < instruction_d);
+                let idx = *idx;
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
                         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                        let k = (lookup_index
-                            >> (instruction_lookups::LOG_K_CHUNK
-                                * (instruction_lookups::D - 1 - idx)))
-                            % instruction_lookups::K_CHUNK as u128;
+                        let shift = instruction_params.log_k_chunk * (instruction_d - 1 - idx);
+                        let k = (lookup_index >> shift) % instruction_params.k_chunk as u128;
                         Some(k as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(cached_data, instruction_lookups::K_CHUNK, &row)
+                PCS::process_chunk_onehot(cached_data, instruction_params.k_chunk, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let d = preprocessing.bytecode.d;
@@ -543,12 +552,12 @@ impl CommittedPolynomial {
                             &preprocessing.memory_layout,
                         )
                         .map(|address| {
-                            (address as usize >> (DTH_ROOT_OF_K.log_2() * (ram_d - 1 - idx)))
-                                % DTH_ROOT_OF_K
+                            (address as usize >> (one_hot.log_chunk * (ram_d - 1 - idx)))
+                                % one_hot.chunk_size
                         })
                     })
                     .collect();
-                PCS::process_chunk_onehot(cached_data, DTH_ROOT_OF_K, &row)
+                PCS::process_chunk_onehot(cached_data, one_hot.chunk_size, &row)
             }
         }
     }
