@@ -15,7 +15,9 @@ use std::ops::Index;
 ///
 /// They are often initialized with `coeffs` and then converted to `bound_coeffs`
 /// when binding the polynomial.
-#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
+#[derive(
+    Clone, Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative,
+)]
 pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     num_vars: usize,
     len: usize,
@@ -343,17 +345,59 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
     }
 }
 
-impl<T: SmallScalar, F: JoltField> Clone for CompactPolynomial<T, F> {
-    fn clone(&self) -> Self {
-        Self::from_coeffs(self.coeffs.to_vec())
-    }
-}
-
 impl<T: SmallScalar, F: JoltField> Index<usize> for CompactPolynomial<T, F> {
     type Output = T;
 
     #[inline(always)]
     fn index(&self, _index: usize) -> &T {
         &(self.coeffs[_index])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::JoltField;
+    use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+    use ark_bn254::Fr;
+
+    #[test]
+    fn clone_preserves_bound_state_u8_single_bind() {
+        let coeffs: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let mut poly: CompactPolynomial<u8, Fr> = CompactPolynomial::from_coeffs(coeffs);
+        let original_len = poly.len();
+        let original_num_vars = poly.get_num_vars();
+
+        let r = <Fr as JoltField>::Challenge::from(5u128);
+        poly.bind(r, BindingOrder::LowToHigh);
+
+        assert!(poly.is_bound());
+        assert_eq!(poly.len(), original_len / 2);
+        assert_eq!(poly.get_num_vars(), original_num_vars - 1);
+
+        let clone = poly.clone();
+        assert_eq!(poly, clone);
+        assert!(clone.is_bound());
+        assert_eq!(clone.len(), poly.len());
+        assert_eq!(clone.get_num_vars(), poly.get_num_vars());
+        assert_eq!(clone.bound_coeffs, poly.bound_coeffs);
+    }
+
+    #[test]
+    fn clone_preserves_bound_state_u8_multiple_binds() {
+        let coeffs: Vec<u8> = (0..8).collect();
+        let mut poly: CompactPolynomial<u8, Fr> = CompactPolynomial::from_coeffs(coeffs);
+
+        let r1 = <Fr as JoltField>::Challenge::from(3u128);
+        let r2 = <Fr as JoltField>::Challenge::from(7u128);
+        poly.bind(r1, BindingOrder::LowToHigh);
+        poly.bind(r2, BindingOrder::LowToHigh);
+
+        let clone = poly.clone();
+        assert_eq!(poly, clone);
+        assert!(clone.is_bound());
+        assert_eq!(clone.len(), poly.len());
+        assert_eq!(clone.get_num_vars(), poly.get_num_vars());
+        assert_eq!(clone.bound_coeffs, poly.bound_coeffs);
     }
 }
