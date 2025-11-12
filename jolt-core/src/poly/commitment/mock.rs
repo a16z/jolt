@@ -110,3 +110,33 @@ where
         b"mock_commit"
     }
 }
+
+impl<F> super::commitment_scheme::StreamingCommitmentScheme for MockCommitScheme<F>
+where
+    F: JoltField,
+{
+    type ChunkState = ();
+
+    fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
+        _setup: &Self::ProverSetup,
+        _chunk: &[T],
+    ) -> Self::ChunkState {
+        ()
+    }
+
+    fn compute_tier1_commitment_onehot(
+        _setup: &Self::ProverSetup,
+        _onehot_k: usize,
+        _chunk: &[Option<usize>],
+    ) -> Self::ChunkState {
+        ()
+    }
+
+    fn compute_tier2_commitment(
+        _setup: &Self::ProverSetup,
+        _onehot_k: Option<usize>,
+        _tier1_commitments: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        (MockCommitment::default(), ())
+    }
+}
