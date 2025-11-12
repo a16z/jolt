@@ -15,6 +15,7 @@ use crate::zkvm::dag::stage::SumcheckStagesProver;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheckProver;
@@ -22,14 +23,10 @@ use crate::zkvm::spartan::instruction_input::InstructionInputSumcheckProver;
 use crate::zkvm::spartan::outer::{OuterRemainingSumcheckProver, OuterUniSkipInstanceProver};
 use crate::zkvm::spartan::product::{
     ProductVirtualInnerProver, ProductVirtualRemainderProver, ProductVirtualUniSkipInstanceParams,
+    ProductVirtualUniSkipInstanceProver,
 };
 use crate::zkvm::spartan::shift::ShiftSumcheckProver;
 use crate::zkvm::witness::VirtualPolynomial;
-
-use product::{
-    ProductVirtualUniSkipInstanceProver, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
-    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-};
 
 pub mod inner;
 pub mod instruction_input;
