@@ -6,8 +6,8 @@ use crate::{
     },
     utils::accumulation::Acc5S,
 };
-use num_traits::Zero;
 use core::{mem::MaybeUninit, ptr};
+use num_traits::Zero;
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
@@ -414,7 +414,7 @@ fn eval_inter32_final_op<F: JoltField>(
             ptr::write(f_slice_ptr.add(31), inf);
         }
         let f_inf16_fact = inf.mul_u64(20922789888000u64); // 16!
-        // Compute entries 17..31 (indices 16..30)
+                                                           // Compute entries 17..31 (indices 16..30)
         for i in 0..15 {
             unsafe {
                 let win_ptr = f_slice_ptr.add(i) as *const [F; 16];
