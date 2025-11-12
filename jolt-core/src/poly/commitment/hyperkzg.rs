@@ -9,7 +9,7 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
+    commitment_scheme::CommitmentScheme,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field::JoltField;
@@ -505,36 +505,6 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"hyperkzg"
-    }
-}
-
-impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
-where
-    <P as Pairing>::ScalarField: JoltField,
-{
-    type ChunkState = ();
-
-    fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
-        _setup: &Self::ProverSetup,
-        _chunk: &[T],
-    ) -> Self::ChunkState {
-        unimplemented!("HyperKZG does not support tier 1 commitments")
-    }
-
-    fn compute_tier1_commitment_onehot(
-        _setup: &Self::ProverSetup,
-        _onehot_k: usize,
-        _chunk: &[Option<usize>],
-    ) -> Self::ChunkState {
-        unimplemented!("HyperKZG does not support tier 1 commitments")
-    }
-
-    fn compute_tier2_commitment(
-        _setup: &Self::ProverSetup,
-        _onehot_k: Option<usize>,
-        _tier1_commitments: &[Self::ChunkState],
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
-        unimplemented!("HyperKZG does not support tier 2 commitments")
     }
 }
 

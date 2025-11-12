@@ -81,7 +81,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         jolt_to_ark(&result)
     }
 
-    fn commit<E, M1>(
+    fn commit<E, _M1>(
         &self,
         _nu: usize,
         sigma: usize,
@@ -89,7 +89,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
     ) -> Result<(E::GT, Vec<E::G1>), DoryError>
     where
         E: PairingCurve,
-        M1: DoryRoutines<E::G1>,
+        _M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
         let num_cols = 1 << sigma;
