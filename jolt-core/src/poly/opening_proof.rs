@@ -485,11 +485,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             | CommittedPolynomial::BytecodeRa(_)
             | CommittedPolynomial::RamRa(_) => {
                 let log_K = r.len() - self.log_T;
-                debug_assert!(
-                    log_K == 8,
-                    "Expected log_K to be 8 != {log_K}, poly: {:?}",
-                    self.polynomial
-                );
                 r[log_K..].reverse();
                 r[..log_K].reverse();
             }
@@ -1197,7 +1192,6 @@ where
         let mut r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
         let log_K = r_sumcheck.len() - self.log_T;
-        debug_assert!(log_K == 8, "Expected log_K to be 8");
         r_sumcheck[..log_K].reverse();
         r_sumcheck[log_K..].reverse();
 
