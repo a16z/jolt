@@ -1,4 +1,5 @@
-use std::{array, iter::zip};
+use ark_ff::Zero;
+use std::iter::zip;
 
 use allocative::Allocative;
 use rayon::prelude::*;
@@ -174,46 +175,42 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         name = "InstructionInputSumcheckProver::compute_prover_message"
     )]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let out_evals_r_cycle_stage_1 = self.eq_r_cycle_stage_1.E_out_current();
-        let in_evals_r_cycle_stage_1 = self.eq_r_cycle_stage_1.E_in_current();
-        let out_evals_r_cycle_stage_2 = self.eq_r_cycle_stage_2.E_out_current();
-        let in_evals_r_cycle_stage_2 = self.eq_r_cycle_stage_2.E_in_current();
+        // Lockstep requirement: the two split-eq polynomials must have identical split sizes
+        debug_assert_eq!(
+            self.eq_r_cycle_stage_1.E_out_current_len(),
+            self.eq_r_cycle_stage_2.E_out_current_len(),
+            "eq_r_cycle_stage_1 and eq_r_cycle_stage_2 must have same E_out length"
+        );
+        debug_assert_eq!(
+            self.eq_r_cycle_stage_1.E_in_current_len(),
+            self.eq_r_cycle_stage_2.E_in_current_len(),
+            "eq_r_cycle_stage_1 and eq_r_cycle_stage_2 must have same E_in length"
+        );
 
-        let out_len = out_evals_r_cycle_stage_1.len();
-        let in_len = in_evals_r_cycle_stage_1.len();
-        let in_n_vars = in_len.ilog2();
+        let e_out_stage_2 = self.eq_r_cycle_stage_2.E_out_current();
+        let e_in_stage_2 = self.eq_r_cycle_stage_2.E_in_current();
 
+        // Fold over stage 1's split-eq; use indices to access stage 2's corresponding weights
         let [eval_at_0_for_stage_1, eval_at_inf_for_stage_1, eval_at_0_for_stage_2, eval_at_inf_for_stage_2] =
-            (0..out_len)
-                .into_par_iter()
-                .map(|j_hi| {
-                    let mut eval_at_0_for_stage_1 = F::zero();
-                    let mut eval_at_inf_for_stage_1 = F::zero();
-                    let mut eval_at_0_for_stage_2 = F::zero();
-                    let mut eval_at_inf_for_stage_2 = F::zero();
-
-                    for j_lo in 0..in_len {
-                        let j = j_lo + (j_hi << in_n_vars);
-
+            self.eq_r_cycle_stage_1
+                .par_fold_out_in(
+                    || [F::Unreduced::<9>::zero(); 4],
+                    |inner, j, x_in, e_in1| {
                         // Eval RightInstructionInputIsRs2(x) at (r', j, {0, inf}).
                         let right_is_rs2_at_j_0 = self.right_is_rs2_poly.get_bound_coeff(j * 2);
                         let right_is_rs2_at_j_inf =
                             self.right_is_rs2_poly.get_bound_coeff(j * 2 + 1) - right_is_rs2_at_j_0;
-
                         // Eval Rs2Value(x) at (r', j, {0, inf}).
                         let rs2_value_at_j_0 = self.rs2_value_poly.get_bound_coeff(j * 2);
                         let rs2_value_at_j_inf =
                             self.rs2_value_poly.get_bound_coeff(j * 2 + 1) - rs2_value_at_j_0;
-
                         // Eval RightInstructionInputIsImm(x) at (r', j, {0, inf}).
                         let right_is_imm_at_j_0 = self.right_is_imm_poly.get_bound_coeff(j * 2);
                         let right_is_imm_at_j_inf =
                             self.right_is_imm_poly.get_bound_coeff(j * 2 + 1) - right_is_imm_at_j_0;
-
                         // Eval Imm(x) at (r', j, {0, inf}).
                         let imm_at_j_0 = self.imm_poly.get_bound_coeff(j * 2);
                         let imm_at_j_inf = self.imm_poly.get_bound_coeff(j * 2 + 1) - imm_at_j_0;
-
                         // Eval RightInstructionInput(x) at (r', j, {0, inf}).
                         let right_at_j_0 = right_is_rs2_at_j_0 * rs2_value_at_j_0
                             + right_is_imm_at_j_0 * imm_at_j_0;
@@ -224,23 +221,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                         let left_is_rs1_at_j_0 = self.left_is_rs1_poly.get_bound_coeff(j * 2);
                         let left_is_rs1_at_j_inf =
                             self.left_is_rs1_poly.get_bound_coeff(j * 2 + 1) - left_is_rs1_at_j_0;
-
                         // Eval Rs1Value(x) at (r', j, {0, inf}).
                         let rs1_value_at_j_0 = self.rs1_value_poly.get_bound_coeff(j * 2);
                         let rs1_value_at_j_inf =
                             self.rs1_value_poly.get_bound_coeff(j * 2 + 1) - rs1_value_at_j_0;
-
                         // Eval LeftInstructionInputIsPc(x) at (r', j, {0, inf}).
                         let left_is_pc_at_j_0 = self.left_is_pc_poly.get_bound_coeff(j * 2);
                         let left_is_pc_at_j_inf =
                             self.left_is_pc_poly.get_bound_coeff(j * 2 + 1) - left_is_pc_at_j_0;
-
                         // Eval UnexpandedPc(x) at (r', j, {0, inf}).
                         let unexpanded_pc_at_j_0 = self.unexpanded_pc_poly.get_bound_coeff(j * 2);
                         let unexpanded_pc_at_j_inf =
                             self.unexpanded_pc_poly.get_bound_coeff(j * 2 + 1)
                                 - unexpanded_pc_at_j_0;
-
                         // Eval LeftInstructionInput(x) at (r', {0, inf}, j).
                         let left_at_j_0 = left_is_rs1_at_j_0 * rs1_value_at_j_0
                             + left_is_pc_at_j_0 * unexpanded_pc_at_j_0;
@@ -251,20 +244,44 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                         let input_at_j_0 = right_at_j_0 + self.params.gamma * left_at_j_0;
                         let input_at_j_inf = right_at_j_inf + self.params.gamma * left_at_j_inf;
 
-                        eval_at_0_for_stage_1 += in_evals_r_cycle_stage_1[j_lo] * input_at_j_0;
-                        eval_at_inf_for_stage_1 += in_evals_r_cycle_stage_1[j_lo] * input_at_j_inf;
-                        eval_at_0_for_stage_2 += in_evals_r_cycle_stage_2[j_lo] * input_at_j_0;
-                        eval_at_inf_for_stage_2 += in_evals_r_cycle_stage_2[j_lo] * input_at_j_inf;
-                    }
+                        // Stage 2 e_in mirrors stage 1's x_in indexing; when fully bound, treat as 1
+                        let e_in2 = if e_in_stage_2.len() <= 1 {
+                            F::one()
+                        } else {
+                            e_in_stage_2[x_in]
+                        };
 
-                    [
-                        out_evals_r_cycle_stage_1[j_hi] * eval_at_0_for_stage_1,
-                        out_evals_r_cycle_stage_1[j_hi] * eval_at_inf_for_stage_1,
-                        out_evals_r_cycle_stage_2[j_hi] * eval_at_0_for_stage_2,
-                        out_evals_r_cycle_stage_2[j_hi] * eval_at_inf_for_stage_2,
-                    ]
-                })
-                .reduce(|| [F::zero(); 4], |a, b| array::from_fn(|i| a[i] + b[i]));
+                        // Accumulate in Montgomery-unreduced form to minimize reductions
+                        inner[0] += e_in1.mul_unreduced::<9>(input_at_j_0);
+                        inner[1] += e_in1.mul_unreduced::<9>(input_at_j_inf);
+                        inner[2] += e_in2.mul_unreduced::<9>(input_at_j_0);
+                        inner[3] += e_in2.mul_unreduced::<9>(input_at_j_inf);
+                    },
+                    |x_out, e_out1, inner| {
+                        let mut out = [F::Unreduced::<9>::zero(); 4];
+                        let reduced0 = F::from_montgomery_reduce::<9>(inner[0]);
+                        let reduced1 = F::from_montgomery_reduce::<9>(inner[1]);
+                        let reduced2 = F::from_montgomery_reduce::<9>(inner[2]);
+                        let reduced3 = F::from_montgomery_reduce::<9>(inner[3]);
+                        let e_out2 = if e_out_stage_2.len() <= 1 {
+                            F::one()
+                        } else {
+                            e_out_stage_2[x_out]
+                        };
+                        out[0] = e_out1.mul_unreduced::<9>(reduced0);
+                        out[1] = e_out1.mul_unreduced::<9>(reduced1);
+                        out[2] = e_out2.mul_unreduced::<9>(reduced2);
+                        out[3] = e_out2.mul_unreduced::<9>(reduced3);
+                        out
+                    },
+                    |mut a, b| {
+                        for i in 0..4 {
+                            a[i] += b[i];
+                        }
+                        a
+                    },
+                )
+                .map(|x| F::from_montgomery_reduce::<9>(x));
 
         let univariate_evals_stage_1 = self.eq_r_cycle_stage_1.gruen_evals_deg_3(
             eval_at_0_for_stage_1,

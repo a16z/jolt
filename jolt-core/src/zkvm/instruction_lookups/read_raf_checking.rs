@@ -280,6 +280,7 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
             let _guard = span.enter();
             cycle_data
                 .par_iter()
+                .with_min_len(4096)
                 .fold(
                     || vec![Vec::new(); num_tables],
                     |mut buckets, data| {
@@ -462,62 +463,61 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
 
-        let new_suffix_polys: Vec<_> = LookupTables::<XLEN>::iter()
-            .collect::<Vec<_>>()
-            .par_iter()
-            .zip(self.lookup_indices_by_table.par_iter())
-            .map(|(table, lookup_indices)| {
-                let suffixes = table.suffixes();
-                let unreduced_polys = lookup_indices
-                    .par_chunks(chunk_size)
-                    .fold(
-                        || {
-                            // Accumulator layout: [M][suffix]
-                            vec![unsafe_allocate_zero_vec::<F::Unreduced<6>>(suffixes.len()); M]
-                        },
-                        |mut acc, chunk| {
+        let new_suffix_polys: Vec<_> = {
+            LookupTables::<XLEN>::iter()
+                .collect::<Vec<_>>()
+                .par_iter()
+                .zip(self.lookup_indices_by_table.par_iter())
+                .map(|(table, lookup_indices)| {
+                    let suffixes = table.suffixes();
+                    let unreduced_polys = lookup_indices
+                        .par_chunks(chunk_size)
+                        .map(|chunk| {
+                            let mut chunk_result: Vec<Vec<F::Unreduced<6>>> =
+                                vec![unsafe_allocate_zero_vec(M); suffixes.len()];
+
                             for j in chunk {
                                 let k = self.lookup_indices[*j];
                                 let (prefix_bits, suffix_bits) =
                                     k.split((PHASES - 1 - phase) * LOG_M);
-                                // Compute r_index once: low LOG_M bits of prefix_bits
-                                let r_index: usize = (u128::from(&prefix_bits) as usize) & (M - 1);
-                                let u = self.u_evals_rv[*j];
-                                for (suffix_idx, suffix) in suffixes.iter().enumerate() {
+                                for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut())
+                                {
                                     let t = suffix.suffix_mle::<XLEN>(suffix_bits);
                                     if t != 0 {
-                                        acc[r_index][suffix_idx] += u.mul_u64_unreduced(t);
+                                        let u = self.u_evals_rv[*j];
+                                        result[prefix_bits % M] += u.mul_u64_unreduced(t);
                                     }
                                 }
                             }
-                            acc
-                        },
-                    )
-                    .reduce(
-                        || vec![unsafe_allocate_zero_vec::<F::Unreduced<6>>(suffixes.len()); M],
-                        |mut acc, new| {
-                            // Element-wise add: iterate r_index, then suffix index
-                            for (acc_row, new_row) in acc.iter_mut().zip(new.iter()) {
-                                for (acc_coeff, new_coeff) in acc_row.iter_mut().zip(new_row.iter())
-                                {
-                                    *acc_coeff += new_coeff;
-                                }
-                            }
-                            acc
-                        },
-                    );
 
-                // Reduce the unreduced values to field elements
-                // Transpose back to suffix-major: for each suffix, collect M coefficients
-                (0..suffixes.len())
-                    .map(|s_idx| {
-                        (0..M)
-                            .map(|r_idx| F::from_barrett_reduce(unreduced_polys[r_idx][s_idx]))
-                            .collect::<Vec<F>>()
-                    })
-                    .collect::<Vec<Vec<F>>>()
-            })
-            .collect();
+                            chunk_result
+                        })
+                        .reduce(
+                            || vec![unsafe_allocate_zero_vec(M); suffixes.len()],
+                            |mut acc, new| {
+                                for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                                    for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter())
+                                    {
+                                        *acc_coeff += new_coeff;
+                                    }
+                                }
+                                acc
+                            },
+                        );
+
+                    // Reduce the unreduced values to field elements
+                    unreduced_polys
+                        .into_iter()
+                        .map(|unreduced_coeffs| {
+                            unreduced_coeffs
+                                .into_iter()
+                                .map(F::from_barrett_reduce)
+                                .collect::<Vec<F>>()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
 
         // Replace existing suffix polynomials
         self.suffix_polys
@@ -646,7 +646,6 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
         let (prev_claim_spartan, prev_claim_branch) = {
             let span = tracing::span!(tracing::Level::INFO, "Compute prev_claims");
             let _guard = span.enter();
-
             // Compute both sums in a single parallel traversal over j with delayed reduction.
             let out_evals_spartan = self.eq_r_spartan.E_out_current();
             let out_evals_branch = self.eq_r_branch.E_out_current();
@@ -747,69 +746,90 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             let val = self.combined_val_polynomial.as_ref().unwrap();
             let raf_val = self.combined_raf_val_polynomial.as_ref().unwrap();
 
+            // Lockstep invariant for split-eq structures
             debug_assert_eq!(
-                self.eq_r_spartan.current_index,
-                self.eq_r_branch.current_index
+                self.eq_r_spartan.E_out_current_len(),
+                self.eq_r_branch.E_out_current_len(),
+                "Spartan and Branch split-eq must have same E_out length"
             );
-            let out_evals_spartan = self.eq_r_spartan.E_out_current();
-            let in_evals_spartan = self.eq_r_spartan.E_in_current();
+            debug_assert_eq!(
+                self.eq_r_spartan.E_in_current_len(),
+                self.eq_r_branch.E_in_current_len(),
+                "Spartan and Branch split-eq must have same E_in length"
+            );
+
             let out_evals_branch = self.eq_r_branch.E_out_current();
             let in_evals_branch = self.eq_r_branch.E_in_current();
 
-            let out_len = out_evals_spartan.len();
-            let in_len = in_evals_spartan.len();
-            let in_n_vars = in_len.ilog2();
+            // Fold across (x_out, x_in) using Spartan's split-eq, mirror weights from Branch
+            let [eval_at_0_spartan, eval_at_inf_spartan, eval_at_0_branch, eval_at_inf_branch] =
+                self.eq_r_spartan
+                    .par_fold_out_in(
+                        || [F::Unreduced::<9>::zero(); 4],
+                        |inner, j, x_in, e_in_spartan| {
+                            // Eval ra(x), val(x), raf_val(x) at (r', j, {0, inf})
+                            let ra_at_0_j = ra.get_bound_coeff(2 * j);
+                            let ra_at_inf_j = ra.get_bound_coeff(2 * j + 1) - ra_at_0_j;
 
-            let [eval_at_0_spartan, eval_at_inf_spartan, eval_at_0_branch, eval_at_inf_branch] = (0
-                ..out_len)
-                .into_par_iter()
-                .map(|j_hi| {
-                    let mut eval_at_0_spartan = F::zero();
-                    let mut eval_at_inf_spartan = F::zero();
-                    let mut eval_at_0_branch = F::zero();
-                    let mut eval_at_inf_branch = F::zero();
+                            let val_at_0_j = val.get_bound_coeff(2 * j);
+                            let val_at_inf_j = val.get_bound_coeff(2 * j + 1) - val_at_0_j;
 
-                    for j_lo in 0..in_len {
-                        let j = j_lo + (j_hi << in_n_vars);
+                            let raf_val_at_0_j = raf_val.get_bound_coeff(2 * j);
+                            let raf_val_at_inf_j =
+                                raf_val.get_bound_coeff(2 * j + 1) - raf_val_at_0_j;
 
-                        let ra_at_0_j = ra.get_bound_coeff(2 * j);
-                        let ra_at_inf_j = ra.get_bound_coeff(2 * j + 1) - ra_at_0_j;
+                            // Spartan endpoints: e_in_spartan · ra · (val + raf_val)
+                            let sp_0 = ra_at_0_j * (val_at_0_j + raf_val_at_0_j);
+                            let sp_inf = ra_at_inf_j * (val_at_inf_j + raf_val_at_inf_j);
+                            inner[0] += e_in_spartan.mul_unreduced::<9>(sp_0);
+                            inner[1] += e_in_spartan.mul_unreduced::<9>(sp_inf);
 
-                        let val_at_0_j = val.get_bound_coeff(2 * j);
-                        let val_at_inf_j = val.get_bound_coeff(2 * j + 1) - val_at_0_j;
-
-                        let raf_val_at_0_j = raf_val.get_bound_coeff(2 * j);
-                        let raf_val_at_inf_j = raf_val.get_bound_coeff(2 * j + 1) - raf_val_at_0_j;
-
-                        eval_at_0_spartan +=
-                            in_evals_spartan[j_lo] * ra_at_0_j * (val_at_0_j + raf_val_at_0_j);
-                        eval_at_inf_spartan += in_evals_spartan[j_lo]
-                            * ra_at_inf_j
-                            * (val_at_inf_j + raf_val_at_inf_j);
-                        eval_at_0_branch += in_evals_branch[j_lo] * ra_at_0_j * val_at_0_j;
-                        eval_at_inf_branch += in_evals_branch[j_lo] * ra_at_inf_j * val_at_inf_j;
-                    }
-
-                    [
-                        out_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_0_spartan),
-                        out_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_inf_spartan),
-                        out_evals_branch[j_hi].mul_unreduced::<9>(eval_at_0_branch),
-                        out_evals_branch[j_hi].mul_unreduced::<9>(eval_at_inf_branch),
-                    ]
-                })
-                .reduce(
-                    || [F::Unreduced::zero(); 4],
-                    |a, b| std::array::from_fn(|i| a[i] + b[i]),
-                );
+                            // Branch endpoints: e_in_branch · ra · val
+                            let e_in_branch = if in_evals_branch.len() <= 1 {
+                                F::one()
+                            } else {
+                                in_evals_branch[x_in]
+                            };
+                            let br_0 = ra_at_0_j * val_at_0_j;
+                            let br_inf = ra_at_inf_j * val_at_inf_j;
+                            inner[2] += e_in_branch.mul_unreduced::<9>(br_0);
+                            inner[3] += e_in_branch.mul_unreduced::<9>(br_inf);
+                        },
+                        |x_out, e_out_spartan, inner| {
+                            // Multiply by respective E_out weights
+                            let mut out = [F::Unreduced::<9>::zero(); 4];
+                            let reduced0 = F::from_montgomery_reduce::<9>(inner[0]);
+                            let reduced1 = F::from_montgomery_reduce::<9>(inner[1]);
+                            let reduced2 = F::from_montgomery_reduce::<9>(inner[2]);
+                            let reduced3 = F::from_montgomery_reduce::<9>(inner[3]);
+                            let e_out_branch = if out_evals_branch.len() <= 1 {
+                                F::one()
+                            } else {
+                                out_evals_branch[x_out]
+                            };
+                            out[0] = e_out_spartan.mul_unreduced::<9>(reduced0);
+                            out[1] = e_out_spartan.mul_unreduced::<9>(reduced1);
+                            out[2] = e_out_branch.mul_unreduced::<9>(reduced2);
+                            out[3] = e_out_branch.mul_unreduced::<9>(reduced3);
+                            out
+                        },
+                        |mut a, b| {
+                            for i in 0..4 {
+                                a[i] += b[i];
+                            }
+                            a
+                        },
+                    )
+                    .map(F::from_montgomery_reduce);
 
             let univariate_evals_spartan = self.eq_r_spartan.gruen_evals_deg_3(
-                F::from_montgomery_reduce(eval_at_0_spartan),
-                F::from_montgomery_reduce(eval_at_inf_spartan),
+                eval_at_0_spartan,
+                eval_at_inf_spartan,
                 self.prev_claim_spartan.unwrap(),
             );
             let univariate_evals_branch = self.eq_r_branch.gruen_evals_deg_3(
-                F::from_montgomery_reduce(eval_at_0_branch),
-                F::from_montgomery_reduce(eval_at_inf_branch),
+                eval_at_0_branch,
+                eval_at_inf_branch,
                 self.prev_claim_branch.unwrap(),
             );
 
