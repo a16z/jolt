@@ -86,22 +86,6 @@ pub fn compute_mles_product_sum<F: JoltField>(
 
 /// Computes the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
 ///
-/// The evaluations on `U_D` are accumulated into `sums`.
-///
-/// Inputs:
-/// - `pairs[j] = (p_j(0), p_j(1))`
-/// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
-fn product_eval_univariate_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
-    match pairs.len() {
-        2 => eval_inter2_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
-        4 => eval_inter4_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
-        8 => eval_inter8_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
-        16 => eval_inter16_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
-        32 => eval_inter32_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
-        _ => product_eval_univariate_naive_accumulate(pairs, sums),
-    }
-}
-
 /// Computes the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
 ///
 /// The evaluations on `U_D` are assigned to `evals`.
