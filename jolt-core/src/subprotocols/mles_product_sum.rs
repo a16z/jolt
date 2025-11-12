@@ -4,9 +4,10 @@ use crate::{
         eq_poly::EqPolynomial, ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
-    utils::{accumulation::Acc5S},
+    utils::accumulation::Acc5S,
 };
 use num_traits::Zero;
+use core::{mem::MaybeUninit, ptr};
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
@@ -84,8 +85,6 @@ pub fn compute_mles_product_sum<F: JoltField>(
     UniPoly::from_coeff(coeffs)
 }
 
-/// Computes the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
-///
 /// Computes the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
 ///
 /// The evaluations on `U_D` are assigned to `evals`.
@@ -209,26 +208,51 @@ fn eval_inter16_final_op<F: JoltField>(
     outputs: &mut [F],
     op: impl Fn(&mut F, F),
 ) {
-    #[inline]
-    fn batch_helper<F: JoltField>(vals: &[F; 9]) -> [F; 16] {
-        let mut f = [F::zero(); 16]; // f[1, ..., 15, inf]
-        f[..8].copy_from_slice(&vals[..8]);
-        f[15] = vals[8];
-        let f_inf40320 = vals[8].mul_u64(40320);
-        for i in 0..7 {
-            f[8 + i] = ex8(&f[i..i + 8].try_into().unwrap(), f_inf40320);
-        }
-        f
-    }
+    debug_assert!(outputs.len() >= 16);
     let a = eval_inter8(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
-    let mut av = batch_helper(&a);
     let b = eval_inter8(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
-    let bv = batch_helper(&b);
-    // Include all entries [1..15, inf]
-    for i in 0..16 {
-        av[i] *= bv[i];
-        op(&mut outputs[i], av[i]);
+    // Emit indices 1..8 directly
+    for i in 0..8 {
+        let v = a[i] * b[i];
+        op(&mut outputs[i], v);
     }
+    // Slide both 8-wide windows using pointer windows over a scratch buffer (no per-iter shifts)
+    let a_inf40320 = a[8].mul_u64(40320);
+    let b_inf40320 = b[8].mul_u64(40320);
+    // Scratch buffers: seed first 8, prewrite slot 15 with inf for the final window
+    let mut aw_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
+    let mut bw_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
+    let aw_ptr = aw_mu.as_mut_ptr();
+    let bw_ptr = bw_mu.as_mut_ptr();
+    let aw_slice_ptr = unsafe { (*aw_ptr).as_mut_ptr() };
+    let bw_slice_ptr = unsafe { (*bw_ptr).as_mut_ptr() };
+    unsafe {
+        ptr::copy_nonoverlapping(a.as_ptr(), aw_slice_ptr, 8);
+        ptr::write(aw_slice_ptr.add(15), a[8]);
+        ptr::copy_nonoverlapping(b.as_ptr(), bw_slice_ptr, 8);
+        ptr::write(bw_slice_ptr.add(15), b[8]);
+    }
+    for i in 0..7 {
+        // Window over aw[i..i+8] and bw[i..i+8] without bounds checks
+        let na = unsafe {
+            let win_a_ptr = aw_slice_ptr.add(i) as *const [F; 8];
+            ex8::<F>(&*win_a_ptr, a_inf40320)
+        };
+        let nb = unsafe {
+            let win_b_ptr = bw_slice_ptr.add(i) as *const [F; 8];
+            ex8::<F>(&*win_b_ptr, b_inf40320)
+        };
+        let v = na * nb;
+        op(&mut outputs[8 + i], v);
+        // Append newly computed elements for subsequent windows
+        unsafe {
+            ptr::write(aw_slice_ptr.add(8 + i), na);
+            ptr::write(bw_slice_ptr.add(8 + i), nb);
+        }
+    }
+    // Write the inf slot at index 15
+    let v_inf = a[8] * b[8];
+    op(&mut outputs[15], v_inf);
 }
 
 #[inline(always)]
@@ -270,7 +294,7 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
     (f4, f5)
 }
 
-#[inline]
+#[inline(always)]
 fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     // P(9) from f[i]=P(i+1): 8(f[1]+f[7]) + 56(f[3]+f[5]) - 28(f[2]+f[6]) - 70 f[4] - f[0] + f_inf40320
     // Use signed accumulator to reduce only once.
@@ -339,35 +363,67 @@ fn eval_inter32_final_op<F: JoltField>(
         // Expand each 8 to 16 using ex8 sliding (compute 9..16)
         #[inline]
         fn expand8_to16<F: JoltField>(vals: &[F; 9]) -> ([F; 16], F) {
-            let mut f = [F::zero(); 16]; // f[1..16]
-            f[..8].copy_from_slice(&vals[..8]);
+            // Build f[1..16] without zero-initialization; return also inf
+            let mut f_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
+            let f_ptr = f_mu.as_mut_ptr();
+            let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+            // First 8 from vals
+            unsafe {
+                ptr::copy_nonoverlapping(vals.as_ptr(), f_slice_ptr, 8);
+            }
             let f_inf = vals[8];
             let f_inf40320 = f_inf.mul_u64(40320);
+            // Compute positions 9..16 (indices 8..15)
             for i in 0..8 {
-                f[8 + i] = ex8(&f[i..i + 8].try_into().unwrap(), f_inf40320);
+                unsafe {
+                    let win_ptr = f_slice_ptr.add(i) as *const [F; 8];
+                    let win_ref: &[F; 8] = &*win_ptr;
+                    let val: F = ex8(win_ref, f_inf40320);
+                    ptr::write(f_slice_ptr.add(8 + i), val);
+                }
             }
+            let f = unsafe { f_mu.assume_init() };
             (f, f_inf)
         }
         let (a16_vals, a_inf) = expand8_to16::<F>(&a8);
         let (b16_vals, b_inf) = expand8_to16::<F>(&b8);
-        // Pointwise product to get the 16-base for the half and its inf
-        let mut base = [F::zero(); 16];
+        // Pointwise product to get the 16-base for the half and its inf without zero-initialization
+        let mut base_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
+        let base_ptr = base_mu.as_mut_ptr();
+        let base_slice_ptr = unsafe { (*base_ptr).as_mut_ptr() };
         for i in 0..16 {
-            base[i] = a16_vals[i] * b16_vals[i];
+            unsafe {
+                ptr::write(base_slice_ptr.add(i), a16_vals[i] * b16_vals[i]);
+            }
         }
+        let base = unsafe { base_mu.assume_init() };
         (base, a_inf * b_inf)
     }
     #[inline]
     fn expand16_to_u32<F: JoltField>(base16: &[F; 16], inf: F) -> [F; 32] {
-        // Build [1..31, inf] for a degree-16 product using ex16 sliding
-        let mut f = [F::zero(); 32];
-        f[..16].copy_from_slice(base16);
-        f[31] = inf;
-        let f_inf16_fact = inf.mul_u64(20922789888000u64); // 16!
-        for i in 0..15 {
-            f[16 + i] = ex16(&f[i..i + 16].try_into().unwrap(), f_inf16_fact);
+        // Build [1..31, inf] for a degree-16 product using ex16 sliding without zero-initialization
+        let mut f_mu: MaybeUninit<[F; 32]> = MaybeUninit::uninit();
+        let f_ptr = f_mu.as_mut_ptr();
+        let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+        // Initialize first 16 with base16
+        unsafe {
+            ptr::copy_nonoverlapping(base16.as_ptr(), f_slice_ptr, 16);
         }
-        f
+        // Write inf at position 31 upfront (needed by the last window)
+        unsafe {
+            ptr::write(f_slice_ptr.add(31), inf);
+        }
+        let f_inf16_fact = inf.mul_u64(20922789888000u64); // 16!
+        // Compute entries 17..31 (indices 16..30)
+        for i in 0..15 {
+            unsafe {
+                let win_ptr = f_slice_ptr.add(i) as *const [F; 16];
+                let win_ref: &[F; 16] = &*win_ptr;
+                let val = ex16::<F>(win_ref, f_inf16_fact);
+                ptr::write(f_slice_ptr.add(16 + i), val);
+            }
+        }
+        unsafe { f_mu.assume_init() }
     }
     // First 16 polynomials → half A
     let (a16_base, a_inf) =
@@ -407,6 +463,7 @@ fn assign<T: Sized>(dst: &mut T, src: T) {
 /// Inputs:
 /// - `pairs[j] = (p_j(0), p_j(1))`
 /// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
+#[allow(dead_code)]
 fn product_eval_univariate_naive_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
     let d = pairs.len();
     debug_assert_eq!(sums.len(), d);
