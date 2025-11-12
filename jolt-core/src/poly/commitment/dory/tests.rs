@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::super::*;
     use crate::field::JoltField;
@@ -474,10 +475,7 @@ mod tests {
             .map(|poly| DoryCommitmentScheme::commit(poly, &prover_setup))
             .collect();
 
-        let commitments: Vec<_> = commitments_and_hints
-            .iter()
-            .map(|(c, _)| c.clone())
-            .collect();
+        let commitments: Vec<_> = commitments_and_hints.iter().map(|(c, _)| *c).collect();
         let hints: Vec<_> = commitments_and_hints.into_iter().map(|(_, h)| h).collect();
 
         // Step 3: Generate 5 random coefficients
@@ -532,8 +530,7 @@ mod tests {
 
         assert!(
             result.is_ok(),
-            "Verification should succeed for homomorphically combined commitment: {:?}",
-            result
+            "Verification should succeed for homomorphically combined commitment: {result:?}"
         );
     }
 
@@ -567,10 +564,7 @@ mod tests {
         // Step 2: Use batch_commit
         let commitments_and_hints = DoryCommitmentScheme::batch_commit(&polys, &prover_setup);
 
-        let commitments: Vec<_> = commitments_and_hints
-            .iter()
-            .map(|(c, _)| c.clone())
-            .collect();
+        let commitments: Vec<_> = commitments_and_hints.iter().map(|(c, _)| *c).collect();
         let hints: Vec<_> = commitments_and_hints.into_iter().map(|(_, h)| h).collect();
 
         // Step 3: Generate random coefficients (like gamma powers in opening_proof.rs)
@@ -636,8 +630,7 @@ mod tests {
 
         assert!(
             result.is_ok(),
-            "Verification should succeed with batch_commit flow: {:?}",
-            result
+            "Verification should succeed with batch_commit flow: {result:?}"
         );
 
         // Step 11: Also verify that proving with the direct hint works
@@ -662,8 +655,7 @@ mod tests {
 
         assert!(
             result2.is_ok(),
-            "Verification should also succeed with direct commitment: {:?}",
-            result2
+            "Verification should also succeed with direct commitment: {result2:?}"
         );
     }
 }

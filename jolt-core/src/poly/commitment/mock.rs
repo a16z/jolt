@@ -121,7 +121,6 @@ where
         _setup: &Self::ProverSetup,
         _chunk: &[T],
     ) -> Self::ChunkState {
-        ()
     }
 
     fn compute_tier1_commitment_onehot(
@@ -129,7 +128,6 @@ where
         _onehot_k: usize,
         _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
-        ()
     }
 
     fn compute_tier2_commitment(

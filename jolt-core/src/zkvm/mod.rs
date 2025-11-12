@@ -721,7 +721,7 @@ mod tests {
             &inputs,
             &untrusted_advice,
             &trusted_advice,
-            Some(trusted_advice_commitment.clone()),
+            Some(trusted_advice_commitment),
         );
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -729,7 +729,7 @@ mod tests {
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
-            Some(trusted_advice_commitment.clone()),
+            Some(trusted_advice_commitment),
             debug_info,
         );
         assert!(
