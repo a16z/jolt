@@ -149,26 +149,39 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         // This avoids nested Rayon layers while still computing d_j on-the-fly from the split representation.
         let E_in = eq.D.E_in_current();
         let E_out = eq.D.E_out_current();
-        let x_in_bits = E_in.len().log_2();
         let w_current = eq.D.get_current_w();
         let factor_0 = F::one() - w_current;
         let factor_1: F = w_current.into();
 
+        // Precompute merged inner weights once (in unreduced form): [low*(1-w), low*w] for all x_in
+        let in_len = E_in.len();
+        let x_in_bits = in_len.log_2();
+        let merged_in_unreduced: Vec<F::Unreduced<9>> = {
+            let mut merged: Vec<F::Unreduced<9>> = unsafe_allocate_zero_vec(2 * in_len);
+            for (x_in, &low) in E_in.iter().enumerate() {
+                let off = 2 * x_in;
+                merged[off] = low.mul_unreduced::<9>(factor_0);
+                merged[off + 1] = low.mul_unreduced::<9>(factor_1);
+            }
+            merged
+        };
+
         let G = E_out
             .par_iter()
             .enumerate()
-            .map(|(x_out, &high)| {
+            .map(|(x_out, &e_out)| {
                 let mut local_unreduced: Vec<F::Unreduced<9>> =
                     unsafe_allocate_zero_vec(polynomial.K);
                 let mut touched_indices: Vec<usize> = Vec::new();
                 let mut touched_flags: Vec<u8> = vec![0u8; polynomial.K];
                 let x_out_base = x_out << (x_in_bits + 1);
 
-                for (x_in, &low) in E_in.iter().enumerate() {
+                for x_in in 0..in_len {
                     let j0 = x_out_base + (x_in << 1);
                     let j1 = j0 + 1;
-                    let add0_unr = low.mul_unreduced::<9>(factor_0);
-                    let add1_unr = low.mul_unreduced::<9>(factor_1);
+                    let off = 2 * x_in;
+                    let add0_unr = merged_in_unreduced[off];
+                    let add1_unr = merged_in_unreduced[off + 1];
 
                     if let Some(k0) = nonzero_indices[j0] {
                         let idx = k0 as usize;
@@ -187,15 +200,11 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                         local_unreduced[idx] += add1_unr;
                     }
                 }
-                // Materialize as reduced F and apply the high factor only for touched indices
+                // Materialize as reduced F and apply the e_out factor for touched indices
                 let mut local_g: Vec<F> = unsafe_allocate_zero_vec(polynomial.K);
-                if high.is_zero() {
-                    return local_g;
-                }
-                let apply_high = high != F::one();
                 for idx in touched_indices {
                     let reduced = F::from_montgomery_reduce::<9>(local_unreduced[idx]);
-                    local_g[idx] = if apply_high { high * reduced } else { reduced };
+                    local_g[idx] = e_out * reduced;
                 }
                 local_g
             })
