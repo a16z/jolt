@@ -15,6 +15,7 @@ use super::{
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::rlc_polynomial::RLCPolynomial;
+use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -168,7 +169,8 @@ where
         .any(|poly| matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)));
 
     let B = if has_one_hot {
-        let rlc_result = RLCPolynomial::linear_combination(f_arc, &q_powers);
+        let dummy_poly_ids = vec![CommittedPolynomial::RdInc; f_arc.len()];
+        let rlc_result = RLCPolynomial::linear_combination(dummy_poly_ids, f_arc, &q_powers, None);
         MultilinearPolynomial::RLC(rlc_result)
     } else {
         let poly_refs: Vec<&MultilinearPolynomial<P::ScalarField>> =
@@ -518,7 +520,6 @@ where
         _setup: &Self::ProverSetup,
         _chunk: &[T],
     ) -> Self::ChunkState {
-        ()
     }
 
     fn compute_tier1_commitment_onehot(
@@ -526,7 +527,6 @@ where
         _onehot_k: usize,
         _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
-        ()
     }
 
     fn compute_tier2_commitment(

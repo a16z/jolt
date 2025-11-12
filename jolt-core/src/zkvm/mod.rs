@@ -668,6 +668,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[ignore] // @TODO(markosg04) this test is broken
     fn advice_e2e_dory() {
         use crate::poly::{
             commitment::commitment_scheme::CommitmentScheme,

@@ -5,6 +5,7 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+use crate::poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use allocative::Allocative;
@@ -18,14 +19,15 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
+use tracer::LazyTraceIterator;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::Itertools;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-    rlc_polynomial::RLCPolynomial,
 };
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -792,6 +794,7 @@ where
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>)>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
@@ -858,14 +861,17 @@ where
                 }
             }
 
-            let (coeffs, polynomials): (Vec<F>, Vec<MultilinearPolynomial<F>>) = rlc_map
-                .iter()
-                .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
-                .unzip();
+            let (poly_ids, coeffs, polys): (Vec<_>, Vec<F>, Vec<MultilinearPolynomial<F>>) =
+                rlc_map
+                    .iter()
+                    .map(|(k, v)| (k, v, polynomials.remove(k).unwrap()))
+                    .multiunzip();
 
             let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-                polynomials.into_iter().map(Arc::new).collect(),
+                poly_ids.into_iter().copied().collect(),
+                polys.into_iter().map(Arc::new).collect(),
                 &coeffs,
+                streaming_context,
             ));
 
             let hints: Vec<PCS::OpeningProofHint> = rlc_map

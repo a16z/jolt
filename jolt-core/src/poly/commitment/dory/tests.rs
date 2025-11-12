@@ -11,6 +11,7 @@ mod tests {
     use ark_std::{UniformRand, Zero};
     use serial_test::serial;
     type Fr = ark_bn254::Fr;
+    use crate::zkvm::witness::CommittedPolynomial;
 
     fn test_commitment_scheme_with_poly(
         poly: MultilinearPolynomial<Fr>,
@@ -499,9 +500,13 @@ mod tests {
         }
 
         // Step 7: Compute combined polynomial: P = coeff[0]*P0 + coeff[1]*P1 + ... + coeff[4]*P4
+        let poly_arcs: Vec<_> = polys.into_iter().map(Arc::new).collect();
+        let dummy_poly_ids = vec![CommittedPolynomial::RdInc; poly_arcs.len()];
         let combined_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-            polys.into_iter().map(Arc::new).collect(),
+            dummy_poly_ids,
+            poly_arcs,
             &coeffs,
+            None,
         ));
 
         // Step 8: Create evaluation proof using combined commitment and hint
@@ -588,9 +593,13 @@ mod tests {
         }
 
         // Step 7: Create RLC polynomial (combined polynomial)
+        let poly_arcs: Vec<_> = polys.into_iter().map(Arc::new).collect();
+        let dummy_poly_ids = vec![CommittedPolynomial::RdInc; poly_arcs.len()];
         let combined_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-            polys.into_iter().map(Arc::new).collect(),
+            dummy_poly_ids,
+            poly_arcs,
             &coeffs,
+            None,
         ));
 
         // Step 8: Verify that directly committing to the combined polynomial gives the same result

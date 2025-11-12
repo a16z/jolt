@@ -6,6 +6,7 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::poly::rlc_polynomial::RLCStreamingData;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -65,6 +66,7 @@ use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelBridge,
     ParallelIterator,
 };
+use std::sync::Arc;
 use tracer::instruction::Cycle;
 use tracer::ChunksIterator;
 use tracer::JoltDevice;
@@ -449,7 +451,10 @@ pub fn prove_jolt_dag<
     drop(span);
 
     // Batch-prove all openings (Stage 7)
-    let (_, _, trace, _, _) = state_manager.get_prover_data();
+    let (_, lazy_trace, trace, _, _) = state_manager.get_prover_data();
+
+    // Clone lazy trace immediately to avoid borrow conflicts
+    let rlc_lazy_trace = lazy_trace.clone();
 
     let all_polys: Vec<CommittedPolynomial> = AllCommittedPolynomials::iter().copied().collect();
     let polynomials_map =
@@ -484,11 +489,32 @@ pub fn prove_jolt_dag<
             )
         });
 
+    // Prepare streaming context for Dory Vector Matrix Product
+    let streaming_context = rlc_lazy_trace.map(|lazy_trace| {
+        let ram_d = all_polys
+            .iter()
+            .filter_map(|p| match p {
+                CommittedPolynomial::RamRa(i) => Some(i + 1),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+
+        let streaming_preprocessing = Arc::new(RLCStreamingData {
+            bytecode: preprocessing.bytecode.clone(),
+            memory_layout: preprocessing.memory_layout.clone(),
+            ram_d,
+        });
+
+        (lazy_trace, streaming_preprocessing)
+    });
+
     let reduced_opening_proof = opening_accumulator.reduce_and_prove(
         polynomials_map,
         opening_proof_hints,
         &preprocessing.generators,
         transcript,
+        streaming_context,
     );
 
     #[cfg(test)]
