@@ -1,7 +1,3 @@
-use std::marker::PhantomData;
-
-use num_traits::Zero;
-
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -21,6 +17,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
+use std::marker::PhantomData;
 
 // RAM Hamming booleanity sumcheck
 //
@@ -95,73 +92,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let eq = &self.eq_r_cycle;
         let H = &self.H;
 
-        // Accumulate constant (c0) and quadratic (e) coefficients in unreduced form
-        let coeffs_unr: [F::Unreduced<9>; 2] = if eq.E_in_current_len() == 1 {
-            (0..eq.len() / 2)
-                .into_par_iter()
-                .map(|j| {
-                    let eq_eval = eq.E_out_current()[j];
-                    let h0 = H.get_bound_coeff(2 * j);
-                    let h1 = H.get_bound_coeff(2 * j + 1);
-                    let delta = h1 - h0;
-                    let c0 = h0.square() - h0;
-                    let e = delta.square();
-                    [
-                        eq_eval.mul_unreduced::<9>(c0),
-                        eq_eval.mul_unreduced::<9>(e),
-                    ]
-                })
-                .reduce(
-                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
-                    |a, b| [a[0] + b[0], a[1] + b[1]],
-                )
-        } else {
-            let num_x_in_bits = eq.E_in_current_len().log_2();
-            let chunk_size = 1 << num_x_in_bits;
-            let x_bitmask = chunk_size - 1;
-            (0..eq.len() / 2)
-                .collect::<Vec<_>>()
-                .par_chunks(chunk_size)
-                .enumerate()
-                .map(|(x_out, chunk)| {
-                    let E_out_eval = eq.E_out_current()[x_out];
-                    let inner_unr: [F::Unreduced<9>; 2] = chunk
-                        .par_iter()
-                        .map(|j| {
-                            let j = *j;
-                            let x_in = j & x_bitmask;
-                            let E_in_eval = eq.E_in_current()[x_in];
-                            let h0 = H.get_bound_coeff(2 * j);
-                            let h1 = H.get_bound_coeff(2 * j + 1);
-                            let delta = h1 - h0;
-                            let c0 = h0.square() - h0;
-                            let e = delta.square();
-                            [
-                                E_in_eval.mul_unreduced::<9>(c0),
-                                E_in_eval.mul_unreduced::<9>(e),
-                            ]
-                        })
-                        .reduce(
-                            || [<F as JoltField>::Unreduced::<9>::zero(); 2],
-                            |a, b| [a[0] + b[0], a[1] + b[1]],
-                        );
-
-                    // Reduce inner then scale by E_out in unreduced domain
-                    let inner_c0 = F::from_montgomery_reduce(inner_unr[0]);
-                    let inner_e = F::from_montgomery_reduce(inner_unr[1]);
-                    [
-                        E_out_eval.mul_unreduced::<9>(inner_c0),
-                        E_out_eval.mul_unreduced::<9>(inner_e),
-                    ]
-                })
-                .reduce(
-                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
-                    |a, b| [a[0] + b[0], a[1] + b[1]],
-                )
-        };
-
-        let c0 = F::from_montgomery_reduce(coeffs_unr[0]);
-        let e = F::from_montgomery_reduce(coeffs_unr[1]);
+        // Accumulate constant (c0) and quadratic (e) coefficients via generic split-eq fold.
+        let [c0, e] = eq.par_fold_out_in_unreduced::<9, 2>(&|g| {
+            let h0 = H.get_bound_coeff(2 * g);
+            let h1 = H.get_bound_coeff(2 * g + 1);
+            let delta = h1 - h0;
+            [h0.square() - h0, delta.square()]
+        });
         eq.gruen_evals_deg_3(c0, e, previous_claim).to_vec()
     }
 

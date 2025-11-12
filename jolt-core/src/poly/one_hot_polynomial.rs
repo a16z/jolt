@@ -253,36 +253,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let eq_r_address_claim = B.final_sumcheck_claim();
             let H = &polynomial.H.read().unwrap();
 
-            let gruen_eval_0 = if d_gruen.E_in_current_len() == 1 {
-                let unreduced_gruen_eval_0 = (0..d_gruen.len() / 2)
-                    .into_par_iter()
-                    .map(|j| {
-                        d_gruen.E_out_current()[j].mul_unreduced::<9>(H.get_bound_coeff(2 * j))
-                    })
-                    .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
-                F::from_montgomery_reduce(unreduced_gruen_eval_0)
-            } else {
-                let d_e_in = d_gruen.E_in_current();
-                let d_e_out = d_gruen.E_out_current();
-                let num_x_in = d_gruen.E_in_current_len();
-                let num_x_out = d_gruen.E_out_current_len();
-                let num_x_in_bits = num_x_in.log_2();
-
-                (0..num_x_out)
-                    .into_par_iter()
-                    .map(|x_out| {
-                        let unreduced_inner_sum = (0..num_x_in)
-                            .into_par_iter()
-                            .map(|x_in| {
-                                let j = (x_out << num_x_in_bits) | x_in;
-                                d_e_in[x_in].mul_unreduced::<9>(H.get_bound_coeff(2 * j))
-                            })
-                            .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
-                        let inner_sum = F::from_montgomery_reduce(unreduced_inner_sum);
-                        d_e_out[x_out] * inner_sum
-                    })
-                    .sum()
-            };
+            let [gruen_eval_0] =
+                d_gruen.par_fold_out_in_unreduced::<9, 1>(&|g| [H.get_bound_coeff(2 * g)]);
 
             let gruen_univariate_evals: [F; 2] =
                 d_gruen.gruen_evals_deg_2(gruen_eval_0, previous_claim / eq_r_address_claim);

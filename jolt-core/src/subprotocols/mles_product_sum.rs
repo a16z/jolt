@@ -1,16 +1,12 @@
-use num_traits::Zero;
-use std::iter::zip;
-
-use rayon::prelude::*;
-
 use crate::{
     field::{BarrettReduce, FMAdd, JoltField},
     poly::{
         eq_poly::EqPolynomial, ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
-    utils::{accumulation::Acc5S, math::Math},
+    utils::{accumulation::Acc5S},
 };
+use num_traits::Zero;
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
@@ -20,111 +16,47 @@ pub fn compute_mles_product_sum<F: JoltField>(
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
-    // Split Eq poly optimization using GruenSplitEqPolynomial.
-    // See https://eprint.iacr.org/2025/1117.pdf section 5.2.
-
-    // Get the eq polynomial evaluations from the split structure
-    // Note: With LowToHigh binding, E_out corresponds to the first half (outer loop)
-    // and E_in corresponds to the second half (inner loop)
-    let num_x_out = eq_poly.E_out_current_len();
-    let num_x_in = eq_poly.E_in_current_len();
-
-    // Get the scaling factor that accumulates eq evaluations for already-bound variables
+    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, ∞] using split-eq fold.
+    let d = mles.len();
     let current_scalar = eq_poly.get_current_scalar();
-
-    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, inf].
-    let sum_evals: Vec<F> = if num_x_in == 1 {
-        // E_in is fully bound - simplified computation
-        let eq_in_eval = eq_poly.E_in_current()[0] * current_scalar;
-        let eq_out_evals = eq_poly.E_out_current();
-
-        (0..num_x_out)
-            .into_par_iter()
-            .map(|j_out| {
-                let mut partial_evals = vec![F::zero(); mles.len()];
-                let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
-
-                for (i, mle) in mles.iter().enumerate() {
-                    let mle_eval_at_0_j = mle.get_bound_coeff(2 * j_out);
-                    let mle_eval_at_1_j = mle.get_bound_coeff(2 * j_out + 1);
-                    mle_eval_pairs[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
+    let sum_evals: Vec<F> = eq_poly
+        .par_fold_out_in(
+            || vec![F::Unreduced::<9>::zero(); d],
+            |inner, g, _x_in, e_in| {
+                // Build per-g pairs [(p0, p1); D]
+                let mut pairs: Vec<(F, F)> = Vec::with_capacity(d);
+                for mle in mles.iter() {
+                    let p0 = mle.get_bound_coeff(2 * g);
+                    let p1 = mle.get_bound_coeff(2 * g + 1);
+                    pairs.push((p0, p1));
                 }
-
-                mle_eval_pairs[0].0 *= eq_in_eval;
-                mle_eval_pairs[0].1 *= eq_in_eval;
-                product_eval_univariate_accumulate(&mle_eval_pairs, &mut partial_evals);
-
-                partial_evals
-                    .into_iter()
-                    .map(|v| {
-                        let result = v * eq_out_evals[j_out];
-                        let unreduced = *result.as_unreduced_ref();
-                        unreduced
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .fold_with(
-                vec![F::Unreduced::<5>::zero(); mles.len()],
-                |running, new: Vec<F::Unreduced<4>>| {
-                    zip(running, new).map(|(a, b)| a + b).collect()
-                },
-            )
-            .reduce(
-                || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
-            )
-            .into_iter()
-            .map(F::from_barrett_reduce)
-            .collect()
-    } else {
-        // General case with both E_in and E_out
-        let num_x_in_bits = num_x_in.log_2();
-        let eq_in_evals = eq_poly.E_in_current();
-        let eq_out_evals = eq_poly.E_out_current();
-
-        (0..num_x_out)
-            .into_par_iter()
-            .map(|j_out| {
-                let mut partial_evals = vec![F::zero(); mles.len()];
-                let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
-
-                for j_in in 0..num_x_in {
-                    let j = (j_out << num_x_in_bits) | j_in;
-
-                    for (i, mle) in mles.iter().enumerate() {
-                        let mle_eval_at_0_j = mle.get_bound_coeff(2 * j);
-                        let mle_eval_at_1_j = mle.get_bound_coeff(2 * j + 1);
-                        mle_eval_pairs[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
-                    }
-
-                    mle_eval_pairs[0].0 *= eq_in_evals[j_in] * current_scalar;
-                    mle_eval_pairs[0].1 *= eq_in_evals[j_in] * current_scalar;
-                    product_eval_univariate_accumulate(&mle_eval_pairs, &mut partial_evals);
+                // Compute endpoints on U_D into a small Vec<F>
+                let mut endpoints = vec![F::zero(); d];
+                product_eval_univariate_assign(&pairs, &mut endpoints);
+                // Accumulate with unreduced arithmetic
+                for k in 0..d {
+                    inner[k] += e_in.mul_unreduced::<9>(endpoints[k]);
                 }
-
-                partial_evals
-                    .into_iter()
-                    .map(|v| {
-                        let result = v * eq_out_evals[j_out];
-                        let unreduced = *result.as_unreduced_ref();
-                        unreduced
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .fold_with(
-                vec![F::Unreduced::<5>::zero(); mles.len()],
-                |running, new: Vec<F::Unreduced<4>>| {
-                    zip(running, new).map(|(a, b)| a + b).collect()
-                },
-            )
-            .reduce(
-                || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
-            )
-            .into_iter()
-            .map(F::from_barrett_reduce)
-            .collect()
-    };
+            },
+            |_x_out, e_out, inner| {
+                // Reduce inner lanes, scale by e_out (unreduced), return outer acc vector
+                let mut out = vec![F::Unreduced::<9>::zero(); d];
+                for k in 0..d {
+                    let reduced_k = F::from_montgomery_reduce::<9>(inner[k]);
+                    out[k] = e_out.mul_unreduced::<9>(reduced_k);
+                }
+                out
+            },
+            |mut a, b| {
+                for k in 0..d {
+                    a[k] += b[k];
+                }
+                a
+            },
+        )
+        .into_iter()
+        .map(|x| F::from_montgomery_reduce::<9>(x) * current_scalar)
+        .collect();
 
     // Get r[round] from the eq polynomial
     let r_round = eq_poly.get_current_w();
