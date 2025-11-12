@@ -85,6 +85,15 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
             addends_proj,
         );
     }
+
+    fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
+        assert_eq!(left.len(), right.len(), "Lengths must match");
+        left.par_iter_mut()
+            .zip(right.par_iter())
+            .for_each(|(l, r)| {
+                *l = *l * *scalar + *r;
+            });
+    }
 }
 
 pub struct JoltG2Routines;
@@ -168,5 +177,14 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
             raw_scalar,
             addends_proj,
         );
+    }
+
+    fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
+        assert_eq!(left.len(), right.len(), "Lengths must match");
+        left.par_iter_mut()
+            .zip(right.par_iter())
+            .for_each(|(l, r)| {
+                *l = *l * *scalar + *r;
+            });
     }
 }

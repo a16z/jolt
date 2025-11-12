@@ -372,7 +372,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     ) -> Vec<F> {
         let T = DoryGlobals::get_T();
 
-        let chunk_results: Vec<Vec<F>> = ctx
+        let result = ctx
             .lazy_trace
             .clone()
             .pad_using(T, |_| Cycle::NoOp)
@@ -380,39 +380,48 @@ impl<F: JoltField> RLCPolynomial<F> {
             .enumerate()
             .par_bridge()
             .map(|(row_idx, chunk)| {
-                let mut chunk_result = vec![F::zero(); num_columns];
+                // Nested parallelism: process columns within chunk in parallel
+                let chunk_result: Vec<F> = chunk
+                    .par_iter()
+                    .map(|cycle| {
+                        let mut val = F::zero();
 
-                for (col_offset, cycle) in chunk.iter().enumerate() {
-                    // Process DENSE POLYNOMIALS (RdInc, RamInc)
-                    for (poly_id, coeff) in &ctx.dense_polys {
-                        let val = Self::extract_dense_value(poly_id, cycle);
-                        chunk_result[col_offset] += left_vec[row_idx] * *coeff * val;
-                    }
-
-                    // Process ONE-HOT POLYNOMIALS (InstructionRa, BytecodeRa, RamRa)
-                    for (poly_id, coeff) in &ctx.onehot_polys {
-                        if let Some(k) = Self::extract_onehot_k(poly_id, cycle, &ctx.preprocessing)
-                        {
-                            let rows_per_k = T / num_columns;
-                            let onehot_row = k * rows_per_k + row_idx;
-                            chunk_result[col_offset] += left_vec[onehot_row] * *coeff;
+                        // Process DENSE POLYNOMIALS (RdInc, RamInc)
+                        for (poly_id, coeff) in &ctx.dense_polys {
+                            let dense_val = Self::extract_dense_value(poly_id, cycle);
+                            val += left_vec[row_idx] * *coeff * dense_val;
                         }
-                    }
-                }
+
+                        // Process ONE-HOT POLYNOMIALS (InstructionRa, BytecodeRa, RamRa)
+                        for (poly_id, coeff) in &ctx.onehot_polys {
+                            if let Some(k) =
+                                Self::extract_onehot_k(poly_id, cycle, &ctx.preprocessing)
+                            {
+                                let rows_per_k = T / num_columns;
+                                let onehot_row = k * rows_per_k + row_idx;
+                                val += left_vec[onehot_row] * *coeff;
+                            }
+                        }
+
+                        val
+                    })
+                    .collect();
 
                 chunk_result
             })
-            .collect();
+            .reduce(
+                || vec![F::zero(); num_columns],
+                |mut acc, chunk_result| {
+                    acc.par_iter_mut().zip(chunk_result.par_iter()).for_each(
+                        |(acc_val, &chunk_val)| {
+                            *acc_val += chunk_val;
+                        },
+                    );
+                    acc
+                },
+            );
 
         drop_in_background_thread(ctx);
-        chunk_results.into_par_iter().reduce(
-            || vec![F::zero(); num_columns],
-            |mut acc, chunk_result| {
-                for (i, val) in chunk_result.iter().enumerate() {
-                    acc[i] += *val;
-                }
-                acc
-            },
-        )
+        result
     }
 }
