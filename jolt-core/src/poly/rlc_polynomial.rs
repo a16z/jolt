@@ -4,7 +4,7 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::math::Math;
 use crate::utils::small_scalar::SmallScalar;
-use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::instruction_lookups;
 use crate::zkvm::ram::remap_address;
@@ -280,7 +280,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         // Compute the vector-matrix product for dense submatrix
         let mut result: Vec<F> = if let Some(ctx) = &self.streaming_context {
             // Streaming mode: generate rows on-demand from trace
-            self.streaming_vector_matrix_product(left_vec, num_columns, ctx)
+            self.streaming_vector_matrix_product(left_vec, num_columns, Arc::clone(ctx))
         } else {
             // Linear space mode: use pre-computed dense_rlc
             (0..num_columns)
@@ -368,7 +368,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         &self,
         left_vec: &[F],
         num_columns: usize,
-        ctx: &Arc<StreamingRLCContext<F>>,
+        ctx: Arc<StreamingRLCContext<F>>,
     ) -> Vec<F> {
         let T = DoryGlobals::get_T();
 
@@ -404,6 +404,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             })
             .collect();
 
+        drop_in_background_thread(ctx);
         chunk_results.into_par_iter().reduce(
             || vec![F::zero(); num_columns],
             |mut acc, chunk_result| {
