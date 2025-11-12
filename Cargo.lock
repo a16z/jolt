@@ -171,7 +171,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -181,7 +181,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -202,7 +202,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -223,7 +223,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "quote",
  "syn 2.0.110",
@@ -232,7 +232,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -244,7 +244,7 @@ dependencies = [
 [[package]]
 name = "ark-grumpkin"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -269,9 +269,9 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version)",
+ "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std",
  "arrayvec",
  "digest",
@@ -293,7 +293,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -820,9 +820,9 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-common"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
+checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
@@ -956,8 +956,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "dory"
+name = "dory-derive"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92455ee9d76bb8878b7900486c07e880cd019acf144144aa61c799fb6464fefe"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
+]
+
+[[package]]
+name = "dory-pcs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c39e3ecf57aa4adc063f292501076a16bd6f254c090c949cc9906af7edb43de4"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -975,15 +988,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.17",
  "tracing",
-]
-
-[[package]]
-name = "dory-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.110",
 ]
 
 [[package]]
@@ -1300,9 +1304,9 @@ dependencies = [
 
 [[package]]
 name = "generic-array"
-version = "0.14.9"
+version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb6743198531e02858aeaea5398fcc883e71851fcbcb5a2f773e2fb6cb1edf2"
+checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
@@ -1514,9 +1518,9 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hyper"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb3aa54a13a0dfe7fbe3a59e0c76093041720fdc77b110cc0fc260fafb4dc51e"
+checksum = "1744436df46f0bde35af3eda22aeaba453aada65d8f1c171cd8a5f59030bd69f"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1939,7 +1943,7 @@ dependencies = [
  "criterion",
  "derive_more 2.0.1",
  "dirs",
- "dory",
+ "dory-pcs",
  "eyre",
  "fixedbitset 0.5.7",
  "iai-callgrind",
@@ -2040,7 +2044,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=test%2Fbump-version#a8e0032be423c109881addff9c159f8fa355a8b0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2862,14 +2866,13 @@ dependencies = [
 
 [[package]]
 name = "proptest"
-version = "1.8.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bb0be07becd10686a0bb407298fb425360a5c44a663774406340c59a22de4ce"
+checksum = "bee689443a2bd0a16ab0348b52ee43e3b2d1b1f931c8aa5c9f8de4c86fbe8c40"
 dependencies = [
  "bit-set",
  "bit-vec",
  "bitflags 2.10.0",
- "lazy_static",
  "num-traits",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
