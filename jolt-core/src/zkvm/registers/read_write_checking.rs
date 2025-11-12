@@ -518,10 +518,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                     let mut eval_at_0_for_stage_3 = F::Unreduced::<9>::zero();
                     let mut eval_at_inf_for_stage_3 = F::Unreduced::<9>::zero();
 
-                    let mut eval_at_0_for_current_stage_1 = F::zero();
-                    let mut eval_at_inf_for_current_stage_1 = F::zero();
-                    let mut eval_at_0_for_current_stage_3 = F::zero();
-                    let mut eval_at_inf_for_current_stage_3 = F::zero();
+                    let mut eval_at_0_for_current_stage_1 = F::Unreduced::<9>::zero();
+                    let mut eval_at_inf_for_current_stage_1 = F::Unreduced::<9>::zero();
+                    let mut eval_at_0_for_current_stage_3 = F::Unreduced::<9>::zero();
+                    let mut eval_at_inf_for_current_stage_3 = F::Unreduced::<9>::zero();
 
                     let mut x_out_prev: Option<usize> = None;
 
@@ -640,19 +640,31 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                                     let E_out_stage_3_eval =
                                         gruen_eq_r_cycle_stage_3.E_out_current()[x];
 
-                                    eval_at_0_for_stage_1 += eval_at_0_for_current_stage_1
-                                        .mul_unreduced::<9>(E_out_stage_1_eval);
-                                    eval_at_inf_for_stage_1 += eval_at_inf_for_current_stage_1
-                                        .mul_unreduced::<9>(E_out_stage_1_eval);
-                                    eval_at_0_for_stage_3 += eval_at_0_for_current_stage_3
-                                        .mul_unreduced::<9>(E_out_stage_3_eval);
-                                    eval_at_inf_for_stage_3 += eval_at_inf_for_current_stage_3
-                                        .mul_unreduced::<9>(E_out_stage_3_eval);
+                                    let red0_s1 = F::from_montgomery_reduce::<9>(
+                                        eval_at_0_for_current_stage_1,
+                                    );
+                                    let redi_s1 = F::from_montgomery_reduce::<9>(
+                                        eval_at_inf_for_current_stage_1,
+                                    );
+                                    let red0_s3 = F::from_montgomery_reduce::<9>(
+                                        eval_at_0_for_current_stage_3,
+                                    );
+                                    let redi_s3 = F::from_montgomery_reduce::<9>(
+                                        eval_at_inf_for_current_stage_3,
+                                    );
+                                    eval_at_0_for_stage_1 +=
+                                        E_out_stage_1_eval.mul_unreduced::<9>(red0_s1);
+                                    eval_at_inf_for_stage_1 +=
+                                        E_out_stage_1_eval.mul_unreduced::<9>(redi_s1);
+                                    eval_at_0_for_stage_3 +=
+                                        E_out_stage_3_eval.mul_unreduced::<9>(red0_s3);
+                                    eval_at_inf_for_stage_3 +=
+                                        E_out_stage_3_eval.mul_unreduced::<9>(redi_s3);
 
-                                    eval_at_0_for_current_stage_1 = F::zero();
-                                    eval_at_inf_for_current_stage_1 = F::zero();
-                                    eval_at_0_for_current_stage_3 = F::zero();
-                                    eval_at_inf_for_current_stage_3 = F::zero();
+                                    eval_at_0_for_current_stage_1 = F::Unreduced::<9>::zero();
+                                    eval_at_inf_for_current_stage_1 = F::Unreduced::<9>::zero();
+                                    eval_at_0_for_current_stage_3 = F::Unreduced::<9>::zero();
+                                    eval_at_inf_for_current_stage_3 = F::Unreduced::<9>::zero();
                                 }
                                 _ => (),
                             }
@@ -714,13 +726,17 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                                 rs1_inner_sum_evals[1] + params.gamma * rs2_inner_sum_evals[1],
                             ];
 
-                            eval_at_0_for_current_stage_1 += E_in_stage_1_eval
-                                * (rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0]);
+                            eval_at_0_for_current_stage_1 += E_in_stage_1_eval.mul_unreduced::<9>(
+                                rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0],
+                            );
                             eval_at_inf_for_current_stage_1 += E_in_stage_1_eval
-                                * (rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1]);
-                            eval_at_0_for_current_stage_3 += E_in_stage_3_eval * read_vals_evals[0];
+                                .mul_unreduced::<9>(
+                                    rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1],
+                                );
+                            eval_at_0_for_current_stage_3 +=
+                                E_in_stage_3_eval.mul_unreduced::<9>(read_vals_evals[0]);
                             eval_at_inf_for_current_stage_3 +=
-                                E_in_stage_3_eval * read_vals_evals[1];
+                                E_in_stage_3_eval.mul_unreduced::<9>(read_vals_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
@@ -728,14 +744,16 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                     if let Some(x) = x_out_prev {
                         let E_out_stage_1_eval = gruen_eq_r_cycle_stage_1.E_out_current()[x];
                         let E_out_stage_3_eval = gruen_eq_r_cycle_stage_3.E_out_current()[x];
-                        eval_at_0_for_stage_1 +=
-                            E_out_stage_1_eval.mul_unreduced::<9>(eval_at_0_for_current_stage_1);
-                        eval_at_inf_for_stage_1 +=
-                            E_out_stage_1_eval.mul_unreduced::<9>(eval_at_inf_for_current_stage_1);
-                        eval_at_0_for_stage_3 +=
-                            E_out_stage_3_eval.mul_unreduced::<9>(eval_at_0_for_current_stage_3);
-                        eval_at_inf_for_stage_3 +=
-                            E_out_stage_3_eval.mul_unreduced::<9>(eval_at_inf_for_current_stage_3);
+                        let red0_s1 = F::from_montgomery_reduce::<9>(eval_at_0_for_current_stage_1);
+                        let redi_s1 =
+                            F::from_montgomery_reduce::<9>(eval_at_inf_for_current_stage_1);
+                        let red0_s3 = F::from_montgomery_reduce::<9>(eval_at_0_for_current_stage_3);
+                        let redi_s3 =
+                            F::from_montgomery_reduce::<9>(eval_at_inf_for_current_stage_3);
+                        eval_at_0_for_stage_1 += E_out_stage_1_eval.mul_unreduced::<9>(red0_s1);
+                        eval_at_inf_for_stage_1 += E_out_stage_1_eval.mul_unreduced::<9>(redi_s1);
+                        eval_at_0_for_stage_3 += E_out_stage_3_eval.mul_unreduced::<9>(red0_s3);
+                        eval_at_inf_for_stage_3 += E_out_stage_3_eval.mul_unreduced::<9>(redi_s3);
                     }
                     [
                         eval_at_0_for_stage_1,

@@ -73,6 +73,7 @@ members = [
     "examples/merkle-tree/guest",
     "examples/hash-bench",
     "examples/hash-bench/guest",
+    "zklean-extractor",
 ]
 
 [features]
