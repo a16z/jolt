@@ -805,11 +805,6 @@ where
         );
         let _enter = prepare_span.enter();
 
-        // Merge D in preparation of `prepare_sumcheck`
-        self.eq_cycle_map
-            .par_iter_mut()
-            .for_each(|(_, eq_cycle)| eq_cycle.write().unwrap().merge_D());
-
         // Populate dense_polynomial_map
         for sumcheck in self.sumchecks.iter() {
             if let ProverOpening::Dense(_) = &sumcheck.prover_state {
@@ -827,11 +822,6 @@ where
         self.sumchecks.par_iter_mut().for_each(|sumcheck| {
             sumcheck.prepare_sumcheck(&polynomials, &self.dense_polynomial_map);
         });
-
-        // Drop merged D as they are no longer needed
-        self.eq_cycle_map
-            .par_iter_mut()
-            .for_each(|(_, eq_cycle)| eq_cycle.write().unwrap().drop_merged_D());
 
         drop(_enter);
 
@@ -1299,8 +1289,7 @@ mod tests {
             .take(LOG_T)
             .collect::<Vec<_>>();
 
-        let mut eq_cycle_state = EqCycleState::new(&r_cycle);
-        eq_cycle_state.merge_D();
+        let eq_cycle_state = EqCycleState::new(&r_cycle);
 
         let mut dense_opening = DensePolynomialProverOpening {
             polynomial: Some(Arc::new(RwLock::new(SharedDensePolynomial {

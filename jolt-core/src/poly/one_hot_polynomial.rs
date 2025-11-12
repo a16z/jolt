@@ -7,6 +7,7 @@ use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
+#[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
@@ -75,8 +76,6 @@ pub struct EqAddressState<F: JoltField> {
 pub struct EqCycleState<F: JoltField> {
     /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
     pub D: GruenSplitEqPolynomial<F>,
-    /// Merged D polynomial, used to compute G
-    pub merged_D: Option<DensePolynomial<F>>,
     /// The number of variables that have been bound during sumcheck so far
     pub num_variables_bound: usize,
 }
@@ -104,18 +103,8 @@ impl<F: JoltField> EqCycleState<F> {
         let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh);
         Self {
             D,
-            merged_D: None,
             num_variables_bound: 0,
         }
-    }
-
-    pub fn merge_D(&mut self) {
-        self.merged_D = Some(self.D.merge());
-    }
-
-    pub fn drop_merged_D(&mut self) {
-        let merged_D = std::mem::take(&mut self.merged_D);
-        drop_in_background_thread(merged_D);
     }
 }
 
@@ -151,35 +140,72 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     pub fn initialize(&mut self, mut polynomial: OneHotPolynomial<F>) {
         let nonzero_indices = &polynomial.nonzero_indices;
         let T = nonzero_indices.len();
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = (T / num_chunks).max(1);
 
         let eq = self.eq_cycle_state.read().unwrap();
-        let D_coeffs_for_G = &eq.merged_D.as_ref().unwrap();
+        // Compute G without materializing the dense eq(r_cycle, j) table:
+        // G[k] = sum_{j: nonzero_indices[j] = k} eq(r_cycle, j).
+        // (described in Section 6.3 of the Twist/Shout paper)
+        // Custom parallelization: parallel over E_out, sequential over E_in and the last bit.
+        // This avoids nested Rayon layers while still computing d_j on-the-fly from the split representation.
+        let E_in = eq.D.E_in_current();
+        let E_out = eq.D.E_out_current();
+        let x_in_bits = E_in.len().log_2();
+        let w_current = eq.D.get_current_w();
+        let factor_0 = F::one() - w_current;
+        let factor_1: F = w_current.into();
 
-        // Compute G as described in Section 6.3
-        let G = nonzero_indices
-            .par_chunks(chunk_size)
+        let G = E_out
+            .par_iter()
             .enumerate()
-            .map(|(chunk_index, chunk)| {
-                let mut result = unsafe_allocate_zero_vec(polynomial.K);
-                let mut j = chunk_index * chunk_size;
-                for k in chunk {
-                    if let Some(k) = k {
-                        result[*k as usize] += D_coeffs_for_G[j];
+            .map(|(x_out, &high)| {
+                let mut local_unreduced: Vec<F::Unreduced<9>> =
+                    unsafe_allocate_zero_vec(polynomial.K);
+                let mut touched_indices: Vec<usize> = Vec::new();
+                let mut touched_flags: Vec<u8> = vec![0u8; polynomial.K];
+                let x_out_base = x_out << (x_in_bits + 1);
+
+                for (x_in, &low) in E_in.iter().enumerate() {
+                    let j0 = x_out_base + (x_in << 1);
+                    let j1 = j0 + 1;
+                    let add0_unr = low.mul_unreduced::<9>(factor_0);
+                    let add1_unr = low.mul_unreduced::<9>(factor_1);
+
+                    if let Some(k0) = nonzero_indices[j0] {
+                        let idx = k0 as usize;
+                        if touched_flags[idx] == 0 {
+                            touched_flags[idx] = 1;
+                            touched_indices.push(idx);
+                        }
+                        local_unreduced[idx] += add0_unr;
                     }
-                    j += 1;
+                    if let Some(k1) = nonzero_indices[j1] {
+                        let idx = k1 as usize;
+                        if touched_flags[idx] == 0 {
+                            touched_flags[idx] = 1;
+                            touched_indices.push(idx);
+                        }
+                        local_unreduced[idx] += add1_unr;
+                    }
                 }
-                result
+                // Materialize as reduced F and apply the high factor only for touched indices
+                let mut local_g: Vec<F> = unsafe_allocate_zero_vec(polynomial.K);
+                if high.is_zero() {
+                    return local_g;
+                }
+                let apply_high = high != F::one();
+                for idx in touched_indices {
+                    let reduced = F::from_montgomery_reduce::<9>(local_unreduced[idx]);
+                    local_g[idx] = if apply_high { high * reduced } else { reduced };
+                }
+                local_g
             })
             .reduce(
                 || unsafe_allocate_zero_vec(polynomial.K),
-                |mut running, new| {
-                    running
-                        .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running
+                |mut a, b| {
+                    for (x, y) in a.iter_mut().zip(b) {
+                        *x += y;
+                    }
+                    a
                 },
             );
 
@@ -689,8 +715,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let eq_address_state = EqAddressState::new(&r_address);
-        let mut eq_cycle_state = EqCycleState::new(&r_cycle);
-        eq_cycle_state.merge_D();
+        let eq_cycle_state = EqCycleState::new(&r_cycle);
 
         let mut one_hot_opening = OneHotPolynomialProverOpening::new(
             Arc::new(RwLock::new(eq_address_state)),
