@@ -9,7 +9,7 @@ use secp256k1::{
 
 #[jolt::provable(
     stack_size = 8388608,
-    memory_size = 8388608,
+    memory_size = 16777216,
     max_trace_length = 1048576
 )]
 fn recover(sig: &[u8], msg: [u8; 32]) -> PublicKey {

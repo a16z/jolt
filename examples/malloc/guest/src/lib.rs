@@ -1,6 +1,6 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-#[jolt::provable]
+#[jolt::provable(memory_size = 65536)]
 fn alloc(val: i32) -> u32 {
     // The C functions are linked by the build script
     extern "C" {

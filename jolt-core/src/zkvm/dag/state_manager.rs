@@ -6,10 +6,10 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::compute_d_parameter;
-use crate::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing};
+use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{Cycle, Instruction};
+use tracer::instruction::Cycle;
 use tracer::{JoltDevice, LazyTraceIterator};
 
 pub struct ProverState<'a, F: JoltField, PCS>
@@ -62,18 +62,18 @@ where
             .filter_map(|cycle| {
                 crate::zkvm::ram::remap_address(
                     cycle.ram_access().address() as u64,
-                    &preprocessing.shared.memory_layout,
+                    &preprocessing.memory_layout,
                 )
             })
             .max()
             .unwrap_or(0)
             .max(
                 crate::zkvm::ram::remap_address(
-                    preprocessing.shared.ram.min_bytecode_address,
-                    &preprocessing.shared.memory_layout,
+                    preprocessing.ram.min_bytecode_address,
+                    &preprocessing.memory_layout,
                 )
                 .unwrap_or(0)
-                    + preprocessing.shared.ram.bytecode_words.len() as u64
+                    + preprocessing.ram.bytecode_words.len() as u64
                     + 1,
             )
             .next_power_of_two() as usize;
@@ -100,33 +100,6 @@ where
                 trusted_advice_polynomial: None,
             }),
             verifier_state: None,
-        }
-    }
-
-    /// Only used in tests; in practice, the verifier state manager is
-    /// constructed using `JoltProof::to_verifier_state_manager`
-    #[cfg(test)]
-    pub fn new_verifier(
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
-        program_io: JoltDevice,
-        trace_length: usize,
-        ram_K: usize,
-        twist_sumcheck_switch_index: usize,
-    ) -> Self {
-        let ram_d = compute_d_parameter(ram_K);
-
-        StateManager {
-            untrusted_advice_commitment: None,
-            trusted_advice_commitment: None,
-            program_io,
-            ram_K,
-            ram_d,
-            twist_sumcheck_switch_index,
-            prover_state: None,
-            verifier_state: Some(VerifierState {
-                preprocessing,
-                trace_length,
-            }),
         }
     }
 
@@ -159,64 +132,22 @@ where
             panic!("Prover state not initialized");
         }
     }
+}
 
-    pub fn get_verifier_data(&self) -> (&'a JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
-        if let Some(ref verifier_state) = self.verifier_state {
-            (
-                verifier_state.preprocessing,
-                &self.program_io,
-                verifier_state.trace_length,
-            )
-        } else {
-            panic!("Verifier state not initialized");
-        }
-    }
-
-    pub fn get_trace_len(&self) -> usize {
-        if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state.trace_length
-        } else if let Some(ref prover_state) = self.prover_state {
-            prover_state.trace.len()
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    pub fn get_bytecode(&self) -> &[Instruction] {
-        if let Some(ref verifier_state) = self.verifier_state {
-            &verifier_state.preprocessing.shared.bytecode.bytecode
-        } else if let Some(ref prover_state) = self.prover_state {
-            &prover_state.preprocessing.shared.bytecode.bytecode
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    pub fn get_shared_preprocessing(&self) -> &JoltSharedPreprocessing {
-        if let Some(ref verifier_state) = self.verifier_state {
-            &verifier_state.preprocessing.shared
-        } else if let Some(ref prover_state) = self.prover_state {
-            &prover_state.preprocessing.shared
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    pub fn fiat_shamir_preamble(&self, transcript: &mut impl Transcript) {
-        transcript.append_u64(self.program_io.memory_layout.max_input_size);
-        transcript.append_u64(self.program_io.memory_layout.max_output_size);
-        transcript.append_u64(self.program_io.memory_layout.memory_size);
-        transcript.append_bytes(&self.program_io.inputs);
-        transcript.append_bytes(&self.program_io.outputs);
-        transcript.append_u64(self.program_io.panic as u64);
-        transcript.append_u64(self.ram_K as u64);
-
-        if let Some(ref verifier_state) = self.verifier_state {
-            transcript.append_u64(verifier_state.trace_length as u64);
-        } else if let Some(ref prover_state) = self.prover_state {
-            transcript.append_u64(prover_state.trace.len() as u64);
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
+// TODO: Perhaps better we have something like a JoltClaim with this stuff in
+// it and have a method on that to append that to the transcript.
+pub fn fiat_shamir_preamble(
+    program_io: &JoltDevice,
+    ram_K: usize,
+    trace_length: usize,
+    transcript: &mut impl Transcript,
+) {
+    transcript.append_u64(program_io.memory_layout.max_input_size);
+    transcript.append_u64(program_io.memory_layout.max_output_size);
+    transcript.append_u64(program_io.memory_layout.memory_size);
+    transcript.append_bytes(&program_io.inputs);
+    transcript.append_bytes(&program_io.outputs);
+    transcript.append_u64(program_io.panic as u64);
+    transcript.append_u64(ram_K as u64);
+    transcript.append_u64(trace_length as u64);
 }

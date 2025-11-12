@@ -26,6 +26,7 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
+        bytecode::BytecodePreprocessing,
         dag::state_manager::StateManager,
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
@@ -42,7 +43,7 @@ use common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{chain, zip_eq, Itertools};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::NormalizedInstruction;
+use tracer::instruction::{Instruction, NormalizedInstruction};
 
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;
@@ -127,7 +128,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ReadRafSumcheckParams::gen(state_manager, opening_accumulator, transcript);
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+
+        let params = ReadRafSumcheckParams::gen(
+            &preprocessing.bytecode,
+            trace.len().log_2(),
+            opening_accumulator,
+            transcript,
+        );
 
         let claim_per_stage = [
             params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
@@ -146,7 +154,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             .each_ref()
             .map(|r_cycle| EqPolynomial::evals(&r_cycle[..prefix_n_vars]));
 
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let F = trace
             .par_chunks(chunk_size)
             .enumerate()
@@ -162,7 +169,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     array::from_fn(|_| unsafe_allocate_zero_vec::<F>(params.K));
 
                 for (j, cycle) in trace_chunk.iter().enumerate() {
-                    let pc = preprocessing.shared.bytecode.get_pc(cycle);
+                    let pc = preprocessing.bytecode.get_pc(cycle);
                     for stage in 0..N_STAGES {
                         res_per_stage[stage][pc] += eq_evals[stage][j]
                     }
@@ -214,7 +221,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
         let pc = trace
             .par_iter()
-            .map(|cycle| preprocessing.shared.bytecode.get_pc(cycle))
+            .map(|cycle| preprocessing.bytecode.get_pc(cycle))
             .collect();
 
         Self {
@@ -454,31 +461,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         }
 
         if round < self.params.log_K {
-            rayon::scope(|s| {
-                s.spawn(|_| {
-                    self.params
-                        .val_polys
-                        .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh))
-                });
-                s.spawn(|_| {
-                    self.params
-                        .int_poly
-                        .bind_parallel(r_j, BindingOrder::LowToHigh);
-                });
-                s.spawn(|_| {
-                    self.F
-                        .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-                });
-                self.r_address_prime.push(r_j);
-            });
+            self.params
+                .val_polys
+                .iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            self.params
+                .int_poly
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.F
+                .iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            self.r_address_prime.push(r_j);
             if round == self.params.log_K - 1 {
                 self.init_log_t_rounds();
             }
         } else {
             self.ra
-                .par_iter_mut()
+                .iter_mut()
                 .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
             self.gruen_eq_polys
                 .iter_mut()
@@ -521,12 +520,18 @@ pub struct ReadRafSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ReadRafSumcheckVerifier<F> {
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        bytecode_preprocessing: &BytecodePreprocessing,
+        n_cycle_vars: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         Self {
-            params: ReadRafSumcheckParams::gen(state_manager, opening_accumulator, transcript),
+            params: ReadRafSumcheckParams::gen(
+                bytecode_preprocessing,
+                n_cycle_vars,
+                opening_accumulator,
+                transcript,
+            ),
         }
     }
 }
@@ -643,43 +648,43 @@ struct ReadRafSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
     fn gen(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        bytecode_preprocessing: &BytecodePreprocessing,
+        n_cycle_vars: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let preprocessing = state_manager.get_shared_preprocessing();
-        let K = preprocessing.bytecode.code_size;
+        let K = bytecode_preprocessing.code_size;
         let log_K = K.log_2();
-        let d = preprocessing.bytecode.d;
-        let log_T = state_manager.get_trace_len().log_2();
+        let d = bytecode_preprocessing.d;
         let gamma_powers = transcript.challenge_scalar_powers(7);
 
+        let bytecode = &bytecode_preprocessing.bytecode;
         let (val_1, rv_claim_1) = Self::compute_val_rv(
-            state_manager,
+            bytecode,
             opening_accumulator,
             ReadCheckingValType::Stage1,
             transcript,
         );
         let (val_2, rv_claim_2) = Self::compute_val_rv(
-            state_manager,
+            bytecode,
             opening_accumulator,
             ReadCheckingValType::Stage2,
             transcript,
         );
         let (val_3, rv_claim_3) = Self::compute_val_rv(
-            state_manager,
+            bytecode,
             opening_accumulator,
             ReadCheckingValType::Stage3,
             transcript,
         );
         let (val_4, rv_claim_4) = Self::compute_val_rv(
-            state_manager,
+            bytecode,
             opening_accumulator,
             ReadCheckingValType::Stage4,
             transcript,
         );
         let (val_5, rv_claim_5) = Self::compute_val_rv(
-            state_manager,
+            bytecode,
             opening_accumulator,
             ReadCheckingValType::Stage5,
             transcript,
@@ -747,7 +752,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             K,
             log_K,
             d,
-            log_T,
+            log_T: n_cycle_vars,
             val_polys,
             rv_claims,
             raf_claim,
@@ -758,7 +763,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     }
 
     fn compute_val_rv(
-        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
+        bytecode: &[Instruction],
         opening_accumulator: &dyn OpeningAccumulator<F>,
         val_type: ReadCheckingValType,
         transcript: &mut impl Transcript,
@@ -767,35 +772,35 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             ReadCheckingValType::Stage1 => {
                 let gamma_powers = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
                 (
-                    Self::compute_val_1(sm, &gamma_powers),
+                    Self::compute_val_1(bytecode, &gamma_powers),
                     Self::compute_rv_claim_1(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage2 => {
                 let gamma_powers = transcript.challenge_scalar_powers(4);
                 (
-                    Self::compute_val_2(sm, &gamma_powers),
+                    Self::compute_val_2(bytecode, &gamma_powers),
                     Self::compute_rv_claim_2(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage3 => {
                 let gamma_powers = transcript.challenge_scalar_powers(9);
                 (
-                    Self::compute_val_3(sm, &gamma_powers),
+                    Self::compute_val_3(bytecode, &gamma_powers),
                     Self::compute_rv_claim_3(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage4 => {
                 let gamma_powers = transcript.challenge_scalar_powers(3);
                 (
-                    Self::compute_val_4(sm, opening_accumulator, &gamma_powers),
+                    Self::compute_val_4(bytecode, opening_accumulator, &gamma_powers),
                     Self::compute_rv_claim_4(opening_accumulator, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage5 => {
                 let gamma_powers = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
                 (
-                    Self::compute_val_5(sm, opening_accumulator, &gamma_powers),
+                    Self::compute_val_5(bytecode, opening_accumulator, &gamma_powers),
                     Self::compute_rv_claim_5(opening_accumulator, &gamma_powers),
                 )
             }
@@ -806,11 +811,8 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ///    Val(k) = unexpanded_pc(k) + gamma * imm(k)
     ///             + gamma^2 * circuit_flags[0](k) + gamma^3 * circuit_flags[1](k) + ...
     /// This particular Val virtualizes claims output by Spartan's "outer" sumcheck
-    fn compute_val_1(
-        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
-        gamma_powers: &[F],
-    ) -> Vec<F> {
-        sm.get_bytecode()
+    fn compute_val_1(bytecode: &[Instruction], gamma_powers: &[F]) -> Vec<F> {
+        bytecode
             .par_iter()
             .map(|instruction| {
                 let NormalizedInstruction {
@@ -879,11 +881,8 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ///       rd_addr(k) is the rd address for instruction k;
     ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise.
     /// This Val matches the fused product sumcheck.
-    fn compute_val_2(
-        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
-        gamma_powers: &[F],
-    ) -> Vec<F> {
-        sm.get_bytecode()
+    fn compute_val_2(bytecode: &[Instruction], gamma_powers: &[F]) -> Vec<F> {
+        bytecode
             .par_iter()
             .map(|instruction| {
                 let flags = instruction.circuit_flags();
@@ -947,11 +946,8 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ///             + gamma^2 * left_operand_is_rs1_value(k)
     ///             + gamma^3 * left_operand_is_pc(k) + ...
     /// This particular Val virtualizes claims output by the ShiftSumcheck.
-    fn compute_val_3(
-        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
-        gamma_powers: &[F],
-    ) -> Vec<F> {
-        sm.get_bytecode()
+    fn compute_val_3(bytecode: &[Instruction], gamma_powers: &[F]) -> Vec<F> {
+        bytecode
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
@@ -1067,7 +1063,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     /// and analogously for rs1(k, k') and rs2(k, k').
     /// This particular Val virtualizes claims output by the registers read/write checking sumcheck.
     fn compute_val_4(
-        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
+        bytecode: &[Instruction],
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
     ) -> Vec<F> {
@@ -1082,7 +1078,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let eq_r_register = EqPolynomial::<F>::evals(r_register);
         debug_assert_eq!(eq_r_register.len(), REGISTER_COUNT as usize);
 
-        sm.get_bytecode()
+        bytecode
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
@@ -1125,7 +1121,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     /// This particular Val virtualizes the claim output by the registers val-evaluation sumcheck
     /// and the instruction lookups sumcheck.
     fn compute_val_5(
-        sm: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
+        bytecode: &[Instruction],
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
     ) -> Vec<F> {
@@ -1140,7 +1136,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let eq_r_register = EqPolynomial::evals(&r_register);
         debug_assert_eq!(eq_r_register.len(), REGISTER_COUNT as usize);
 
-        sm.get_bytecode()
+        bytecode
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();

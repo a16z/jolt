@@ -27,6 +27,7 @@ use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
     constraints::{
@@ -37,7 +38,6 @@ use crate::zkvm::r1cs::{
     inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
-use crate::zkvm::JoltSharedPreprocessing;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 
@@ -93,10 +93,8 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     ) -> Self {
         let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
-        let tau_low = &tau[0..tau.len() - 1];
-
         let extended =
-            Self::compute_univariate_skip_extended_evals(&preprocessing.shared, trace, tau_low);
+            Self::compute_univariate_skip_extended_evals(&preprocessing.bytecode, trace, tau);
 
         let instance = Self {
             tau: tau.to_vec(),
@@ -123,87 +121,56 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     /// \sum_{x_in'} eq(tau_in, (x_in', 0)) * Az(x_out, x_in', 0, y) * Bz(x_out, x_in', 0, y)
     ///     + eq(tau_in, (x_in', 1)) * Az(x_out, x_in', 1, y) * Bz(x_out, x_in', 1, y)
     fn compute_univariate_skip_extended_evals(
-        preprocess: &JoltSharedPreprocessing,
+        bytecode_preprocessing: &BytecodePreprocessing,
         trace: &[Cycle],
-        tau_low: &[F::Challenge],
+        tau: &[F::Challenge],
     ) -> [F; OUTER_UNIVARIATE_SKIP_DEGREE] {
-        let m = tau_low.len() / 2;
-        let (tau_out, tau_in) = tau_low.split_at(m);
-        // Compute the split eq polynomial, one scaled by R^2 in order to balance against
-        // Montgomery (not Barrett) reduction later on in 8-limb signed accumulation
-        // of e_in * (az * bz)
-        let (E_out, E_in) = rayon::join(
-            || EqPolynomial::evals_with_scaling(tau_out, Some(F::MONTGOMERY_R_SQUARE)),
-            || EqPolynomial::evals(tau_in),
+        // Build split-eq over full τ; new_with_scaling drops the last variable (τ_high) for the split,
+        // and we carry an outer scaling factor (R^2) via current_scalar.
+        let split_eq = GruenSplitEqPolynomial::<F>::new_with_scaling(
+            tau,
+            BindingOrder::LowToHigh,
+            Some(F::MONTGOMERY_R_SQUARE),
         );
+        let outer_scale = split_eq.get_current_scalar(); // = R^2 at this stage
 
-        let num_x_out_vals = E_out.len();
-        let num_x_in_vals = E_in.len();
-        assert!(
-            num_x_in_vals >= 2,
-            "univariate skip expects at least 2 x_in values (last bit is group index)"
-        );
-        // The last x_in bit is the group selector: even indices -> group 0, odd -> group 1
-        let num_x_in_half = num_x_in_vals >> 1;
+        let num_x_in_bits = split_eq.E_in_current_len().log_2();
+        let num_x_in_prime_bits = num_x_in_bits.saturating_sub(1); // ignore last bit (group index)
 
-        let num_parallel_chunks = core::cmp::min(
-            num_x_out_vals,
-            rayon::current_num_threads().next_power_of_two() * 8,
-        );
-        let x_out_chunk_size = if num_x_out_vals > 0 {
-            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
-        } else {
-            0
-        };
-        let iter_num_x_in_vars = num_x_in_vals.log_2();
-        let iter_num_x_in_prime_vars = iter_num_x_in_vars - 1; // ignore last bit (group index)
+        split_eq
+            .par_fold_out_in(
+                || [Acc8S::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
+                |inner, g, x_in, e_in| {
+                    // Decode (x_out, x_in') from g and choose group by the last x_in bit
+                    let x_out = g >> num_x_in_bits;
+                    let x_in_prime = x_in >> 1;
+                    let base_step_idx = (x_out << num_x_in_prime_bits) | x_in_prime;
 
-        (0..num_parallel_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let x_out_start = chunk_idx * x_out_chunk_size;
-                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let mut acc_unreduced: [F::Unreduced<9>; OUTER_UNIVARIATE_SKIP_DEGREE] =
-                    [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                        bytecode_preprocessing,
+                        trace,
+                        base_step_idx,
+                    );
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
 
-                for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [Acc8S<F>; OUTER_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
-                    for x_in_prime in 0..num_x_in_half {
-                        // Materialize row once for both groups (ignores last bit)
-                        let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, base_step_idx);
-
-                        // Group 0 (even index)
-                        let x_in_even = x_in_prime << 1;
-                        let e_in_even = E_in[x_in_even];
-
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                            let prod_s192 = eval.extended_azbz_product_first_group(j);
-                            inner_acc[j].fmadd(&e_in_even, &prod_s192);
-                        }
-
-                        // Group 1 (odd index) using same row inputs
-                        let x_in_odd = x_in_even + 1;
-                        let e_in_odd = E_in[x_in_odd];
-
-                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                            let prod_s192 = eval.extended_azbz_product_second_group(j);
-                            inner_acc[j].fmadd(&e_in_odd, &prod_s192);
-                        }
-                    }
-                    let e_out = E_out[x_out_val];
+                    let is_group1 = (x_in & 1) == 1;
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner_acc[j].montgomery_reduce();
-                        acc_unreduced[j] += e_out.mul_unreduced::<9>(reduced);
+                        let prod_s192 = if !is_group1 {
+                            eval.extended_azbz_product_first_group(j)
+                        } else {
+                            eval.extended_azbz_product_second_group(j)
+                        };
+                        inner[j].fmadd(&e_in, &prod_s192);
                     }
-                }
-                acc_unreduced
-            })
-            .reduce(
-                || [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
+                },
+                |_x_out, e_out, inner| {
+                    let mut out = [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                    for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
+                        let reduced = inner[j].montgomery_reduce();
+                        out[j] = e_out.mul_unreduced::<9>(reduced);
+                    }
+                    out
+                },
                 |mut a, b| {
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                         a[j] += b[j];
@@ -211,7 +178,7 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
                     a
                 },
             )
-            .map(F::from_montgomery_reduce::<9>)
+            .map(|x| F::from_montgomery_reduce::<9>(x) * outer_scale)
     }
 }
 
@@ -246,7 +213,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
 #[derive(Allocative)]
 pub struct OuterRemainingSumcheckProver<F: JoltField> {
     #[allocative(skip)]
-    preprocess: Arc<JoltSharedPreprocessing>,
+    bytecode_preprocessing: BytecodePreprocessing,
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
@@ -266,6 +233,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
         uni: &UniSkipState<F>,
     ) -> Self {
         let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let bytecode_preprocessing = preprocessing.bytecode.clone();
 
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
@@ -288,7 +256,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
             );
 
         let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
-            &preprocessing.shared,
+            &bytecode_preprocessing,
             trace,
             &lagrange_evals_r,
             &split_eq_poly,
@@ -296,8 +264,8 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
 
         Self {
             split_eq_poly,
-            preprocess: Arc::new(preprocessing.shared.clone()),
-            trace: Arc::new(trace.to_vec()),
+            bytecode_preprocessing,
+            trace: state_manager.get_trace_arc(),
             az: az_bound,
             bz: bz_bound,
             first_round_evals: (t0, t_inf),
@@ -332,7 +300,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     #[inline]
     fn compute_first_quadratic_evals_and_bound_polys(
-        preprocess: &JoltSharedPreprocessing,
+        bytecode_preprocessing: &BytecodePreprocessing,
         trace: &[Cycle],
         lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
@@ -361,8 +329,11 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                     let mut inner_sum_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            bytecode_preprocessing,
+                            trace,
+                            current_step_idx,
+                        );
                         let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
                         let az0 = eval.az_at_r_first_group(lagrange_evals_r);
                         let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
@@ -419,72 +390,18 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     /// (ordering of indices is MSB to LSB, so x_out is the MSB and x_in is the LSB)
     #[inline]
     fn remaining_quadratic_evals(&self) -> (F, F) {
-        let eq_poly = &self.split_eq_poly;
-
         let n = self.az.len();
         debug_assert_eq!(n, self.bz.len());
-        if eq_poly.E_in_current_len() == 1 {
-            // groups are pairs (0,1)
-            let groups = n / 2;
-            let (t0_unr, tinf_unr) = (0..groups)
-                .into_par_iter()
-                .map(|g| {
-                    let az0 = self.az[2 * g];
-                    let az1 = self.az[2 * g + 1];
-                    let bz0 = self.bz[2 * g];
-                    let bz1 = self.bz[2 * g + 1];
-                    let eq = eq_poly.E_out_current()[g];
-                    let p0 = az0 * bz0;
-                    let slope = (az1 - az0) * (bz1 - bz0);
-                    let t0_unr = eq.mul_unreduced::<9>(p0);
-                    let tinf_unr = eq.mul_unreduced::<9>(slope);
-                    (t0_unr, tinf_unr)
-                })
-                .reduce(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |a, b| (a.0 + b.0, a.1 + b.1),
-                );
-            (
-                F::from_montgomery_reduce::<9>(t0_unr),
-                F::from_montgomery_reduce::<9>(tinf_unr),
-            )
-        } else {
-            let num_x1_bits = eq_poly.E_in_current_len().log_2();
-            let x1_len = eq_poly.E_in_current_len();
-            let x2_len = eq_poly.E_out_current_len();
-            let (sum0_unr, suminf_unr) = (0..x2_len)
-                .into_par_iter()
-                .map(|x2| {
-                    let mut inner0_unr = F::Unreduced::<9>::zero();
-                    let mut inner_inf_unr = F::Unreduced::<9>::zero();
-                    for x1 in 0..x1_len {
-                        let g = (x2 << num_x1_bits) | x1;
-                        let az0 = self.az[2 * g];
-                        let az1 = self.az[2 * g + 1];
-                        let bz0 = self.bz[2 * g];
-                        let bz1 = self.bz[2 * g + 1];
-                        let e_in = eq_poly.E_in_current()[x1];
-                        let p0 = az0 * bz0;
-                        let slope = (az1 - az0) * (bz1 - bz0);
-                        inner0_unr += e_in.mul_unreduced::<9>(p0);
-                        inner_inf_unr += e_in.mul_unreduced::<9>(slope);
-                    }
-                    let e_out = eq_poly.E_out_current()[x2];
-                    let inner0_red = F::from_montgomery_reduce::<9>(inner0_unr);
-                    let inner_inf_red = F::from_montgomery_reduce::<9>(inner_inf_unr);
-                    let t0_unr = e_out.mul_unreduced::<9>(inner0_red);
-                    let tinf_unr = e_out.mul_unreduced::<9>(inner_inf_red);
-                    (t0_unr, tinf_unr)
-                })
-                .reduce(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |a, b| (a.0 + b.0, a.1 + b.1),
-                );
-            (
-                F::from_montgomery_reduce::<9>(sum0_unr),
-                F::from_montgomery_reduce::<9>(suminf_unr),
-            )
-        }
+        let [t0, tinf] = self.split_eq_poly.par_fold_out_in_unreduced::<9, 2>(&|g| {
+            let az0 = self.az[2 * g];
+            let az1 = self.az[2 * g + 1];
+            let bz0 = self.bz[2 * g];
+            let bz1 = self.bz[2 * g + 1];
+            let p0 = az0 * bz0;
+            let slope = (az1 - az0) * (bz1 - bz0);
+            [p0, slope]
+        });
+        (t0, tinf)
     }
 
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
@@ -572,7 +489,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
 
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let claimed_witness_evals =
-            R1CSEval::compute_claimed_inputs(&self.preprocess, &self.trace, r_cycle);
+            R1CSEval::compute_claimed_inputs(&self.bytecode_preprocessing, &self.trace, r_cycle);
 
         #[cfg(test)]
         {

@@ -21,7 +21,6 @@ pub struct DensePolynomial<F: JoltField> {
     pub num_vars: usize, // the number of variables in the multilinear polynomial
     pub len: usize,
     pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
-    binding_scratch_space: Option<Vec<F>>,
 }
 
 impl<F: JoltField> DensePolynomial<F> {
@@ -36,7 +35,6 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars: Z.len().log_2(),
             len: Z.len(),
             Z,
-            binding_scratch_space: None,
         }
     }
 
@@ -51,7 +49,6 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars: poly_evals.len().log_2(),
             len: poly_evals.len(),
             Z: poly_evals,
-            binding_scratch_space: None,
         }
     }
 
@@ -158,7 +155,6 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars,
             len,
             Z: new_evals,
-            binding_scratch_space: None,
         }
     }
 
@@ -199,7 +195,6 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars,
             len,
             Z: new_evals,
-            binding_scratch_space: None,
         }
     }
 
@@ -217,31 +212,22 @@ impl<F: JoltField> DensePolynomial<F> {
 
     pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F::Challenge) {
         let n = self.len() / 2;
-
-        if self.binding_scratch_space.is_none() {
-            self.binding_scratch_space = Some(unsafe_allocate_zero_vec(n));
-        }
-
-        let scratch_space = self.binding_scratch_space.as_mut().unwrap();
-
-        scratch_space
-            .par_iter_mut()
-            .with_min_len(4096)
-            .take(n)
-            .enumerate()
-            .for_each(|(i, z)| {
-                let m = self.Z[2 * i + 1] - self.Z[2 * i];
-                *z = if m.is_zero() {
-                    self.Z[2 * i]
+        let mut bound_Z = Vec::with_capacity(n);
+        (bound_Z.spare_capacity_mut(), self.Z.par_chunks_exact(2))
+            .into_par_iter()
+            .with_min_len(512)
+            .for_each(|(bound_coeff, coeffs)| {
+                let m = coeffs[1] - coeffs[0];
+                bound_coeff.write(if m.is_zero() {
+                    coeffs[0]
                 } else if m.is_one() {
-                    self.Z[2 * i] + r
+                    coeffs[0] + *r
                 } else {
-                    self.Z[2 * i] + *r * m
-                }
+                    coeffs[0] + *r * m
+                });
             });
-
-        std::mem::swap(&mut self.Z, scratch_space);
-
+        unsafe { bound_Z.set_len(n) };
+        self.Z = bound_Z;
         self.num_vars -= 1;
         self.len = n;
     }

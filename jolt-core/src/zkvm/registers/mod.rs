@@ -3,23 +3,15 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
-    subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
-    },
+    subprotocols::sumcheck_prover::SumcheckInstanceProver,
     transcripts::Transcript,
     zkvm::{
-        dag::{
-            stage::{SumcheckStagesProver, SumcheckStagesVerifier},
-            state_manager::StateManager,
-        },
+        dag::{stage::SumcheckStagesProver, state_manager::StateManager},
         registers::{
-            read_write_checking::{
-                RegistersReadWriteCheckingProver, RegistersReadWriteCheckingVerifier,
-            },
-            val_evaluation::{ValEvaluationSumcheckProver, ValEvaluationSumcheckVerifier},
+            read_write_checking::RegistersReadWriteCheckingProver,
+            val_evaluation::ValEvaluationSumcheckProver,
         },
     },
 };
@@ -57,33 +49,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let val_evaluation = ValEvaluationSumcheckProver::gen(state_manager, opening_accumulator);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("registers ValEvaluationSumcheck", &val_evaluation);
-        vec![Box::new(val_evaluation)]
-    }
-}
-
-pub struct RegistersDagVerifier;
-
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStagesVerifier<F, ProofTranscript, PCS> for RegistersDagVerifier
-{
-    fn stage4_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        let read_write_checking =
-            RegistersReadWriteCheckingVerifier::new(state_manager, opening_accumulator, transcript);
-        vec![Box::new(read_write_checking)]
-    }
-
-    fn stage5_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        let val_evaluation = ValEvaluationSumcheckVerifier::new(state_manager);
         vec![Box::new(val_evaluation)]
     }
 }

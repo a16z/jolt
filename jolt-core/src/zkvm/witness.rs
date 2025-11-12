@@ -199,8 +199,8 @@ impl CommittedPolynomial {
         match self {
             CommittedPolynomial::InstructionRa(_) => Some(instruction_lookups::K_CHUNK),
             CommittedPolynomial::BytecodeRa(_) => {
-                let d = preprocessing.shared.bytecode.d;
-                let log_K = preprocessing.shared.bytecode.code_size.log_2();
+                let d = preprocessing.bytecode.d;
+                let log_K = preprocessing.bytecode.code_size.log_2();
                 Some(1 << log_K.div_ceil(d))
             }
             CommittedPolynomial::RamRa(_) => Some(DTH_ROOT_OF_K),
@@ -258,15 +258,15 @@ impl CommittedPolynomial {
                 PCS::compute_tier1_commitment_onehot(setup, instruction_lookups::K_CHUNK, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
-                let d = preprocessing.shared.bytecode.d;
-                let log_K = preprocessing.shared.bytecode.code_size.log_2();
+                let d = preprocessing.bytecode.d;
+                let log_K = preprocessing.bytecode.code_size.log_2();
                 let log_K_chunk = log_K.div_ceil(d);
                 let K_chunk = 1 << log_K_chunk;
 
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let pc = preprocessing.shared.bytecode.get_pc(cycle);
+                        let pc = preprocessing.bytecode.get_pc(cycle);
                         Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
                     })
                     .collect();
@@ -278,7 +278,7 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
-                            &preprocessing.shared.memory_layout,
+                            &preprocessing.memory_layout,
                         )
                         .map(|address| {
                             (address as usize >> (DTH_ROOT_OF_K.log_2() * (ram_d - 1 - idx)))
@@ -391,7 +391,7 @@ impl CommittedPolynomial {
 
                 // BytecodeRa indices
                 if let Some(dth_root_log) = dth_root_log {
-                    let pc = preprocessing.shared.bytecode.get_pc(cycle);
+                    let pc = preprocessing.bytecode.get_pc(cycle);
 
                     for j in 0..bytecode_d {
                         let index = (pc >> (dth_root_log * (bytecode_d - 1 - j))) % DTH_ROOT_OF_K;
@@ -403,7 +403,7 @@ impl CommittedPolynomial {
                 if let Some(dth_log) = dth_root_log {
                     let address_opt = remap_address(
                         cycle.ram_access().address() as u64,
-                        &preprocessing.shared.memory_layout,
+                        &preprocessing.memory_layout,
                     );
 
                     for j in 0..ram_d {
@@ -476,14 +476,14 @@ impl CommittedPolynomial {
     {
         match self {
             CommittedPolynomial::BytecodeRa(i) => {
-                let d = preprocessing.shared.bytecode.d;
+                let d = preprocessing.bytecode.d;
                 if *i > d {
                     panic!("Invalid index for bytecode ra: {i}");
                 }
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let pc = preprocessing.shared.bytecode.get_pc(cycle);
+                        let pc = preprocessing.bytecode.get_pc(cycle);
                         Some(((pc >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i))) % DTH_ROOT_OF_K) as u8)
                     })
                     .collect();
@@ -501,7 +501,7 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
-                            &preprocessing.shared.memory_layout,
+                            &preprocessing.memory_layout,
                         )
                         .map(|address| {
                             ((address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))

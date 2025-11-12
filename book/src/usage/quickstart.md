@@ -72,6 +72,19 @@ cargo run --release
 
 This will compile the guest, perform some required preprocessing, and execute the host code which proves and verifies the 50th Fibonacci number. This preprocessing is run within the `build_fib` function and adds significant time to running the host, but only needs to be performed once. This means that we could use the prove method many times without rerunning `build_fib`. In the future we will support caching this across runs of the host.
 
+Note that many logs in the example are logged at the `info` level. To see these logs, you can set the `RUST_LOG` environment variable before running the host:
+```
+RUST_LOG=info cargo run --release
+```
+
+If everything is working correctly, you should see output similar to the following:
+```
+...
+2025-11-05T22:17:43.849979Z  INFO jolt_core::zkvm: Proved in 2.6s (0.4 kHz / padded 0.8 kHz)
+2025-11-05T22:17:43.923164Z  INFO example: output: 12586269025
+2025-11-05T22:17:43.923300Z  INFO example: valid: true
+```
+
 ## Development
 
 ### Rust

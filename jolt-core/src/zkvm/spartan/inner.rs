@@ -182,19 +182,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InnerSumcheck
 ///     where `segment_evals` are the cached witness openings at `r_cycle` from the outer stage.
 ///
 /// Then `expected = (eval_a + γ·eval_b) · eval_z`, and accept iff output_claim == expected.
-pub struct InnerSumcheckVerifier<F: JoltField> {
+pub struct InnerSumcheckVerifier<'a, F: JoltField> {
     params: InnerSumcheckParams<F>,
-    key: Arc<UniformSpartanKey<F>>,
+    key: &'a UniformSpartanKey<F>,
 }
 
-impl<F: JoltField> InnerSumcheckVerifier<F> {
-    pub fn new(key: Arc<UniformSpartanKey<F>>, transcript: &mut impl Transcript) -> Self {
+impl<'a, F: JoltField> InnerSumcheckVerifier<'a, F> {
+    pub fn new(key: &'a UniformSpartanKey<F>, transcript: &mut impl Transcript) -> Self {
         let params = InnerSumcheckParams::new(transcript);
         Self { params, key }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for InnerSumcheckVerifier<F> {
+impl<'a, F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for InnerSumcheckVerifier<'a, F>
+{
     fn degree(&self) -> usize {
         DEGREE_BOUND
     }

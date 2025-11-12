@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(memory_size = 32768, max_trace_length = 65536)]
 fn fib(n: u32) -> u128 {
     let mut a: u128 = 0;
     let mut b: u128 = 1;

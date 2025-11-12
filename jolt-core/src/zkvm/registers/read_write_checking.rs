@@ -118,10 +118,14 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params =
-            RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
-
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+
+        let params = RegistersReadWriteCheckingParams::new(
+            state_manager.twist_sumcheck_switch_index,
+            trace.len().log_2(),
+            opening_accumulator,
+            transcript,
+        );
 
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -514,10 +518,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                     let mut eval_at_0_for_stage_3 = F::Unreduced::<9>::zero();
                     let mut eval_at_inf_for_stage_3 = F::Unreduced::<9>::zero();
 
-                    let mut eval_at_0_for_current_stage_1 = F::zero();
-                    let mut eval_at_inf_for_current_stage_1 = F::zero();
-                    let mut eval_at_0_for_current_stage_3 = F::zero();
-                    let mut eval_at_inf_for_current_stage_3 = F::zero();
+                    let mut eval_at_0_for_current_stage_1 = F::Unreduced::<9>::zero();
+                    let mut eval_at_inf_for_current_stage_1 = F::Unreduced::<9>::zero();
+                    let mut eval_at_0_for_current_stage_3 = F::Unreduced::<9>::zero();
+                    let mut eval_at_inf_for_current_stage_3 = F::Unreduced::<9>::zero();
 
                     let mut x_out_prev: Option<usize> = None;
 
@@ -636,19 +640,31 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                                     let E_out_stage_3_eval =
                                         gruen_eq_r_cycle_stage_3.E_out_current()[x];
 
-                                    eval_at_0_for_stage_1 += eval_at_0_for_current_stage_1
-                                        .mul_unreduced::<9>(E_out_stage_1_eval);
-                                    eval_at_inf_for_stage_1 += eval_at_inf_for_current_stage_1
-                                        .mul_unreduced::<9>(E_out_stage_1_eval);
-                                    eval_at_0_for_stage_3 += eval_at_0_for_current_stage_3
-                                        .mul_unreduced::<9>(E_out_stage_3_eval);
-                                    eval_at_inf_for_stage_3 += eval_at_inf_for_current_stage_3
-                                        .mul_unreduced::<9>(E_out_stage_3_eval);
+                                    let red0_s1 = F::from_montgomery_reduce::<9>(
+                                        eval_at_0_for_current_stage_1,
+                                    );
+                                    let redi_s1 = F::from_montgomery_reduce::<9>(
+                                        eval_at_inf_for_current_stage_1,
+                                    );
+                                    let red0_s3 = F::from_montgomery_reduce::<9>(
+                                        eval_at_0_for_current_stage_3,
+                                    );
+                                    let redi_s3 = F::from_montgomery_reduce::<9>(
+                                        eval_at_inf_for_current_stage_3,
+                                    );
+                                    eval_at_0_for_stage_1 +=
+                                        E_out_stage_1_eval.mul_unreduced::<9>(red0_s1);
+                                    eval_at_inf_for_stage_1 +=
+                                        E_out_stage_1_eval.mul_unreduced::<9>(redi_s1);
+                                    eval_at_0_for_stage_3 +=
+                                        E_out_stage_3_eval.mul_unreduced::<9>(red0_s3);
+                                    eval_at_inf_for_stage_3 +=
+                                        E_out_stage_3_eval.mul_unreduced::<9>(redi_s3);
 
-                                    eval_at_0_for_current_stage_1 = F::zero();
-                                    eval_at_inf_for_current_stage_1 = F::zero();
-                                    eval_at_0_for_current_stage_3 = F::zero();
-                                    eval_at_inf_for_current_stage_3 = F::zero();
+                                    eval_at_0_for_current_stage_1 = F::Unreduced::<9>::zero();
+                                    eval_at_inf_for_current_stage_1 = F::Unreduced::<9>::zero();
+                                    eval_at_0_for_current_stage_3 = F::Unreduced::<9>::zero();
+                                    eval_at_inf_for_current_stage_3 = F::Unreduced::<9>::zero();
                                 }
                                 _ => (),
                             }
@@ -710,13 +726,17 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                                 rs1_inner_sum_evals[1] + params.gamma * rs2_inner_sum_evals[1],
                             ];
 
-                            eval_at_0_for_current_stage_1 += E_in_stage_1_eval
-                                * (rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0]);
+                            eval_at_0_for_current_stage_1 += E_in_stage_1_eval.mul_unreduced::<9>(
+                                rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0],
+                            );
                             eval_at_inf_for_current_stage_1 += E_in_stage_1_eval
-                                * (rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1]);
-                            eval_at_0_for_current_stage_3 += E_in_stage_3_eval * read_vals_evals[0];
+                                .mul_unreduced::<9>(
+                                    rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1],
+                                );
+                            eval_at_0_for_current_stage_3 +=
+                                E_in_stage_3_eval.mul_unreduced::<9>(read_vals_evals[0]);
                             eval_at_inf_for_current_stage_3 +=
-                                E_in_stage_3_eval * read_vals_evals[1];
+                                E_in_stage_3_eval.mul_unreduced::<9>(read_vals_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
@@ -724,14 +744,16 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                     if let Some(x) = x_out_prev {
                         let E_out_stage_1_eval = gruen_eq_r_cycle_stage_1.E_out_current()[x];
                         let E_out_stage_3_eval = gruen_eq_r_cycle_stage_3.E_out_current()[x];
-                        eval_at_0_for_stage_1 +=
-                            E_out_stage_1_eval.mul_unreduced::<9>(eval_at_0_for_current_stage_1);
-                        eval_at_inf_for_stage_1 +=
-                            E_out_stage_1_eval.mul_unreduced::<9>(eval_at_inf_for_current_stage_1);
-                        eval_at_0_for_stage_3 +=
-                            E_out_stage_3_eval.mul_unreduced::<9>(eval_at_0_for_current_stage_3);
-                        eval_at_inf_for_stage_3 +=
-                            E_out_stage_3_eval.mul_unreduced::<9>(eval_at_inf_for_current_stage_3);
+                        let red0_s1 = F::from_montgomery_reduce::<9>(eval_at_0_for_current_stage_1);
+                        let redi_s1 =
+                            F::from_montgomery_reduce::<9>(eval_at_inf_for_current_stage_1);
+                        let red0_s3 = F::from_montgomery_reduce::<9>(eval_at_0_for_current_stage_3);
+                        let redi_s3 =
+                            F::from_montgomery_reduce::<9>(eval_at_inf_for_current_stage_3);
+                        eval_at_0_for_stage_1 += E_out_stage_1_eval.mul_unreduced::<9>(red0_s1);
+                        eval_at_inf_for_stage_1 += E_out_stage_1_eval.mul_unreduced::<9>(redi_s1);
+                        eval_at_0_for_stage_3 += E_out_stage_3_eval.mul_unreduced::<9>(red0_s3);
+                        eval_at_inf_for_stage_3 += E_out_stage_3_eval.mul_unreduced::<9>(redi_s3);
                     }
                     [
                         eval_at_0_for_stage_1,
@@ -1232,17 +1254,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eq_r_cycle_stage_1 = eq_r_cycle_stage_1.as_mut().unwrap();
         let eq_r_cycle_stage_3 = eq_r_cycle_stage_3.as_mut().unwrap();
 
-        [
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
-            inc_cycle,
-            eq_r_cycle_stage_1,
-            eq_r_cycle_stage_3,
-        ]
-        .into_par_iter()
-        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+        rs1_ra.bind_parallel(r_j, BindingOrder::HighToLow);
+        rs2_ra.bind_parallel(r_j, BindingOrder::HighToLow);
+        rd_wa.bind_parallel(r_j, BindingOrder::HighToLow);
+        val.bind_parallel(r_j, BindingOrder::HighToLow);
+        inc_cycle.bind_parallel(r_j, BindingOrder::HighToLow);
+        eq_r_cycle_stage_1.bind_parallel(r_j, BindingOrder::HighToLow);
+        eq_r_cycle_stage_3.bind_parallel(r_j, BindingOrder::HighToLow);
     }
 
     fn phase3_bind(&mut self, r_j: F::Challenge) {
@@ -1388,12 +1406,17 @@ pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        twist_sumcheck_switch_index: usize,
+        n_cycle_vars: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params =
-            RegistersReadWriteCheckingParams::new(state_manager, opening_accumulator, transcript);
+        let params = RegistersReadWriteCheckingParams::new(
+            twist_sumcheck_switch_index,
+            n_cycle_vars,
+            opening_accumulator,
+            transcript,
+        );
         Self { params }
     }
 }
@@ -1502,7 +1525,7 @@ struct RegistersReadWriteCheckingParams<F: JoltField> {
     gamma: F,
     /// Equals `gamma^3`.
     gamma_cub: F,
-    sumcheck_switch_index: usize,
+    twist_sumcheck_switch_index: usize,
     n_cycle_vars: usize, // = log(T)
     r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
     r_cycle_stage_3: OpeningPoint<BIG_ENDIAN, F>,
@@ -1510,26 +1533,23 @@ struct RegistersReadWriteCheckingParams<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        twist_sumcheck_switch_index: usize,
+        n_cycle_vars: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_cub = gamma.square() * gamma;
-        let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
-        let n_cycle_vars = state_manager.get_trace_len().log_2();
-
         let (r_cycle_stage_1, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
         let (r_cycle_stage_3, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
         );
-
         Self {
             gamma,
             gamma_cub,
-            sumcheck_switch_index,
+            twist_sumcheck_switch_index,
             n_cycle_vars,
             r_cycle_stage_1,
             r_cycle_stage_3,
@@ -1569,7 +1589,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let sumcheck_switch_index = self.sumcheck_switch_index;
+        let sumcheck_switch_index = self.twist_sumcheck_switch_index;
         let n_cycle_vars = self.n_cycle_vars;
         // The high-order cycle variables are bound after the switch
         let mut r_cycle = sumcheck_challenges[sumcheck_switch_index..n_cycle_vars].to_vec();
