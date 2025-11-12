@@ -39,7 +39,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
-        let setup = ArkworksProverSetup::new(&mut OsRng, max_num_vars);
+        let setup = ArkworksProverSetup::new_from_urs(&mut OsRng, max_num_vars);
 
         // Initialize the prepared point cache for faster multi-pairings
         // Skips cache initialization during tests to avoid shared state issues
