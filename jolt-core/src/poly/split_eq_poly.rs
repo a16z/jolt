@@ -313,61 +313,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    /// Emulates the behavior of EqPolynomial::evals(&self.w).par_iter().enumerate()
-    /// Only works if `self.binding_order` is `BindingOrder::LowToHigh`.
-    /// For the high-to-low version, see `par_iter_high_to_low`.
-    pub fn par_iter_low_to_high(&self) -> impl ParallelIterator<Item = (usize, F)> + use<'_, F> {
-        assert_eq!(self.binding_order, BindingOrder::LowToHigh);
-        assert_eq!(
-            self.current_index,
-            self.w.len(),
-            "par_iter_low_to_high only supports unbound polynomials"
-        );
-
-        let E_in = self.E_in_current();
-        let x_in_bits = E_in.len().log_2();
-        let E_out = self.E_out_current();
-        let w_current = self.get_current_w();
-        E_out.par_iter().enumerate().flat_map(move |(x_out, high)| {
-            E_in.par_iter().enumerate().flat_map(move |(x_in, low)| {
-                let high_low = *high * low;
-                let eval_1 = high_low * w_current;
-                let eval_0 = high_low - eval_1;
-                let index = (x_out << (x_in_bits + 1)) + (x_in << 1);
-                [(index, eval_0), (index + 1, eval_1)]
-            })
-        })
-    }
-
-    /// Emulates the behavior of EqPolynomial::evals(&self.w).par_iter().enumerate()
-    /// Only works if `self.binding_order` is `BindingOrder::HighToLow`.
-    /// For the low-to-high version, see `par_iter_low_to_high`.
-    pub fn par_iter_high_to_low(&self) -> impl ParallelIterator<Item = (usize, F)> + use<'_, F> {
-        assert_eq!(self.binding_order, BindingOrder::HighToLow);
-        assert_eq!(
-            self.current_index, 0,
-            "par_iter_high_to_low only supports unbound polynomials"
-        );
-
-        let E_in = self.E_in_current();
-        let x_in_bits = E_in.len().log_2();
-        let E_out = self.E_out_current();
-        let x_out_bits = E_out.len().log_2();
-        let w_current = self.get_current_w();
-        [F::one() - w_current, w_current.into()]
-            .into_par_iter()
-            .enumerate()
-            .flat_map(move |(msb, eq_msb)| {
-                E_in.par_iter().enumerate().flat_map(move |(x_in, high)| {
-                    E_out.par_iter().enumerate().map(move |(x_out, low)| {
-                        let index =
-                            (msb << (x_in_bits + x_out_bits)) + (x_in << x_out_bits) + x_out;
-                        (index, eq_msb * high * low)
-                    })
-                })
-            })
-    }
-
     #[inline(always)]
     pub fn group_index(&self, x_out: usize, x_in: usize) -> usize {
         let num_x_in_bits = self.E_in_current_len().log_2();
@@ -518,50 +463,5 @@ mod tests {
 
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
-    }
-
-    #[test]
-    fn par_iter_low_to_high() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
-
-        let split_eq: GruenSplitEqPolynomial<Fr> =
-            GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
-        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
-        let indices: Vec<_> = split_eq.par_iter_low_to_high().map(|(i, _)| i).collect();
-        let coeffs: Vec<_> = split_eq
-            .par_iter_low_to_high()
-            .map(|(_, coeff)| coeff)
-            .collect();
-
-        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
-        assert_eq!(regular_eq.Z, coeffs);
-    }
-
-    #[test]
-    fn par_iter_high_to_low() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
-
-        let split_eq: GruenSplitEqPolynomial<Fr> =
-            GruenSplitEqPolynomial::new(&w, BindingOrder::HighToLow);
-        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
-
-        let indices: Vec<_> = split_eq.par_iter_high_to_low().map(|(i, _)| i).collect();
-        let coeffs: Vec<_> = split_eq
-            .par_iter_high_to_low()
-            .map(|(_, coeff)| coeff)
-            .collect();
-
-        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
-        assert_eq!(regular_eq.Z, coeffs);
     }
 }
