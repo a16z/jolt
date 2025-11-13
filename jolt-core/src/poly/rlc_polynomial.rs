@@ -108,6 +108,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         // In test mode, disable streaming to check joint commitment consistency with fully materialized RLC poly.
         #[cfg(test)]
         {
+            use crate::utils::small_scalar::SmallScalar;
             let mut result = RLCPolynomial::<F>::new();
             let dense_indices: Vec<usize> = polynomials
                 .iter()
