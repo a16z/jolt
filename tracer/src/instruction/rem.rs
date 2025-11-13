@@ -118,9 +118,7 @@ impl RISCVTrace for REM {
         let a2 = allocator.allocate(); // quotient from oracle
         let a3 = allocator.allocate(); // |remainder| from oracle
         let t0 = allocator.allocate(); // adjusted divisor
-        let t1 = allocator.allocate(); // temporary (MULH result, then reused)
-        let t2 = allocator.allocate(); // temporary (MUL result, then reused)
-        let t3 = allocator.allocate(); // temporary (sign extend, then signed remainder)
+        let t1 = allocator.allocate(); // temporary
 
         let shmat = match xlen {
             Xlen::Bit32 => 31,
@@ -138,6 +136,10 @@ impl RISCVTrace for REM {
 
         // Verify no overflow: quotient × divisor must not overflow
         asm.emit_r::<MULH>(*t1, *a2, *t0); // High bits of multiplication
+
+        let t2 = allocator.allocate();
+        let t3 = allocator.allocate();
+
         asm.emit_r::<MUL>(*t2, *a2, *t0); // quotient × adjusted_divisor
         asm.emit_i::<SRAI>(*t3, *t2, shmat); // Sign-extend low bits
         asm.emit_b::<VirtualAssertEQ>(*t1, *t3, 0); // Assert no overflow

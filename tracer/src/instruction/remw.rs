@@ -1,5 +1,4 @@
 use crate::instruction::addw::ADDW;
-use crate::instruction::mul::MUL;
 use crate::instruction::srai::SRAI;
 use crate::instruction::sub::SUB;
 use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
@@ -98,7 +97,7 @@ impl RISCVTrace for REMW {
     /// 1. Sign-extend inputs to proper 32-bit signed values
     /// 2. Receive untrusted quotient and |remainder| from oracle
     /// 3. Handle special cases (div-by-zero returns dividend, overflow returns 0)
-    /// 4. Verify quotient × divisor doesn't overflow 32 bits (MULW vs MUL comparison)
+    /// 4. Verify quotient fits in 32 bits (sign-extend check prevents forgery)
     /// 5. Apply sign of dividend to remainder
     /// 6. Verify: dividend = quotient × divisor + remainder (in 32-bit space)
     /// 7. Verify: |remainder| < |divisor|
@@ -138,10 +137,12 @@ impl RISCVTrace for REMW {
         asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0); // Check div-by-zero
         asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3); // Adjust for overflow
 
-        // Verify no 32-bit overflow: MULW and MUL must match
+        // Verify quotient fits in 32 bits: sign-extending must yield same value
+        asm.emit_i::<VirtualSignExtendWord>(*t1, *a2, 0); // Sign-extend quotient to 64-bit
+        asm.emit_b::<VirtualAssertEQ>(*t1, *a2, 0); // Assert quotient was valid 32-bit
+
+        // Compute quotient × divisor for verification
         asm.emit_r::<MULW>(*t1, *a2, *t0); // 32-bit multiply, sign-extended
-        asm.emit_r::<MUL>(*t2, *a2, *t0); // Full 64-bit multiply
-        asm.emit_b::<VirtualAssertEQ>(*t1, *t2, 0); // Assert no overflow
 
         // Apply sign of dividend to remainder (RISC-V: sign(remainder) = sign(dividend))
         asm.emit_i::<SRAI>(*t2, *t4, 31); // Sign bit of 32-bit dividend
