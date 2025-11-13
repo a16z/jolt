@@ -19,6 +19,7 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
+        unipoly::UniPoly,
     },
     subprotocols::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
@@ -121,12 +122,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "RamRafEvaluationSumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        (0..self.ra.len() / 2)
+    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        let evals = (0..self.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let ra_evals = self
@@ -146,13 +144,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
                 || [F::Unreduced::zero(); DEGREE_BOUND],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             )
-            .into_iter()
-            .map(F::from_montgomery_reduce)
-            .collect()
+            .map(F::from_montgomery_reduce);
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
-    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.ra.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.unmap.bind_parallel(r_j, BindingOrder::LowToHigh);
     }

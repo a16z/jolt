@@ -457,24 +457,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         self.params.input_claim
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "ProductVirtualRemainderProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let (t0, t_inf) = if round == 0 {
             self.first_round_evals
         } else {
             self.remaining_quadratic_evals()
         };
-        let evals = self
-            .split_eq_poly
-            .gruen_evals_deg_3(t0, t_inf, previous_claim);
-        vec![evals[0], evals[1], evals[2]]
+        self.split_eq_poly
+            .gruen_poly_deg_3(t0, t_inf, previous_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         rayon::join(
             || self.left.bind_parallel(r_j, BindingOrder::LowToHigh),
             || self.right.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -702,11 +697,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtua
         self.params.input_claim(accumulator)
     }
 
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        Vec::new()
+    fn compute_message(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
+        UniPoly::zero()
     }
 
-    fn bind(&mut self, _r_j: F::Challenge, _round: usize) {}
+    fn ingest_challenge(&mut self, _r_j: F::Challenge, _round: usize) {}
 
     fn cache_openings(
         &self,

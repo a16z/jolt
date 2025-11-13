@@ -7,6 +7,7 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, P
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningId, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
 };
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -103,8 +104,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InnerSumcheck
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "InnerSumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "InnerSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let univariate_poly_evals: [F; DEGREE_BOUND] = (0..self.poly_abc_small.len() / 2)
             .into_par_iter()
             .map(|i| {
@@ -130,11 +131,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InnerSumcheck
                 },
             );
 
-        univariate_poly_evals.into()
+        UniPoly::from_evals_and_hint(previous_claim, &univariate_poly_evals)
     }
 
-    #[tracing::instrument(skip_all, name = "InnerSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "InnerSumcheckProver::inject_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         // Bind both polynomials in parallel
         self.poly_abc_small
             .bind_parallel(r_j, BindingOrder::LowToHigh);

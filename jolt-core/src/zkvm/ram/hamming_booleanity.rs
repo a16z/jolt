@@ -6,6 +6,7 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -78,11 +79,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         F::zero()
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "RamHammingBooleanitySumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let eq = &self.eq_r_cycle;
         let H = &self.H;
 
@@ -93,11 +91,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             let delta = h1 - h0;
             [h0.square() - h0, delta.square()]
         });
-        eq.gruen_evals_deg_3(c0, e, previous_claim).to_vec()
+        eq.gruen_poly_deg_3(c0, e, previous_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(
+        skip_all,
+        name = "RamHammingBooleanitySumcheckProver::ingest_challenge"
+    )]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.eq_r_cycle.bind(r_j);
         self.H.bind_parallel(r_j, BindingOrder::LowToHigh);
     }

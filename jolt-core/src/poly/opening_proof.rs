@@ -31,7 +31,10 @@ use super::{
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
-    poly::one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
+    poly::{
+        one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
+        unipoly::UniPoly,
+    },
     subprotocols::{
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
@@ -213,11 +216,8 @@ pub struct DensePolynomialProverOpening<F: JoltField> {
 }
 
 impl<F: JoltField> DensePolynomialProverOpening<F> {
-    #[tracing::instrument(
-        skip_all,
-        name = "DensePolynomialProverOpening::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let shared_eq = self.eq_poly.read().unwrap();
         let polynomial_ref = self.polynomial.as_ref().unwrap();
         let polynomial = &polynomial_ref.read().unwrap().poly;
@@ -230,9 +230,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
             [polynomial.get_bound_coeff(2 * g)]
         });
 
-        let gruen_univariate_evals = gruen_eq.gruen_evals_deg_2(q_0, previous_claim);
-
-        vec![gruen_univariate_evals[0], gruen_univariate_evals[1]]
+        gruen_eq.gruen_poly_deg_2(q_0, previous_claim)
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
@@ -400,14 +398,14 @@ where
         self.input_claim
     }
 
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         match &mut self.prover_state {
-            ProverOpening::Dense(opening) => opening.compute_prover_message(round, previous_claim),
-            ProverOpening::OneHot(opening) => opening.compute_prover_message(round, previous_claim),
+            ProverOpening::Dense(opening) => opening.compute_message(round, previous_claim),
+            ProverOpening::OneHot(opening) => opening.compute_message(round, previous_claim),
         }
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.bind(r_j, round),
             ProverOpening::OneHot(opening) => opening.bind(r_j, round),
@@ -1310,7 +1308,7 @@ mod tests {
         let mut previous_claim = input_claim;
 
         for round in 0..LOG_T {
-            let dense_message = dense_opening.compute_prover_message(round, previous_claim);
+            let dense_message = dense_opening.compute_message(round, previous_claim);
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
 
@@ -1325,7 +1323,11 @@ mod tests {
                 .sum();
 
             assert_eq!(
-                dense_message, expected_message,
+                [
+                    dense_message.eval_at_zero(),
+                    dense_message.evaluate::<Fr>(&Fr::from(2))
+                ],
+                *expected_message,
                 "round {round} prover message mismatch"
             );
 
