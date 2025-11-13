@@ -4,7 +4,7 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-#[derive(Clone, Allocative)]
+#[derive(Clone, Allocative, Debug)]
 pub enum HashMapOrVec<T: Clone + Default> {
     HashMap(HashMap<usize, T>),
     Vec(Vec<Option<T>>),

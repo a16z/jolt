@@ -7,9 +7,15 @@ use crate::zkvm::ram::remap_address;
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, RAMAccess};
 
-/// Tuple of (row, col, coefficient)
+/// Tuple of (row, col, coeff)
 #[derive(Allocative, Debug, PartialEq)]
-pub struct MatrixEntry<F: JoltField>(pub usize, pub usize, pub F);
+pub struct MatrixEntry<F: JoltField> {
+    pub row: usize,
+    pub col: usize,
+    prev: u64,
+    next: u64,
+    pub coeff: F,
+}
 
 #[derive(Allocative)]
 pub struct SparseValPolynomial<F: JoltField> {
@@ -28,7 +34,7 @@ impl<F: JoltField> SparseValPolynomial<F> {
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
-                let mut matrix_entries = Vec::with_capacity(trace_chunk.len() * 2);
+                let mut matrix_entries = Vec::with_capacity(trace_chunk.len());
 
                 // Row index of the I matrix
                 let mut j = chunk_index * chunk_size;
@@ -38,31 +44,35 @@ impl<F: JoltField> SparseValPolynomial<F> {
                         as usize;
                     match ram_op {
                         RAMAccess::Write(write) => {
-                            matrix_entries.push(MatrixEntry(j, k, F::from_u64(write.pre_value)));
-                            if j + 1 != (chunk_index + 1) * chunk_size {
-                                // If next cycle is within the same chunk, append entry for
-                                // write value
-                                matrix_entries.push(MatrixEntry(
-                                    j + 1,
-                                    k,
-                                    F::from_u64(write.post_value),
-                                ));
-                            }
+                            matrix_entries.push(MatrixEntry {
+                                row: j,
+                                col: k,
+                                coeff: F::from_u64(write.pre_value),
+                                prev: write.pre_value,
+                                next: write.post_value,
+                            });
                         }
                         RAMAccess::Read(read) => {
-                            matrix_entries.push(MatrixEntry(j, k, F::from_u64(read.value)));
+                            matrix_entries.push(MatrixEntry {
+                                row: j,
+                                col: k,
+                                coeff: F::from_u64(read.value),
+                                prev: read.value,
+                                next: read.value,
+                            });
                         }
                         _ => {
-                            matrix_entries.push(MatrixEntry(j, k, F::zero()));
+                            // matrix_entries.push(MatrixEntry(j, k, F::zero()));
                         }
                     }
                     j += 1;
                 }
 
-                matrix_entries.dedup();
                 matrix_entries
             })
             .collect();
+
+        println!("{row_chunks:?}");
 
         SparseValPolynomial { row_chunks, K }
     }
@@ -76,28 +86,63 @@ impl<F: JoltField> SparseValPolynomial<F> {
             let mut bound_indices: HashMapOrVec<usize> = HashMapOrVec::new(self.K, row_chunk.len());
 
             for i in 0..row_chunk.len() {
-                let MatrixEntry(j_prime, k, coeff) = row_chunk[i];
+                let MatrixEntry {
+                    row,
+                    col,
+                    coeff,
+                    prev,
+                    next,
+                } = row_chunk[i];
 
-                if let Some(bound_index) = bound_indices.get(k) {
-                    if row_chunk[bound_index].0 == j_prime / 2 {
+                if let Some(bound_index) = bound_indices.get(col) {
+                    if row_chunk[bound_index].row == row / 2 {
+                        debug_assert!(row % 2 == 1);
                         // Neighbor was already processed
-                        debug_assert!(j_prime % 2 == 1);
-                        let (lo, hi) = (row_chunk[bound_index].2, coeff);
-                        row_chunk[bound_index].2 = lo + r * (hi - lo);
+                        let neighbor = &mut row_chunk[bound_index];
+                        // Neighbor's coeff was eagerly bound to the following:
+                        //   (1 - r) * coeff + r * next,
+                        // We want to correct the value to replace `next` with the
+                        // `coeff` we have now encountered.
+                        neighbor.coeff += r * (coeff - F::from_u64(neighbor.next));
+                        neighbor.next = next;
                         continue;
                     }
                 }
-                // Otherwise, this is the first time this k has been encountered
-                // in this row
 
-                // For SparseValPolynomial, the absence of a matrix entry implies
-                // that its coefficient is equal to that of the the most recent matrix
-                // entry in the same column.
-                // So, we eagerly set bound_coeff := coeff, which is the correct
-                // bound_coeff unless we encounter a neighboring coeff, which is
-                // handled by the above if block.
-                row_chunk[next_bound_index] = MatrixEntry(j_prime / 2, k, coeff);
-                bound_indices[k] = next_bound_index;
+                // Otherwise, this is the first time this col has been encountered
+                // in this pair of rows
+                let new_entry = if row % 2 == 0 {
+                    // For SparseValPolynomial, the absence of a matrix entry implies
+                    // that its coeff has not been bound yet.
+                    //
+                    // Here, we eagerly bind `coeff` with `next`, as if the next
+                    // row doesn't have an entry in the same column. If we do encounter
+                    // an entry in the next row, we will correct this bound value (see
+                    // logic in above if-block).
+                    MatrixEntry {
+                        row: row / 2,
+                        col,
+                        // (1 - r) * coeff + r * next
+                        coeff: coeff + r * (F::from_u64(next) - coeff),
+                        prev,
+                        next,
+                    }
+                } else {
+                    // Odd row, where the previous row did not have a matrix entry in
+                    // this column. The absence of a matrix entry implies that its
+                    // coeff has not been bound yet, which means it is `prev`.
+                    let prev_F = F::from_u64(prev);
+                    MatrixEntry {
+                        row: row / 2,
+                        col,
+                        // (1 - r) * prev + r * coeff
+                        coeff: prev_F + r * (coeff - prev_F),
+                        prev,
+                        next,
+                    }
+                };
+                row_chunk[next_bound_index] = new_entry;
+                bound_indices[col] = next_bound_index;
                 next_bound_index += 1;
             }
             row_chunk.truncate(next_bound_index);
