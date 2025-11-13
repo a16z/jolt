@@ -21,6 +21,7 @@ use crate::{
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{ProverOpeningAccumulator, ReducedOpeningProof},
+        rlc_polynomial::RLCStreamingData,
     },
     pprof_scope,
     subprotocols::{
@@ -338,6 +339,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         (proof, debug_info)
     }
 
+    #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials")]
     fn generate_and_commit_witness_polynomials(
         &mut self,
     ) -> (
@@ -355,6 +357,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
         let row_len = DoryGlobals::get_num_columns();
         let num_rows = T / DoryGlobals::get_max_num_rows();
+
+        tracing::debug!(
+            "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
+            polys.len(),
+            T,
+            row_len,
+            num_rows
+        );
 
         // Tier 1: Compute row commitments for each polynomial
         let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
@@ -923,12 +933,19 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
+        let ram_d = compute_d_parameter(self.ram_K);
+        let streaming_data = Arc::new(RLCStreamingData {
+            bytecode: self.preprocessing.bytecode.clone(),
+            memory_layout: self.preprocessing.memory_layout.clone(),
+            ram_d,
+        });
+
         self.opening_accumulator.reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
             &self.preprocessing.generators,
             &mut self.transcript,
-            None, // No streaming context for main proof opening
+            Some((self.lazy_trace.clone(), streaming_data)),
         )
     }
 }

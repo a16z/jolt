@@ -3,7 +3,6 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::math::Math;
-use crate::utils::small_scalar::SmallScalar;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::instruction_lookups;
@@ -174,9 +173,12 @@ impl<F: JoltField> RLCPolynomial<F> {
             result
         }
 
-        // Streaming
+        // Streaming mode in non-test builds
         #[cfg(not(test))]
-        if let Some((lazy_trace, preprocessing)) = streaming_context {
+        {
+            let (lazy_trace, preprocessing) =
+                streaming_context.expect("Streaming context must be provided in non-test builds");
+
             let mut dense_polys = Vec::new();
             let mut onehot_polys = Vec::new();
 
@@ -193,78 +195,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 }
             }
 
-            if !dense_polys.is_empty() || !onehot_polys.is_empty() {
-                return Self::new_streaming(dense_polys, onehot_polys, lazy_trace, preprocessing);
-            }
-        }
-
-        // Fall back to materialized mode if no streaming context or no eligible polynomials
-        // Only needed in production mode (test mode always returns early with materialized result)
-        #[cfg(not(test))]
-        {
-            let mut result = RLCPolynomial::<F>::new();
-            let dense_indices: Vec<usize> = polynomials
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
-                .map(|(i, _)| i)
-                .collect();
-
-            if !dense_indices.is_empty() {
-                let dense_len = result.dense_rlc.len();
-
-                result.dense_rlc = (0..dense_len)
-                    .into_par_iter()
-                    .map(|i| {
-                        let mut acc = F::zero();
-                        for &poly_idx in &dense_indices {
-                            let poly = polynomials[poly_idx].as_ref();
-                            let coeff = coefficients[poly_idx];
-
-                            if i < poly.original_len() {
-                                match poly {
-                                    MultilinearPolynomial::U8Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::U16Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::U32Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::U64Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::I64Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::U128Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::I128Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::S128Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::LargeScalars(p) => {
-                                        acc += p.Z[i] * coeff;
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                        }
-                        acc
-                    })
-                    .collect();
-            }
-            for (i, poly) in polynomials.into_iter().enumerate() {
-                if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
-                    result.one_hot_rlc.push((coefficients[i], poly));
-                }
-            }
-
-            result
+            Self::new_streaming(dense_polys, onehot_polys, lazy_trace, preprocessing)
         }
     }
 
