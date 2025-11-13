@@ -7,8 +7,9 @@ use crate::zkvm::ram::remap_address;
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, RAMAccess};
 
-/// Represents a coefficient of the Val(k, j) polynomial, conceptually
-/// equivalent to an entry in a K x T matrix.
+/// Represents a non-zero coefficient of the ra(k, j) polynomial and the
+/// corresponding coefficient of the Val(k, j) polynomial. Conceptually,
+/// both ra and Val can be seen as K x T matrices, hence `MatrixEntry`.
 #[derive(Allocative, Debug, PartialEq)]
 pub struct MatrixEntry<F: JoltField> {
     /// The row index. Before binding, row \in [0, T)
@@ -19,20 +20,23 @@ pub struct MatrixEntry<F: JoltField> {
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
     /// Val(k, j', 11...1).
-    /// `prev` contains the unbound coefficient before
-    /// Val(k, j', 00...0) –– abusing notation, `prev` is
+    /// `prev_val` contains the unbound coefficient before
+    /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
     /// Val(k, j'-1, 11...1)
-    prev: u64,
+    prev_val: u64,
     /// In round i, each MatrixEntry represents a coefficient
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
     /// Val(k, j', 11...1).
-    /// `next` contains the unbound coefficient after
-    /// Val(k, j', 00...0) –– abusing notation, `next` is
+    /// `next_val` contains the unbound coefficient after
+    /// Val(k, j', 00...0) –– abusing notation, `next_val` is
     /// Val(k, j'+1, 00...0)
-    next: u64,
-    /// The (potentially bound) Val coefficient for this matrix entry.
-    pub coeff: F,
+    next_val: u64,
+    /// The Val coefficient for this matrix entry.
+    pub val_coeff: F,
+    /// The ra coefficient for this matrix entry. Note that for RAM,
+    /// ra and wa are the same polynomial.
+    pub ra_coeff: F,
 }
 
 /// Represents the Val(k, j) polynomial for the RAM read/write-checking
@@ -43,11 +47,11 @@ pub struct MatrixEntry<F: JoltField> {
 /// the KT total coefficients for the purposes of sumcheck. The coefficients
 /// we do need are stored in this data structure.
 #[derive(Allocative)]
-pub struct SparseValPolynomial<F: JoltField> {
+pub struct SparseMatrixPolynomial<F: JoltField> {
     pub entries: Vec<MatrixEntry<F>>,
 }
 
-impl<F: JoltField> SparseValPolynomial<F> {
+impl<F: JoltField> SparseMatrixPolynomial<F> {
     pub fn new(trace: &[Cycle], memory_layout: &MemoryLayout) -> Self {
         let entries: Vec<_> = trace
             .par_iter()
@@ -58,16 +62,18 @@ impl<F: JoltField> SparseValPolynomial<F> {
                     RAMAccess::Write(write) => Some(MatrixEntry {
                         row: j,
                         col: remap_address(write.address, &memory_layout).unwrap() as usize,
-                        coeff: F::from_u64(write.pre_value),
-                        prev: write.pre_value,
-                        next: write.post_value,
+                        ra_coeff: F::one(),
+                        val_coeff: F::from_u64(write.pre_value),
+                        prev_val: write.pre_value,
+                        next_val: write.post_value,
                     }),
                     RAMAccess::Read(read) => Some(MatrixEntry {
                         row: j,
                         col: remap_address(read.address, &memory_layout).unwrap() as usize,
-                        coeff: F::from_u64(read.value),
-                        prev: read.value,
-                        next: read.value,
+                        ra_coeff: F::one(),
+                        val_coeff: F::from_u64(read.value),
+                        prev_val: read.value,
+                        next_val: read.value,
                     }),
                     _ => None,
                 }
@@ -76,7 +82,7 @@ impl<F: JoltField> SparseValPolynomial<F> {
 
         println!("{entries:?}");
 
-        SparseValPolynomial { entries }
+        SparseMatrixPolynomial { entries }
     }
 
     fn bind_rows(
@@ -167,37 +173,42 @@ impl<F: JoltField> SparseValPolynomial<F> {
                 MatrixEntry {
                     row: even.row / 2,
                     col: even.col,
-                    coeff: even.coeff + r * (odd.coeff - even.coeff),
-                    prev: even.prev,
-                    next: odd.next,
+                    ra_coeff: even.ra_coeff + r * (odd.ra_coeff - even.ra_coeff),
+                    val_coeff: even.val_coeff + r * (odd.val_coeff - even.val_coeff),
+                    prev_val: even.prev_val,
+                    next_val: odd.next_val,
                 }
             }
             (Some(even), None) => {
-                // For SparseValPolynomial, the absence of a matrix entry implies
+                // For SparseMatrixPolynomial, the absence of a matrix entry implies
                 // that its coeff has not been bound yet.
                 // The absence of an odd-row entry in the same column as even[i]
-                // means that its implicit coeff is even[i].next.
-                let odd_coeff = F::from_u64(even.next);
+                // means that its implicit Val coeff is even[i].next, and its implicit
+                // ra coeff is 0.
+                let odd_val_coeff = F::from_u64(even.next_val);
                 MatrixEntry {
                     row: even.row / 2,
                     col: even.col,
-                    coeff: even.coeff + r * (odd_coeff - even.coeff),
-                    prev: even.prev,
-                    next: even.next,
+                    ra_coeff: (F::one() - r) * even.ra_coeff,
+                    val_coeff: even.val_coeff + r * (odd_val_coeff - even.val_coeff),
+                    prev_val: even.prev_val,
+                    next_val: even.next_val,
                 }
             }
             (None, Some(odd)) => {
-                // For SparseValPolynomial, the absence of a matrix entry implies
+                // For SparseMatrixPolynomial, the absence of a matrix entry implies
                 // that its coeff has not been bound yet.
                 // The absence of an even-row entry in the same column as odd[j]
-                // means that its implicit coeff is odd[j].prev.
-                let even_coeff = F::from_u64(odd.prev);
+                // means that its implicit Val coeff is odd[j].prev, and its implicit
+                // ra coeff is 0.
+                let even_val_coeff = F::from_u64(odd.prev_val);
                 MatrixEntry {
                     row: odd.row / 2,
                     col: odd.col,
-                    coeff: even_coeff + r * (odd.coeff - even_coeff),
-                    prev: odd.prev,
-                    next: odd.next,
+                    ra_coeff: r * odd.ra_coeff,
+                    val_coeff: even_val_coeff + r * (odd.val_coeff - even_val_coeff),
+                    prev_val: odd.prev_val,
+                    next_val: odd.next_val,
                 }
             }
             (None, None) => panic!("Both entries are None"),
