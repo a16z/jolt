@@ -1,4 +1,4 @@
-const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
+const TEST_MEMORY_CAPACITY: u64 = DEFAULT_MEMORY_SIZE; // Use same size as program memory (128 MB)
 
 const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_MEMORY_SIZE; // big enough to run Linux and xv6
 
@@ -25,6 +25,7 @@ pub mod default_terminal;
 pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
+pub mod syscalls;
 pub mod terminal;
 
 use self::cpu::{Cpu, Xlen};
@@ -119,12 +120,28 @@ impl Emulator {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
+        let mut cycle_count = 0;
         loop {
+            // Log every 1000 cycles to see progress, and log more detail near cycle 13000
+            if cycle_count % 1000 == 0 || cycle_count < 10 || (cycle_count >= 13005 && cycle_count < 13020) {
+                let disas = self.cpu.disassemble_next_instruction();
+                tracing::info!("Cycle {}: PC={:#x} a0={:#x} a1={:#x} | {}", cycle_count, self.cpu.pc, self.cpu.x[10], self.cpu.x[11], disas);
+            }
             let disas = self.cpu.disassemble_next_instruction();
             tracing::debug!("{disas}");
 
             let mut traces = if trace { Some(Vec::new()) } else { None };
             self.tick(traces.as_mut());
+            cycle_count += 1;
+
+            // Check if EXIT ECALL was called
+            if let Some(exit_code) = self.cpu.exit_code {
+                match exit_code {
+                    0 => tracing::info!("Program exited successfully (code {})", exit_code),
+                    _ => tracing::error!("Program exited with error code {}", exit_code),
+                };
+                break;
+            }
 
             // Check if tohost has been written to
             let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);

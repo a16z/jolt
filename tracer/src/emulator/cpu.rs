@@ -24,6 +24,10 @@ use jolt_platform::{
     JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
     JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
+
+const JOLT_CSR_ECALL_NUM: u32 = 0x435352; // "CSR" in hex (ASCII)
+const JOLT_EXIT_ECALL_NUM: u32 = 0x455849; // "EXI" in hex (ASCII)
+const JOLT_RET_ECALL_NUM: u32 = 0x524554; // "RET" in hex (ASCII)
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
 
@@ -113,6 +117,8 @@ pub struct Cpu {
     pub vr_allocator: VirtualRegisterAllocator,
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
+    /// Exit code set by EXIT ECALL, None means program hasn't exited yet
+    pub exit_code: Option<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -277,6 +283,7 @@ impl Cpu {
             active_markers: FnvHashMap::default(),
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
+            exit_code: None,
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -548,9 +555,9 @@ impl Cpu {
 
                 return false; // we don't take the trap
             } else if call_id == JOLT_PRINT_ECALL_NUM {
-                let string_ptr = self.x[11] as u32; // a0
-                let string_len = self.x[12] as u32; // a1
-                let event_type = self.x[13] as u32; // a2
+                let string_ptr = self.x[11] as u32; // a1
+                let string_len = self.x[12] as u32; // a2
+                let event_type = self.x[13] as u32; // a3
 
                 // Any fault raised while touching guest memory (e.g. a bad
                 // string pointer) is swallowed here and will manifest as the
@@ -558,6 +565,88 @@ impl Cpu {
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
 
                 return false;
+            } else if call_id == JOLT_CSR_ECALL_NUM {
+                // CSR operations via ECALL
+                const CSR_OP_READ: u32 = 1;
+                const CSR_OP_WRITE: u32 = 2;
+                const CSR_OP_SET: u32 = 3;
+                const CSR_OP_CLEAR: u32 = 4;
+
+                let op = self.x[11] as u32;      // a1: operation type
+                let csr_addr = self.x[12] as u16; // a2: CSR address
+                let value = self.x[13] as u64;    // a3: value (for write ops)
+
+                match op {
+                    CSR_OP_READ => {
+                        let result = self.read_csr_raw(csr_addr);
+                        self.x[10] = result as i64; // Return in a0
+                    }
+                    CSR_OP_WRITE => {
+                        self.write_csr_raw(csr_addr, value);
+                    }
+                    CSR_OP_SET => {
+                        let old_value = self.read_csr_raw(csr_addr);
+                        self.write_csr_raw(csr_addr, old_value | value);
+                        self.x[10] = old_value as i64; // Return old value in a0
+                    }
+                    CSR_OP_CLEAR => {
+                        let old_value = self.read_csr_raw(csr_addr);
+                        self.write_csr_raw(csr_addr, old_value & !value);
+                        self.x[10] = old_value as i64; // Return old value in a0
+                    }
+                    _ => {
+                        // Unknown CSR operation, ignore
+                    }
+                }
+
+                // PC is already advanced by tick_operate after fetch, so we don't need to advance it again
+
+                return false; // we don't take the trap
+            } else if call_id == JOLT_EXIT_ECALL_NUM {
+                // EXIT ECALL - program is requesting to exit
+                let exit_code = self.x[11] as u32; // a1: exit code
+
+                tracing::info!("EXIT ECALL: exit_code={}", exit_code);
+
+                self.exit_code = Some(exit_code);
+
+                return false; // we don't take the trap
+            } else if call_id == JOLT_RET_ECALL_NUM {
+                // RET ECALL - return from trap handler (equivalent to mret)
+                // Restore PC from mepc and continue execution
+                let mepc = self.read_csr_raw(CSR_MEPC_ADDRESS);
+                self.pc = mepc;
+
+                tracing::debug!("RET ECALL: returning to PC={:#x}", mepc);
+
+                return false; // we don't take the trap
+                } else {
+                    // Check if this is a Linux syscall (syscall number in a7)
+                    let syscall_nr = self.x[17] as i64; // a7
+                    if syscall_nr != 0 {
+                        // This is a Linux syscall
+                        tracing::warn!("ECALL detected: a0={:#x} a7={} (syscall_nr)", self.x[10], syscall_nr);
+
+                        let result = self.handle_syscall(
+                            syscall_nr,
+                            self.x[10] as usize,  // a0
+                            self.x[11] as usize,  // a1
+                            self.x[12] as usize,  // a2
+                            self.x[13] as usize,  // a3
+                            self.x[14] as usize,  // a4
+                            self.x[15] as usize,  // a5
+                        );
+
+                        tracing::info!("SYSCALL nr={} (a7) with args: a0={:#x} a1={:#x} a2={:#x}",
+                            syscall_nr, self.x[10], self.x[11], self.x[12]);
+                        tracing::info!("SYSCALL nr={} returned: {}", syscall_nr, result);
+
+                        // Put return value in a0
+                        self.x[10] = result;
+
+                        // PC is already advanced by tick_operate after fetch
+                        return false; // we don't take the trap
+                    }
             }
         }
 

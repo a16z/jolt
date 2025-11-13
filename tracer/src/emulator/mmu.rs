@@ -172,8 +172,10 @@ impl Mmu {
                 ea <= layout.io_end,
                 "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
+            // TODO(sagar) Hack: Allow addresses in the zero-padding range (below RAM_START_ADDRESS - 8)
+            // OR in the I/O device range (>= get_lowest_address())
             assert!(
-                ea >= layout.get_lowest_address(),
+                ea >= layout.get_lowest_address() || ea <= RAM_START_ADDRESS - 8,
                 "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
 
@@ -184,13 +186,14 @@ impl Mmu {
                     || jolt_device.is_panic(ea)
                     || jolt_device.is_termination(ea)
             } else {
-                // loads also from input
+                // loads from input/advice/output/panic/termination OR zero-padding range
                 jolt_device.is_input(ea)
                     || jolt_device.is_trusted_advice(ea)
                     || jolt_device.is_untrusted_advice(ea)
                     || jolt_device.is_output(ea)
                     || jolt_device.is_panic(ea)
                     || jolt_device.is_termination(ea)
+                    || ea <= RAM_START_ADDRESS - 8
             };
             assert!(
                 ok,
@@ -509,6 +512,7 @@ impl Mmu {
                             || jolt_device.is_output(effective_address)
                             || jolt_device.is_panic(effective_address)
                             || jolt_device.is_termination(effective_address)
+                            || effective_address <= RAM_START_ADDRESS - 8
                         {
                             return jolt_device.load(effective_address);
                         }

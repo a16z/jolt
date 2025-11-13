@@ -4,6 +4,7 @@ use std::process::exit;
 
 use clap::Parser;
 
+use common::jolt_device::{JoltDevice, MemoryConfig};
 use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
 /// RISC-V emulator for Jolt
@@ -46,6 +47,12 @@ fn main() {
     // Create and run the emulator
     let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
     emulator.setup_program(&elf_content);
+
+    // Setup JoltDevice for low memory access
+    let mut memory_config = MemoryConfig::default();
+    memory_config.program_size = Some(elf_content.len() as u64);
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
+
     emulator.run_test(args.trace.unwrap_or(false));
 
     // If signature file is specified, write the signature with specified granularity
