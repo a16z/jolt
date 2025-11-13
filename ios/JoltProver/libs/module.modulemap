@@ -1,0 +1,4 @@
+module JoltFFIC {
+    header "jolt-ffi.h"
+    export *
+}
