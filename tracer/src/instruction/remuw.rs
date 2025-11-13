@@ -1,5 +1,6 @@
 use crate::instruction::add::ADD;
 use crate::instruction::mul::MUL;
+use crate::instruction::mulhu::MULHU;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
@@ -88,12 +89,15 @@ impl RISCVTrace for REMUW {
     /// Verification strategy:
     /// 1. Zero-extend inputs to get proper 32-bit unsigned values
     /// 2. Receive untrusted quotient and remainder from oracle
-    /// 3. Verify: dividend = quotient × divisor + remainder (all 32-bit unsigned)
-    /// 4. Verify: remainder < divisor
+    /// 3. Verify quotient × divisor doesn't overflow 32 bits (high bits must be 0)
+    /// 4. Verify: dividend = quotient × divisor + remainder (all 32-bit unsigned)
+    /// 5. Verify: remainder < divisor
     ///
     /// Special case: Division by zero returns dividend (handled by VirtualAssertValidUnsignedRemainder)
     ///
-    /// Note: No overflow check needed since remainder operations work modulo 2^32.
+    /// The overflow check prevents forgery attacks where a malicious prover could
+    /// otherwise set quotient = (dividend - remainder) × divisor^(-1) (mod 2^32)
+    /// for odd divisors to forge any remainder less than the divisor.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -107,6 +111,8 @@ impl RISCVTrace for REMUW {
         let t1 = allocator.allocate(); // zero-extended dividend
         let t2 = allocator.allocate(); // zero-extended divisor
         let t3 = allocator.allocate(); // zero-extended quotient
+        let t4 = allocator.allocate(); // high bits check
+        let zero = 0; // x0 register
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // Get untrusted advice from oracle
@@ -118,8 +124,10 @@ impl RISCVTrace for REMUW {
         asm.emit_i::<VirtualZeroExtendWord>(*t2, a1, 0); // divisor
         asm.emit_i::<VirtualZeroExtendWord>(*t3, *a2, 0); // quotient
 
-        // Compute quotient × divisor (32-bit unsigned values)
-        asm.emit_r::<MUL>(*t0, *t3, *t2);
+        // Verify no 32-bit overflow: high bits of (quotient × divisor) must be 0
+        asm.emit_r::<MUL>(*t0, *t3, *t2); // Lower 64 bits
+        asm.emit_r::<MULHU>(*t4, *t3, *t2); // Upper 64 bits
+        asm.emit_b::<VirtualAssertEQ>(*t4, zero, 0); // Assert no overflow
 
         // Verify: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t0, *t0, *a3);

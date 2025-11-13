@@ -10,6 +10,7 @@ use crate::{
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, Cycle,
     Instruction, RISCVInstruction, RISCVTrace,
 };
@@ -72,15 +73,16 @@ impl RISCVTrace for REMU {
     ///
     /// The zkVM cannot directly compute modulo, so we receive the quotient and remainder
     /// as advice from an untrusted oracle, then verify correctness using constraints:
-    /// 1. dividend = quotient × divisor + remainder
-    /// 2. remainder < divisor (unsigned comparison)
+    /// 1. quotient × divisor must not overflow (prevents modular inverse forgery)
+    /// 2. dividend = quotient × divisor + remainder
+    /// 3. remainder < divisor (unsigned comparison)
     ///
     /// Special case per RISC-V spec:
     /// - Division by zero: remainder = dividend
     ///
-    /// Note: No overflow check needed since we work modulo the word size for remainder.
-    /// The VirtualAssertValidUnsignedRemainder handles the div-by-zero case by
-    /// allowing remainder == dividend when divisor == 0.
+    /// The overflow check prevents forgery attacks where a malicious prover could
+    /// otherwise set quotient = (dividend - remainder) × divisor^(-1) (mod 2^64)
+    /// to forge any remainder less than the divisor.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -97,7 +99,10 @@ impl RISCVTrace for REMU {
         asm.emit_j::<VirtualAdvice>(*a2, 0); // quotient
         asm.emit_j::<VirtualAdvice>(*a3, 0); // remainder
 
-        // Compute quotient × divisor (no overflow check needed for remainder)
+        // Verify no overflow: quotient × divisor must not overflow
+        asm.emit_b::<VirtualAssertMulUNoOverflow>(*a2, a1, 0);
+
+        // Compute quotient × divisor
         asm.emit_r::<MUL>(*t0, *a2, a1);
 
         // Verify: dividend = quotient × divisor + remainder

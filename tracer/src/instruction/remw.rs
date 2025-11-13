@@ -1,4 +1,5 @@
 use crate::instruction::addw::ADDW;
+use crate::instruction::mul::MUL;
 use crate::instruction::srai::SRAI;
 use crate::instruction::sub::SUB;
 use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
@@ -97,15 +98,18 @@ impl RISCVTrace for REMW {
     /// 1. Sign-extend inputs to proper 32-bit signed values
     /// 2. Receive untrusted quotient and |remainder| from oracle
     /// 3. Handle special cases (div-by-zero returns dividend, overflow returns 0)
-    /// 4. Apply sign of dividend to remainder
-    /// 5. Verify: dividend = quotient × divisor + remainder (in 32-bit space)
-    /// 6. Verify: |remainder| < |divisor|
+    /// 4. Verify quotient × divisor doesn't overflow 32 bits (MULW vs MUL comparison)
+    /// 5. Apply sign of dividend to remainder
+    /// 6. Verify: dividend = quotient × divisor + remainder (in 32-bit space)
+    /// 7. Verify: |remainder| < |divisor|
     ///
     /// Special cases:
     /// - Division by zero: remainder = dividend
     /// - Overflow (i32::MIN % -1): remainder = 0 (handled by VirtualChangeDivisorW)
     ///
-    /// Note: No overflow check needed for multiplication since we work modulo 2^32.
+    /// The overflow check prevents forgery attacks where a malicious prover could
+    /// otherwise set quotient = (dividend - remainder) × divisor^(-1) (mod 2^32)
+    /// for odd divisors to forge any remainder less than the divisor.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -134,8 +138,10 @@ impl RISCVTrace for REMW {
         asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0); // Check div-by-zero
         asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3); // Adjust for overflow
 
-        // Compute quotient × divisor in 32-bit space (no overflow check needed)
-        asm.emit_r::<MULW>(*t1, *a2, *t0); // 32-bit multiply
+        // Verify no 32-bit overflow: MULW and MUL must match
+        asm.emit_r::<MULW>(*t1, *a2, *t0); // 32-bit multiply, sign-extended
+        asm.emit_r::<MUL>(*t2, *a2, *t0); // Full 64-bit multiply
+        asm.emit_b::<VirtualAssertEQ>(*t1, *t2, 0); // Assert no overflow
 
         // Apply sign of dividend to remainder (RISC-V: sign(remainder) = sign(dividend))
         asm.emit_i::<SRAI>(*t2, *t4, 31); // Sign bit of 32-bit dividend
