@@ -65,3 +65,10 @@ jolt-sdk/tests/fib_io_device_bytes.rs
 jolt-sdk/tests/fib_proof_bytes.rs
 jolt-sdk/tests/jolt_verifier_preprocessing_bytes.rs
 
+# FFI generated files
+jolt-ffi/target/
+jolt-ffi/**/*.elf
+jolt-ffi/**/*.bin
+jolt-ffi/**/*-preprocessing.bin
+jolt-ffi/examples/c/jolt_example
+

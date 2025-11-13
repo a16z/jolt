@@ -30,6 +30,7 @@ members = [
     "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
+    "jolt-ffi",
     "jolt-inlines/sha2",
     "jolt-inlines/keccak256",
     "jolt-inlines/blake2",

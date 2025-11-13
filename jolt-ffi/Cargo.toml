@@ -1,0 +1,29 @@
+[package]
+name = "jolt-ffi"
+version = "0.1.0"
+edition = "2021"
+authors = ["Markos Georghiades <mgeorghiades@a16z.com>"]
+description = "C FFI bindings for Jolt zkVM prover"
+license-file = "../LICENSE"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "prepare-guest"
+path = "src/bin/prepare_guest.rs"
+
+[dependencies]
+jolt-core = { workspace = true, features = ["prover", "host"] }
+tracer = { workspace = true }
+common = { workspace = true }
+
+ark-bn254 = { workspace = true }
+ark-serialize = { workspace = true }
+postcard = { workspace = true }
+clap = { workspace = true }
+eyre = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+cbindgen = "0.27"
