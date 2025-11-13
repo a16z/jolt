@@ -362,7 +362,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             })
             .collect();
 
-        let sparse_val = SparseValPolynomial::new(&trace, &memory_layout, params.K);
+        let sparse_val = SparseValPolynomial::new(&trace, &memory_layout);
 
         Self {
             ram_addresses,
