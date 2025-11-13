@@ -38,7 +38,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
-use itertools::{chain, zip_eq, Itertools};
+use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::{Cycle, Instruction, NormalizedInstruction};
@@ -303,11 +303,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         self.params.input_claim()
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "BytecodeReadRafSumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::compute_message")]
+    fn compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_K {
             const DEGREE: usize = 2;
 
@@ -368,16 +365,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                 let [eval_at_0, eval_at_2] = evals;
                 let eval_at_1 = self.prev_round_claims[stage] - eval_at_0;
                 let round_poly = UniPoly::from_evals(&[eval_at_0, eval_at_1, eval_at_2]);
-                agg_round_poly += &(&round_poly * &self.params.gamma_powers[stage]);
+                agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
                 round_polys[stage] = round_poly;
             }
 
             self.prev_round_polys = Some(round_polys);
 
-            vec![
-                agg_round_poly.eval_at_zero(),
-                agg_round_poly.evaluate::<F>(&F::from_u8(2)),
-            ]
+            agg_round_poly
         } else {
             let degree = <Self as SumcheckInstanceProver<F, T>>::degree(self);
 
@@ -440,19 +434,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             for (stage, evals) in evals_per_stage.iter().enumerate() {
                 let claim = self.prev_round_claims[stage];
                 let round_poly = self.gruen_eq_polys[stage].compute_round_poly(evals, claim);
-                agg_round_poly += &(&round_poly * &self.params.gamma_powers[stage]);
+                agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
                 round_polys[stage] = round_poly;
             }
 
             self.prev_round_polys = Some(round_polys);
 
-            let domain = chain!([0], 2..).take(degree).map(F::from_u64);
-            domain.map(|x| agg_round_poly.evaluate::<F>(&x)).collect()
+            agg_round_poly
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if let Some(prev_round_polys) = self.prev_round_polys.take() {
             self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
         }

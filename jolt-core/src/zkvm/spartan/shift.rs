@@ -14,6 +14,7 @@ use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -81,16 +82,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         }
     }
 
-    #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         match self {
-            Self::Phase1(prover) => prover.compute_prover_message(),
-            Self::Phase2(prover) => prover.compute_prover_message(),
+            Self::Phase1(prover) => prover.compute_message(previous_claim),
+            Self::Phase2(prover) => prover.compute_message(previous_claim),
         }
     }
 
-    #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         match self {
             Self::Phase1(prover) => {
                 if prover.should_transition_to_phase2() {
@@ -475,8 +476,9 @@ impl<F: JoltField> Phase1Prover<F> {
         }
     }
 
-    fn compute_prover_message(&self) -> Vec<F> {
-        self.prefix_suffix_pairs
+    fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
+        let evals = self
+            .prefix_suffix_pairs
             .par_iter()
             .map(|(p, q)| {
                 let mut evals = [F::zero(); DEGREE_BOUND];
@@ -492,8 +494,9 @@ impl<F: JoltField> Phase1Prover<F> {
             .reduce(
                 || [F::zero(); DEGREE_BOUND],
                 |a, b| array::from_fn(|i| a[i] + b[i]),
-            )
-            .to_vec()
+            );
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
     fn bind(&mut self, r_j: F::Challenge) {
@@ -624,7 +627,7 @@ impl<F: JoltField> Phase2Prover<F> {
         }
     }
 
-    fn compute_prover_message(&self) -> Vec<F> {
+    fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let half_n = self.unexpanded_pc_poly.len() / 2;
         let mut evals = [F::zero(); DEGREE_BOUND];
         for j in 0..half_n {
@@ -661,7 +664,8 @@ impl<F: JoltField> Phase2Prover<F> {
                         * (F::one() - is_noop_evals[i])
             });
         }
-        evals.to_vec()
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
     fn bind(&mut self, r_j: F::Challenge) {

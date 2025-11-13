@@ -1,4 +1,3 @@
-use itertools::chain;
 use num_traits::Zero;
 use std::{array, marker::PhantomData, sync::Arc};
 use tracer::instruction::Cycle;
@@ -120,9 +119,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
 
     #[tracing::instrument(
         skip_all,
-        name = "RegistersValEvaluationSumcheckProver::compute_prover_message"
+        name = "RegistersValEvaluationSumcheckProver::compute_message"
     )]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let [eval_at_1, eval_at_2, eval_at_inf] = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
@@ -152,13 +151,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
             .map(F::from_montgomery_reduce);
 
         let eval_at_0 = previous_claim - eval_at_1;
-        let poly = UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf]);
-        let domain = chain!([0], 2..).take(DEGREE_BOUND).map(F::from_u64);
-        domain.map(|x| poly.evaluate::<F>(&x)).collect()
+        UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf])
     }
 
-    #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(
+        skip_all,
+        name = "RegistersValEvaluationSumcheckProver::ingest_challenge"
+    )]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.lt.bind(r_j, BindingOrder::LowToHigh);

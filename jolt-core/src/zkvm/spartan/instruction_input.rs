@@ -1,5 +1,4 @@
 use ark_ff::Zero;
-use std::iter::zip;
 
 use allocative::Allocative;
 use rayon::prelude::*;
@@ -167,11 +166,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "InstructionInputSumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
         // Lockstep requirement: the two split-eq polynomials must have identical split sizes
         debug_assert_eq!(
             self.eq_r_cycle_stage_1.E_out_current_len(),
@@ -280,33 +276,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 )
                 .map(|x| F::from_montgomery_reduce::<9>(x));
 
-        let univariate_evals_stage_1 = self.eq_r_cycle_stage_1.gruen_evals_deg_3(
+        let round_poly_stage_1 = self.eq_r_cycle_stage_1.gruen_poly_deg_3(
             eval_at_0_for_stage_1,
             eval_at_inf_for_stage_1,
             self.prev_claim_stage_1,
         );
-        let univariate_evals_stage_2 = self.eq_r_cycle_stage_2.gruen_evals_deg_3(
+        let round_poly_stage_2 = self.eq_r_cycle_stage_2.gruen_poly_deg_3(
             eval_at_0_for_stage_2,
             eval_at_inf_for_stage_2,
             self.prev_claim_stage_2,
         );
-        self.prev_round_poly_stage_1 = Some(UniPoly::from_evals_and_hint(
-            self.prev_claim_stage_1,
-            &univariate_evals_stage_1,
-        ));
-        self.prev_round_poly_stage_2 = Some(UniPoly::from_evals_and_hint(
-            self.prev_claim_stage_2,
-            &univariate_evals_stage_2,
-        ));
-        zip(univariate_evals_stage_1, univariate_evals_stage_2)
-            .map(|(eval_stage_1, eval_stage_2)| {
-                eval_stage_1 + self.params.gamma.square() * eval_stage_2
-            })
-            .collect()
+        let gamma_squared = self.params.gamma.square();
+        let res = &round_poly_stage_1 + &(&round_poly_stage_2 * gamma_squared);
+        self.prev_round_poly_stage_1 = Some(round_poly_stage_1);
+        self.prev_round_poly_stage_2 = Some(round_poly_stage_2);
+        res
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         let Self {
             left_is_rs1_poly,
             left_is_pc_poly,

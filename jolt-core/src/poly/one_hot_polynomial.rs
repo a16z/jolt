@@ -12,6 +12,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
 use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::poly::unipoly::UniPoly;
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -188,11 +189,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         self.log_T = T.log_2();
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "OneHotPolynomialProverOpening::compute_prover_message"
-    )]
-    pub fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::compute_message")]
+    pub fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let shared_eq_address = self.eq_address_state.read().unwrap();
         let shared_eq_cycle = self.eq_cycle_state.read().unwrap();
         let polynomial = &self.polynomial;
@@ -244,10 +242,12 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
-            unreduced_univariate_poly_evals
+            let univariate_poly_evals = unreduced_univariate_poly_evals
                 .into_iter()
                 .map(|evals| F::from_montgomery_reduce(evals))
-                .collect()
+                .collect::<Vec<_>>();
+
+            UniPoly::from_evals_and_hint(previous_claim, &univariate_poly_evals)
         } else {
             // T-variable rounds
             let B = &shared_eq_address.B;
@@ -258,13 +258,10 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let [gruen_eval_0] =
                 d_gruen.par_fold_out_in_unreduced::<9, 1>(&|g| [H.get_bound_coeff(2 * g)]);
 
-            let gruen_univariate_evals: [F; 2] =
-                d_gruen.gruen_evals_deg_2(gruen_eval_0, previous_claim / eq_r_address_claim);
+            let gruen_univariate_evals =
+                d_gruen.gruen_poly_deg_2(gruen_eval_0, previous_claim / eq_r_address_claim);
 
-            vec![
-                eq_r_address_claim * gruen_univariate_evals[0],
-                eq_r_address_claim * gruen_univariate_evals[1],
-            ]
+            gruen_univariate_evals * eq_r_address_claim
         }
     }
 
@@ -704,7 +701,8 @@ mod tests {
         let mut previous_claim = input_claim;
 
         for round in 0..LOG_K + LOG_T {
-            let one_hot_message = one_hot_opening.compute_prover_message(round, previous_claim);
+            let one_hot_message = one_hot_opening.compute_message(round, previous_claim);
+            // Evals at [0, 2].
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
 
@@ -731,7 +729,11 @@ mod tests {
                     .sum();
             }
             assert_eq!(
-                one_hot_message, expected_message,
+                [
+                    one_hot_message.eval_at_zero(),
+                    one_hot_message.evaluate::<Fr>(&Fr::from(2))
+                ],
+                *expected_message,
                 "round {round} prover message mismatch"
             );
 

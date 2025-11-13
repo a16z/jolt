@@ -1,6 +1,7 @@
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use std::cmp::Ordering;
-use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
+use std::iter::zip;
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::transcripts::{AppendToTranscript, Transcript};
@@ -360,6 +361,17 @@ impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
     }
 }
 
+impl<F: JoltField> Add for &UniPoly<F> {
+    type Output = UniPoly<F>;
+
+    fn add(self, rhs: Self) -> UniPoly<F> {
+        let mut coeffs = vec![F::zero(); self.coeffs.len().max(rhs.coeffs.len())];
+        zip(&mut coeffs, &self.coeffs).for_each(|(acc, lhs)| *acc += *lhs);
+        zip(&mut coeffs, &rhs.coeffs).for_each(|(acc, rhs)| *acc += *rhs);
+        UniPoly { coeffs }
+    }
+}
+
 impl<F: JoltField> Sub for UniPoly<F> {
     type Output = Self;
 
@@ -395,11 +407,11 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     }
 }
 
-impl<F: JoltField> Mul<&F> for &UniPoly<F> {
+impl<F: JoltField> Mul<F> for &UniPoly<F> {
     type Output = UniPoly<F>;
 
-    fn mul(self, rhs: &F) -> UniPoly<F> {
-        UniPoly::from_coeff(self.coeffs.iter().map(|c| *c * *rhs).collect::<Vec<_>>())
+    fn mul(self, rhs: F) -> UniPoly<F> {
+        UniPoly::from_coeff(self.coeffs.iter().map(|c| *c * rhs).collect::<Vec<_>>())
     }
 }
 

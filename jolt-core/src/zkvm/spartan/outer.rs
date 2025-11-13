@@ -431,24 +431,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
         self.params.input_claim
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterRemainingSumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let (t0, t_inf) = if round == 0 {
             self.first_round_evals
         } else {
             self.remaining_quadratic_evals()
         };
-        let evals = self
-            .split_eq_poly
-            .gruen_evals_deg_3(t0, t_inf, previous_claim);
-        vec![evals[0], evals[1], evals[2]]
+        self.split_eq_poly
+            .gruen_poly_deg_3(t0, t_inf, previous_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         rayon::join(
             || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
             || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
