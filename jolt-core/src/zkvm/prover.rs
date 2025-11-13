@@ -1220,7 +1220,7 @@ mod tests {
             &inputs,
             &untrusted_advice,
             &trusted_advice,
-            Some(trusted_advice_commitment.clone()),
+            Some(trusted_advice_commitment),
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1230,7 +1230,7 @@ mod tests {
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
-            Some(trusted_advice_commitment.clone()),
+            Some(trusted_advice_commitment),
             debug_info,
         )
         .unwrap();

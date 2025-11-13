@@ -171,7 +171,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 }
             }
 
-            return result;
+            result
         }
 
         // Streaming
