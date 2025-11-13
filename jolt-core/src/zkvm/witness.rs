@@ -2,6 +2,7 @@
 
 use allocative::Allocative;
 use common::constants::XLEN;
+use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
@@ -13,16 +14,16 @@ use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
-use crate::poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
+use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::InstructionFlags;
+use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::{
     field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
     utils::math::Math,
-    zkvm::{
-        instruction_lookups, lookup_table::LookupTables, ram::remap_address,
-        JoltProverPreprocessing,
-    },
+    zkvm::{instruction_lookups, lookup_table::LookupTables, ram::remap_address},
 };
 
 use super::instruction::{CircuitFlags, LookupQuery};
@@ -348,6 +349,17 @@ impl CommittedPolynomial {
         }
         let batch = WitnessData::new(trace.len(), ram_d, bytecode_d);
 
+        // Precompute constants per cycle
+        let bytecode_constants = if bytecode_d > 0 {
+            let d = preprocessing.bytecode.d;
+            let log_K = preprocessing.bytecode.code_size.log_2();
+            let log_K_chunk = log_K.div_ceil(d);
+            let K_chunk = 1 << log_K_chunk;
+            Some((d, log_K_chunk, K_chunk))
+        } else {
+            None
+        };
+
         let dth_root_log = if ram_d > 0 {
             Some(DTH_ROOT_OF_K.log_2())
         } else {
@@ -390,11 +402,11 @@ impl CommittedPolynomial {
                 }
 
                 // BytecodeRa indices
-                if let Some(dth_root_log) = dth_root_log {
+                if let Some((d, log_K_chunk, K_chunk)) = bytecode_constants {
                     let pc = preprocessing.bytecode.get_pc(cycle);
 
                     for j in 0..bytecode_d {
-                        let index = (pc >> (dth_root_log * (bytecode_d - 1 - j))) % DTH_ROOT_OF_K;
+                        let index = (pc >> (log_K_chunk * (d - 1 - j))) % K_chunk;
                         batch_ref.bytecode_ra[j][i] = Some(index as u8);
                     }
                 }
@@ -447,7 +459,11 @@ impl CommittedPolynomial {
                 CommittedPolynomial::BytecodeRa(i) => {
                     if *i < bytecode_d {
                         let indices = std::mem::take(&mut batch.bytecode_ra[*i]);
-                        let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
+                        let d = preprocessing.bytecode.d;
+                        let log_K = preprocessing.bytecode.code_size.log_2();
+                        let log_K_chunk = log_K.div_ceil(d);
+                        let K_chunk = 1 << log_K_chunk;
+                        let one_hot = OneHotPolynomial::from_indices(indices, K_chunk);
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
@@ -464,33 +480,33 @@ impl CommittedPolynomial {
     }
 
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
-    pub fn generate_witness<F, PCS>(
+    pub fn generate_witness<F>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
         trace: &[Cycle],
         ram_d: usize,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
-        PCS: CommitmentScheme<Field = F>,
     {
         match self {
             CommittedPolynomial::BytecodeRa(i) => {
-                let d = preprocessing.bytecode.d;
+                let d = bytecode_preprocessing.d;
+                let log_K = bytecode_preprocessing.code_size.log_2();
+                let log_K_chunk = log_K.div_ceil(d);
+                let K_chunk = 1 << log_K_chunk;
                 if *i > d {
                     panic!("Invalid index for bytecode ra: {i}");
                 }
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let pc = preprocessing.bytecode.get_pc(cycle);
-                        Some(((pc >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i))) % DTH_ROOT_OF_K) as u8)
+                        let pc = bytecode_preprocessing.get_pc(cycle);
+                        Some(((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk) as u8)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
-                    addresses,
-                    DTH_ROOT_OF_K,
-                ))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
             }
             CommittedPolynomial::RamRa(i) => {
                 let d = ram_d;
@@ -499,14 +515,12 @@ impl CommittedPolynomial {
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        remap_address(
-                            cycle.ram_access().address() as u64,
-                            &preprocessing.memory_layout,
+                        remap_address(cycle.ram_access().address() as u64, memory_layout).map(
+                            |address| {
+                                ((address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                    % DTH_ROOT_OF_K) as u8
+                            },
                         )
-                        .map(|address| {
-                            ((address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-                                % DTH_ROOT_OF_K) as u8
-                        })
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(

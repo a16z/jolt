@@ -13,6 +13,7 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
+        unipoly::UniPoly,
     },
     subprotocols::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
@@ -51,8 +52,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for HammingWeight
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "HammingWeightProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "HammingWeightProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let prover_msg = self
             .ra
             .par_iter()
@@ -69,11 +70,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for HammingWeight
             })
             .reduce(F::Unreduced::zero, |running, new| running + new);
 
-        vec![F::from_montgomery_reduce(prover_msg)]
+        let eval_at_0 = F::from_montgomery_reduce(prover_msg);
+        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0])
     }
 
-    #[tracing::instrument(skip_all, name = "HammingWeightProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "HammingWeightProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.ra
             .par_iter_mut()
             .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));

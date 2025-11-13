@@ -1,11 +1,11 @@
+use std::sync::Arc;
+
 use allocative::Allocative;
 use ark_std::Zero;
 use rayon::prelude::*;
-use std::sync::Arc;
 use tracer::instruction::Cycle;
 
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
@@ -28,7 +28,6 @@ use crate::utils::math::Math;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
     constraints::{
         OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DEGREE,
@@ -87,14 +86,13 @@ pub struct OuterUniSkipInstanceProver<F: JoltField> {
 
 impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
         tau: &[F::Challenge],
     ) -> Self {
-        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
-
         let extended =
-            Self::compute_univariate_skip_extended_evals(&preprocessing.bytecode, trace, tau);
+            Self::compute_univariate_skip_extended_evals(bytecode_preprocessing, trace, tau);
 
         let instance = Self {
             tau: tau.to_vec(),
@@ -227,13 +225,12 @@ pub struct OuterRemainingSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
-        num_cycles_bits: usize,
+    pub fn gen(
+        trace: Arc<Vec<Cycle>>,
+        bytecode_preprocessing: &BytecodePreprocessing,
         uni: &UniSkipState<F>,
     ) -> Self {
-        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
-        let bytecode_preprocessing = preprocessing.bytecode.clone();
+        let bytecode_preprocessing = bytecode_preprocessing.clone();
 
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
@@ -257,19 +254,21 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
 
         let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
             &bytecode_preprocessing,
-            trace,
+            &trace,
             &lagrange_evals_r,
             &split_eq_poly,
         );
 
+        let n_cycle_vars = trace.len().ilog2() as usize;
+
         Self {
             split_eq_poly,
             bytecode_preprocessing,
-            trace: state_manager.get_trace_arc(),
+            trace,
             az: az_bound,
             bz: bz_bound,
             first_round_evals: (t0, t_inf),
-            params: OuterRemainingSumcheckParams::new(num_cycles_bits, uni),
+            params: OuterRemainingSumcheckParams::new(n_cycle_vars, uni),
         }
     }
 
@@ -432,24 +431,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
         self.params.input_claim
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterRemainingSumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let (t0, t_inf) = if round == 0 {
             self.first_round_evals
         } else {
             self.remaining_quadratic_evals()
         };
-        let evals = self
-            .split_eq_poly
-            .gruen_evals_deg_3(t0, t_inf, previous_claim);
-        vec![evals[0], evals[1], evals[2]]
+        self.split_eq_poly
+            .gruen_poly_deg_3(t0, t_inf, previous_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         rayon::join(
             || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
             || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),

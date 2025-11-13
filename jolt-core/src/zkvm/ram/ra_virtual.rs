@@ -1,17 +1,18 @@
+use common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 use std::iter::zip;
 use std::sync::Arc;
+use tracer::instruction::Cycle;
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{
     compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
@@ -55,19 +56,14 @@ pub struct RaSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
+        memory_layout: &MemoryLayout,
+        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-
-        let params = RaSumcheckParams::new(
-            trace.len(),
-            state_manager.ram_K,
-            opening_accumulator,
-            transcript,
-        );
+        let params = RaSumcheckParams::new(trace.len(), ram_K, opening_accumulator, transcript);
 
         // Precompute EQ tables for each chunk
         let eq_tables: Vec<Vec<F>> = params
@@ -92,19 +88,17 @@ impl<F: JoltField> RaSumcheckProver<F> {
                 let ra_i_indices: Vec<Option<u8>> = trace
                     .par_iter()
                     .map(|cycle| {
-                        remap_address(
-                            cycle.ram_access().address() as u64,
-                            &preprocessing.memory_layout,
-                        )
-                        .map(|address| {
-                            // For each address, add eq_r_cycle[j] to each corresponding chunk
-                            // This maintains the property that sum of all ra values for an address equals 1
-                            let address_i = (address
-                                >> (DTH_ROOT_OF_K.log_2() * (params.d - 1 - i)))
-                                % DTH_ROOT_OF_K as u64;
+                        remap_address(cycle.ram_access().address() as u64, memory_layout).map(
+                            |address| {
+                                // For each address, add eq_r_cycle[j] to each corresponding chunk
+                                // This maintains the property that sum of all ra values for an address equals 1
+                                let address_i = (address
+                                    >> (DTH_ROOT_OF_K.log_2() * (params.d - 1 - i)))
+                                    % DTH_ROOT_OF_K as u64;
 
-                            address_i as u8
-                        })
+                                address_i as u8
+                            },
+                        )
                     })
                     .collect();
                 RaPolynomial::new(Arc::new(ra_i_indices), eq_table)
@@ -128,8 +122,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
         self.params.num_rounds()
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaVirtualization::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _: usize) {
+    #[tracing::instrument(skip_all, name = "RamRaVirtualization::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _: usize) {
         for ra_i in self.ra_i_polys.iter_mut() {
             ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
@@ -140,15 +134,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let degree = self.params.degree();
         let ra_i_polys = &self.ra_i_polys;
         let eq_poly = &self.eq_poly;
 
         // We need to compute evaluations at 0, 2, 3, ..., degree
         // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
-        (0..ra_i_polys[0].len() / 2)
+        let evals = (0..ra_i_polys[0].len() / 2)
             .into_par_iter()
             .map(|i| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
@@ -182,7 +176,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
             )
             .into_iter()
             .map(F::from_barrett_reduce)
-            .collect()
+            .collect::<Vec<_>>();
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
     fn cache_openings(

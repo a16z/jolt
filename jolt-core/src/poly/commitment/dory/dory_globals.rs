@@ -37,7 +37,7 @@ impl From<u8> for DoryContext {
             0 => DoryContext::Main,
             1 => DoryContext::TrustedAdvice,
             2 => DoryContext::UntrustedAdvice,
-            _ => panic!("Invalid DoryContext value: {}", value),
+            _ => panic!("Invalid DoryContext value: {value}"),
         }
     }
 }
