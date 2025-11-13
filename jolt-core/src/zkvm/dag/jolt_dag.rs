@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
@@ -102,7 +102,7 @@ pub fn prove_jolt_dag<
     // Commit to untrusted_advice
     let _untrusted_advice_opening_proof_hints =
         if !state_manager.program_io.untrusted_advice.is_empty() {
-            let _guard = DoryGlobals::initialize(
+            DoryGlobals::initialize_untrusted_advice(
                 1,
                 state_manager
                     .program_io
@@ -110,6 +110,7 @@ pub fn prove_jolt_dag<
                     .max_untrusted_advice_size as usize
                     / 8,
             );
+            let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
             let hints = commit_untrusted_advice(&mut state_manager);
             Some(hints)
         } else {
@@ -470,6 +471,7 @@ pub fn prove_jolt_dag<
 
     // Generate trusted_advice opening proofs
     let trusted_advice_proof = (!state_manager.program_io.trusted_advice.is_empty()).then(|| {
+        let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
         generate_trusted_advice_proof(
             &mut state_manager,
             &opening_accumulator,
@@ -481,6 +483,7 @@ pub fn prove_jolt_dag<
     // Generate untrusted_advice opening proofs
     let untrusted_advice_proof =
         (!state_manager.program_io.untrusted_advice.is_empty()).then(|| {
+            let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
             generate_untrusted_advice_proof(
                 &mut state_manager,
                 &opening_accumulator,

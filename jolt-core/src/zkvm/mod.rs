@@ -668,7 +668,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore] // @TODO(markosg04) this test is broken
     fn advice_e2e_dory() {
         use crate::poly::{
             commitment::commitment_scheme::CommitmentScheme,
@@ -702,9 +701,12 @@ mod tests {
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
         let trusted_advice_commitment = {
-            let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(
+            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice(
                 1,
                 (max_trusted_advice_size as usize) / 8,
+            );
+            let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
+                crate::poly::commitment::dory::DoryContext::TrustedAdvice,
             );
             let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
             let (trusted_advice_commitment, _hint) =

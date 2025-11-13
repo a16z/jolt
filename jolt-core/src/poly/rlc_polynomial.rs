@@ -106,7 +106,75 @@ impl<F: JoltField> RLCPolynomial<F> {
         debug_assert_eq!(polynomials.len(), coefficients.len());
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
-        // Disable streaming in test mode. In order to check the joint commitment consistency we need fully materialized RLC poly.
+        // In test mode, disable streaming to check joint commitment consistency with fully materialized RLC poly.
+        #[cfg(test)]
+        {
+            let mut result = RLCPolynomial::<F>::new();
+            let dense_indices: Vec<usize> = polynomials
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
+                .map(|(i, _)| i)
+                .collect();
+
+            if !dense_indices.is_empty() {
+                let dense_len = result.dense_rlc.len();
+
+                result.dense_rlc = (0..dense_len)
+                    .into_par_iter()
+                    .map(|i| {
+                        let mut acc = F::zero();
+                        for &poly_idx in &dense_indices {
+                            let poly = polynomials[poly_idx].as_ref();
+                            let coeff = coefficients[poly_idx];
+
+                            if i < poly.original_len() {
+                                match poly {
+                                    MultilinearPolynomial::U8Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U16Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U32Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U64Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::I64Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U128Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::I128Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::S128Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::LargeScalars(p) => {
+                                        acc += p.Z[i] * coeff;
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                        acc
+                    })
+                    .collect();
+            }
+            for (i, poly) in polynomials.into_iter().enumerate() {
+                if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
+                    result.one_hot_rlc.push((coefficients[i], poly));
+                }
+            }
+
+            return result;
+        }
+
+        // Streaming
         #[cfg(not(test))]
         if let Some((lazy_trace, preprocessing)) = streaming_context {
             let mut dense_polys = Vec::new();
@@ -130,70 +198,74 @@ impl<F: JoltField> RLCPolynomial<F> {
             }
         }
 
-        // Fall back to materialized mode
-        let mut result = RLCPolynomial::<F>::new();
-        let dense_indices: Vec<usize> = polynomials
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
-            .map(|(i, _)| i)
-            .collect();
+        // Fall back to materialized mode if no streaming context or no eligible polynomials
+        // Only needed in production mode (test mode always returns early with materialized result)
+        #[cfg(not(test))]
+        {
+            let mut result = RLCPolynomial::<F>::new();
+            let dense_indices: Vec<usize> = polynomials
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
+                .map(|(i, _)| i)
+                .collect();
 
-        if !dense_indices.is_empty() {
-            let dense_len = result.dense_rlc.len();
+            if !dense_indices.is_empty() {
+                let dense_len = result.dense_rlc.len();
 
-            result.dense_rlc = (0..dense_len)
-                .into_par_iter()
-                .map(|i| {
-                    let mut acc = F::zero();
-                    for &poly_idx in &dense_indices {
-                        let poly = polynomials[poly_idx].as_ref();
-                        let coeff = coefficients[poly_idx];
+                result.dense_rlc = (0..dense_len)
+                    .into_par_iter()
+                    .map(|i| {
+                        let mut acc = F::zero();
+                        for &poly_idx in &dense_indices {
+                            let poly = polynomials[poly_idx].as_ref();
+                            let coeff = coefficients[poly_idx];
 
-                        if i < poly.original_len() {
-                            match poly {
-                                MultilinearPolynomial::U8Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
+                            if i < poly.original_len() {
+                                match poly {
+                                    MultilinearPolynomial::U8Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U16Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U32Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U64Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::I64Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::U128Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::I128Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::S128Scalars(p) => {
+                                        acc += p.coeffs[i].field_mul(coeff);
+                                    }
+                                    MultilinearPolynomial::LargeScalars(p) => {
+                                        acc += p.Z[i] * coeff;
+                                    }
+                                    _ => unreachable!(),
                                 }
-                                MultilinearPolynomial::U16Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
-                                }
-                                MultilinearPolynomial::U32Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
-                                }
-                                MultilinearPolynomial::U64Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
-                                }
-                                MultilinearPolynomial::I64Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
-                                }
-                                MultilinearPolynomial::U128Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
-                                }
-                                MultilinearPolynomial::I128Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
-                                }
-                                MultilinearPolynomial::S128Scalars(p) => {
-                                    acc += p.coeffs[i].field_mul(coeff);
-                                }
-                                MultilinearPolynomial::LargeScalars(p) => {
-                                    acc += p.Z[i] * coeff;
-                                }
-                                _ => unreachable!(),
                             }
                         }
-                    }
-                    acc
-                })
-                .collect();
-        }
-        for (i, poly) in polynomials.into_iter().enumerate() {
-            if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
-                result.one_hot_rlc.push((coefficients[i], poly));
+                        acc
+                    })
+                    .collect();
             }
-        }
+            for (i, poly) in polynomials.into_iter().enumerate() {
+                if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
+                    result.one_hot_rlc.push((coefficients[i], poly));
+                }
+            }
 
-        result
+            result
+        }
     }
 
     /// Commits to the rows of `RLCPolynomial`, viewing its coefficients
@@ -321,9 +393,15 @@ impl<F: JoltField> RLCPolynomial<F> {
                 tracer::instruction::RAMAccess::Write(write) => {
                     F::from_i128(write.post_value as i128 - write.pre_value as i128)
                 }
-                _ => F::zero(),
+                tracer::instruction::RAMAccess::Read(_) | tracer::instruction::RAMAccess::NoOp => {
+                    F::zero()
+                }
             },
-            _ => F::zero(), // One-hot polynomials handled below
+            CommittedPolynomial::InstructionRa(_)
+            | CommittedPolynomial::BytecodeRa(_)
+            | CommittedPolynomial::RamRa(_) => {
+                panic!("One-hot polynomials should not be passed to extract_dense_value")
+            }
         }
     }
 
@@ -357,7 +435,9 @@ impl<F: JoltField> RLCPolynomial<F> {
                 (address as usize >> (DTH_ROOT_OF_K.log_2() * (preprocessing.ram_d - 1 - idx)))
                     % DTH_ROOT_OF_K
             }),
-            _ => None,
+            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
+                panic!("Dense polynomials should not be passed to extract_onehot_k")
+            }
         }
     }
 

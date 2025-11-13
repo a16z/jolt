@@ -128,6 +128,19 @@ impl CommitmentScheme for DoryCommitmentScheme {
         .expect("proof generation should succeed")
     }
 
+    fn prove_without_hint<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<ark_bn254::Fr>,
+        opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
+        transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        let _span = trace_span!("DoryCommitmentScheme::prove_without_hint").entered();
+
+        let (_commitment, row_commitments) = Self::commit(poly, setup);
+
+        Self::prove(setup, poly, opening_point, row_commitments, transcript)
+    }
+
     fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
