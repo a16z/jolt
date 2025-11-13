@@ -3,11 +3,11 @@ use std::iter::zip;
 
 use allocative::Allocative;
 use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
@@ -22,7 +22,6 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        dag::state_manager::StateManager,
         instruction::{Flags, InstructionFlags},
         witness::VirtualPolynomial,
     },
@@ -56,13 +55,11 @@ pub struct InstructionInputSumcheckProver<F: JoltField> {
 impl<F: JoltField> InstructionInputSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        trace: &[Cycle],
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params = InstructionInputParams::new(opening_accumulator, transcript);
-
-        let (_, _, trace, _, _) = state_manager.get_prover_data();
 
         // Compute MLEs.
         let mut left_is_rs1_poly = vec![false; trace.len()];

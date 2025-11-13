@@ -3,7 +3,6 @@ use num_traits::Zero;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -22,17 +21,17 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        dag::state_manager::StateManager,
+        bytecode::BytecodePreprocessing,
         ram::remap_address,
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::constants::RAM_START_ADDRESS;
+use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 use rayon::prelude::*;
-use tracer::JoltDevice;
+use tracer::{instruction::Cycle, JoltDevice};
 
 // RAM output sumchecks
 //
@@ -85,11 +84,11 @@ impl<F: JoltField> OutputSumcheckProver<F> {
     pub fn gen(
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        program_io: &JoltDevice,
+        ram_K: usize,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (_, _, _, program_io, _) = state_manager.get_prover_data();
-        let params = OutputSumcheckParams::new(state_manager.ram_K, program_io, transcript);
+        let params = OutputSumcheckParams::new(ram_K, program_io, transcript);
 
         let K = final_ram_state.len();
         debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
@@ -98,12 +97,11 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         // Compute the witness indices corresponding to the start and end of the IO
         // region of memory
         let io_start = remap_address(
-            params.program_io.memory_layout.input_start,
-            &params.program_io.memory_layout,
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
         )
         .unwrap() as usize;
-        let io_end =
-            remap_address(RAM_START_ADDRESS, &params.program_io.memory_layout).unwrap() as usize;
+        let io_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
 
         // Compute Val_io by copying the relevant slice of Val_final
         let mut val_io = vec![0; K];
@@ -364,11 +362,12 @@ pub struct ValFinalSumcheckProver<F: JoltField> {
 impl<F: JoltField> ValFinalSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
         let T = trace.len();
 
         let r_address = opening_accumulator
@@ -400,8 +399,13 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let inc =
-            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc = CommittedPolynomial::RamInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
 
         // #[cfg(test)]
         // {

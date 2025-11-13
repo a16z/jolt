@@ -5,13 +5,13 @@ use common::constants::XLEN;
 use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
+use tracer::instruction::Cycle;
 
 use super::{LOG_K, LOG_M, M, PHASES};
 
 use crate::{
     field::{JoltField, MulTrunc},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
@@ -37,7 +37,6 @@ use crate::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
     zkvm::{
-        dag::state_manager::StateManager,
         instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -171,7 +170,7 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     params: ReadRafSumcheckParams<F>,
 }
 
-impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
+impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// Creates a prover-side instance for the Read+RAF batched sumcheck.
     ///
     /// Builds prover-side working state:
@@ -181,11 +180,10 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::gen")]
     pub fn gen(
-        sm: &'a mut StateManager<F, impl CommitmentScheme<Field = F>>,
+        trace: &[Cycle],
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let trace = sm.get_prover_data().2;
         let log_T = trace.len().log_2();
         let params = ReadRafSumcheckParams::new(log_T, transcript);
         let (r_branch, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -1269,18 +1267,11 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
-    use crate::{
-        poly::commitment::mock::MockCommitScheme,
-        zkvm::{bytecode::BytecodePreprocessing, ram::RAMPreprocessing, JoltProverPreprocessing},
-    };
     use ark_bn254::Fr;
     use ark_std::Zero;
-    use common::jolt_device::MemoryLayout;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
-    use tracer::emulator::memory::Memory;
     use tracer::instruction::Cycle;
-    use tracer::{JoltDevice, LazyTraceIterator};
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
@@ -1363,38 +1354,9 @@ mod tests {
         let trace: Vec<_> = (0..T)
             .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
-        let bytecode = vec![];
-        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
-        let memory_layout = MemoryLayout::default();
-        let prover_preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
-            JoltProverPreprocessing {
-                generators: (),
-                bytecode: bytecode_preprocessing,
-                ram: RAMPreprocessing::preprocess(vec![]),
-                memory_layout: memory_layout.clone(),
-            };
 
-        let program_io = JoltDevice {
-            memory_layout,
-            untrusted_advice: vec![],
-            trusted_advice: vec![],
-            inputs: vec![],
-            outputs: vec![],
-            panic: false,
-        };
-        let final_memory_state = Memory::default();
-
-        let lazy_trace = LazyTraceIterator::new_for_test();
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
-        let mut prover_sm = StateManager::<'_, Fr, _>::new_prover(
-            &prover_preprocessing,
-            lazy_trace,
-            trace.clone(),
-            program_io,
-            None,
-            final_memory_state,
-        );
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
         let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
 
@@ -1463,11 +1425,8 @@ mod tests {
             rv_claim_branch,
         );
 
-        let mut prover_sumcheck = ReadRafSumcheckProver::gen(
-            &mut prover_sm,
-            &prover_opening_accumulator,
-            prover_transcript,
-        );
+        let mut prover_sumcheck =
+            ReadRafSumcheckProver::gen(&trace, &prover_opening_accumulator, prover_transcript);
 
         let (proof, r_sumcheck) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],

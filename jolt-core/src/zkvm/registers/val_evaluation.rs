@@ -1,11 +1,11 @@
 use itertools::chain;
 use num_traits::Zero;
 use std::{array, marker::PhantomData, sync::Arc};
+use tracer::instruction::Cycle;
 
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         lt_poly::LtPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -22,14 +22,14 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        dag::state_manager::StateManager,
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        bytecode::BytecodePreprocessing,
+        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::constants::REGISTER_COUNT;
+use common::{constants::REGISTER_COUNT, jolt_device::MemoryLayout};
 use rayon::prelude::*;
 
 // Register value evaluation sumcheck
@@ -62,8 +62,11 @@ pub(crate) struct ValEvaluationSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         // The opening point is r_address || r_cycle
@@ -73,10 +76,14 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         );
         let (r_address, r_cycle) = registers_val_input_sample.0.split_at(LOG_K);
 
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let params = ValEvaluationSumcheckParams::new(trace.len().log_2());
-        let inc =
-            CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc = CommittedPolynomial::RdInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
 
         let eq_r_address = EqPolynomial::evals(&r_address.r);
         let wa: Vec<Option<u8>> = trace

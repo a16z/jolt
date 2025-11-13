@@ -1,22 +1,14 @@
 use crate::poly::opening_proof::{OpeningAccumulator, ProverOpeningAccumulator, SumcheckId};
-use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
     HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
 };
 use crate::utils::math::Math;
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheckProver;
-use crate::zkvm::dag::stage::SumcheckStagesProver;
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::{
     compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
 };
 use crate::{
-    field::JoltField,
-    poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
-    transcripts::Transcript,
+    field::JoltField, poly::eq_poly::EqPolynomial, transcripts::Transcript,
     utils::thread::unsafe_allocate_zero_vec,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -132,44 +124,12 @@ impl BytecodePCMapper {
     }
 }
 
-pub struct BytecodeDagProver;
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStagesProver<F, T, PCS>
-    for BytecodeDagProver
-{
-    fn stage6_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, PCS>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
-    ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let read_raf = ReadRafSumcheckProver::gen(sm, opening_accumulator, transcript);
-        let (hamming_weight, booleanity) =
-            gen_ra_one_hot_provers(sm, opening_accumulator, transcript);
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("Bytecode ReadRafSumcheck", &read_raf);
-            print_data_structure_heap_usage("Bytecode HammingWeightSumcheck", &hamming_weight);
-            print_data_structure_heap_usage("Bytecode BooleanitySumcheck", &booleanity);
-        }
-
-        vec![
-            Box::new(read_raf),
-            Box::new(hamming_weight),
-            Box::new(booleanity),
-        ]
-    }
-}
-
-fn gen_ra_one_hot_provers<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+pub fn gen_ra_one_hot_provers<F: JoltField>(
+    trace: &[Cycle],
+    bytecode_preprocessing: &BytecodePreprocessing,
     opening_accumulator: &ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
-    let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-    let bytecode_preprocessing = &preprocessing.bytecode;
-
     let r_cycle: Vec<F::Challenge> = opening_accumulator
         .get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter)
         .0

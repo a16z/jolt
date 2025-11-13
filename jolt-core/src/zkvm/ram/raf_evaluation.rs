@@ -1,15 +1,15 @@
+use common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
-use tracer::JoltDevice;
+use tracer::instruction::Cycle;
 
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
         multilinear_polynomial::{
@@ -25,7 +25,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::{dag::state_manager::StateManager, ram::remap_address, witness::VirtualPolynomial},
+    zkvm::{ram::remap_address, witness::VirtualPolynomial},
 };
 
 // RAM RAF evaluation sumcheck
@@ -54,15 +54,14 @@ pub struct RafEvaluationSumcheckProver<F: JoltField> {
 impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        trace: &[Cycle],
+        memory_layout: &MemoryLayout,
+        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
-        let K = state_manager.ram_K;
         let T = trace.len();
 
-        let params = RafEvaluationSumcheckParams::new(program_io, K, opening_accumulator);
+        let params = RafEvaluationSumcheckParams::new(memory_layout, ram_K, opening_accumulator);
 
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
@@ -79,7 +78,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
-                let mut result = unsafe_allocate_zero_vec(K);
+                let mut result = unsafe_allocate_zero_vec(ram_K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
                     if let Some(k) =
@@ -92,7 +91,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
                 result
             })
             .reduce(
-                || unsafe_allocate_zero_vec(K),
+                || unsafe_allocate_zero_vec(ram_K),
                 |mut running, new| {
                     running
                         .par_iter_mut()
@@ -103,7 +102,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
             );
         let ra = MultilinearPolynomial::from(ra_evals);
         let lowest_memory_address = memory_layout.get_lowest_address();
-        let unmap = UnmapRamAddressPolynomial::new(K.log_2(), lowest_memory_address);
+        let unmap = UnmapRamAddressPolynomial::new(ram_K.log_2(), lowest_memory_address);
 
         Self { ra, unmap, params }
     }
@@ -188,11 +187,11 @@ pub struct RafEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     pub fn new(
-        program_io: &JoltDevice,
+        memory_layout: &MemoryLayout,
         ram_K: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = RafEvaluationSumcheckParams::new(program_io, ram_K, opening_accumulator);
+        let params = RafEvaluationSumcheckParams::new(memory_layout, ram_K, opening_accumulator);
         Self { params }
     }
 }
@@ -257,11 +256,11 @@ pub struct RafEvaluationSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> RafEvaluationSumcheckParams<F> {
     pub fn new(
-        program_io: &JoltDevice,
+        memory_layout: &MemoryLayout,
         ram_K: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
-        let start_address = program_io.memory_layout.get_lowest_address();
+        let start_address = memory_layout.get_lowest_address();
         let log_K = ram_K.log_2();
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,

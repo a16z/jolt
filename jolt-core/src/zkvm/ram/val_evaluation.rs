@@ -1,12 +1,12 @@
+use common::jolt_device::MemoryLayout;
 use itertools::chain;
 use num_traits::Zero;
 use std::{array, iter::zip, sync::Arc};
-use tracer::JoltDevice;
+use tracer::{instruction::Cycle, JoltDevice};
 
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         lt_poly::LtPolynomial,
         multilinear_polynomial::{
@@ -25,9 +25,9 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        dag::state_manager::StateManager,
+        bytecode::BytecodePreprocessing,
         ram::remap_address,
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
@@ -65,15 +65,16 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, PCS>,
+        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
         let T = trace.len();
-        let K = state_manager.ram_K;
+        let K = ram_K;
 
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
@@ -107,8 +108,13 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let inc =
-            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc = CommittedPolynomial::RamInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
         let lt = LtPolynomial::new(&r_cycle);
 
         Self {
