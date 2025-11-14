@@ -192,7 +192,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Setup trace length and padding
         let unpadded_trace_len = trace.len();
-        let padded_trace_len = (trace.len() + 1).next_power_of_two();
+        let padded_trace_len = if unpadded_trace_len < 256 {
+            256 // ensures that T >= k^{1/D}
+        } else {
+            (trace.len() + 1).next_power_of_two()
+        };
         trace.resize(padded_trace_len, Cycle::NoOp);
 
         // Calculate K for DoryGlobals initialization
