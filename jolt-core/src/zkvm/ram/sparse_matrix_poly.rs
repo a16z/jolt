@@ -81,8 +81,6 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             })
             .collect();
 
-        println!("{entries:?}");
-
         SparseMatrixPolynomial { entries }
     }
 
