@@ -85,13 +85,13 @@ class JoltProver {
                         jolt_cpu_prover_gen_from_elf(
                             preprocessing,
                             elfPtr.baseAddress,
-                            elfPtr.count,
+                            Uint(elfPtr.count),
                             inputBytes.isEmpty ? nil : inputPtr.baseAddress,
                             inputPtr.count,
                             untrustedBytes.isEmpty ? nil : untrustedPtr.baseAddress,
-                            untrustedPtr.count,
+                            Uint(untrustedPtr.count),
                             trustedBytes.isEmpty ? nil : trustedPtr.baseAddress,
-                            trustedPtr.count
+                            Uint(trustedPtr.count)
                         )
                     }
                 }
