@@ -516,20 +516,17 @@ where
 {
     type ChunkState = ();
 
-    fn compute_tier1_commitment<T: SmallScalar>(
-        _setup: &Self::ProverSetup,
-        _chunk: &[T],
-    ) -> Self::ChunkState {
+    fn process_chunk<T: SmallScalar>(_setup: &Self::ProverSetup, _chunk: &[T]) -> Self::ChunkState {
     }
 
-    fn compute_tier1_commitment_onehot(
+    fn process_chunk_onehot(
         _setup: &Self::ProverSetup,
         _onehot_k: usize,
         _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
     }
 
-    fn compute_tier2_commitment(
+    fn aggregate_chunks(
         _setup: &Self::ProverSetup,
         _onehot_k: Option<usize>,
         _tier1_commitments: &[Self::ChunkState],

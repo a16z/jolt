@@ -237,10 +237,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     type ChunkState = Vec<ArkG1>; // Tier 1 commitment chunks
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment")]
-    fn compute_tier1_commitment<T: SmallScalar>(
-        setup: &Self::ProverSetup,
-        chunk: &[T],
-    ) -> Self::ChunkState {
+    fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState {
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         let row_len = DoryGlobals::get_num_columns();
@@ -261,7 +258,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         skip_all,
         name = "DoryCommitmentScheme::compute_tier1_commitment_onehot"
     )]
-    fn compute_tier1_commitment_onehot(
+    fn process_chunk_onehot(
         setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
@@ -296,7 +293,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     }
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier2_commitment")]
-    fn compute_tier2_commitment(
+    fn aggregate_chunks(
         setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],

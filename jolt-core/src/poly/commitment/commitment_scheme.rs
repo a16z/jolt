@@ -132,20 +132,17 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
     type ChunkState: Send + Sync + Clone + PartialEq + Debug;
 
     /// Compute tier 1 commitment for a chunk of small scalar values
-    fn compute_tier1_commitment<T: SmallScalar>(
-        setup: &Self::ProverSetup,
-        chunk: &[T],
-    ) -> Self::ChunkState;
+    fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState;
 
     /// Compute tier 1 commitment for a chunk of one-hot values
-    fn compute_tier1_commitment_onehot(
+    fn process_chunk_onehot(
         setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState;
 
     /// Compute tier 2 commitment from accumulated tier 1 commitments
-    fn compute_tier2_commitment(
+    fn aggregate_chunks(
         setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
         tier1_commitments: &[Self::ChunkState],

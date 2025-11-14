@@ -407,11 +407,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .zip(polys)
             .map(|(tier1_commitments, poly)| {
                 let onehot_k = poly.get_onehot_k(self.preprocessing);
-                PCS::compute_tier2_commitment(
-                    &self.preprocessing.generators,
-                    onehot_k,
-                    &tier1_commitments,
-                )
+                PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
             })
             .unzip();
 
