@@ -5,6 +5,7 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+use crate::poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use allocative::Allocative;
@@ -18,14 +19,15 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
+use tracer::LazyTraceIterator;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::Itertools;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-    rlc_polynomial::RLCPolynomial,
 };
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -785,6 +787,7 @@ where
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>)>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
@@ -851,14 +854,23 @@ where
                 }
             }
 
-            let (coeffs, polynomials): (Vec<F>, Vec<MultilinearPolynomial<F>>) = rlc_map
+            let (poly_ids, coeffs, polys): (
+                Vec<CommittedPolynomial>,
+                Vec<F>,
+                Vec<MultilinearPolynomial<F>>,
+            ) = rlc_map
                 .iter()
-                .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
-                .unzip();
+                .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
+                .multiunzip();
+
+            let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
+                polys.into_iter().map(Arc::new).collect();
 
             let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-                polynomials.into_iter().map(Arc::new).collect(),
+                poly_ids.clone(),
+                poly_arcs.clone(),
                 &coeffs,
+                streaming_context,
             ));
 
             let hints: Vec<PCS::OpeningProofHint> = rlc_map
@@ -874,11 +886,26 @@ where
             // the hints for the individual sumchecks.
             let hint = PCS::combine_hints(hints, &coeffs);
 
+            #[cfg(test)]
+            let joint_poly = (joint_poly, poly_ids, poly_arcs, coeffs);
+
             (joint_poly, hint)
         };
 
         #[cfg(test)]
-        let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
+        let joint_commitment = {
+            let (joint_poly_ref, poly_ids, poly_arcs, coeffs) = &joint_poly;
+            let materialized_poly = match joint_poly_ref {
+                MultilinearPolynomial::RLC(rlc) => {
+                    MultilinearPolynomial::RLC(rlc.materialize(poly_ids, poly_arcs, coeffs))
+                }
+                _ => joint_poly_ref.clone(),
+            };
+            PCS::commit(&materialized_poly, pcs_setup).0
+        };
+
+        #[cfg(test)]
+        let joint_poly = joint_poly.0;
 
         #[cfg(not(test))]
         {
@@ -887,7 +914,8 @@ where
         }
 
         // Reduced opening proof
-        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+        let joint_opening_proof =
+            PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, Some(hint), transcript);
 
         ReducedOpeningProof {
             sumcheck_proof,

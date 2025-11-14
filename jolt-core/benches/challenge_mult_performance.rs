@@ -14,7 +14,7 @@ fn bench_add(c: &mut Criterion) {
         |b| {
             b.iter_batched(
                 || {
-                    let x = Fr::random(&mut rng);
+                    let x = <Fr as JoltField>::random(&mut rng);
                     let ab: Vec<_> = (0..100)
                         .map(|_| {
                             (
@@ -42,7 +42,7 @@ fn bench_add(c: &mut Criterion) {
         |b| {
             b.iter_batched(
                 || {
-                    let x = Fr::random(&mut rng);
+                    let x = <Fr as JoltField>::random(&mut rng);
                     let ab: Vec<_> = (0..100)
                         .map(|_| {
                             (
@@ -73,7 +73,7 @@ fn bench_mul(c: &mut Criterion) {
     c.bench_function("Fr * Mont254BitChallenge (100x)", |b| {
         b.iter_batched(
             || {
-                let a = Fr::random(&mut rng);
+                let a = <Fr as JoltField>::random(&mut rng);
                 let bs: Vec<_> = (0..100)
                     .map(|_| Mont254BitChallenge::random(&mut rng))
                     .collect();
@@ -95,7 +95,7 @@ fn bench_mul(c: &mut Criterion) {
         |b| {
             b.iter_batched(
                 || {
-                    let a = Fr::random(&mut rng);
+                    let a = <Fr as JoltField>::random(&mut rng);
                     let xs: Vec<Fr> = (0..100)
                         .map(|_| MontU128Challenge::random(&mut rng).into())
                         .collect();
@@ -116,7 +116,7 @@ fn bench_mul(c: &mut Criterion) {
     c.bench_function("Fr.mul_u128_mont_form (100x)", |b| {
         b.iter_batched(
             || {
-                let a = Fr::random(&mut rng);
+                let a = <Fr as JoltField>::random(&mut rng);
                 let xs: Vec<_> = (0..100)
                     .map(|_| MontU128Challenge::random(&mut rng))
                     .collect();

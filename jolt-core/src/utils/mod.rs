@@ -123,31 +123,6 @@ pub fn uninterleave_bits(val: u128) -> (u64, u64) {
     (x_bits as u64, y_bits as u64)
 }
 
-/// Transposes a matrix represented as a vector of vectors.
-/// Assumes a regular matrix (all rows have the same number of elements).
-pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
-    if v.is_empty() {
-        return vec![];
-    }
-    let first_row_len = v[0].len();
-    assert!(
-        v.iter().all(|row| row.len() == first_row_len),
-        "Matrix must be regular (all rows must have the same length)."
-    );
-
-    let num_cols = first_row_len;
-    let mut mat_iter: Vec<_> = v.into_iter().map(|row| row.into_iter()).collect();
-
-    (0..num_cols)
-        .map(|_| {
-            mat_iter
-                .iter_mut()
-                .map(|iter| iter.next().unwrap())
-                .collect::<Vec<T>>()
-        })
-        .collect()
-}
-
 /// Combines two 64-bit values into a single 128-bit value by interleaving their bits.
 /// Takes even bits from the first argument and odd bits from the second argument.
 ///

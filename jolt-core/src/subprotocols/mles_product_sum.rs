@@ -304,9 +304,7 @@ fn assign<T: Sized>(dst: &mut T, src: T) {
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
-    use ark_std::UniformRand;
-    use dory::curve::test_rng;
-    use rand::rngs::StdRng;
+    use ark_std::{test_rng, UniformRand};
     use std::array::from_fn;
 
     use crate::{
@@ -402,8 +400,9 @@ mod tests {
         assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
-    fn random_mle(n_vars: usize, rng: &mut StdRng) -> MultilinearPolynomial<Fr> {
-        MultilinearPolynomial::LargeScalars(DensePolynomial::random(n_vars, rng))
+    fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {
+        let values: Vec<Fr> = (0..(1 << n_vars)).map(|_| Fr::random(rng)).collect();
+        MultilinearPolynomial::LargeScalars(DensePolynomial::new(values))
     }
 
     /// Generates MLE `p(x) = sum_j eq(j, x) * prod_i mle_i(j)`.

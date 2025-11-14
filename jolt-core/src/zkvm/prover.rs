@@ -1,3 +1,4 @@
+use crate::zkvm::witness::DTH_ROOT_OF_K;
 use std::{
     collections::HashMap,
     fs::File,
@@ -15,9 +16,13 @@ use crate::{
     field::JoltField,
     guest,
     poly::{
-        commitment::{commitment_scheme::StreamingCommitmentScheme, dory::DoryGlobals},
+        commitment::{
+            commitment_scheme::StreamingCommitmentScheme,
+            dory::{DoryContext, DoryGlobals},
+        },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{ProverOpeningAccumulator, ReducedOpeningProof},
+        rlc_polynomial::RLCStreamingData,
     },
     pprof_scope,
     subprotocols::{
@@ -25,7 +30,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
     },
     transcripts::Transcript,
-    utils::{math::Math, thread::drop_in_background_thread, transpose},
+    utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{ram::populate_memory_states, verifier::JoltVerifierPreprocessing},
 };
 use crate::{
@@ -65,9 +70,7 @@ use crate::{
             prove_stage1_uni_skip, prove_stage2_uni_skip,
             shift::ShiftSumcheckProver,
         },
-        witness::{
-            compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
-        },
+        witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial},
         ProverDebugInfo, Serializable,
     },
 };
@@ -189,7 +192,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Setup trace length and padding
         let unpadded_trace_len = trace.len();
-        let padded_trace_len = (trace.len() + 1).next_power_of_two();
+        let padded_trace_len = if unpadded_trace_len < 256 {
+            256 // ensures that T >= k^{1/D}
+        } else {
+            (trace.len() + 1).next_power_of_two()
+        };
         trace.resize(padded_trace_len, Cycle::NoOp);
 
         // Calculate K for DoryGlobals initialization
@@ -335,6 +342,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         (proof, debug_info)
     }
 
+    #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials")]
     fn generate_and_commit_witness_polynomials(
         &mut self,
     ) -> (
@@ -347,43 +355,63 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             AllCommittedPolynomials::initialize(self.ram_K, bytecode_d),
         );
 
-        // Generate and commit to all witness polynomials.
+        // Generate and commit to all witness polynomials using streaming tier1/tier2 pattern
         let T = DoryGlobals::get_T();
-
-        let cached_data = PCS::prepare_cached_data(&self.preprocessing.generators);
-
         let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
         let row_len = DoryGlobals::get_num_columns();
-        let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
-            vec![vec![]; T / DoryGlobals::get_max_num_rows()];
+        let num_rows = T / DoryGlobals::get_max_num_rows();
 
+        tracing::debug!(
+            "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
+            polys.len(),
+            T,
+            row_len,
+            num_rows
+        );
+
+        // Tier 1: Compute row commitments for each polynomial
+        let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
         let ram_d = compute_d_parameter(self.ram_K);
+
         self.lazy_trace
             .clone()
             .pad_using(T, |_| Cycle::NoOp)
             .iter_chunks(row_len)
             .zip(row_commitments.iter_mut())
             .par_bridge()
-            .for_each(|(chunk, row_commitments)| {
+            .for_each(|(chunk, row_tier1_commitments)| {
                 let res: Vec<_> = polys
                     .par_iter()
                     .map(|poly| {
-                        poly.generate_witness_and_commit_row::<_, PCS>(
-                            &cached_data,
+                        poly.stream_witness_and_commit_rows::<_, PCS>(
+                            &self.preprocessing.generators,
                             self.preprocessing,
                             &chunk,
                             ram_d,
                         )
                     })
                     .collect();
-                *row_commitments = res;
+                *row_tier1_commitments = res;
             });
 
-        let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
+        // Transpose: row_commitments[row][poly] -> tier1_per_poly[poly][row]
+        let tier1_per_poly: Vec<Vec<PCS::ChunkState>> = (0..polys.len())
+            .into_par_iter()
+            .map(|poly_idx| {
+                row_commitments
+                    .iter()
+                    .flat_map(|row| row.get(poly_idx).cloned())
+                    .collect()
+            })
+            .collect();
+
+        // Tier 2: Compute final commitments from tier1 commitments
+        let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
             .into_par_iter()
             .zip(polys)
-            .map(|(rc, poly)| {
-                PCS::finalize(&cached_data, poly.get_onehot_k(self.preprocessing), &rc)
+            .map(|(tier1_commitments, poly)| {
+                let onehot_k = poly.get_onehot_k(self.preprocessing);
+                PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
             })
             .unzip();
 
@@ -405,10 +433,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             return None;
         }
 
-        let _guard = DoryGlobals::initialize(
+        DoryGlobals::initialize_untrusted_advice(
             1,
             self.program_io.memory_layout.max_untrusted_advice_size as usize / 8,
         );
+        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
 
         let mut untrusted_advice_vec =
             vec![0; self.program_io.memory_layout.max_untrusted_advice_size as usize / 8];
@@ -843,24 +872,20 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
     #[tracing::instrument(skip_all)]
     fn prove_trusted_advice(&mut self) -> Option<PCS::Proof> {
-        let bytecode_d = self.preprocessing.bytecode.d;
-        let _guard = (
-            DoryGlobals::initialize(DTH_ROOT_OF_K, self.padded_trace_len),
-            AllCommittedPolynomials::initialize(self.ram_K, bytecode_d),
-        );
-
         self.advice
             .trusted_advice_polynomial
             .as_ref()
             .map(|trusted_advice_poly| {
+                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
                 let (point, _) = self
                     .opening_accumulator
                     .get_trusted_advice_opening()
                     .unwrap();
-                PCS::prove_without_hint(
+                PCS::prove(
                     &self.preprocessing.generators,
                     trusted_advice_poly,
                     &point.r,
+                    None,
                     &mut self.transcript,
                 )
             })
@@ -868,24 +893,20 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
     #[tracing::instrument(skip_all)]
     fn prove_untrusted_advice(&mut self) -> Option<PCS::Proof> {
-        let bytecode_d = self.preprocessing.bytecode.d;
-        let _guard = (
-            DoryGlobals::initialize(DTH_ROOT_OF_K, self.padded_trace_len),
-            AllCommittedPolynomials::initialize(self.ram_K, bytecode_d),
-        );
-
         self.advice
             .untrusted_advice_polynomial
             .as_ref()
             .map(|untrusted_advice_poly| {
+                let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
                 let (point, _) = self
                     .opening_accumulator
                     .get_untrusted_advice_opening()
                     .unwrap();
-                PCS::prove_without_hint(
+                PCS::prove(
                     &self.preprocessing.generators,
                     untrusted_advice_poly,
                     &point.r,
+                    None,
                     &mut self.transcript,
                 )
             })
@@ -913,11 +934,19 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
+        let ram_d = compute_d_parameter(self.ram_K);
+        let streaming_data = Arc::new(RLCStreamingData {
+            bytecode: self.preprocessing.bytecode.clone(),
+            memory_layout: self.preprocessing.memory_layout.clone(),
+            ram_d,
+        });
+
         self.opening_accumulator.reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
             &self.preprocessing.generators,
             &mut self.transcript,
+            Some((self.lazy_trace.clone(), streaming_data)),
         )
     }
 }
@@ -1017,6 +1046,7 @@ mod tests {
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::zkvm::prover::JoltProverPreprocessing;
     use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
+    use crate::zkvm::witness::DTH_ROOT_OF_K;
     use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
     use ark_bn254::Fr;
     use serial_test::serial;
@@ -1039,6 +1069,47 @@ mod tests {
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
             RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+    }
+
+    #[test]
+    #[serial]
+    fn small_trace_e2e_dory() {
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&5u32).unwrap();
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            256,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+
+        assert!(
+            prover.padded_trace_len <= DTH_ROOT_OF_K,
+            "Test requires T <= DTH_ROOT_OF_K ({}), got T = {}",
+            DTH_ROOT_OF_K,
+            prover.padded_trace_len
+        );
+
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1187,9 +1258,12 @@ mod tests {
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
         let trusted_advice_commitment = {
-            let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(
+            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice(
                 1,
                 (max_trusted_advice_size as usize) / 8,
+            );
+            let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
+                crate::poly::commitment::dory::DoryContext::TrustedAdvice,
             );
             let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
             let (trusted_advice_commitment, _hint) =
@@ -1206,7 +1280,7 @@ mod tests {
             &inputs,
             &untrusted_advice,
             &trusted_advice,
-            Some(trusted_advice_commitment.clone()),
+            Some(trusted_advice_commitment),
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1216,7 +1290,7 @@ mod tests {
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
-            Some(trusted_advice_commitment.clone()),
+            Some(trusted_advice_commitment),
             debug_info,
         )
         .unwrap();
