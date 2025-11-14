@@ -1,3 +1,4 @@
+use crate::zkvm::witness::DTH_ROOT_OF_K;
 use std::{
     collections::HashMap,
     fs::File,
@@ -69,9 +70,7 @@ use crate::{
             prove_stage1_uni_skip, prove_stage2_uni_skip,
             shift::ShiftSumcheckProver,
         },
-        witness::{
-            compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
-        },
+        witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial},
         ProverDebugInfo, Serializable,
     },
 };
@@ -882,10 +881,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                     .opening_accumulator
                     .get_trusted_advice_opening()
                     .unwrap();
-                PCS::prove_without_hint(
+                PCS::prove(
                     &self.preprocessing.generators,
                     trusted_advice_poly,
                     &point.r,
+                    None,
                     &mut self.transcript,
                 )
             })
@@ -902,10 +902,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                     .opening_accumulator
                     .get_untrusted_advice_opening()
                     .unwrap();
-                PCS::prove_without_hint(
+                PCS::prove(
                     &self.preprocessing.generators,
                     untrusted_advice_poly,
                     &point.r,
+                    None,
                     &mut self.transcript,
                 )
             })
@@ -1045,6 +1046,7 @@ mod tests {
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::zkvm::prover::JoltProverPreprocessing;
     use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
+    use crate::zkvm::witness::DTH_ROOT_OF_K;
     use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
     use ark_bn254::Fr;
     use serial_test::serial;
@@ -1067,6 +1069,47 @@ mod tests {
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
             RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+    }
+
+    #[test]
+    #[serial]
+    fn small_trace_e2e_dory() {
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&5u32).unwrap();
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            256,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+
+        assert!(
+            prover.padded_trace_len <= DTH_ROOT_OF_K,
+            "Test requires T <= DTH_ROOT_OF_K ({}), got T = {}",
+            DTH_ROOT_OF_K,
+            prover.padded_trace_len
+        );
+
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 

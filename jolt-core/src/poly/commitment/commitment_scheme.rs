@@ -4,8 +4,9 @@ use std::fmt::Debug;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
-    field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::errors::ProofVerifyError,
+    field::JoltField,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
@@ -88,7 +89,8 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `setup` - The prover setup for the commitment scheme
     /// * `poly` - The multilinear polynomial being proved
     /// * `opening_point` - The point at which the polynomial is evaluated
-    /// * `hint` - A hint that helps optimize the proof generation
+    /// * `hint` - An optional hint that helps optimize the proof generation.
+    ///   When `None`, implementations should compute the hint internally if needed.
     /// * `transcript` - The transcript for Fiat-Shamir transformation
     ///
     /// # Returns
@@ -97,18 +99,9 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
-        hint: Self::OpeningProofHint,
+        hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
-
-    fn prove_without_hint<ProofTranscript: Transcript>(
-        _setup: &Self::ProverSetup,
-        _poly: &MultilinearPolynomial<Self::Field>,
-        _opening_point: &[<Self::Field as JoltField>::Challenge],
-        _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        unimplemented!()
-    }
 
     /// Verifies a proof of polynomial evaluation at a specific point.
     ///
@@ -139,7 +132,7 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
     type ChunkState: Send + Sync + Clone + PartialEq + Debug;
 
     /// Compute tier 1 commitment for a chunk of small scalar values
-    fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
+    fn compute_tier1_commitment<T: SmallScalar>(
         setup: &Self::ProverSetup,
         chunk: &[T],
     ) -> Self::ChunkState;

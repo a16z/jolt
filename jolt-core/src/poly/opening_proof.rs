@@ -854,15 +854,21 @@ where
                 }
             }
 
-            let (poly_ids, coeffs, polys): (Vec<_>, Vec<F>, Vec<MultilinearPolynomial<F>>) =
-                rlc_map
-                    .iter()
-                    .map(|(k, v)| (k, v, polynomials.remove(k).unwrap()))
-                    .multiunzip();
+            let (poly_ids, coeffs, polys): (
+                Vec<CommittedPolynomial>,
+                Vec<F>,
+                Vec<MultilinearPolynomial<F>>,
+            ) = rlc_map
+                .iter()
+                .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
+                .multiunzip();
+
+            let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
+                polys.into_iter().map(Arc::new).collect();
 
             let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-                poly_ids.into_iter().copied().collect(),
-                polys.into_iter().map(Arc::new).collect(),
+                poly_ids.clone(),
+                poly_arcs.clone(),
                 &coeffs,
                 streaming_context,
             ));
@@ -880,11 +886,26 @@ where
             // the hints for the individual sumchecks.
             let hint = PCS::combine_hints(hints, &coeffs);
 
+            #[cfg(test)]
+            let joint_poly = (joint_poly, poly_ids, poly_arcs, coeffs);
+
             (joint_poly, hint)
         };
 
         #[cfg(test)]
-        let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
+        let joint_commitment = {
+            let (joint_poly_ref, poly_ids, poly_arcs, coeffs) = &joint_poly;
+            let materialized_poly = match joint_poly_ref {
+                MultilinearPolynomial::RLC(rlc) => {
+                    MultilinearPolynomial::RLC(rlc.materialize(poly_ids, poly_arcs, coeffs))
+                }
+                _ => joint_poly_ref.clone(),
+            };
+            PCS::commit(&materialized_poly, pcs_setup).0
+        };
+
+        #[cfg(test)]
+        let joint_poly = joint_poly.0;
 
         #[cfg(not(test))]
         {
@@ -893,7 +914,8 @@ where
         }
 
         // Reduced opening proof
-        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+        let joint_opening_proof =
+            PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, Some(hint), transcript);
 
         ReducedOpeningProof {
             sumcheck_proof,

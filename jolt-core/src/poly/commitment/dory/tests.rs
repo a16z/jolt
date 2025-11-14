@@ -12,7 +12,6 @@ mod tests {
     use ark_std::{UniformRand, Zero};
     use serial_test::serial;
     type Fr = ark_bn254::Fr;
-    use crate::zkvm::witness::CommittedPolynomial;
 
     fn test_commitment_scheme_with_poly(
         poly: MultilinearPolynomial<Fr>,
@@ -39,7 +38,7 @@ mod tests {
             prover_setup,
             &poly,
             &opening_point,
-            row_commitments,
+            Some(row_commitments),
             &mut prove_transcript,
         );
 
@@ -265,7 +264,7 @@ mod tests {
             &prover_setup,
             &poly,
             &opening_point,
-            row_commitments,
+            Some(row_commitments),
             &mut prove_transcript,
         );
 
@@ -422,7 +421,7 @@ mod tests {
             &prover_setup,
             &poly,
             &opening_point,
-            row_commitments,
+            Some(row_commitments),
             &mut prove_transcript,
         );
 
@@ -445,9 +444,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_dory_homomorphic_combination() {
-        use crate::poly::rlc_polynomial::RLCPolynomial;
-        use std::sync::Arc;
-
         DoryGlobals::reset();
 
         let num_vars = 8;
@@ -498,14 +494,9 @@ mod tests {
         }
 
         // Step 7: Compute combined polynomial: P = coeff[0]*P0 + coeff[1]*P1 + ... + coeff[4]*P4
-        let poly_arcs: Vec<_> = polys.into_iter().map(Arc::new).collect();
-        let dummy_poly_ids = vec![CommittedPolynomial::RdInc; poly_arcs.len()];
-        let combined_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-            dummy_poly_ids,
-            poly_arcs,
-            &coeffs,
-            None,
-        ));
+        let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
+        let combined_poly = DensePolynomial::linear_combination(&poly_refs, &coeffs);
+        let combined_poly = MultilinearPolynomial::from(combined_poly.Z);
 
         // Step 8: Create evaluation proof using combined commitment and hint
         let mut prove_transcript = Blake2bTranscript::new(b"dory_homomorphic_test");
@@ -513,7 +504,7 @@ mod tests {
             &prover_setup,
             &combined_poly,
             &opening_point,
-            combined_hint,
+            Some(combined_hint),
             &mut prove_transcript,
         );
 
@@ -537,9 +528,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_dory_batch_commit_e2e() {
-        use crate::poly::rlc_polynomial::RLCPolynomial;
-        use std::sync::Arc;
-
         DoryGlobals::reset();
 
         let num_vars = 8;
@@ -586,15 +574,10 @@ mod tests {
             evaluation += *coeff * poly_eval;
         }
 
-        // Step 7: Create RLC polynomial (combined polynomial)
-        let poly_arcs: Vec<_> = polys.into_iter().map(Arc::new).collect();
-        let dummy_poly_ids = vec![CommittedPolynomial::RdInc; poly_arcs.len()];
-        let combined_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-            dummy_poly_ids,
-            poly_arcs,
-            &coeffs,
-            None,
-        ));
+        // Step 7: Create combined polynomial
+        let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
+        let combined_poly = DensePolynomial::linear_combination(&poly_refs, &coeffs);
+        let combined_poly = MultilinearPolynomial::from(combined_poly.Z);
 
         // Step 8: Verify that directly committing to the combined polynomial gives the same result
         // as homomorphically combining the individual commitments
@@ -613,7 +596,7 @@ mod tests {
             &prover_setup,
             &combined_poly,
             &opening_point,
-            combined_hint,
+            Some(combined_hint),
             &mut prove_transcript,
         );
 
@@ -639,7 +622,7 @@ mod tests {
             &prover_setup,
             &combined_poly,
             &opening_point,
-            direct_hint,
+            Some(direct_hint),
             &mut prove_transcript2,
         );
 

@@ -7,6 +7,16 @@ use ark_ec::CurveGroup;
 use dory::primitives::arithmetic::DoryRoutines;
 use rayon::prelude::*;
 
+/// left[i] = left[i] * scalar + right[i]
+fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
+    assert_eq!(left.len(), right.len(), "Lengths must match");
+    left.par_iter_mut()
+        .zip(right.par_iter())
+        .for_each(|(l, r)| {
+            *l = *l * *scalar + *r;
+        });
+}
+
 pub struct JoltG1Routines;
 
 impl DoryRoutines<ArkG1> for JoltG1Routines {
@@ -87,12 +97,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
-        assert_eq!(left.len(), right.len(), "Lengths must match");
-        left.par_iter_mut()
-            .zip(right.par_iter())
-            .for_each(|(l, r)| {
-                *l = *l * *scalar + *r;
-            });
+        fold_field_vectors(left, right, scalar);
     }
 }
 
@@ -180,11 +185,6 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
-        assert_eq!(left.len(), right.len(), "Lengths must match");
-        left.par_iter_mut()
-            .zip(right.par_iter())
-            .for_each(|(l, r)| {
-                *l = *l * *scalar + *r;
-            });
+        fold_field_vectors(left, right, scalar);
     }
 }

@@ -234,14 +234,12 @@ where
             .coeffs
             .par_chunks(row_len)
             .map(|row| {
-                let field_row: Vec<Fr> = row
+                let result = row
                     .iter()
-                    .map(|&b| if b { Fr::from(1u64) } else { Fr::from(0u64) })
-                    .collect();
-                ArkG1(
-                    VariableBaseMSM::msm_field_elements(&bases[..field_row.len()], &field_row)
-                        .unwrap(),
-                )
+                    .zip(&bases[..row.len()])
+                    .filter_map(|(&b, base)| if b { Some(*base) } else { None })
+                    .sum();
+                ArkG1(result)
             })
             .collect(),
         MultilinearPolynomial::OneHot(poly) => {

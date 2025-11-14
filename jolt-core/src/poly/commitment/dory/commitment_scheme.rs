@@ -41,9 +41,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
         let setup = ArkworksProverSetup::new_from_urs(&mut OsRng, max_num_vars);
 
-        // Initialize the prepared point cache for faster multi-pairings
-        // Skips cache initialization during tests to avoid shared state issues
-        #[cfg(not(test))]
         DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
 
         setup
@@ -94,10 +91,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
-        row_commitments: Self::OpeningProofHint,
+        hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
+
+        let row_commitments = hint.unwrap_or_else(|| {
+            let (_commitment, row_commitments) = Self::commit(poly, setup);
+            row_commitments
+        });
 
         let num_cols = DoryGlobals::get_num_columns();
         let num_rows = DoryGlobals::get_max_num_rows();
@@ -126,19 +128,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
             &mut dory_transcript,
         )
         .expect("proof generation should succeed")
-    }
-
-    fn prove_without_hint<ProofTranscript: Transcript>(
-        setup: &Self::ProverSetup,
-        poly: &MultilinearPolynomial<ark_bn254::Fr>,
-        opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
-        transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        let _span = trace_span!("DoryCommitmentScheme::prove_without_hint").entered();
-
-        let (_commitment, row_commitments) = Self::commit(poly, setup);
-
-        Self::prove(setup, poly, opening_point, row_commitments, transcript)
     }
 
     fn verify<ProofTranscript: Transcript>(

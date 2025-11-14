@@ -20,7 +20,7 @@ use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
     transcripts::{AppendToTranscript, Transcript},
-    utils::errors::ProofVerifyError,
+    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -487,7 +487,7 @@ where
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated
-        _: Self::OpeningProofHint,
+        _hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
@@ -516,7 +516,7 @@ where
 {
     type ChunkState = ();
 
-    fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
+    fn compute_tier1_commitment<T: SmallScalar>(
         _setup: &Self::ProverSetup,
         _chunk: &[T],
     ) -> Self::ChunkState {

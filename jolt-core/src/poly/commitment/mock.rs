@@ -7,7 +7,7 @@ use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::{AppendToTranscript, Transcript},
-    utils::errors::ProofVerifyError,
+    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
 use super::commitment_scheme::CommitmentScheme;
@@ -86,7 +86,7 @@ where
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
-        _: Self::OpeningProofHint,
+        _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         MockProof {
@@ -117,7 +117,7 @@ where
 {
     type ChunkState = ();
 
-    fn compute_tier1_commitment<T: crate::utils::small_scalar::SmallScalar>(
+    fn compute_tier1_commitment<T: SmallScalar>(
         _setup: &Self::ProverSetup,
         _chunk: &[T],
     ) -> Self::ChunkState {
