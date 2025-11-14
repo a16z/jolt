@@ -39,14 +39,13 @@ pub struct MatrixEntry<F: JoltField> {
     pub ra_coeff: F,
 }
 
-/// Represents the Val(k, j) polynomial for the RAM read/write-checking
-/// sumcheck. Conceptually, the Val polynomial can be viewed as a K x T
-/// matrix, where each row contains the state of memory at cycle j. This
-/// matrix is far too large to explicitly store in memory, but we observe
-/// that, while binding cycle variables, we only need a small fraction of
-/// the KT total coefficients for the purposes of sumcheck. The coefficients
-/// we do need are stored in this data structure.
-#[derive(Allocative)]
+/// Represents the ra(k, j) and Val(k, j) polynomials for the RAM
+/// read/write-checking sumcheck. Conceptually, both ra and Val can
+/// be seen as K x T matrices. This is far too large to explicitly
+/// store in memory, but we observe that, while binding cycle variables,
+/// we only need a small fraction of the coefficients for the purposes
+/// of sumcheck. The coefficients we do need are stored in this data structure.
+#[derive(Allocative, Debug)]
 pub struct SparseMatrixPolynomial<F: JoltField> {
     pub entries: Vec<MatrixEntry<F>>,
 }
@@ -160,6 +159,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         out
     }
 
+    // TODO(moodlezoup): Optimize for zeros in Val
     fn bind_entries(
         even: Option<&MatrixEntry<F>>,
         odd: Option<&MatrixEntry<F>>,
@@ -182,8 +182,8 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             (Some(even), None) => {
                 // For SparseMatrixPolynomial, the absence of a matrix entry implies
                 // that its coeff has not been bound yet.
-                // The absence of an odd-row entry in the same column as even[i]
-                // means that its implicit Val coeff is even[i].next, and its implicit
+                // The absence of an odd-row entry in the same column as even
+                // means that its implicit Val coeff is even.next, and its implicit
                 // ra coeff is 0.
                 let odd_val_coeff = F::from_u64(even.next_val);
                 MatrixEntry {
@@ -198,8 +198,8 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             (None, Some(odd)) => {
                 // For SparseMatrixPolynomial, the absence of a matrix entry implies
                 // that its coeff has not been bound yet.
-                // The absence of an even-row entry in the same column as odd[j]
-                // means that its implicit Val coeff is odd[j].prev, and its implicit
+                // The absence of an even-row entry in the same column as odd
+                // means that its implicit Val coeff is odd.prev, and its implicit
                 // ra coeff is 0.
                 let even_val_coeff = F::from_u64(odd.prev_val);
                 MatrixEntry {
@@ -219,11 +219,159 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         self.entries = self
             .entries
             .par_chunk_by(|x, y| x.row / 2 == y.row / 2)
-            .flat_map(|rows| {
-                let odd_row_start_index = rows.partition_point(|entry| entry.row.is_even());
-                let (even_row, odd_row) = rows.split_at(odd_row_start_index);
+            .flat_map(|entries| {
+                let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
+                let (even_row, odd_row) = entries.split_at(odd_row_start_index);
                 Self::bind_rows(&even_row, &odd_row, r)
             })
             .collect();
+    }
+
+    pub fn prover_message_contribution(
+        even_row: &[MatrixEntry<F>],
+        odd_row: &[MatrixEntry<F>],
+        inc_evals: [F; 2],
+        gamma: F,
+    ) -> [F; 2] {
+        /// Threshold where we stop parallelizing and do a plain linear merge.
+        const PAR_THRESHOLD: usize = 32_768;
+
+        // small inputs: do the O(n) sequential algorithm
+        if even_row.len() + odd_row.len() <= PAR_THRESHOLD {
+            return Self::seq_prover_message_contribution(even_row, odd_row, inc_evals, gamma);
+        }
+
+        // Split the longer row at its midpoint; find where that pivot would land in the other row.
+        let (even_pivot_idx, odd_pivot_idx) = if even_row.len() > odd_row.len() {
+            let even_pivot_idx = even_row.len() / 2;
+            let pivot = even_row[even_pivot_idx].col;
+            let odd_pivot_idx = odd_row.partition_point(|x| x.col < pivot);
+            (even_pivot_idx, odd_pivot_idx)
+        } else {
+            let odd_pivot_idx = odd_row.len() / 2;
+            let pivot = odd_row[odd_pivot_idx].col;
+            let even_pivot_idx = even_row.partition_point(|x| x.col < pivot);
+            (even_pivot_idx, odd_pivot_idx)
+        };
+
+        // Now we know the global order: everything in even_row[..even_pivot_idx] and
+        // odd_row[..odd_pivot_idx] comes before everything in even_row[even_pivot_idx..]
+        // and odd_row[odd_pivot_idx..]. Merge those two regions in parallel.
+        let (left_evals, right_evals) = rayon::join(
+            || {
+                Self::prover_message_contribution(
+                    &even_row[..even_pivot_idx],
+                    &odd_row[..odd_pivot_idx],
+                    inc_evals,
+                    gamma,
+                )
+            },
+            || {
+                Self::prover_message_contribution(
+                    &even_row[even_pivot_idx..],
+                    &odd_row[odd_pivot_idx..],
+                    inc_evals,
+                    gamma,
+                )
+            },
+        );
+
+        [
+            left_evals[0] + right_evals[0],
+            left_evals[1] + right_evals[1],
+        ]
+    }
+
+    fn seq_prover_message_contribution(
+        even: &[MatrixEntry<F>],
+        odd: &[MatrixEntry<F>],
+        inc_evals: [F; 2],
+        gamma: F,
+    ) -> [F; 2] {
+        let mut i = 0;
+        let mut j = 0;
+        let mut evals_accumulator = [F::zero(); 2];
+
+        while i < even.len() && j < odd.len() {
+            if even[i].col == odd[j].col {
+                let evals = Self::compute_evals(Some(&even[i]), Some(&odd[j]), inc_evals, gamma);
+                evals_accumulator[0] += evals[0];
+                evals_accumulator[1] += evals[1];
+                i += 1;
+                j += 1;
+            } else if even[i].col < odd[j].col {
+                let evals = Self::compute_evals(Some(&even[i]), None, inc_evals, gamma);
+                evals_accumulator[0] += evals[0];
+                evals_accumulator[1] += evals[1];
+                i += 1;
+            } else {
+                let evals = Self::compute_evals(None, Some(&odd[j]), inc_evals, gamma);
+                evals_accumulator[0] += evals[0];
+                evals_accumulator[1] += evals[1];
+                j += 1;
+            }
+        }
+        for remaining_even_entry in even[i..].iter() {
+            let evals = Self::compute_evals(Some(&remaining_even_entry), None, inc_evals, gamma);
+            evals_accumulator[0] += evals[0];
+            evals_accumulator[1] += evals[1];
+        }
+        for remaining_odd_entry in odd[j..].iter() {
+            let evals = Self::compute_evals(None, Some(&remaining_odd_entry), inc_evals, gamma);
+            evals_accumulator[0] += evals[0];
+            evals_accumulator[1] += evals[1];
+        }
+
+        evals_accumulator
+    }
+
+    fn compute_evals(
+        even: Option<&MatrixEntry<F>>,
+        odd: Option<&MatrixEntry<F>>,
+        inc_evals: [F; 2],
+        gamma: F,
+    ) -> [F; 2] {
+        match (even, odd) {
+            (Some(even), Some(odd)) => {
+                debug_assert!(even.row.is_even());
+                debug_assert!(odd.row.is_odd());
+                debug_assert_eq!(even.col, odd.col);
+                let ra_evals = [even.ra_coeff, odd.ra_coeff - even.ra_coeff];
+                let val_evals = [even.val_coeff, odd.val_coeff - even.val_coeff];
+                [
+                    ra_evals[0] * (val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
+                    ra_evals[1] * (val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                ]
+            }
+            (Some(even), None) => {
+                // For SparseMatrixPolynomial, the absence of a matrix entry implies
+                // that its coeff has not been bound yet.
+                // The absence of an odd-row entry in the same column as even
+                // means that its implicit Val coeff is even.next, and its implicit
+                // ra coeff is 0.
+                let odd_val_coeff = F::from_u64(even.next_val);
+                let ra_evals = [even.ra_coeff, -even.ra_coeff];
+                let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
+                [
+                    ra_evals[0] * (val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
+                    ra_evals[1] * (val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                ]
+            }
+            (None, Some(odd)) => {
+                // For SparseMatrixPolynomial, the absence of a matrix entry implies
+                // that its coeff has not been bound yet.
+                // The absence of an even-row entry in the same column as odd
+                // means that its implicit Val coeff is odd.prev, and its implicit
+                // ra coeff is 0.
+                let even_val_coeff = F::from_u64(odd.prev_val);
+                let ra_evals = [F::zero(), odd.ra_coeff];
+                let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
+                [
+                    F::zero(), // ra_evals[0] is zero
+                    ra_evals[1] * (val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                ]
+            }
+            (None, None) => panic!("Both entries are None"),
+        }
     }
 }
