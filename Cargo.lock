@@ -2015,6 +2015,7 @@ dependencies = [
  "clap",
  "common",
  "eyre",
+ "hex",
  "jolt-core",
  "postcard",
  "tracer",

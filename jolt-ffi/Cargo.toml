@@ -13,6 +13,10 @@ crate-type = ["staticlib", "rlib"]
 name = "prepare-guest"
 path = "src/bin/prepare_guest.rs"
 
+[[bin]]
+name = "verify"
+path = "src/bin/verify.rs"
+
 [dependencies]
 jolt-core = { workspace = true, features = ["prover", "host"] }
 tracer = { workspace = true }
@@ -24,6 +28,7 @@ postcard = { workspace = true }
 clap = { workspace = true }
 eyre = { workspace = true }
 tracing-subscriber = { workspace = true }
+hex = "0.4"
 
 [build-dependencies]
 cbindgen = "0.27"
