@@ -4,6 +4,7 @@ use allocative::Allocative;
 use num::Integer;
 use rayon::prelude::*;
 
+use crate::field::OptimizedMul;
 use crate::zkvm::ram::remap_address;
 use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use common::jolt_device::MemoryLayout;
@@ -159,7 +160,6 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         out
     }
 
-    // TODO(moodlezoup): Optimize for zeros in Val
     fn bind_entries(
         even: Option<&MatrixEntry<F>>,
         odd: Option<&MatrixEntry<F>>,
@@ -174,7 +174,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
                     row: even.row / 2,
                     col: even.col,
                     ra_coeff: even.ra_coeff + r * (odd.ra_coeff - even.ra_coeff),
-                    val_coeff: even.val_coeff + r * (odd.val_coeff - even.val_coeff),
+                    val_coeff: even.val_coeff + r.mul_0_optimized(odd.val_coeff - even.val_coeff),
                     prev_val: even.prev_val,
                     next_val: odd.next_val,
                 }
@@ -190,7 +190,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
                     row: even.row / 2,
                     col: even.col,
                     ra_coeff: (F::one() - r) * even.ra_coeff,
-                    val_coeff: even.val_coeff + r * (odd_val_coeff - even.val_coeff),
+                    val_coeff: even.val_coeff + r.mul_0_optimized(odd_val_coeff - even.val_coeff),
                     prev_val: even.prev_val,
                     next_val: even.next_val,
                 }
@@ -206,7 +206,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
                     row: odd.row / 2,
                     col: odd.col,
                     ra_coeff: r * odd.ra_coeff,
-                    val_coeff: even_val_coeff + r * (odd.val_coeff - even_val_coeff),
+                    val_coeff: even_val_coeff + r.mul_0_optimized(odd.val_coeff - even_val_coeff),
                     prev_val: odd.prev_val,
                     next_val: odd.next_val,
                 }
