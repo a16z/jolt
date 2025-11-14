@@ -41,7 +41,7 @@ cd "$JOLT_ROOT"
 
 # Step 1: Prepare guest
 echo "Step 1: Preparing guest program..."
-cargo run -q -p jolt-ffi --bin prepare-guest -- \
+cargo run --release -q -p jolt-ffi --bin prepare-guest -- \
     --guest "$GUEST" \
     --elf-output "jolt-ffi/examples/c/$ELF_OUTPUT" \
     --preprocessing-output "jolt-ffi/examples/c/$PREPROCESSING_OUTPUT"

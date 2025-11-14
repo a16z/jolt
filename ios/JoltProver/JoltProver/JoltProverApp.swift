@@ -1,4 +1,5 @@
 import SwiftUI
+import os.log
 
 @main
 struct JoltProverApp: App {

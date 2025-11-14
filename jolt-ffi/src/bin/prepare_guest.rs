@@ -29,7 +29,7 @@ struct Args {
     preprocessing_output: PathBuf,
 
     /// Maximum trace length (power of 2)
-    #[arg(short, long, default_value = "65536")]
+    #[arg(short, long, default_value = "16777216")]
     max_trace_length: usize,
 
     /// Target directory for cargo build
@@ -71,7 +71,9 @@ fn main() -> Result<()> {
     let (bytecode, init_memory_state, _) = program.decode();
 
     // Trace once to get the memory layout
-    let (_, _, _, io_device) = program.trace(&[], &[], &[]);
+    let fib_input: u64 = 80000;
+    let input = &mut postcard::to_stdvec(&fib_input)?;
+    let (_, _, _, io_device) = program.trace(input, &[], &[]);
 
     println!("  - Bytecode size: {} instructions", bytecode.len());
     println!("  - Memory layout: {} bytes", io_device.memory_layout.memory_size);

@@ -26,16 +26,16 @@ cargo build --release --target aarch64-apple-ios --message-format=short -q
 echo "Building for iOS simulator - Apple Silicon (aarch64-apple-ios-sim)..."
 cargo build --release --target aarch64-apple-ios-sim --message-format=short -q
 
-# iOS simulator (Intel)
-echo "Building for iOS simulator - Intel (x86_64-apple-ios)..."
-cargo build --release --target x86_64-apple-ios --message-format=short -q
+# # iOS simulator (Intel)
+# echo "Building for iOS simulator - Intel (x86_64-apple-ios)..."
+# cargo build --release --target x86_64-apple-ios --message-format=short -q
 
-# Create universal library for simulator (arm64 + x86_64)
-echo "Creating universal simulator library..."
-lipo -create \
-    "$PROJECT_ROOT/target/aarch64-apple-ios-sim/release/libjolt_ffi.a" \
-    "$PROJECT_ROOT/target/x86_64-apple-ios/release/libjolt_ffi.a" \
-    -output "$OUTPUT_DIR/libjolt_ffi_sim.a"
+# # Create universal library for simulator (arm64 + x86_64)
+# echo "Creating universal simulator library..."
+# lipo -create \
+#     "$PROJECT_ROOT/target/aarch64-apple-ios-sim/release/libjolt_ffi.a" \
+#     "$PROJECT_ROOT/target/x86_64-apple-ios/release/libjolt_ffi.a" \
+#     -output "$OUTPUT_DIR/libjolt_ffi_sim.a"
 
 # Copy device library
 echo "Copying device library..."

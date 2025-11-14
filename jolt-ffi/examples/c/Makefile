@@ -3,13 +3,13 @@
 # Paths
 JOLT_ROOT = ../../..
 TARGET_DIR = $(JOLT_ROOT)/target
-DEBUG_DIR = $(TARGET_DIR)/debug
-HEADER = $(DEBUG_DIR)/jolt-ffi.h
+RELEASE_DIR = $(TARGET_DIR)/release
+HEADER = $(RELEASE_DIR)/jolt-ffi.h
 
 # Compiler settings
 CC = clang
-CFLAGS = -Wall -Wextra -I$(DEBUG_DIR)
-LDFLAGS = -L$(DEBUG_DIR)
+CFLAGS = -Wall -Wextra -O3 -I$(RELEASE_DIR)
+LDFLAGS = -L$(RELEASE_DIR)
 LIBS = -ljolt_ffi -lm -liconv -framework CoreFoundation -framework Security -framework SystemConfiguration
 
 # Output
@@ -20,12 +20,12 @@ TARGET = jolt_example
 all: $(TARGET)
 
 # Build the Rust FFI library first
-$(DEBUG_DIR)/libjolt_ffi.a:
+$(RELEASE_DIR)/libjolt_ffi.a:
 	@echo "Building jolt-ffi library..."
-	cd $(JOLT_ROOT) && cargo build -p jolt-ffi --lib
+	cd $(JOLT_ROOT) && cargo build --release -p jolt-ffi --lib
 
 # Build the C example
-$(TARGET): example.c $(DEBUG_DIR)/libjolt_ffi.a
+$(TARGET): example.c $(RELEASE_DIR)/libjolt_ffi.a
 	@echo "Compiling C example..."
 	$(CC) $(CFLAGS) example.c -o $(TARGET) $(LDFLAGS) $(LIBS)
 	@echo "✓ Built $(TARGET) successfully"
