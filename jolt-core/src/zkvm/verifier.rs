@@ -219,7 +219,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             self.proof.ram_K,
             self.proof.trace_length,
-            self.proof.twist_sumcheck_switch_index,
             &self.opening_accumulator,
             &mut self.transcript,
         );

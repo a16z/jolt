@@ -1,9 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use allocative::Allocative;
 use num::Integer;
 use rayon::prelude::*;
 
-use crate::field::JoltField;
 use crate::zkvm::ram::remap_address;
+use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, RAMAccess};
 
@@ -45,7 +47,7 @@ pub struct MatrixEntry<F: JoltField> {
 /// store in memory, but we observe that, while binding cycle variables,
 /// we only need a small fraction of the coefficients for the purposes
 /// of sumcheck. The coefficients we do need are stored in this data structure.
-#[derive(Allocative, Debug)]
+#[derive(Allocative, Debug, Default)]
 pub struct SparseMatrixPolynomial<F: JoltField> {
     pub entries: Vec<MatrixEntry<F>>,
 }
@@ -215,6 +217,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SparseMatrixPolynomial::bind")]
     pub fn bind(&mut self, r: F::Challenge) {
         self.entries = self
             .entries
@@ -373,5 +376,41 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             }
             (None, None) => panic!("Both entries are None"),
         }
+    }
+
+    #[tracing::instrument(skip_all, name = "SparseMatrixPolynomial::materialize")]
+    pub fn materialize(
+        self,
+        K: usize,
+        val_init: &[F],
+    ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
+        // Initialize ra and Val to initial values
+        let ra: Vec<Arc<Mutex<F>>> = (0..K)
+            .into_par_iter()
+            .map(|_| Arc::new(Mutex::new(F::zero())))
+            .collect();
+        let val: Vec<Arc<Mutex<F>>> = val_init
+            .par_iter()
+            .map(|&x| Arc::new(Mutex::new(x)))
+            .collect();
+        // Update some of the ra and Val coefficients based on
+        // matrix entries.
+        self.entries.into_par_iter().for_each(|entry| {
+            debug_assert_eq!(entry.row, 0);
+            let k = entry.col;
+            *ra[k].lock().unwrap() = entry.ra_coeff;
+            *val[k].lock().unwrap() = entry.val_coeff;
+        });
+        // Unwrap Arc<Mutex<F>> back into F
+        let ra: Vec<F> = ra
+            .into_par_iter()
+            .map(|arc_mutex| *arc_mutex.lock().unwrap())
+            .collect();
+        let val: Vec<F> = val
+            .into_par_iter()
+            .map(|arc_mutex| *arc_mutex.lock().unwrap())
+            .collect();
+        // Convert Vec<F> to MultilinearPolynomial<F>
+        (ra.into(), val.into())
     }
 }

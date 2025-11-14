@@ -546,7 +546,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.trace,
             self.ram_K,
-            self.twist_sumcheck_switch_index,
             &self.opening_accumulator,
             &mut self.transcript,
         );
