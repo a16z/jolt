@@ -75,6 +75,7 @@ use tracer::instruction::{
     Instruction,
 };
 use z3::{ast::Int, SatResult, Solver};
+use crate::test_instruction;
 
 #[derive(Clone, Debug)]
 struct JoltState<T = Int> {
@@ -421,58 +422,6 @@ impl JoltState<i64> {
     }
 }
 
-macro_rules! test_instruction {
-    ($instr:ident, $operands:path $(, $field:ident : $value:expr )* $(,)?) => {
-        paste::paste! {
-            #[test]
-            #[allow(nonstandard_style)]
-            fn [<test_ $instr>]() {
-                let instr = Instruction::$instr($instr {
-                    operands: test_instruction!(@ $operands),
-                    $($field: $value,)*
-                    // unused by solver
-                    address: 8,
-                    is_compressed: false,
-                    is_first_in_sequence: false,
-                    virtual_sequence_remaining: None,
-                });
-                do_test(stringify!(instr), &instr);
-            }
-        }
-    };
-    // Expand operands
-    (@ FormatR) => {
-        FormatR { rd: 1, rs1: 2, rs2: 3 }
-    };
-    (@ FormatI) => {
-        FormatI { rd: 1, rs1: 2, imm: 1234 }
-    };
-    (@ FormatU) => {
-        FormatU { rd: 1, imm: 1234 }
-    };
-    (@ FormatB) => {
-        FormatB { rs1: 2, rs2: 3, imm: 1234 }
-    };
-    (@ FormatJ) => {
-        FormatJ { rd: 1, imm: 1234 }
-    };
-    (@ FormatLoad) => {
-        FormatLoad { rd: 1, rs1: 2, imm: 1234 }
-    };
-    (@ FormatS) => {
-        FormatS { rs1: 2, rs2: 3, imm: 1234 }
-    };
-    (@ AssertAlignFormat) => {
-        AssertAlignFormat { rs1: 2, imm: 1234 }
-    };
-    (@ FormatVirtualRightShiftI) => {
-        FormatVirtualRightShiftI { rd: 1, rs1: 2, imm: 1234 }
-    };
-    (@ FormatVirtualRightShiftR) => {
-        FormatVirtualRightShiftR { rd: 1, rs1: 2, rs2: 3 }
-    };
-}
-
 fn do_test(name: &str, instr: &Instruction) {
     let mut solver = Solver::new();
 
@@ -513,55 +462,66 @@ fn do_test(name: &str, instr: &Instruction) {
     }
 }
 
-test_instruction!(ADD, FormatR);
-test_instruction!(ADDI, FormatI);
-test_instruction!(AND, FormatR);
-test_instruction!(ANDI, FormatI);
-test_instruction!(ANDN, FormatR);
-test_instruction!(AUIPC, FormatU);
-test_instruction!(BEQ, FormatB);
-test_instruction!(BGE, FormatB);
-test_instruction!(BGEU, FormatB);
-test_instruction!(BLT, FormatB);
-test_instruction!(BLTU, FormatB);
-test_instruction!(BNE, FormatB);
-test_instruction!(ECALL, FormatI);
-test_instruction!(FENCE, FormatI);
-test_instruction!(JAL, FormatJ);
-test_instruction!(JALR, FormatI);
-test_instruction!(LD, FormatLoad);
-test_instruction!(LUI, FormatU);
-test_instruction!(MUL, FormatR);
-test_instruction!(MULHU, FormatR);
-test_instruction!(OR, FormatR);
-test_instruction!(ORI, FormatI);
-test_instruction!(SD, FormatS);
-test_instruction!(SLT, FormatR);
-test_instruction!(SLTI, FormatI);
-test_instruction!(SLTIU, FormatI);
-test_instruction!(SLTU, FormatR);
-test_instruction!(SUB, FormatR);
-test_instruction!(VirtualAdvice, FormatJ, advice: 0);
-test_instruction!(VirtualAssertEQ, FormatB);
-test_instruction!(VirtualAssertHalfwordAlignment, AssertAlignFormat);
-test_instruction!(VirtualAssertLTE, FormatB);
-test_instruction!(VirtualAssertMulUNoOverflow, FormatB);
-test_instruction!(VirtualAssertValidDiv0, FormatB);
-test_instruction!(VirtualAssertValidUnsignedRemainder, FormatB);
-test_instruction!(VirtualAssertWordAlignment, AssertAlignFormat);
-test_instruction!(VirtualChangeDivisor, FormatR);
-test_instruction!(VirtualMovsign, FormatI);
-test_instruction!(VirtualMULI, FormatI);
-test_instruction!(VirtualPow2, FormatI);
-test_instruction!(VirtualPow2I, FormatJ);
-test_instruction!(VirtualPow2IW, FormatJ);
-test_instruction!(VirtualPow2W, FormatI);
-test_instruction!(VirtualRev8W, FormatI);
-test_instruction!(VirtualROTRIW, FormatVirtualRightShiftI);
-test_instruction!(VirtualShiftRightBitmask, FormatI);
-test_instruction!(VirtualShiftRightBitmaskI, FormatJ);
-test_instruction!(VirtualSignExtendWord, FormatI);
-test_instruction!(VirtualSRA, FormatVirtualRightShiftR);
-test_instruction!(VirtualSRAI, FormatVirtualRightShiftI);
-test_instruction!(VirtualSRL, FormatVirtualRightShiftR);
-test_instruction!(VirtualSRLI, FormatVirtualRightShiftI);
+macro_rules! test_instruction_constraints {
+    ($instr:ident, $operands:path $(, $field:ident : $value:expr )* $(,)?) => {
+        test_instruction!(
+            $instr,
+            do_test,
+            $operands,
+            $($field : $value,)*
+        );
+    };
+}
+
+test_instruction_constraints!(ADD, FormatR);
+test_instruction_constraints!(ADDI, FormatI);
+test_instruction_constraints!(AND, FormatR);
+test_instruction_constraints!(ANDI, FormatI);
+test_instruction_constraints!(ANDN, FormatR);
+test_instruction_constraints!(AUIPC, FormatU);
+test_instruction_constraints!(BEQ, FormatB);
+test_instruction_constraints!(BGE, FormatB);
+test_instruction_constraints!(BGEU, FormatB);
+test_instruction_constraints!(BLT, FormatB);
+test_instruction_constraints!(BLTU, FormatB);
+test_instruction_constraints!(BNE, FormatB);
+test_instruction_constraints!(ECALL, FormatI);
+test_instruction_constraints!(FENCE, FormatI);
+test_instruction_constraints!(JAL, FormatJ);
+test_instruction_constraints!(JALR, FormatI);
+test_instruction_constraints!(LD, FormatLoad);
+test_instruction_constraints!(LUI, FormatU);
+test_instruction_constraints!(MUL, FormatR);
+test_instruction_constraints!(MULHU, FormatR);
+test_instruction_constraints!(OR, FormatR);
+test_instruction_constraints!(ORI, FormatI);
+test_instruction_constraints!(SD, FormatS);
+test_instruction_constraints!(SLT, FormatR);
+test_instruction_constraints!(SLTI, FormatI);
+test_instruction_constraints!(SLTIU, FormatI);
+test_instruction_constraints!(SLTU, FormatR);
+test_instruction_constraints!(SUB, FormatR);
+test_instruction_constraints!(VirtualAdvice, FormatJ, advice: 0);
+test_instruction_constraints!(VirtualAssertEQ, FormatB);
+test_instruction_constraints!(VirtualAssertHalfwordAlignment, AssertAlignFormat);
+test_instruction_constraints!(VirtualAssertLTE, FormatB);
+test_instruction_constraints!(VirtualAssertMulUNoOverflow, FormatB);
+test_instruction_constraints!(VirtualAssertValidDiv0, FormatB);
+test_instruction_constraints!(VirtualAssertValidUnsignedRemainder, FormatB);
+test_instruction_constraints!(VirtualAssertWordAlignment, AssertAlignFormat);
+test_instruction_constraints!(VirtualChangeDivisor, FormatR);
+test_instruction_constraints!(VirtualMovsign, FormatI);
+test_instruction_constraints!(VirtualMULI, FormatI);
+test_instruction_constraints!(VirtualPow2, FormatI);
+test_instruction_constraints!(VirtualPow2I, FormatJ);
+test_instruction_constraints!(VirtualPow2IW, FormatJ);
+test_instruction_constraints!(VirtualPow2W, FormatI);
+test_instruction_constraints!(VirtualRev8W, FormatI);
+test_instruction_constraints!(VirtualROTRIW, FormatVirtualRightShiftI);
+test_instruction_constraints!(VirtualShiftRightBitmask, FormatI);
+test_instruction_constraints!(VirtualShiftRightBitmaskI, FormatJ);
+test_instruction_constraints!(VirtualSignExtendWord, FormatI);
+test_instruction_constraints!(VirtualSRA, FormatVirtualRightShiftR);
+test_instruction_constraints!(VirtualSRAI, FormatVirtualRightShiftI);
+test_instruction_constraints!(VirtualSRL, FormatVirtualRightShiftR);
+test_instruction_constraints!(VirtualSRLI, FormatVirtualRightShiftI);

@@ -1,0 +1,532 @@
+#![cfg(test)]
+use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
+use std::fmt::Write;
+use tracer::{
+    emulator::cpu::Xlen,
+    instruction::{
+        add::ADD,
+        addi::ADDI,
+        addiw::ADDIW,
+        addw::ADDW,
+        and::AND,
+        andi::ANDI,
+        andn::ANDN,
+        div::DIV,
+        divu::DIVU,
+        divuw::DIVUW,
+        divw::DIVW,
+        format::{
+            format_i::FormatI, format_r::FormatR, normalize_imm,
+        },
+        lui::LUI,
+        mul::MUL,
+        mulh::MULH,
+        mulhsu::MULHSU,
+        mulhu::MULHU,
+        mulw::MULW,
+        ori::ORI,
+        rem::REM,
+        remu::REMU,
+        remuw::REMUW,
+        remw::REMW,
+        sllw::SLLW,
+        sltu::SLTU,
+        sra::SRA,
+        srai::SRAI,
+        sraiw::SRAIW,
+        sraw::SRAW,
+        srl::SRL,
+        srli::SRLI,
+        srliw::SRLIW,
+        srlw::SRLW,
+        sub::SUB,
+        subw::SUBW,
+        virtual_advice::VirtualAdvice,
+        virtual_assert_eq::VirtualAssertEQ,
+        virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
+        virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
+        virtual_assert_valid_div0::VirtualAssertValidDiv0,
+        virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
+        virtual_assert_word_alignment::VirtualAssertWordAlignment,
+        virtual_change_divisor::VirtualChangeDivisor,
+        virtual_change_divisor_w::VirtualChangeDivisorW,
+        virtual_movsign::VirtualMovsign,
+        virtual_muli::VirtualMULI,
+        virtual_pow2::VirtualPow2,
+        virtual_pow2_w::VirtualPow2W,
+        virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+        virtual_sign_extend_word::VirtualSignExtendWord,
+        virtual_sra::VirtualSRA,
+        virtual_srai::VirtualSRAI,
+        virtual_srl::VirtualSRL,
+        virtual_srli::VirtualSRLI,
+        virtual_zero_extend_word::VirtualZeroExtendWord,
+        xor::XOR,
+        Instruction,
+    },
+    utils::virtual_registers::VirtualRegisterAllocator,
+};
+use z3::{
+    Params, SatResult, Solver, ast::{BV, Bool}
+};
+use crate::test_instruction;
+
+const Z3_TIMEOUT_MS: u32 = 30_000;
+const Z3_RANDOM_SEED: u32 = 42;
+
+#[derive(Clone)]
+struct SymbolicCpu {
+    var_prefix: String,
+    x: [BV; REGISTER_COUNT as usize],
+    advice_vars: Vec<BV>,
+    asserts: Vec<Bool>,
+    xlen: Xlen,
+}
+
+impl SymbolicCpu {
+    fn new(var_prefix: &str, xlen: Xlen) -> Self {
+        SymbolicCpu {
+            var_prefix: var_prefix.to_string(),
+            x: (0..REGISTER_COUNT)
+                .map(|i| BV::new_const(format!("{}_x{}", var_prefix, i), 64))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            advice_vars: Vec::new(),
+            asserts: Vec::new(),
+            xlen,
+        }
+    }
+
+    fn sign_extend(&self, bv: &BV) -> BV {
+        match self.xlen {
+            Xlen::Bit32 => bv.extract(31, 0).sign_ext(32),
+            Xlen::Bit64 => bv.clone(),
+        }
+    }
+
+    fn unsigned_data(&self, bv: &BV) -> BV {
+        match self.xlen {
+            Xlen::Bit32 => bv.extract(31, 0).zero_ext(32),
+            Xlen::Bit64 => bv.clone(),
+        }
+    }
+}
+
+fn trailing_zeros(bv: &BV, bitsz: u32) -> BV {
+    fn tz_recursive(bv: &BV, curr_sz: u32, bitsz: u32) -> BV {
+        if curr_sz == 1 {
+            return bv
+                .eq(&BV::from_u64(0, 1))
+                .ite(&BV::from_u64(1, bitsz), &BV::from_u64(0, bitsz));
+        }
+        let half = curr_sz / 2;
+        let lower = bv.extract(half - 1, 0);
+        let upper = bv.extract(curr_sz - 1, half);
+        let upper_tz = tz_recursive(&upper, half, bitsz);
+        let lower_tz = tz_recursive(&lower, half, bitsz);
+        (lower.eq(&BV::from_u64(0, half)))
+            .ite(&(upper_tz + BV::from_u64(half as u64, bitsz)), &lower_tz)
+    }
+    tz_recursive(bv, bitsz, bitsz)
+}
+
+fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
+    match instr {
+        Instruction::ADD(ADD { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 + rs2));
+        }
+        Instruction::ADDI(ADDI { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 + imm));
+        }
+        Instruction::AND(AND { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & rs2));
+        }
+        Instruction::ANDI(ANDI { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & imm));
+        }
+        Instruction::ANDN(ANDN { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & rs2.bvnot()));
+        }
+        Instruction::LUI(LUI { operands, .. }) => {
+            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            cpu.x[operands.rd as usize] = BV::from_i64(imm, 64);
+        }
+        Instruction::MUL(MUL { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 * rs2));
+        }
+        Instruction::MULHU(MULHU { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => {
+                    let lhs = rs1.extract(31, 0);
+                    let rhs = rs2.extract(31, 0);
+                    let product = lhs.zero_ext(32) * rhs.zero_ext(32);
+                    cpu.sign_extend(&product.extract(63, 32))
+                }
+                Xlen::Bit64 => {
+                    let product = rs1.zero_ext(64) * rs2.zero_ext(64);
+                    product.extract(127, 64)
+                }
+            }
+        }
+        Instruction::ORI(ORI { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 | imm));
+        }
+        Instruction::SUB(SUB { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 - rs2));
+        }
+        Instruction::VirtualAssertEQ(VirtualAssertEQ { operands, .. }) => {
+            let val1 = cpu.x[operands.rs1 as usize].clone();
+            let val2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.asserts.push(val1.eq(&val2));
+        }
+        Instruction::VirtualAssertHalfwordAlignment(VirtualAssertHalfwordAlignment {
+            operands,
+            ..
+        }) => {
+            let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
+            cpu.asserts.push(addr.extract(0, 0).eq(0))
+        }
+        Instruction::VirtualAssertMulUNoOverflow(VirtualAssertMulUNoOverflow {
+            operands, ..
+        }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.asserts.push(rs1.bvmul_no_overflow(&rs2, false));
+        }
+        Instruction::VirtualAssertValidDiv0(VirtualAssertValidDiv0 { operands, .. }) => {
+            let divisor = cpu.x[operands.rs1 as usize].clone();
+            let quotient = cpu.x[operands.rs2 as usize].clone();
+            cpu.asserts.push(divisor.eq(0).implies(match cpu.xlen {
+                Xlen::Bit32 => quotient.extract(31, 0).eq(u32::MAX),
+                Xlen::Bit64 => quotient.eq(u64::MAX),
+            }));
+        }
+        Instruction::VirtualAssertValidUnsignedRemainder(VirtualAssertValidUnsignedRemainder {
+            operands,
+            ..
+        }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.asserts.push(match cpu.xlen {
+                Xlen::Bit32 => {
+                    let remainder = rs1.extract(31, 0);
+                    let divisor = rs2.extract(31, 0);
+                    divisor.eq(0) | remainder.bvult(&divisor)
+                }
+                Xlen::Bit64 => {
+                    let remainder = rs1;
+                    let divisor = rs2;
+                    divisor.eq(0) | remainder.bvult(&divisor)
+                }
+            });
+        }
+
+        Instruction::VirtualAssertWordAlignment(VirtualAssertWordAlignment {
+            operands, ..
+        }) => {
+            let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
+            cpu.asserts.push(addr.extract(1, 0).eq(0))
+        }
+        Instruction::VirtualChangeDivisor(VirtualChangeDivisor { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => {
+                    let dividend = rs1.extract(31, 0);
+                    let divisor = rs2.extract(31, 0);
+                    (dividend.eq(i32::MIN) & divisor.eq(-1))
+                        .ite(&BV::from_u64(1, 64), &divisor.sign_ext(32))
+                }
+                Xlen::Bit64 => {
+                    let dividend = rs1;
+                    let divisor = rs2;
+                    (dividend.eq(i64::MIN) & divisor.eq(-1)).ite(&BV::from_u64(1, 64), &divisor)
+                }
+            }
+        }
+        Instruction::VirtualChangeDivisorW(VirtualChangeDivisorW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => {
+                    panic!("VirtualChangeDivisorW is invalid in 32b mode");
+                }
+                Xlen::Bit64 => {
+                    let dividend = rs1.extract(31, 0);
+                    let divisor = rs2.extract(31, 0);
+                    (dividend.eq(i32::MIN) & divisor.eq(-1))
+                        .ite(&BV::from_u64(1, 64), &divisor.sign_ext(32))
+                }
+            }
+        }
+        Instruction::VirtualMovsign(VirtualMovsign { operands, .. }) => {
+            let val = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => {
+                    let sign_bit = val.extract(31, 31);
+                    sign_bit
+                        .eq(1)
+                        .ite(&BV::from_u64(u32::MAX as u64, 64), &BV::from_u64(0, 64))
+                }
+                Xlen::Bit64 => {
+                    let sign_bit = val.extract(63, 63);
+                    sign_bit
+                        .eq(1)
+                        .ite(&BV::from_u64(u64::MAX, 64), &BV::from_u64(0, 64))
+                }
+            };
+        }
+        Instruction::VirtualAdvice(VirtualAdvice { operands, .. }) => {
+            let advice_var = BV::new_const(
+                format!("{}_advice_{}", cpu.var_prefix, cpu.advice_vars.len()),
+                64,
+            );
+            cpu.x[operands.rd as usize] = advice_var.clone();
+            cpu.advice_vars.push(advice_var);
+        }
+        Instruction::VirtualPow2(VirtualPow2 { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => BV::from_u64(1, 64).bvshl(rs1 & (32 - 1)),
+                Xlen::Bit64 => BV::from_u64(1, 64).bvshl(rs1 & (64 - 1)),
+            };
+        }
+        Instruction::VirtualPow2W(VirtualPow2W { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => panic!("VirtualPow2W is invalid in 32b mode"),
+                Xlen::Bit64 => BV::from_u64(1, 64).bvshl(rs1 & (32 - 1)),
+            };
+        }
+        Instruction::VirtualSRA(VirtualSRA { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let shift = trailing_zeros(&rs2, 64);
+            cpu.x[operands.rd as usize] = rs1.bvashr(&shift);
+        }
+        Instruction::VirtualSRL(VirtualSRL { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let shift = trailing_zeros(&rs2, 64);
+            cpu.x[operands.rd as usize] = rs1.bvlshr(&shift);
+        }
+        Instruction::VirtualShiftRightBitmask(VirtualShiftRightBitmask { operands, .. }) => {
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => {
+                    let shift = cpu.x[operands.rs1 as usize].clone() & (32 - 1);
+                    let ones = (BV::from_u64(1, 64).bvshl(&(32 - &shift))) - 1;
+                    ones.bvshl(&shift)
+                }
+                Xlen::Bit64 => {
+                    let shift = cpu.x[operands.rs1 as usize].clone() & (64 - 1);
+                    let inv_shift: BV = 64 - &shift;
+                    let ones = (BV::from_u64(1, 128).bvshl(&inv_shift.zero_ext(64))) - 1;
+                    ones.bvshl(&shift.zero_ext(64)).extract(63, 0)
+                }
+            }
+        }
+        Instruction::VirtualSignExtendWord(VirtualSignExtendWord { operands, .. }) => {
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => panic!("VirtualSignExtendWord is not supported for 32-bit mode"),
+                Xlen::Bit64 => {
+                    let val = cpu.x[operands.rs1 as usize].clone();
+                    val.extract(31, 0).sign_ext(32)
+                }
+            }
+        }
+        Instruction::VirtualZeroExtendWord(VirtualZeroExtendWord { operands, .. }) => {
+            cpu.x[operands.rd as usize] = match cpu.xlen {
+                Xlen::Bit32 => panic!("VirtualExtend is not supported for 32-bit mode"),
+                Xlen::Bit64 => {
+                    let val = cpu.x[operands.rs1 as usize].clone();
+                    val.extract(31, 0).zero_ext(32)
+                }
+            }
+        }
+        Instruction::VirtualMULI(VirtualMULI { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 * operands.imm));
+        }
+        Instruction::VirtualSRLI(VirtualSRLI { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let shift = operands.imm.trailing_zeros();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(&rs1).bvlshr(shift));
+        }
+        Instruction::VirtualSRAI(VirtualSRAI { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let shift = operands.imm.trailing_zeros();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(shift));
+        }
+        Instruction::XOR(XOR { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&rs1.bvxor(&rs2));
+        }
+        Instruction::SLTU(SLTU { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu
+                .unsigned_data(&rs1)
+                .bvult(&cpu.unsigned_data(&rs2))
+                .ite(&BV::from_u64(1, 64), &BV::from_u64(0, 64));
+        }
+        _ => panic!("Unsupported instruction {:?} in symbolic_exec", instr),
+    }
+}
+
+fn do_test(instr_name: &str, instr: &Instruction) {
+    let mut solver_params = Params::default();
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
+
+    let mut solver = Solver::new();
+    solver.set_params(&solver_params);
+    let allocator = VirtualRegisterAllocator::default();
+    let xlen = Xlen::Bit64;
+    let (mut cpu1, mut cpu2) = (
+        SymbolicCpu::new("cpu1", xlen),
+        SymbolicCpu::new("cpu2", xlen),
+    );
+    let cpu1_initial = cpu1.clone();
+
+    for (x1, x2) in cpu1.x.iter().zip(cpu2.x.iter()) {
+        solver += &x1.eq(x2);
+    }
+
+    for instr in instr.inline_sequence(&allocator, xlen) {
+        symbolic_exec(&instr, &mut cpu1);
+        symbolic_exec(&instr, &mut cpu2);
+    }
+
+    for assert in cpu1.asserts.iter().chain(cpu2.asserts.iter()) {
+        solver += assert;
+    }
+
+    // We don't care if virtual registers differ
+    solver += cpu1.x[..RISCV_REGISTER_COUNT as usize]
+        .iter()
+        .zip(cpu2.x[..RISCV_REGISTER_COUNT as usize].iter())
+        .map(|(x1, x2)| x1.ne(x2))
+        .reduce(|acc, t| acc | t)
+        .unwrap();
+
+    match solver.check() {
+        SatResult::Unsat => {}
+        SatResult::Sat => {
+            let mut msg = format!("Found differing outputs:\n");
+            let operands = instr.normalize().operands;
+            let model = solver.get_model().unwrap();
+            let eval = |bv: &BV| model.eval(bv, true).unwrap().as_u64().unwrap();
+            for i in 0..RISCV_REGISTER_COUNT as usize {
+                let val1 = eval(&cpu1.x[i]);
+                let val2 = eval(&cpu2.x[i]);
+                if val1 != val2 {
+                    let reg = if i == operands.rd as usize {
+                        format!("rd (x{})", operands.rd)
+                    } else {
+                        format!("x{}", i)
+                    };
+                    let _ = writeln!(msg, "  {}: {:#x} != {:#x}\n", reg, val1, val2);
+                }
+            }
+            let _ = writeln!(msg, "Using inputs:");
+            let _ = writeln!(
+                msg,
+                "  rs1 (x{}): {:#x}",
+                operands.rs1,
+                eval(&cpu1_initial.x[operands.rs1 as usize])
+            );
+            let _ = writeln!(
+                msg,
+                "  rs2 (x{}): {:#x}",
+                operands.rs2,
+                eval(&cpu1_initial.x[operands.rs2 as usize])
+            );
+            let _ = writeln!(msg, "  imm: {:#x}\n", operands.imm);
+
+            if !cpu1.advice_vars.is_empty() {
+                let _ = writeln!(msg, "Using advice:");
+                for (i, (advice_var1, advice_var2)) in cpu1
+                    .advice_vars
+                    .iter()
+                    .zip(cpu2.advice_vars.iter())
+                    .enumerate()
+                {
+                    let val1 = eval(advice_var1);
+                    let val2 = eval(advice_var2);
+                    let _ = writeln!(msg, "  {}: {:#x}, {:#x}", i, val1, val2);
+                }
+            }
+
+            panic!("{}", msg.trim());
+        }
+        SatResult::Unknown => panic!("Solver failed/timed out"),
+    }
+}
+
+macro_rules! test_sequence {
+    ($instr:ident, $operands:path $(, $field:ident : $value:expr )* $(,)?) => {
+        test_instruction!(
+            $instr,
+            do_test,
+            $operands,
+            $($field : $value,)*
+        );
+    };
+}
+
+test_sequence!(ADDIW, FormatI);
+test_sequence!(ADDW, FormatR);
+test_sequence!(DIV, FormatR);
+test_sequence!(DIVU, FormatR);
+test_sequence!(DIVUW, FormatR);
+test_sequence!(DIVW, FormatR);
+// Memory operations are not tested at the moment
+// test_sequence!(LB, FormatLoad);
+// test_sequence!(LBU, FormatLoad);
+// test_sequence!(LH, FormatLoad);
+// test_sequence!(LHU, FormatLoad);
+// test_sequence!(LW, FormatLoad);
+// test_sequence!(LWU, FormatLoad);
+test_sequence!(MULH, FormatR);
+test_sequence!(MULHSU, FormatR);
+test_sequence!(MULW, FormatR);
+test_sequence!(REM, FormatR);
+test_sequence!(REMU, FormatR);
+test_sequence!(REMUW, FormatR);
+test_sequence!(REMW, FormatR);
+// test_sequence!(SB, FormatS);
+// test_sequence!(SH, FormatS);
+// test_sequence!(SLL, FormatR);
+// test_sequence!(SLLI, FormatI);
+// test_sequence!(SLLIW, FormatI);
+test_sequence!(SLLW, FormatR);
+test_sequence!(SRA, FormatR);
+test_sequence!(SRAI, FormatI);
+test_sequence!(SRAIW, FormatI);
+test_sequence!(SRAW, FormatR);
+test_sequence!(SRL, FormatR);
+test_sequence!(SRLI, FormatI);
+test_sequence!(SRLIW, FormatI);
+test_sequence!(SRLW, FormatR);
+test_sequence!(SUBW, FormatR);
+//test_sequence!(SW, FormatS);
