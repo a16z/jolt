@@ -75,7 +75,7 @@ use tracer::instruction::{
     Instruction,
 };
 use z3::{ast::Int, SatResult, Solver};
-use crate::test_instruction;
+use crate::template_format;
 
 #[derive(Clone, Debug)]
 struct JoltState<T = Int> {
@@ -464,12 +464,22 @@ fn do_test(name: &str, instr: &Instruction) {
 
 macro_rules! test_instruction_constraints {
     ($instr:ident, $operands:path $(, $field:ident : $value:expr )* $(,)?) => {
-        test_instruction!(
-            $instr,
-            do_test,
-            $operands,
-            $($field : $value,)*
-        );
+        paste::paste! {
+            #[test]
+            #[allow(nonstandard_style)]
+            fn [<test_ $instr>]() {
+                let instr = Instruction::$instr($instr {
+                    operands: $crate::template_format!($operands),
+                    $($field: $value,)*
+                    // unused by solver
+                    address: 8,
+                    is_compressed: false,
+                    is_first_in_sequence: false,
+                    virtual_sequence_remaining: None,
+                });
+                do_test(stringify!(instr), &instr);
+            }
+        }
     };
 }
 

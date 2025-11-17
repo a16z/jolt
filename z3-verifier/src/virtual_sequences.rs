@@ -15,9 +15,7 @@ use tracer::{
         divu::DIVU,
         divuw::DIVUW,
         divw::DIVW,
-        format::{
-            format_i::FormatI, format_r::FormatR, normalize_imm,
-        },
+        format::{format_i::FormatI, format_r::FormatR, normalize_imm},
         lui::LUI,
         mul::MUL,
         mulh::MULH,
@@ -29,11 +27,11 @@ use tracer::{
         remu::REMU,
         remuw::REMUW,
         remw::REMW,
-        sllw::SLLW,
-        sltu::SLTU,
         sll::SLL,
         slli::SLLI,
         slliw::SLLIW,
+        sllw::SLLW,
+        sltu::SLTU,
         sra::SRA,
         srai::SRAI,
         sraiw::SRAIW,
@@ -65,16 +63,17 @@ use tracer::{
         virtual_srli::VirtualSRLI,
         virtual_zero_extend_word::VirtualZeroExtendWord,
         xor::XOR,
-        Instruction,
+        Cycle, Instruction, RISCVCycle, RISCVInstruction, RISCVTrace,
     },
     utils::virtual_registers::VirtualRegisterAllocator,
 };
 use z3::{
-    Params, SatResult, Solver, ast::{BV, Bool}
+    ast::{Bool, BV},
+    Params, SatResult, Solver,
 };
-use crate::test_instruction;
+use crate::template_format;
 
-const Z3_TIMEOUT_MS: u32 = 30_000;
+const _Z3_TIMEOUT_MS: u32 = 30_000;
 const Z3_RANDOM_SEED: u32 = 42;
 
 #[derive(Clone)]
@@ -396,9 +395,77 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
     }
 }
 
-fn do_test(instr_name: &str, instr: &Instruction) {
+fn test_correctness<I: RISCVInstruction + RISCVTrace>(
+    expected: impl FnOnce(&I, &mut SymbolicCpu),
+    instr: &I,
+) where
+    RISCVCycle<I>: Into<Cycle>,
+{
     let mut solver_params = Params::default();
-    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
+
+    let mut solver = Solver::new();
+    solver.set_params(&solver_params);
+    let allocator = VirtualRegisterAllocator::default();
+    let xlen = Xlen::Bit64;
+    let mut cpu = SymbolicCpu::new("cpu1", xlen);
+
+    let cpu_initial = cpu.clone();
+    let mut cpu_expected = cpu.clone();
+    expected(instr, &mut cpu_expected);
+
+    for instr in instr.inline_sequence(&allocator, xlen) {
+        symbolic_exec(&instr, &mut cpu);
+    }
+
+    for assert in cpu.asserts {
+        solver += assert;
+    }
+
+    // We don't care if virtual registers differ
+    solver += cpu.x[..RISCV_REGISTER_COUNT as usize]
+        .iter()
+        .zip(cpu_expected.x[..RISCV_REGISTER_COUNT as usize].iter())
+        .map(|(x1, x2)| x1.ne(x2))
+        .reduce(|acc, t| acc | t)
+        .unwrap();
+
+    match solver.check() {
+        SatResult::Unsat => {}
+        SatResult::Sat => {
+            let mut msg = format!("Found incorrect outputs:\n");
+            let model = solver.get_model().unwrap();
+            let eval = |bv: &BV| model.eval(bv, true).unwrap().as_u64().unwrap();
+
+            let rs1 = eval(&cpu_initial.x[2]);
+            let rs2 = eval(&cpu_initial.x[3]);
+
+            let rd_val = eval(&cpu.x[1]);
+            let rd_expected = eval(&cpu_expected.x[1]);
+
+            let _ = writeln!(msg, "rs1: {:#x}", rs1);
+            let _ = writeln!(msg, "rs2: {:#x}", rs2);
+
+            let _ = writeln!(msg, "rd: {:#x}", rd_val);
+            let _ = writeln!(msg, "rd expected: {:#x}", rd_expected);
+
+            if !cpu.advice_vars.is_empty() {
+                let _ = writeln!(msg, "Using advice:");
+                for (i, advice_var) in cpu.advice_vars.iter().enumerate() {
+                    let _ = writeln!(msg, "  {}: {:#x}", i, eval(advice_var));
+                }
+            }
+
+            panic!("{}", msg.trim());
+        }
+        SatResult::Unknown => panic!("Solver failed/timed out, result inconclusive"),
+    }
+}
+
+fn test_consistency(instr: &Instruction) {
+    let mut solver_params = Params::default();
+    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
@@ -482,27 +549,132 @@ fn do_test(instr_name: &str, instr: &Instruction) {
 
             panic!("{}", msg.trim());
         }
-        SatResult::Unknown => panic!("Solver failed/timed out"),
+        SatResult::Unknown => panic!("Solver failed/timed out, result inconclusive"),
     }
 }
 
 macro_rules! test_sequence {
-    ($instr:ident, $operands:path $(, $field:ident : $value:expr )* $(,)?) => {
-        test_instruction!(
-            $instr,
-            do_test,
-            $operands,
-            $($field : $value,)*
-        );
+    ($instr:ident, $operands:path, $expected:expr $(, $field:ident : $value:expr )* $(,)?) => {
+        paste::paste! {
+            #[test]
+            #[allow(nonstandard_style)]
+            fn [<test_ $instr _correctness>]() {
+                let instr = $instr {
+                    operands: template_format!($operands),
+                    $($field: $value,)*
+                    // unused by solver
+                    address: 8,
+                    is_compressed: false,
+                    is_first_in_sequence: false,
+                    virtual_sequence_remaining: None,
+                };
+                test_correctness($expected, &instr);
+            }
+
+            #[test]
+            #[allow(nonstandard_style)]
+            fn [<test_ $instr _consistency>]() {
+                let instr = $instr {
+                    operands: template_format!($operands),
+                    $($field: $value,)*
+                    // unused by solver
+                    address: 8,
+                    is_compressed: false,
+                    is_first_in_sequence: false,
+                    virtual_sequence_remaining: None,
+                };
+                test_consistency(&Instruction::$instr(instr));
+            }
+        }
     };
 }
 
-test_sequence!(ADDIW, FormatI);
-test_sequence!(ADDW, FormatR);
-test_sequence!(DIV, FormatR);
-test_sequence!(DIVU, FormatR);
-test_sequence!(DIVUW, FormatR);
-test_sequence!(DIVW, FormatR);
+
+test_sequence!(ADDIW, FormatI, |instr: &ADDIW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let imm = normalize_imm(instr.operands.imm, &cpu.xlen);
+    cpu.x[instr.operands.rd as usize] = (rs1 + imm).extract(31, 0).sign_ext(32);
+});
+test_sequence!(ADDW, FormatR, |instr: &ADDW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = ((rs1 + rs2).extract(31, 0)).sign_ext(32);
+});
+test_sequence!(DIV, FormatR, |instr: &DIV, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            todo!()
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1;
+            let divisor = rs2;
+            divisor.eq(0).ite(
+                &BV::from_i64(-1, 64),
+                &(dividend.eq(i64::MIN) & divisor.eq(-1))
+                    .ite(dividend, &(dividend.bvsdiv(divisor))),
+            )
+        }
+    };
+});
+test_sequence!(DIVU, FormatR, |instr: &DIVU, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            todo!()
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1;
+            let divisor = rs2;
+            divisor
+                .eq(0)
+                .ite(&BV::from_u64(u64::MAX, 64), &(dividend.bvudiv(divisor)))
+        }
+    };
+});
+test_sequence!(DIVUW, FormatR, |instr: &DIVUW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            panic!("DIVUW is invalid in 32b mode");
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1.extract(31, 0);
+            let divisor = rs2.extract(31, 0);
+            divisor
+                .eq(0)
+                .ite(
+                    &BV::from_u64(u32::MAX as u64, 32),
+                    &(dividend.bvudiv(&divisor)),
+                )
+                .sign_ext(32)
+        }
+    };
+});
+test_sequence!(DIVW, FormatR, |instr: &DIVW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            panic!("DIVW is invalid in 32b mode");
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1.extract(31, 0);
+            let divisor = rs2.extract(31, 0);
+            divisor
+                .eq(0)
+                .ite(
+                    &BV::from_i64(-1, 32),
+                    &(dividend.eq(i32::MIN as u32) & divisor.eq(-1))
+                        .ite(&dividend, &(dividend.bvsdiv(&divisor))),
+                )
+                .sign_ext(32)
+        }
+    };
+});
 // Memory operations are not tested at the moment
 // test_sequence!(LB, FormatLoad);
 // test_sequence!(LBU, FormatLoad);
@@ -510,26 +682,209 @@ test_sequence!(DIVW, FormatR);
 // test_sequence!(LHU, FormatLoad);
 // test_sequence!(LW, FormatLoad);
 // test_sequence!(LWU, FormatLoad);
-test_sequence!(MULH, FormatR);
-test_sequence!(MULHSU, FormatR);
-test_sequence!(MULW, FormatR);
-test_sequence!(REM, FormatR);
-test_sequence!(REMU, FormatR);
-test_sequence!(REMUW, FormatR);
-test_sequence!(REMW, FormatR);
+test_sequence!(MULH, FormatR, |instr: &MULH, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            let lhs = rs1.extract(31, 0);
+            let rhs = rs2.extract(31, 0);
+            let product = lhs.sign_ext(32) * rhs.sign_ext(32);
+            cpu.sign_extend(&product.extract(63, 32))
+        }
+        Xlen::Bit64 => {
+            let lhs = rs1;
+            let rhs = rs2;
+            let product = lhs.sign_ext(64) * rhs.sign_ext(64);
+            product.extract(127, 64)
+        }
+    };
+});
+test_sequence!(MULHSU, FormatR, |instr: &MULHSU, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            let lhs = rs1.extract(31, 0);
+            let rhs = rs2.extract(31, 0);
+            let product = lhs.sign_ext(32) * rhs.zero_ext(32);
+            cpu.sign_extend(&product.extract(63, 32))
+        }
+        Xlen::Bit64 => {
+            let lhs = rs1;
+            let rhs = rs2;
+            let product = lhs.sign_ext(64) * rhs.zero_ext(64);
+            product.extract(127, 64)
+        }
+    };
+});
+test_sequence!(MULW, FormatR, |instr: &MULW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0) * rs2.extract(31, 0)).sign_ext(32);
+});
+test_sequence!(REM, FormatR, |instr: &REM, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            todo!()
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1;
+            let divisor = rs2;
+            divisor.eq(0).ite(
+                dividend,
+                &(dividend.eq(i64::MIN) & divisor.eq(-1))
+                    .ite(&BV::from_i64(0, 64), &(dividend.bvsrem(divisor))),
+            )
+        }
+    };
+});
+test_sequence!(REMU, FormatR, |instr: &REMU, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            todo!()
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1;
+            let divisor = rs2;
+            divisor.eq(0)
+                .ite(dividend, &(dividend.bvurem(divisor)))
+        }
+    };
+});
+test_sequence!(REMUW, FormatR, |instr: &REMUW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            panic!("REMUW is invalid in 32b mode");
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1.extract(31, 0);
+            let divisor = rs2.extract(31, 0);
+            divisor
+                .eq(0)
+                .ite(&dividend, &(dividend.bvurem(&divisor)))
+                .sign_ext(32)
+        }
+    };
+});
+test_sequence!(REMW, FormatR, |instr: &REMW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
+        Xlen::Bit32 => {
+            panic!("REMW is invalid in 32b mode");
+        }
+        Xlen::Bit64 => {
+            let dividend = rs1.extract(31, 0);
+            let divisor = rs2.extract(31, 0);
+            divisor
+                .eq(0)
+                .ite(
+                    &dividend,
+                    &(dividend.eq(i32::MIN as u32) & divisor.eq(-1))
+                        .ite(&BV::from_i64(0, 32), &(dividend.bvsrem(&divisor))),
+                )
+                .sign_ext(32)
+        }
+    };
+});
 // test_sequence!(SB, FormatS);
 // test_sequence!(SH, FormatS);
-test_sequence!(SLL, FormatR);
-test_sequence!(SLLI, FormatI);
-test_sequence!(SLLIW, FormatI);
-test_sequence!(SLLW, FormatR);
-test_sequence!(SRA, FormatR);
-test_sequence!(SRAI, FormatI);
-test_sequence!(SRAIW, FormatI);
-test_sequence!(SRAW, FormatR);
-test_sequence!(SRL, FormatR);
-test_sequence!(SRLI, FormatI);
-test_sequence!(SRLIW, FormatI);
-test_sequence!(SRLW, FormatR);
-test_sequence!(SUBW, FormatR);
+test_sequence!(SLL, FormatR, |instr: &SLL, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    let shift = rs2 & match cpu.xlen {
+        Xlen::Bit32 => BV::from_u64(32 - 1, 64),
+        Xlen::Bit64 => BV::from_u64(64 - 1, 64),
+    };
+    cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvshl(&shift));
+});
+test_sequence!(SLLI, FormatI, |instr: &SLLI, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let shift = BV::from_u64((instr.operands.imm as u64) & match cpu.xlen {
+        Xlen::Bit32 => 32 - 1,
+        Xlen::Bit64 => 64 - 1,
+    }, 64);
+    cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvshl(&shift));
+});
+test_sequence!(SLLIW, FormatI, |instr: &SLLIW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let shift = BV::from_u64((instr.operands.imm as u64) & (32 - 1), 32);
+    cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0).bvshl(&shift)).sign_ext(32);
+});
+test_sequence!(SLLW, FormatR, |instr: &SLLW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    let shift = rs2.extract(31, 0) & BV::from_u64(32 - 1, 32);
+    cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0).bvshl(&shift)).sign_ext(32);
+});
+test_sequence!(SRA, FormatR, |instr: &SRA, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    let shift = rs2 & match cpu.xlen {
+        Xlen::Bit32 => BV::from_u64(32 - 1, 64),
+        Xlen::Bit64 => BV::from_u64(64 - 1, 64),
+    };
+    cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(&shift));
+});
+test_sequence!(SRAI, FormatI, |instr: &SRAI, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let shift = BV::from_u64((instr.operands.imm as u64) & match cpu.xlen {
+        Xlen::Bit32 => 32 - 1,
+        Xlen::Bit64 => 64 - 1,
+    }, 64);
+    cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(&shift));
+});
+test_sequence!(SRAIW, FormatI, |instr: &SRAIW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let shift = BV::from_u64((instr.operands.imm as u64) & (32 - 1), 32);
+    cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0).bvashr(&shift)).sign_ext(32);
+});
+test_sequence!(SRAW, FormatR, |instr: &SRAW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    let shift = rs2.extract(31, 0) & BV::from_u64(32 - 1, 32);
+    cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0).bvashr(&shift)).sign_ext(32);
+});
+test_sequence!(SRL, FormatR, |instr: &SRL, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    let shift = rs2 & match cpu.xlen {
+        Xlen::Bit32 => BV::from_u64(32 - 1, 64),
+        Xlen::Bit64 => BV::from_u64(64 - 1, 64),
+    };
+    cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(rs1).bvlshr(&shift));
+});
+test_sequence!(SRLI, FormatI, |instr: &SRLI, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let shift = BV::from_u64((instr.operands.imm as u64) & match cpu.xlen {
+        Xlen::Bit32 => 32 - 1,
+        Xlen::Bit64 => 64 - 1,
+    }, 64);
+    cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(rs1).bvlshr(&shift));
+});
+test_sequence!(SRLIW, FormatI, |instr: &SRLIW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let shift = BV::from_u64((instr.operands.imm as u64) & (32 - 1), 32);
+    cpu.x[instr.operands.rd as usize] =
+        (cpu.unsigned_data(&rs1.extract(31, 0)).bvlshr(&shift)).sign_ext(32);
+});
+test_sequence!(SRLW, FormatR, |instr: &SRLW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    let shift = rs2.extract(31, 0) & BV::from_u64(32 - 1, 32);
+    cpu.x[instr.operands.rd as usize] =
+        (cpu.unsigned_data(&rs1.extract(31, 0)).bvlshr(&shift)).sign_ext(32);
+});
+test_sequence!(SUBW, FormatR, |instr: &SUBW, cpu| {
+    let rs1 = &cpu.x[instr.operands.rs1 as usize];
+    let rs2 = &cpu.x[instr.operands.rs2 as usize];
+    cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0) - rs2.extract(31, 0)).sign_ext(32);
+});
 //test_sequence!(SW, FormatS);
