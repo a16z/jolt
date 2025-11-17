@@ -1,14 +1,17 @@
+use common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 
 use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::config;
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
@@ -18,7 +21,6 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -29,7 +31,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use tracer::instruction::RAMAccess;
+use tracer::instruction::{Cycle, RAMAccess};
 
 // RAM read-write checking sumcheck
 //
@@ -103,16 +105,18 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::gen")]
     pub fn gen(
         initial_memory_state: &[u64],
-        state_manager: &mut StateManager<'_, F, impl CommitmentScheme<Field = F>>,
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        trace: &[Cycle],
+        ram_K: usize,
+        twist_sumcheck_switch_index: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
-
         let params = ReadWriteCheckingParams::new(
-            state_manager.ram_K,
+            ram_K,
             trace.len(),
-            state_manager.twist_sumcheck_switch_index,
+            twist_sumcheck_switch_index,
             opening_accumulator,
             transcript,
         );
@@ -137,8 +141,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 let mut delta = vec![0; params.K];
                 for cycle in trace_chunk.iter() {
                     let ram_op = cycle.ram_access();
-                    let k = remap_address(ram_op.address() as u64, &program_io.memory_layout)
-                        .unwrap_or(0) as usize;
+                    let k =
+                        remap_address(ram_op.address() as u64, memory_layout).unwrap_or(0) as usize;
                     let increment = match ram_op {
                         RAMAccess::Write(write) => {
                             write.post_value as i128 - write.pre_value as i128
@@ -156,12 +160,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         let ram_addresses = trace
             .par_iter()
-            .map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &program_io.memory_layout,
-                )
-            })
+            .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))
             .collect::<Vec<_>>();
 
         // #[cfg(feature = "test_incremental")]
@@ -286,8 +285,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     .iter()
                     .map(|cycle| {
                         let ram_op = cycle.ram_access();
-                        let k = remap_address(ram_op.address() as u64, &program_io.memory_layout)
-                            .unwrap_or(0) as usize;
+                        let k = remap_address(ram_op.address() as u64, memory_layout).unwrap_or(0)
+                            as usize;
                         let increment = match ram_op {
                             RAMAccess::Write(write) => {
                                 write.post_value as i128 - write.pre_value as i128
@@ -308,8 +307,13 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
 
-        let inc_cycle =
-            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = config::params().one_hot.compute_d(ram_K);
+        let inc_cycle = CommittedPolynomial::RamInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
@@ -343,8 +347,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "phase1_compute_prover_message")]
-    fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "phase1_compute_message")]
+    fn phase1_compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let Self {
             ram_addresses,
             I,
@@ -629,12 +633,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         };
 
         // Convert quadratic coefficients to cubic evaluations
-        gruens_eq_r_prime
-            .gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
-            .to_vec()
+        gruens_eq_r_prime.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
     }
 
-    fn phase2_compute_prover_message(&self) -> Vec<F> {
+    fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let Self {
             inc_cycle,
             eq_r_prime,
@@ -715,10 +717,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             )
             .map(F::from_montgomery_reduce);
 
-        univariate_poly_evals.into()
+        UniPoly::from_evals_and_hint(previous_claim, &univariate_poly_evals)
     }
 
-    fn phase3_compute_prover_message(&self) -> Vec<F> {
+    fn phase3_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         const DEGREE: usize = 3;
 
         let Self {
@@ -768,11 +770,14 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 },
             );
 
-        vec![
-            eq_r_prime_eval * F::from_barrett_reduce(evals[0]),
-            eq_r_prime_eval * F::from_barrett_reduce(evals[1]),
-            eq_r_prime_eval * F::from_barrett_reduce(evals[2]),
-        ]
+        UniPoly::from_evals_and_hint(
+            previous_claim,
+            &[
+                eq_r_prime_eval * F::from_barrett_reduce(evals[0]),
+                eq_r_prime_eval * F::from_barrett_reduce(evals[1]),
+                eq_r_prime_eval * F::from_barrett_reduce(evals[2]),
+            ],
+        )
     }
 
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
@@ -950,19 +955,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.chunk_size.log_2() {
-            self.phase1_compute_prover_message(round, previous_claim)
+            self.phase1_compute_message(round, previous_claim)
         } else if round < self.params.T.log_2() {
-            self.phase2_compute_prover_message()
+            self.phase2_compute_message(previous_claim)
         } else {
-            self.phase3_compute_prover_message()
+            self.phase3_compute_message(previous_claim)
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.chunk_size.log_2() {
             self.phase1_bind(r_j, round);
         } else if round < self.params.T.log_2() {

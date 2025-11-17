@@ -4,8 +4,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
-use crate::zkvm::dag::proof_serialization::JoltProof;
-use crate::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC, ProverDebugInfo};
+use crate::zkvm::proof_serialization::JoltProof;
+use crate::zkvm::{prover::JoltProverPreprocessing, ProverDebugInfo};
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
 
@@ -21,12 +21,12 @@ pub fn preprocess(
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
 
-    JoltRV64IMAC::prover_preprocess(bytecode, memory_layout, memory_init, max_trace_length)
+    JoltProverPreprocessing::gen(bytecode, memory_layout, memory_init, max_trace_length)
 }
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
-pub fn prove<F, PCS: StreamingCommitmentScheme<Field = F>, FS>(
+pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
     guest: &Program,
     inputs_bytes: &[u8],
     untrusted_advice_bytes: &[u8],
@@ -38,13 +38,10 @@ pub fn prove<F, PCS: StreamingCommitmentScheme<Field = F>, FS>(
     JoltProof<F, PCS, FS>,
     JoltDevice,
     Option<ProverDebugInfo<F, FS, PCS>>,
-)
-where
-    F: JoltField,
-    FS: Transcript,
-    JoltRV64IMAC: Jolt<F, PCS, FS>,
-{
-    let (proof, io_device, debug_info, _) = JoltRV64IMAC::prove(
+) {
+    use crate::zkvm::prover::JoltCpuProver;
+
+    let prover = JoltCpuProver::gen_from_elf(
         preprocessing,
         &guest.elf_contents,
         inputs_bytes,
@@ -52,6 +49,8 @@ where
         trusted_advice_bytes,
         trusted_advice_commitment,
     );
+    let io_device = prover.program_io.clone();
+    let (proof, debug_info) = prover.prove();
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
     (proof, io_device, debug_info)
 }

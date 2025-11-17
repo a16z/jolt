@@ -3,10 +3,10 @@ use std::borrow::Borrow;
 use std::fmt::Debug;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
-use crate::utils::small_scalar::SmallScalar;
 use crate::{
-    field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::errors::ProofVerifyError,
+    field::JoltField,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
@@ -89,7 +89,8 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `setup` - The prover setup for the commitment scheme
     /// * `poly` - The multilinear polynomial being proved
     /// * `opening_point` - The point at which the polynomial is evaluated
-    /// * `hint` - A hint that helps optimize the proof generation
+    /// * `hint` - An optional hint that helps optimize the proof generation.
+    ///   When `None`, implementations should compute the hint internally if needed.
     /// * `transcript` - The transcript for Fiat-Shamir transformation
     ///
     /// # Returns
@@ -98,18 +99,9 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
-        hint: Self::OpeningProofHint,
+        hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
-
-    fn prove_without_hint<ProofTranscript: Transcript>(
-        _setup: &Self::ProverSetup,
-        _poly: &MultilinearPolynomial<Self::Field>,
-        _opening_point: &[<Self::Field as JoltField>::Challenge],
-        _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        unimplemented!()
-    }
 
     /// Verifies a proof of polynomial evaluation at a specific point.
     ///
@@ -136,37 +128,23 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {
+    /// The type representing chunk state (tier 1 commitments)
     type ChunkState: Send + Sync + Clone + PartialEq + Debug;
-    type CachedData: Sync;
 
-    /// Prepare cached data that will be shared across all polynomial commitments
-    fn prepare_cached_data(setup: &Self::ProverSetup) -> Self::CachedData;
+    /// Compute tier 1 commitment for a chunk of small scalar values
+    fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState;
 
-    // First `process_chunk` is a tier 1 commitment (MSM)
-
-    /// Process a chunk of small scalar values
-    fn process_chunk<T: SmallScalar>(
-        cached_data: &Self::CachedData,
-        chunk: &[T],
-    ) -> Self::ChunkState;
-
-    /// Process a chunk of field elements
-    fn process_chunk_field(
-        cached_data: &Self::CachedData,
-        chunk: &[Self::Field],
-    ) -> Self::ChunkState;
-
-    /// Process a chunk of one-hot values
+    /// Compute tier 1 commitment for a chunk of one-hot values
     fn process_chunk_onehot(
-        cached_data: &Self::CachedData,
+        setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState;
 
-    /// Tier 2 commitment (multi pairing)
-    fn finalize(
-        cached_data: &Self::CachedData,
+    /// Compute tier 2 commitment from accumulated tier 1 commitments
+    fn aggregate_chunks(
+        setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
-        chunks: &[Self::ChunkState],
+        tier1_commitments: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint);
 }

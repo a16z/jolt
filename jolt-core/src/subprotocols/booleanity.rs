@@ -16,6 +16,7 @@ use crate::{
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
     },
     subprotocols::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
@@ -74,7 +75,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         }
     }
 
-    fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_phase1_message(&self, round: usize, previous_claim: F) -> UniPoly<F> {
         let m = round + 1;
         let B = &self.B;
 
@@ -130,11 +131,10 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             });
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
-        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
-            .to_vec()
+        B.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
     }
 
-    fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let D_poly = &self.D;
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
@@ -154,13 +154,10 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         // previous_claim is s(0)+s(1) of the scaled polynomial; divide out eq_r_r to get inner claim
         let adjusted_claim = previous_claim * self.eq_r_r.inverse().unwrap();
-        let gruen_evals =
-            D_poly.gruen_evals_deg_3(quadratic_coeffs_f[0], quadratic_coeffs_f[1], adjusted_claim);
-        vec![
-            self.eq_r_r * gruen_evals[0],
-            self.eq_r_r * gruen_evals[1],
-            self.eq_r_r * gruen_evals[2],
-        ]
+        let gruen_poly =
+            D_poly.gruen_poly_deg_3(quadratic_coeffs_f[0], quadratic_coeffs_f[1], adjusted_claim);
+
+        gruen_poly * self.eq_r_r
     }
 }
 
@@ -177,8 +174,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         F::zero()
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_k_chunk {
             // Phase 1: First log(K_chunk) rounds
             self.compute_phase1_message(round, previous_claim)
@@ -188,8 +185,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.params.log_k_chunk {
             // Phase 1: Bind B and update F
             self.B.bind(r_j);

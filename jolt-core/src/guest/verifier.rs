@@ -6,8 +6,10 @@ use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
-use crate::zkvm::dag::proof_serialization::JoltProof;
-use crate::zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing};
+use crate::zkvm::proof_serialization::JoltProof;
+use crate::zkvm::prover::JoltProverPreprocessing;
+use crate::zkvm::verifier::JoltVerifier;
+use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
 
@@ -21,7 +23,7 @@ pub fn preprocess(
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
 
-    let prover_preprocessing = JoltRV64IMAC::prover_preprocess(
+    let prover_preprocessing = JoltProverPreprocessing::gen(
         bytecode.to_vec(),
         memory_layout,
         memory_init.to_vec(),
@@ -31,18 +33,13 @@ pub fn preprocess(
     JoltVerifierPreprocessing::from(&prover_preprocessing)
 }
 
-pub fn verify<F, PCS: StreamingCommitmentScheme<Field = F>, FS>(
+pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
     proof: JoltProof<F, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-) -> Result<(), ProofVerifyError>
-where
-    F: JoltField,
-    FS: Transcript,
-    JoltRV64IMAC: Jolt<F, PCS, FS>,
-{
+) -> Result<(), ProofVerifyError> {
     use common::jolt_device::JoltDevice;
     let memory_config = MemoryConfig {
         max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
@@ -58,11 +55,13 @@ where
     io_device.inputs = inputs_bytes.to_vec();
     io_device.outputs = outputs_bytes.to_vec();
 
-    JoltRV64IMAC::verify(
+    let verifier = JoltVerifier::new(
         preprocessing,
         proof,
         io_device,
         trusted_advice_commitment,
         None,
-    )
+    )?;
+    verifier.verify().unwrap();
+    Ok(())
 }

@@ -33,13 +33,15 @@ fn sparse_inputs(n: usize, sparsity: f64) -> (DensePolynomial<Fr>, Vec<Fr>) {
             if rng.gen::<f64>() < sparsity {
                 Fr::zero()
             } else {
-                Fr::random(&mut rng)
+                <Fr as JoltField>::random(&mut rng)
             }
         })
         .collect();
 
     let poly = DensePolynomial::new(values);
-    let eval_point = (0..n.log_2()).map(|_| Fr::random(&mut rng)).collect();
+    let eval_point = (0..n.log_2())
+        .map(|_| <Fr as JoltField>::random(&mut rng))
+        .collect();
 
     (poly, eval_point)
 }
@@ -59,7 +61,9 @@ fn setup_batch_inputs(
     sparsity: f64,
 ) -> (Vec<DensePolynomial<Fr>>, Vec<Fr>) {
     let mut rng = StdRng::seed_from_u64(123);
-    let eval_point: Vec<Fr> = (0..n.log_2()).map(|_| Fr::random(&mut rng)).collect();
+    let eval_point: Vec<Fr> = (0..n.log_2())
+        .map(|_| <Fr as JoltField>::random(&mut rng))
+        .collect();
 
     let polys: Vec<DensePolynomial<Fr>> = (0..batch_size)
         .map(|_| sparse_inputs(n, sparsity).0)

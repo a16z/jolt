@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
@@ -12,6 +11,7 @@ use crate::{
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
     },
     subprotocols::{
         mles_product_sum::compute_mles_product_sum, sumcheck_prover::SumcheckInstanceProver,
@@ -19,7 +19,6 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        dag::state_manager::StateManager,
         instruction::LookupQuery,
         instruction_lookups::{d, k_chunk, log_k, log_k_chunk},
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -27,8 +26,8 @@ use crate::{
 };
 use allocative::Allocative;
 use common::constants::XLEN;
-use itertools::chain;
 use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 // Instruction read-access (RA) virtualization sumcheck
 //
@@ -49,13 +48,8 @@ pub struct RaSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-    ) -> Self {
+    pub fn gen(trace: &[Cycle], opening_accumulator: &ProverOpeningAccumulator<F>) -> Self {
         let params = RaSumcheckParams::new(opening_accumulator);
-
-        let (_preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
@@ -115,21 +109,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let ra_i_polys = &self.ra_i_polys;
         let eq_poly = &self.eq_poly;
-
-        let poly = compute_mles_product_sum(ra_i_polys, previous_claim, eq_poly);
-
-        // Evaluate the poly at 0, 2, 3, ..., degree.
-        let degree_bound = self.ra_i_polys.len() + 1;
-        let domain = chain!([0], 2..).map(F::from_u64).take(degree_bound);
-        domain.map(|x| poly.evaluate::<F>(&x)).collect()
+        compute_mles_product_sum(ra_i_polys, previous_claim, eq_poly)
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.ra_i_polys
             .iter_mut()
             .for_each(|p| p.bind_parallel(r_j, BindingOrder::LowToHigh));

@@ -1,8 +1,8 @@
 #![allow(clippy::uninlined_format_args)]
 use ark_bn254::Fr;
 use criterion::{criterion_group, criterion_main, Criterion};
-use dory::arithmetic::Field;
 use jolt_core::{
+    field::JoltField,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::math::Math,
 };
@@ -20,10 +20,13 @@ use rand_core::SeedableRng;
 /// Tuple of (polynomial, evaluation_point) where evaluation_point has log2(n) variables
 fn setup_inputs(n: u64) -> (MultilinearPolynomial<Fr>, Vec<Fr>) {
     let mut rng = ChaCha20Rng::seed_from_u64(n);
-    let poly: MultilinearPolynomial<Fr> =
-        MultilinearPolynomial::from((0..n).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>());
+    let poly: MultilinearPolynomial<Fr> = MultilinearPolynomial::from(
+        (0..n)
+            .map(|_| <Fr as JoltField>::random(&mut rng))
+            .collect::<Vec<_>>(),
+    );
     let eval_point = (0..(n as usize).log_2())
-        .map(|_| Fr::random(&mut rng))
+        .map(|_| <Fr as JoltField>::random(&mut rng))
         .collect::<Vec<_>>();
 
     (poly, eval_point)
