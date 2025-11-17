@@ -282,7 +282,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
             );
 
         // TODO: Double check this binding order
-        let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::HighToLow);
+        let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::LowToHigh);
         //let mut r_grid =
         //    ExpandingTable::new_with_order(1 << n_cycle_vars, ExpansionOrder::MostSignificantBit);
         r_grid.reset(F::one());
