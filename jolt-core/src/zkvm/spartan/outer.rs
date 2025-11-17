@@ -10,6 +10,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
+use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
@@ -215,14 +216,14 @@ pub struct OuterRemainingSumcheckProver<F: JoltField> {
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
-    az: DensePolynomial<F>,
-    bz: DensePolynomial<F>,
+    az: Option<DensePolynomial<F>>,
+    bz: Option<DensePolynomial<F>>,
+    t_prime_poly: Option<MultiquadraticPolynomial<F>>, // multiquadratic polynomial used to answer queries in a streaming window
     /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
     first_round_evals: (F, F),
     #[allocative(skip)]
     params: OuterRemainingSumcheckParams<F>,
 }
-// The streaming prover
 
 impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
