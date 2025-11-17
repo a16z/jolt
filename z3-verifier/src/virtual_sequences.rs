@@ -31,6 +31,9 @@ use tracer::{
         remw::REMW,
         sllw::SLLW,
         sltu::SLTU,
+        sll::SLL,
+        slli::SLLI,
+        slliw::SLLIW,
         sra::SRA,
         srai::SRAI,
         sraiw::SRAIW,
@@ -516,9 +519,9 @@ test_sequence!(REMUW, FormatR);
 test_sequence!(REMW, FormatR);
 // test_sequence!(SB, FormatS);
 // test_sequence!(SH, FormatS);
-// test_sequence!(SLL, FormatR);
-// test_sequence!(SLLI, FormatI);
-// test_sequence!(SLLIW, FormatI);
+test_sequence!(SLL, FormatR);
+test_sequence!(SLLI, FormatI);
+test_sequence!(SLLIW, FormatI);
 test_sequence!(SLLW, FormatR);
 test_sequence!(SRA, FormatR);
 test_sequence!(SRAI, FormatI);
