@@ -581,8 +581,6 @@ impl CommittedPolynomial {
 pub enum VirtualPolynomial {
     SpartanAz,
     SpartanBz,
-    FusedProductLeft,
-    FusedProductRight,
     PC,
     UnexpandedPC,
     NextPC,
@@ -629,8 +627,6 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
     let mut polynomials = vec![
         VirtualPolynomial::SpartanAz,
         VirtualPolynomial::SpartanBz,
-        VirtualPolynomial::FusedProductLeft,
-        VirtualPolynomial::FusedProductRight,
         VirtualPolynomial::PC,
         VirtualPolynomial::UnexpandedPC,
         VirtualPolynomial::NextPC,

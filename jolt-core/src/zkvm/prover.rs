@@ -63,12 +63,9 @@ use crate::{
             val_evaluation::ValEvaluationSumcheckProver as RegistersValEvaluationSumcheckProver,
         },
         spartan::{
-            inner::InnerSumcheckProver,
-            instruction_input::InstructionInputSumcheckProver,
-            outer::OuterRemainingSumcheckProver,
-            product::{ProductVirtualInnerProver, ProductVirtualRemainderProver},
-            prove_stage1_uni_skip, prove_stage2_uni_skip,
-            shift::ShiftSumcheckProver,
+            inner::InnerSumcheckProver, instruction_input::InstructionInputSumcheckProver,
+            outer::OuterRemainingSumcheckProver, product::ProductVirtualRemainderProver,
+            prove_stage1_uni_skip, prove_stage2_uni_skip, shift::ShiftSumcheckProver,
         },
         witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial},
         ProverDebugInfo, Serializable,
@@ -612,8 +609,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let spartan_product_virtual_claim_check =
-            ProductVirtualInnerProver::new(&self.opening_accumulator, &mut self.transcript);
 
         #[cfg(feature = "allocative")]
         {
@@ -622,17 +617,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "InstructionInputSumcheckProver",
                 &spartan_instruction_input,
             );
-            print_data_structure_heap_usage(
-                "ProductVirtualInnerProver",
-                &spartan_product_virtual_claim_check,
-            );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
-            Box::new(spartan_shift),
-            Box::new(spartan_instruction_input),
-            Box::new(spartan_product_virtual_claim_check),
-        ];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> =
+            vec![Box::new(spartan_shift), Box::new(spartan_instruction_input)];
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");

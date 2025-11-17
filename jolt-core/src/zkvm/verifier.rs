@@ -31,12 +31,9 @@ use crate::zkvm::{
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
-        inner::InnerSumcheckVerifier,
-        instruction_input::InstructionInputSumcheckVerifier,
-        outer::OuterRemainingSumcheckVerifier,
-        product::{ProductVirtualInnerVerifier, ProductVirtualRemainderVerifier},
-        shift::ShiftSumcheckVerifier,
-        verify_stage1_uni_skip, verify_stage2_uni_skip,
+        inner::InnerSumcheckVerifier, instruction_input::InstructionInputSumcheckVerifier,
+        outer::OuterRemainingSumcheckVerifier, product::ProductVirtualRemainderVerifier,
+        shift::ShiftSumcheckVerifier, verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
     witness::AllCommittedPolynomials,
     ProverDebugInfo, Serializable,
@@ -254,15 +251,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let spartan_instruction_input =
             InstructionInputSumcheckVerifier::new(&self.opening_accumulator, &mut self.transcript);
-        let spartan_product_virtual_claim_check =
-            ProductVirtualInnerVerifier::new(&self.opening_accumulator, &mut self.transcript);
 
         let _r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
                 &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &spartan_instruction_input,
-                &spartan_product_virtual_claim_check,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
