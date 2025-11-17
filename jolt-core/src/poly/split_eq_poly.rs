@@ -32,11 +32,66 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
     pub(crate) w: Vec<F::Challenge>,
     pub(crate) E_in_vec: Vec<Vec<F>>,
     pub(crate) E_out_vec: Vec<Vec<F>>,
+    /// Cached `[1]` table used to represent eq over zero variables when a side
+    /// (head, inner, or active) has no bits.
+    one_table: Vec<F>,
     pub(crate) binding_order: BindingOrder,
 }
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_with_scaling")]
+    //pub fn new_with_scaling(
+    //    w: &[F::Challenge],
+    //    binding_order: BindingOrder,
+    //    scaling_factor: Option<F>,
+    //) -> Self {
+    //    match binding_order {
+    //        BindingOrder::LowToHigh => {
+    //            let m = w.len() / 2;
+    //            //   w = [w_out, w_in, w_last]
+    //            //         ↑      ↑      ↑
+    //            //         |      |      |
+    //            //         |      |      last element
+    //            //         |      second half of remaining elements (for E_in)
+    //            //         first half of remaining elements (for E_out)
+    //            let (_, wprime) = w.split_last().unwrap();
+    //            let (w_out, w_in) = wprime.split_at(m);
+    //            let (E_out_vec, E_in_vec) = rayon::join(
+    //                || EqPolynomial::evals_cached(w_out),
+    //                || EqPolynomial::evals_cached(w_in),
+    //            );
+    //            Self {
+    //                current_index: w.len(),
+    //                current_scalar: scaling_factor.unwrap_or(F::one()),
+    //                w: w.to_vec(),
+    //                E_in_vec,
+    //                E_out_vec,
+    //                binding_order,
+    //            }
+    //        }
+    //        BindingOrder::HighToLow => {
+    //            // For high-to-low binding, we bind from MSB (index 0) to LSB (index n-1).
+    //            // The split should be: w_in = first half, w_out = second half
+    //            // [w_first, w_in, w_out]
+    //            let (_, wprime) = w.split_first().unwrap();
+    //            let m = w.len() / 2;
+    //            let (w_in, w_out) = wprime.split_at(m);
+    //            let (E_in_vec, E_out_vec) = rayon::join(
+    //                || EqPolynomial::evals_cached_rev(w_in),
+    //                || EqPolynomial::evals_cached_rev(w_out),
+    //            );
+    //
+    //            Self {
+    //                current_index: 0, // Start from 0 for high-to-low up to w.len() - 1
+    //                current_scalar: scaling_factor.unwrap_or(F::one()),
+    //                w: w.to_vec(),
+    //                E_in_vec,
+    //                E_out_vec,
+    //                binding_order,
+    //            }
+    //        }
+    //    }
+    //}
     pub fn new_with_scaling(
         w: &[F::Challenge],
         binding_order: BindingOrder,
@@ -57,12 +112,14 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                     || EqPolynomial::evals_cached(w_out),
                     || EqPolynomial::evals_cached(w_in),
                 );
+                let one_table = vec![F::one()];
                 Self {
                     current_index: w.len(),
                     current_scalar: scaling_factor.unwrap_or(F::one()),
                     w: w.to_vec(),
                     E_in_vec,
                     E_out_vec,
+                    one_table,
                     binding_order,
                 }
             }
@@ -77,6 +134,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                     || EqPolynomial::evals_cached_rev(w_in),
                     || EqPolynomial::evals_cached_rev(w_out),
                 );
+                let one_table = vec![F::one()];
 
                 Self {
                     current_index: 0, // Start from 0 for high-to-low up to w.len() - 1
@@ -84,6 +142,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                     w: w.to_vec(),
                     E_in_vec,
                     E_out_vec,
+                    one_table,
                     binding_order,
                 }
             }
@@ -106,6 +165,16 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    /// Number of variables that have already been bound into `current_scalar`.
+    /// For LowToHigh this is `w.len() - current_index`; for HighToLow it is
+    /// `current_index`.
+    pub fn num_challenges(&self) -> usize {
+        match self.binding_order {
+            BindingOrder::LowToHigh => self.w.len() - self.current_index,
+            BindingOrder::HighToLow => self.current_index,
+        }
+    }
+
     pub fn E_in_current_len(&self) -> usize {
         self.E_in_vec.last().map_or(0, |v| v.len())
     }
@@ -122,6 +191,129 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Return the last vector from `E2` as a slice
     pub fn E_out_current(&self) -> &[F] {
         self.E_out_vec.last().map_or(&[], |v| v.as_slice())
+    }
+
+    /// Return the (E_out, E_in) tables corresponding to a streaming window of the
+    /// given `window_size`, using an explicit slice-based factorisation of the
+    /// current unbound variables.
+    ///
+    /// Semantics (LowToHigh):
+    /// - Let `num_unbound = current_index` and `remaining_w = w[..num_unbound]`.
+    /// - For a window of size `window_size >= 1`, define:
+    ///     - `w_window` as the last `window_size` bits of `remaining_w`
+    ///     - `w_head`   as the prefix before `w_window`
+    ///     - within `w_window`, the last bit is the current Gruen variable and the
+    ///       preceding `window_size - 1` bits are the "active" window bits
+    /// - This function returns eq tables over `w_head`, split into two halves
+    ///   `w_out` and `w_in`:
+    ///     - `w_head = [w_out || w_in]` with `w_out` = first `⌊|w_head| / 2⌋` bits
+    ///   so that
+    ///     - `eq(w_head, (x_out, x_in)) = E_out[x_out] * E_in[x_in]`.
+    ///
+    /// The active window bits are handled separately by [`E_active_for_window`].
+    /// Together they satisfy, for `BindingOrder::LowToHigh`,
+    ///   log2(|E_out|) + log2(|E_in|) + log2(|E_active|) + 1 = #unbound bits,
+    /// where the final `+ 1` accounts for the current linear Gruen bit.
+    ///
+    /// This helper returns slices and represents "no head bits" as
+    /// single-entry `[1]` tables, matching `eq((), ()) = 1`.
+    pub fn E_out_in_for_window(&self, window_size: usize) -> (&[F], &[F]) {
+        if window_size == 0 {
+            return (&self.one_table, &self.one_table);
+        }
+
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                let num_unbound = self.current_index;
+                if num_unbound == 0 {
+                    return (&self.one_table, &self.one_table);
+                }
+
+                // Restrict window size to the actually available unbound bits.
+                let window_size = core::cmp::min(window_size, num_unbound);
+                let head_len = num_unbound.saturating_sub(window_size);
+                if head_len == 0 {
+                    // No head bits: represent as eq over zero vars.
+                    return (&self.one_table, &self.one_table);
+                }
+
+                // The head prefix consists of the earliest `head_len` bits of `w`.
+                // These live entirely in the original `[w_out || w_in] = w[..n-1]`
+                // region, so we can factor them via prefixes of `w_out` and `w_in`.
+                let n = self.w.len();
+                let m = n / 2;
+
+                let head_out_bits = core::cmp::min(head_len, m);
+                let head_in_bits = head_len.saturating_sub(head_out_bits);
+
+                let e_out = if head_out_bits == 0 {
+                    &self.one_table
+                } else {
+                    debug_assert!(
+                        head_out_bits < self.E_out_vec.len(),
+                        "head_out_bits={} E_out_vec.len()={}",
+                        head_out_bits,
+                        self.E_out_vec.len()
+                    );
+                    &self.E_out_vec[head_out_bits]
+                };
+                let e_in = if head_in_bits == 0 {
+                    &self.one_table
+                } else {
+                    debug_assert!(
+                        head_in_bits < self.E_in_vec.len(),
+                        "head_in_bits={} E_in_vec.len()={}",
+                        head_in_bits,
+                        self.E_in_vec.len()
+                    );
+                    &self.E_in_vec[head_in_bits]
+                };
+
+                (e_out, e_in)
+            }
+            BindingOrder::HighToLow => {
+                // Streaming windows are not defined for HighToLow in the current
+                // Spartan code paths; return neutral head tables.
+                (&self.one_table, &self.one_table)
+            }
+        }
+    }
+
+    /// Return the equality table over the "active" window bits (all but the
+    /// last variable in the current streaming window). This is used when
+    /// projecting the multiquadratic t'(z_0, ..., z_{w-1}) down to a univariate
+    /// in the first variable by summing against eq(tau_active, ·) over the
+    /// remaining coordinates.
+    ///
+    /// We derive the active slice directly from the unbound portion of `w`.
+    /// For LowToHigh binding, the unbound variables are `w[..current_index]`;
+    /// the last `window_size` of these belong to the current window, and all
+    /// but the final one are "active".
+    pub fn E_active_for_window(&self, window_size: usize) -> Vec<F> {
+        if window_size <= 1 {
+            // No active bits in a size-0/1 window; eq over zero vars is [1].
+            return vec![F::one()];
+        }
+
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                let num_unbound = self.current_index;
+                if window_size > num_unbound {
+                    // Clamp to the maximum meaningful window size at this round.
+                    return vec![F::one()];
+                }
+                let remaining_w = &self.w[..num_unbound];
+                let window_start = remaining_w.len() - window_size;
+                let (_w_body, w_window) = remaining_w.split_at(window_start);
+                let (w_active, _w_curr_slice) = w_window.split_at(window_size - 1);
+                // We only need the full eq table over the active window bits.
+                EqPolynomial::<F>::evals(w_active)
+            }
+            BindingOrder::HighToLow => {
+                // Not used for the outer Spartan streaming code.
+                vec![F::one()]
+            }
+        }
     }
 
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]

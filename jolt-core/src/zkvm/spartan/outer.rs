@@ -5,11 +5,12 @@ use ark_std::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+use crate::field::BarrettReduce;
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
-use crate::poly::multilinear_polynomial::BindingOrder;
+use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -17,13 +18,15 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::streaming_schedule::StreamingSchedule;
 use crate::subprotocols::sumcheck_prover::{
     SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
 };
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::univariate_skip::{build_uniskip_first_round_poly, UniSkipState};
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::Acc8S;
+use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S, Acc8S};
+use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -48,6 +51,7 @@ use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
 /// Degree bound of the sumcheck round polynomials for [`OuterRemainingSumcheckVerifier`].
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
+const INFINITY: usize = 2; // 2 represents ∞ in base-3
 
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
@@ -209,30 +213,53 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
 /// SumcheckInstance for Spartan outer rounds after the univariate-skip first round.
 /// Round 0 in this instance corresponds to the "streaming" round; subsequent rounds
 /// use the remaining linear-time algorithm over cycle variables.
+//#[derive(Allocative)]
+//pub struct OuterRemainingSumcheckProver<F: JoltField> {
+//    #[allocative(skip)]
+//    bytecode_preprocessing: BytecodePreprocessing,
+//    #[allocative(skip)]
+//    trace: Arc<Vec<Cycle>>,
+//    split_eq_poly: GruenSplitEqPolynomial<F>,
+//    az: Option<DensePolynomial<F>>,
+//    bz: Option<DensePolynomial<F>>,
+//    t_prime_poly: Option<MultiquadraticPolynomial<F>>, // multiquadratic polynomial used to answer queries in a streaming window
+//    /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
+//    first_round_evals: (F, F),
+//    #[allocative(skip)]
+//    params: OuterRemainingSumcheckParams<F>,
+//}
+//
 #[derive(Allocative)]
-pub struct OuterRemainingSumcheckProver<F: JoltField> {
+pub struct OuterRemainingSumcheckProver<F: JoltField, S: StreamingSchedule> {
     #[allocative(skip)]
     bytecode_preprocessing: BytecodePreprocessing,
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
+    /// Split-eq instance used for both streaming and linear phases of the
+    /// outer Spartan sumcheck over cycle variables.
     split_eq_poly: GruenSplitEqPolynomial<F>,
     az: Option<DensePolynomial<F>>,
     bz: Option<DensePolynomial<F>>,
     t_prime_poly: Option<MultiquadraticPolynomial<F>>, // multiquadratic polynomial used to answer queries in a streaming window
+    r_grid: ExpandingTable<F>, // hadamard product of (1 - r_j, r_j) for bound variables so far to help with streaming
     /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
-    first_round_evals: (F, F),
     #[allocative(skip)]
     params: OuterRemainingSumcheckParams<F>,
+    lagrange_evals_r0: [F; 10],
+    schedule: S,
 }
 
-impl<F: JoltField> OuterRemainingSumcheckProver<F> {
+impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
     pub fn gen(
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: &BytecodePreprocessing,
         uni: &UniSkipState<F>,
+        schedule: S,
     ) -> Self {
         let bytecode_preprocessing = bytecode_preprocessing.clone();
+        let n_cycle_vars = trace.len().log_2();
+        let outer_params = OuterRemainingSumcheckParams::new(n_cycle_vars, uni);
 
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
@@ -254,24 +281,240 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
                 Some(lagrange_tau_r0),
             );
 
-        let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
-            &bytecode_preprocessing,
-            &trace,
-            &lagrange_evals_r,
-            &split_eq_poly,
-        );
+        // THIS NEEDS TO CHANGE
+        // TODO: Double check this binding order
+        let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::LowToHigh);
+        //let mut r_grid =
+        //    ExpandingTable::new_with_order(1 << n_cycle_vars, ExpansionOrder::MostSignificantBit);
+        r_grid.reset(F::one());
 
-        let n_cycle_vars = trace.len().ilog2() as usize;
+        //let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
+        //    &bytecode_preprocessing,
+        //    &trace,
+        //    &lagrange_evals_r,
+        //    &split_eq_poly,
+        //);
 
         Self {
             split_eq_poly,
             bytecode_preprocessing,
             trace,
-            az: az_bound,
-            bz: bz_bound,
-            first_round_evals: (t0, t_inf),
-            params: OuterRemainingSumcheckParams::new(n_cycle_vars, uni),
+            az: None,
+            bz: None,
+            t_prime_poly: None,
+            r_grid,
+            params: outer_params,
+            lagrange_evals_r0: lagrange_evals_r,
+            schedule,
         }
+    }
+
+    // gets the evaluations of az(x, {0,1}^log(jlen), r) and bz(x, {0,1}^log(jlen), r)
+    // where x is determined by the bit decomposition of offset
+    // and r is log(klen) variables
+    // this is used both in window computation (jlen is window size)
+    // and in converting to linear time (offset is 0, log(jlen) is the number of unbound variables)
+    // The caller must pass in `scaled_w`, the tensor product of the Lagrange weights
+    // at r0 with the current `r_grid` weights:
+    //   scaled_w[k][t] = lagrange_evals_r0[t] * r_grid[k]  (for klen > 1)
+    // and scaled_w[0][t] = lagrange_evals_r0[t] when klen == 1 (no r_grid factor).
+    fn build_grids(
+        &self,
+        grid_az: &mut [F],
+        grid_bz: &mut [F],
+        jlen: usize,
+        klen: usize,
+        offset: usize,
+        parallel: bool,
+        scaled_w: &[[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]],
+    ) {
+        let preprocess = &self.bytecode_preprocessing;
+        let trace = &self.trace;
+        debug_assert_eq!(scaled_w.len(), klen);
+        debug_assert_eq!(grid_az.len(), jlen);
+        debug_assert_eq!(grid_bz.len(), jlen);
+
+        // Unreduced accumulators per j for Az and the two Bz groups.
+        let mut acc_az = vec![Acc5U::<F>::zero(); jlen];
+        let mut acc_bz_first = vec![Acc6S::<F>::zero(); jlen];
+        let mut acc_bz_second = vec![Acc7S::<F>::zero(); jlen];
+
+        if !parallel {
+            // Sequential traversal: iterate over j first and then k so that we
+            // walk consecutive cycles in memory (full_idx increases by 1 inside
+            // the inner loop).
+            for j in 0..jlen {
+                for k in 0..klen {
+                    let full_idx = offset + j * klen + k;
+                    let current_step_idx = full_idx >> 1;
+                    let selector = (full_idx & 1) == 1;
+
+                    let row_inputs =
+                        R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    let w_k = &scaled_w[k];
+
+                    if !selector {
+                        eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
+                    } else {
+                        eval.fmadd_second_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_second[j]);
+                    }
+                }
+            }
+        } else {
+            // Parallel traversal over j for the linear-time prover.
+            // Each worker owns disjoint accumulators for a fixed j, so there
+            // are no data races. We reuse the precomputed scaled Lagrange weights
+            // per k from `scaled_w`, avoiding redundant tensor products.
+            acc_az
+                .par_iter_mut()
+                .zip(acc_bz_first.par_iter_mut())
+                .zip(acc_bz_second.par_iter_mut())
+                .enumerate()
+                .for_each(|(j, ((acc_az_j, acc_bz_first_j), acc_bz_second_j))| {
+                    for k in 0..klen {
+                        let full_idx = offset + j * klen + k;
+                        let current_step_idx = full_idx >> 1;
+                        let selector = (full_idx & 1) == 1;
+
+                        let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        let w_k = &scaled_w[k];
+
+                        if !selector {
+                            eval.fmadd_first_group_at_r(w_k, acc_az_j, acc_bz_first_j);
+                        } else {
+                            eval.fmadd_second_group_at_r(w_k, acc_az_j, acc_bz_second_j);
+                        }
+                    }
+                });
+        }
+
+        // Final reductions once per j.
+        for j in 0..jlen {
+            let az_j = acc_az[j].barrett_reduce();
+            let bz_first_j = acc_bz_first[j].barrett_reduce();
+            let bz_second_j = acc_bz_second[j].barrett_reduce();
+            grid_az[j] = az_j;
+            grid_bz[j] = bz_first_j + bz_second_j;
+        }
+    }
+
+    // returns the grid of evaluations on {0,1,inf}^window_size
+    // touches each cycle of the trace exactly once and in order!
+    fn get_grid_gen(&mut self, window_size: usize) {
+        // Use the split-eq instance to derive the current window
+        // factorisation of Eq over the unbound cycle bits. This keeps the
+        // semantics in one place (see `split_eq_poly::E_out_in_for_window`).
+        let split_eq = &self.split_eq_poly;
+
+        // helper constants
+        let three_pow_dim = 3_usize.pow(window_size as u32);
+        let jlen = 1 << window_size;
+        let klen = 1 << split_eq.num_challenges();
+
+        // Precompute the tensor product of the Lagrange weights at r0 with the
+        // current r_grid weights so that all calls into `build_grids` can reuse
+        // these scaled tables.
+        let lagrange_evals_r = &self.lagrange_evals_r0;
+        let r_grid = &self.r_grid;
+        let mut scaled_w = vec![[F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; klen];
+        if klen > 1 {
+            debug_assert_eq!(klen, r_grid.len());
+            for k in 0..klen {
+                let weight = r_grid[k];
+                let row = &mut scaled_w[k];
+                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+                    row[t] = lagrange_evals_r[t] * weight;
+                }
+            }
+        } else {
+            debug_assert_eq!(klen, 1);
+            scaled_w[0].copy_from_slice(lagrange_evals_r);
+        }
+
+        // Head-factor eq tables for this window.
+        let (e_out, e_in) = split_eq.E_out_in_for_window(window_size);
+        let e_in_len = e_in.len();
+
+        // main logic: parallelize outer sum over E_out_current; for each x_out,
+        // perform an inner unreduced accumulation over E_in_current and only
+        // reduce once per grid cell, then multiply by E_out unreduced.
+        let res_unr = e_out
+            .par_iter()
+            .enumerate()
+            .map(|(out_idx, out_val)| {
+                // Local unreduced accumulators and scratch buffers for this out_idx.
+                let mut local_res_unr = vec![F::Unreduced::<9>::zero(); three_pow_dim];
+                let mut buff_a: Vec<F> = vec![F::zero(); three_pow_dim];
+                let mut buff_b = vec![F::zero(); three_pow_dim];
+                let mut tmp = vec![F::zero(); three_pow_dim];
+                let mut grid_a = vec![F::zero(); jlen];
+                let mut grid_b = vec![F::zero(); jlen];
+
+                for (in_idx, in_val) in e_in.iter().enumerate() {
+                    let i = out_idx * e_in_len + in_idx;
+
+                    // Reuse the same grid buffers across all x_in for this x_out.
+                    grid_a.fill(F::zero());
+                    grid_b.fill(F::zero());
+                    // Keep this call sequential to avoid nested rayon parallelism.
+                    self.build_grids(
+                        &mut grid_a,
+                        &mut grid_b,
+                        jlen,
+                        klen,
+                        i * jlen * klen,
+                        false,
+                        &scaled_w,
+                    );
+
+                    // Extrapolate grid_a and grid_b from {0,1}^window_size to {0,1,∞}^window_size.
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &grid_a,
+                        &mut buff_a,
+                        &mut tmp,
+                        window_size,
+                    );
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &grid_b,
+                        &mut buff_b,
+                        &mut tmp,
+                        window_size,
+                    );
+
+                    let e_in_val = *in_val;
+                    for idx in 0..three_pow_dim {
+                        let val = buff_a[idx] * buff_b[idx];
+                        local_res_unr[idx] += e_in_val.mul_unreduced::<9>(val);
+                    }
+                }
+
+                // Fold in E_out for this x_out.
+                let e_out_val = *out_val;
+                for idx in 0..three_pow_dim {
+                    let inner_red = F::from_montgomery_reduce::<9>(local_res_unr[idx]);
+                    local_res_unr[idx] = e_out_val.mul_unreduced::<9>(inner_red);
+                }
+                local_res_unr
+            })
+            .reduce(
+                || vec![F::Unreduced::<9>::zero(); three_pow_dim],
+                |mut acc, local| {
+                    for idx in 0..three_pow_dim {
+                        acc[idx] += local[idx];
+                    }
+                    acc
+                },
+            );
+
+        // Final reduction over all (x_out, x_in)
+        let res: Vec<F> = res_unr
+            .into_iter()
+            .map(|unr| F::from_montgomery_reduce::<9>(unr))
+            .collect();
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, res));
     }
 
     /// Compute the quadratic evaluations for the streaming round (right after univariate skip).
@@ -299,80 +542,110 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     /// unbound_coeffs_{a,b}(x_out, x_in, {0,∞}, y)`
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
-    #[inline]
-    fn compute_first_quadratic_evals_and_bound_polys(
-        bytecode_preprocessing: &BytecodePreprocessing,
-        trace: &[Cycle],
-        lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        split_eq_poly: &GruenSplitEqPolynomial<F>,
-    ) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {
-        let num_x_out_vals = split_eq_poly.E_out_current_len();
-        let num_x_in_vals = split_eq_poly.E_in_current_len();
-        let iter_num_x_in_vars = num_x_in_vals.log_2();
+    //#[inline]
+    //fn compute_first_quadratic_evals_and_bound_polys(
+    //    bytecode_preprocessing: &BytecodePreprocessing,
+    //    trace: &[Cycle],
+    //    lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+    //    split_eq_poly: &GruenSplitEqPolynomial<F>,
+    //) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {
+    //    let num_x_out_vals = split_eq_poly.E_out_current_len();
+    //    let num_x_in_vals = split_eq_poly.E_in_current_len();
+    //    let iter_num_x_in_vars = num_x_in_vals.log_2();
+    //
+    //    let groups_exact = num_x_out_vals
+    //        .checked_mul(num_x_in_vals)
+    //        .expect("overflow computing groups_exact");
+    //
+    //    // Preallocate interleaved buffers once ([lo, hi] per entry)
+    //    let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+    //    let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+    //
+    //    // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
+    //    let (t0_acc_unr, t_inf_acc_unr) = az_bound
+    //        .par_chunks_exact_mut(2 * num_x_in_vals)
+    //        .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
+    //        .enumerate()
+    //        .fold(
+    //            || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+    //            |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
+    //                let mut inner_sum0 = F::Unreduced::<9>::zero();
+    //                let mut inner_sum_inf = F::Unreduced::<9>::zero();
+    //                for x_in_val in 0..num_x_in_vals {
+    //                    let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+    //                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
+    //                        bytecode_preprocessing,
+    //                        trace,
+    //                        current_step_idx,
+    //                    );
+    //                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+    //                    let az0 = eval.az_at_r_first_group(lagrange_evals_r);
+    //                    let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
+    //                    let az1 = eval.az_at_r_second_group(lagrange_evals_r);
+    //                    let bz1 = eval.bz_at_r_second_group(lagrange_evals_r);
+    //                    let p0 = az0 * bz0;
+    //                    let slope = (az1 - az0) * (bz1 - bz0);
+    //                    let e_in = split_eq_poly.E_in_current()[x_in_val];
+    //                    inner_sum0 += e_in.mul_unreduced::<9>(p0);
+    //                    inner_sum_inf += e_in.mul_unreduced::<9>(slope);
+    //                    let off = 2 * x_in_val;
+    //                    az_chunk[off] = az0;
+    //                    az_chunk[off + 1] = az1;
+    //                    bz_chunk[off] = bz0;
+    //                    bz_chunk[off + 1] = bz1;
+    //                }
+    //                let e_out = split_eq_poly.E_out_current()[x_out_val];
+    //                let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
+    //                let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
+    //                acc0 += e_out.mul_unreduced::<9>(reduced0);
+    //                acci += e_out.mul_unreduced::<9>(reduced_inf);
+    //                (acc0, acci)
+    //            },
+    //        )
+    //        .reduce(
+    //            || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+    //            |a, b| (a.0 + b.0, a.1 + b.1),
+    //        );
+    //
+    //    (
+    //        F::from_montgomery_reduce::<9>(t0_acc_unr),
+    //        F::from_montgomery_reduce::<9>(t_inf_acc_unr),
+    //        DensePolynomial::new(az_bound),
+    //        DensePolynomial::new(bz_bound),
+    //    )
+    //}
 
-        let groups_exact = num_x_out_vals
-            .checked_mul(num_x_in_vals)
-            .expect("overflow computing groups_exact");
-
-        // Preallocate interleaved buffers once ([lo, hi] per entry)
-        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-
-        // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
-        let (t0_acc_unr, t_inf_acc_unr) = az_bound
-            .par_chunks_exact_mut(2 * num_x_in_vals)
-            .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
-            .enumerate()
-            .fold(
-                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
-                    let mut inner_sum0 = F::Unreduced::<9>::zero();
-                    let mut inner_sum_inf = F::Unreduced::<9>::zero();
-                    for x_in_val in 0..num_x_in_vals {
-                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            bytecode_preprocessing,
-                            trace,
-                            current_step_idx,
-                        );
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        let az0 = eval.az_at_r_first_group(lagrange_evals_r);
-                        let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
-                        let az1 = eval.az_at_r_second_group(lagrange_evals_r);
-                        let bz1 = eval.bz_at_r_second_group(lagrange_evals_r);
-                        let p0 = az0 * bz0;
-                        let slope = (az1 - az0) * (bz1 - bz0);
-                        let e_in = split_eq_poly.E_in_current()[x_in_val];
-                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
-                        inner_sum_inf += e_in.mul_unreduced::<9>(slope);
-                        let off = 2 * x_in_val;
-                        az_chunk[off] = az0;
-                        az_chunk[off + 1] = az1;
-                        bz_chunk[off] = bz0;
-                        bz_chunk[off + 1] = bz1;
-                    }
-                    let e_out = split_eq_poly.E_out_current()[x_out_val];
-                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
-                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-                    acc0 += e_out.mul_unreduced::<9>(reduced0);
-                    acci += e_out.mul_unreduced::<9>(reduced_inf);
-                    (acc0, acci)
-                },
-            )
-            .reduce(
-                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                |a, b| (a.0 + b.0, a.1 + b.1),
-            );
-
-        (
-            F::from_montgomery_reduce::<9>(t0_acc_unr),
-            F::from_montgomery_reduce::<9>(t_inf_acc_unr),
-            DensePolynomial::new(az_bound),
-            DensePolynomial::new(bz_bound),
-        )
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::stream_to_linear_time")]
+    fn stream_to_linear_time(&mut self) {
+        let split_eq_poly = &self.split_eq_poly;
+        // helper constants
+        let jlen = 1 << (split_eq_poly.get_num_vars() - split_eq_poly.num_challenges());
+        let klen = 1 << split_eq_poly.num_challenges();
+        // Precompute scaled Lagrange weights for all k so the parallel
+        // conversion reuses them instead of recomputing per (j, k).
+        let lagrange_evals_r = &self.lagrange_evals_r0;
+        let r_grid = &self.r_grid;
+        let mut scaled_w = vec![[F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; klen];
+        if klen > 1 {
+            debug_assert_eq!(klen, r_grid.len());
+            for k in 0..klen {
+                let weight = r_grid[k];
+                let row = &mut scaled_w[k];
+                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+                    row[t] = lagrange_evals_r[t] * weight;
+                }
+            }
+        } else {
+            debug_assert_eq!(klen, 1);
+            scaled_w[0].copy_from_slice(lagrange_evals_r);
+        }
+        let mut ret_az = unsafe_allocate_zero_vec(jlen);
+        let mut ret_bz = unsafe_allocate_zero_vec(jlen);
+        // Parallelize over j for the linear-time conversion.
+        self.build_grids(&mut ret_az, &mut ret_bz, jlen, klen, 0, true, &scaled_w);
+        self.az = Some(DensePolynomial::new(ret_az));
+        self.bz = Some(DensePolynomial::new(ret_bz));
     }
-
-    // No special binding path needed; az/bz hold interleaved [lo,hi] ready for binding
 
     /// Compute the polynomial for each of the remaining rounds, using the
     /// linear-time algorithm with split-eq optimizations.
@@ -391,36 +664,90 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     /// (ordering of indices is MSB to LSB, so x_out is the MSB and x_in is the LSB)
     #[inline]
     fn remaining_quadratic_evals(&self) -> (F, F) {
-        let n = self.az.len();
-        debug_assert_eq!(n, self.bz.len());
-        let [t0, tinf] = self.split_eq_poly.par_fold_out_in_unreduced::<9, 2>(&|g| {
-            let az0 = self.az[2 * g];
-            let az1 = self.az[2 * g + 1];
-            let bz0 = self.bz[2 * g];
-            let bz1 = self.bz[2 * g + 1];
-            let p0 = az0 * bz0;
-            let slope = (az1 - az0) * (bz1 - bz0);
-            [p0, slope]
-        });
-        (t0, tinf)
+        let eq_poly = &self.split_eq_poly;
+
+        let n = self.az.as_ref().expect("az should be initialized").len();
+        let az = self.az.as_ref().expect("az should be initialized");
+        let bz = self.bz.as_ref().expect("bz should be initialized");
+
+        debug_assert_eq!(n, bz.len());
+        if eq_poly.E_in_current_len() == 1 {
+            // groups are pairs (0,1)
+            let groups = n / 2;
+            let (t0_unr, tinf_unr) = (0..groups)
+                .into_par_iter()
+                .map(|g| {
+                    let az0 = az[2 * g];
+                    let az1 = az[2 * g + 1];
+                    let bz0 = bz[2 * g];
+                    let bz1 = bz[2 * g + 1];
+                    let eq = eq_poly.E_out_current()[g];
+                    let p0 = az0 * bz0;
+                    let slope = (az1 - az0) * (bz1 - bz0);
+                    let t0_unr = eq.mul_unreduced::<9>(p0);
+                    let tinf_unr = eq.mul_unreduced::<9>(slope);
+                    (t0_unr, tinf_unr)
+                })
+                .reduce(
+                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                    |a, b| (a.0 + b.0, a.1 + b.1),
+                );
+            (
+                F::from_montgomery_reduce::<9>(t0_unr),
+                F::from_montgomery_reduce::<9>(tinf_unr),
+            )
+        } else {
+            let num_x1_bits = eq_poly.E_in_current_len().log_2();
+            let x1_len = eq_poly.E_in_current_len();
+            let x2_len = eq_poly.E_out_current_len();
+            let (sum0_unr, suminf_unr) = (0..x2_len)
+                .into_par_iter()
+                .map(|x2| {
+                    let mut inner0_unr = F::Unreduced::<9>::zero();
+                    let mut inner_inf_unr = F::Unreduced::<9>::zero();
+                    for x1 in 0..x1_len {
+                        let g = (x2 << num_x1_bits) | x1;
+                        let az0 = az[2 * g];
+                        let az1 = az[2 * g + 1];
+                        let bz0 = bz[2 * g];
+                        let bz1 = bz[2 * g + 1];
+                        let e_in = eq_poly.E_in_current()[x1];
+                        let p0 = az0 * bz0;
+                        let slope = (az1 - az0) * (bz1 - bz0);
+                        inner0_unr += e_in.mul_unreduced::<9>(p0);
+                        inner_inf_unr += e_in.mul_unreduced::<9>(slope);
+                    }
+                    let e_out = eq_poly.E_out_current()[x2];
+                    let inner0_red = F::from_montgomery_reduce::<9>(inner0_unr);
+                    let inner_inf_red = F::from_montgomery_reduce::<9>(inner_inf_unr);
+                    let t0_unr = e_out.mul_unreduced::<9>(inner0_red);
+                    let tinf_unr = e_out.mul_unreduced::<9>(inner_inf_red);
+                    (t0_unr, tinf_unr)
+                })
+                .reduce(
+                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                    |a, b| (a.0 + b.0, a.1 + b.1),
+                );
+            (
+                F::from_montgomery_reduce::<9>(sum0_unr),
+                F::from_montgomery_reduce::<9>(suminf_unr),
+            )
+        }
     }
 
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
-        let az0 = if !self.az.is_empty() {
-            self.az[0]
-        } else {
-            F::zero()
-        };
-        let bz0 = if !self.bz.is_empty() {
-            self.bz[0]
-        } else {
-            F::zero()
-        };
+        let az = self.az.as_ref().expect("az should be initialized");
+        let bz = self.bz.as_ref().expect("bz should be initialized");
+
+        let az0 = if !az.is_empty() { az[0] } else { F::zero() };
+        let bz0 = if !bz.is_empty() { bz[0] } else { F::zero() };
         [az0, bz0]
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainingSumcheckProver<F> {
+impl<F: JoltField, T: Transcript, S: StreamingSchedule> SumcheckInstanceProver<F, T>
+    for OuterRemainingSumcheckProver<F, S>
+{
     fn degree(&self) -> usize {
         OUTER_REMAINING_DEGREE_BOUND
     }
@@ -433,26 +760,108 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
         self.params.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
+    //#[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
+    //fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+    //    let (t0, t_inf) = if round == 0 {
+    //        self.first_round_evals
+    //    } else {
+    //        self.remaining_quadratic_evals()
+    //    };
+    //    self.split_eq_poly
+    //        .gruen_poly_deg_3(t0, t_inf, previous_claim)
+    //}
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::compute_prover_message"
+    )]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        let (t0, t_inf) = if round == 0 {
-            self.first_round_evals
+        let (t0, t_inf) = if self.schedule.is_streaming(round) {
+            let num_unbound_vars = self.schedule.num_unbound_vars(round);
+
+            if self.schedule.is_window_start(round) {
+                // Build the multiquadratic t'(z) for this window using the
+                // slice-based Eq factorisation provided by the simple
+                // split-eq instance (head vs window bits).
+                self.get_grid_gen(num_unbound_vars);
+            }
+            // Use the multiquadratic polynomial to compute the message
+            let t_prime_poly = self
+                .t_prime_poly
+                .as_ref()
+                .expect("t_prime_poly should be initialized");
+            // Equality weights over the active window bits (all but the first).
+            let e_active = self.split_eq_poly.E_active_for_window(num_unbound_vars);
+            let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
+            let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
+
+            //if round == 0 {
+            //    let (t0_expected, t_inf_expected) = self.first_round_evals;
+            //    assert_eq!(t0_expected, t_prime_0);
+            //    assert_eq!(t_inf_expected, t_prime_inf);
+            //} else {
+            //    let (t0_expected, t_inf_expected) = self.remaining_quadratic_evals();
+            //    assert_eq!(t0_expected, t_prime_0, "t0 mismatch at round {}", round);
+            //    assert_eq!(
+            //        t_inf_expected, t_prime_inf,
+            //        "t_inf mismatch at round {}",
+            //        round
+            //    );
+            //}
+
+            (t_prime_0, t_prime_inf)
         } else {
-            self.remaining_quadratic_evals()
+            // LINEAR PHASE
+            if self.schedule.is_first_linear(round) {
+                self.stream_to_linear_time();
+            }
+            // For now, just use quadratic evals
+            let (t0, t_inf) = self.remaining_quadratic_evals();
+            (t0, t_inf)
         };
+        // Compute the Gruen cubic using the split-eq implementation.
         self.split_eq_poly
             .gruen_poly_deg_3(t0, t_inf, previous_claim)
+        //vec![evals[0], evals[1], evals[2]]
     }
+    //#[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
+    //fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+    //    rayon::join(
+    //        || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
+    //        || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+    //    );
+    //
+    //    // Bind eq_poly for next round
+    //    self.split_eq_poly.bind(r_j);
+    //}
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        rayon::join(
-            || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
-            || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
-        );
-
-        // Bind eq_poly for next round
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
+        // Bind the split-eq instance in lock-step with the outer sumcheck.
         self.split_eq_poly.bind(r_j);
+
+        if self.schedule.is_streaming(round) {
+            let t_prime_poly = self
+                .t_prime_poly
+                .as_mut()
+                .expect("t_prime_poly should be initialized");
+            t_prime_poly.bind(r_j, BindingOrder::LowToHigh);
+            self.r_grid.update(r_j);
+        } else {
+            rayon::join(
+                || {
+                    self.az
+                        .as_mut()
+                        .expect("az should be initialised")
+                        .bind_parallel(r_j, BindingOrder::LowToHigh)
+                },
+                || {
+                    self.bz
+                        .as_mut()
+                        .expect("bz should be initialised")
+                        .bind_parallel(r_j, BindingOrder::LowToHigh)
+                },
+            );
+        }
     }
 
     fn cache_openings(
