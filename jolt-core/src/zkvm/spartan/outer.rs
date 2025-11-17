@@ -222,6 +222,7 @@ pub struct OuterRemainingSumcheckProver<F: JoltField> {
     #[allocative(skip)]
     params: OuterRemainingSumcheckParams<F>,
 }
+// The streaming prover
 
 impl<F: JoltField> OuterRemainingSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
