@@ -256,7 +256,10 @@ impl<F: JoltField, I: Iterator<Item = OneHotRow>> StreamingOneHotRLCPolynomial<F
         }
     }
 
-    pub fn vector_matrix_product(self, left_vec: &[JoltFieldWrapper<F>]) -> Vec<JoltFieldWrapper<F>> {
+    pub fn vector_matrix_product(
+        self,
+        left_vec: &[JoltFieldWrapper<F>],
+    ) -> Vec<JoltFieldWrapper<F>> {
         debug_assert_eq!(left_vec.len(), DoryGlobals::get_max_num_rows());
         let left_vec: &[F] =
             unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
@@ -322,8 +325,9 @@ impl<F: JoltField, I: Iterator<Item = DenseRow<F>>> Iterator for StreamingDenseR
             .iter_mut()
             .map(Iterator::next)
             .zip(&self.coefficients)
-            .fold(Some(vec![F::zero(); num_cols]), |opt_acc, (opt_row, coefficient)| {
-                match (opt_acc, opt_row) {
+            .fold(
+                Some(vec![F::zero(); num_cols]),
+                |opt_acc, (opt_row, coefficient)| match (opt_acc, opt_row) {
                     (Some(mut acc), Some(row)) => {
                         for col in 0..row.len() {
                             acc[col] += *coefficient * row[col];
@@ -332,8 +336,8 @@ impl<F: JoltField, I: Iterator<Item = DenseRow<F>>> Iterator for StreamingDenseR
                         Some(acc)
                     }
                     _ => None,
-                }
-            })
+                },
+            )
     }
 }
 
@@ -347,7 +351,10 @@ impl<F: JoltField, I: Iterator<Item = DenseRow<F>>> StreamingDenseRLCPolynomial<
         }
     }
 
-    pub fn vector_matrix_product(self, left_vec: &[JoltFieldWrapper<F>]) -> Vec<JoltFieldWrapper<F>> {
+    pub fn vector_matrix_product(
+        self,
+        left_vec: &[JoltFieldWrapper<F>],
+    ) -> Vec<JoltFieldWrapper<F>> {
         debug_assert_eq!(left_vec.len(), DoryGlobals::get_max_num_rows());
         let left_vec: &[F] =
             unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
@@ -423,23 +430,25 @@ mod test {
         }
     }
 
-    fn random_multilinear_polynomial<F: JoltField>(rng: &mut impl rand_core::RngCore) -> MultilinearPolynomial<F> {
+    fn random_multilinear_polynomial<F: JoltField>(
+        rng: &mut impl rand_core::RngCore,
+    ) -> MultilinearPolynomial<F> {
         let T = DoryGlobals::get_T();
         let K = (DoryGlobals::get_num_columns() * DoryGlobals::get_max_num_rows()) / T;
 
-        (rng.next_u64() % 2 == 1)
-            .then(|| {
+        if rng.next_u64() % 2 == 1 {
+            {
                 let indices: Vec<Option<u8>> = (0..T)
                     .map(|_| (rng.next_u64() % 2 == 1).then(|| (rng.next_u64() % (K as u64)) as u8))
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(indices, K))
-            })
-            .unwrap_or_else(|| {
-                let coeffs: Vec<F> = (0..T)
-                    .map(|_| F::random(rng))
-                    .collect();
+            }
+        } else {
+            {
+                let coeffs: Vec<F> = (0..T).map(|_| F::random(rng)).collect();
                 MultilinearPolynomial::from(coeffs)
-            })
+            }
+        }
     }
 
     fn streaming_vector_matrix_product_k_t(K: usize, T: usize) {
@@ -455,7 +464,9 @@ mod test {
             .map(|_| random_multilinear_polynomial(&mut rng))
             .collect();
         let coefficients: Vec<F> = (0..num_polys).map(|_| F::random(&mut rng)).collect();
-        let left_vector: Vec<_> = (0..num_rows).map(|_| JoltFieldWrapper(F::random(&mut rng))).collect();
+        let left_vector: Vec<_> = (0..num_rows)
+            .map(|_| JoltFieldWrapper(F::random(&mut rng)))
+            .collect();
 
         let streaming_product: Vec<JoltFieldWrapper<F>> = {
             // Separate out dense and one-hot polynomials with their respective coefficients
@@ -476,33 +487,33 @@ mod test {
                 .map(|(poly, coeff)| (<Vec<OneHotRow>>::from(poly).into_iter(), coeff))
                 .unzip();
 
-            let dense_prod = StreamingDenseRLCPolynomial::linear_combination(dense_polys, dense_coeffs)
-                .vector_matrix_product(&left_vector);
-            let dense_prod: &[F] =
-                unsafe { std::slice::from_raw_parts(dense_prod.as_ptr() as *const F, dense_prod.len()) };
-            let one_hot_prod = StreamingOneHotRLCPolynomial::linear_combination(one_hot_polys, one_hot_coeffs)
-                .vector_matrix_product(&left_vector);
-            let one_hot_prod: &[F] =
-                unsafe { std::slice::from_raw_parts(one_hot_prod.as_ptr() as *const F, one_hot_prod.len()) };
-            dense_prod.into_iter()
+            let dense_prod =
+                StreamingDenseRLCPolynomial::linear_combination(dense_polys, dense_coeffs)
+                    .vector_matrix_product(&left_vector);
+            let dense_prod: &[F] = unsafe {
+                std::slice::from_raw_parts(dense_prod.as_ptr() as *const F, dense_prod.len())
+            };
+            let one_hot_prod =
+                StreamingOneHotRLCPolynomial::linear_combination(one_hot_polys, one_hot_coeffs)
+                    .vector_matrix_product(&left_vector);
+            let one_hot_prod: &[F] = unsafe {
+                std::slice::from_raw_parts(one_hot_prod.as_ptr() as *const F, one_hot_prod.len())
+            };
+            dense_prod
+                .iter()
                 .zip(one_hot_prod)
                 .map(|(a, b)| JoltFieldWrapper(a + b))
                 .collect()
         };
 
         let non_streaming_product: Vec<JoltFieldWrapper<F>> = {
-            let polynomials: Vec<Arc<MultilinearPolynomial<F>>> = polynomials
-                .into_iter()
-                .map(|poly| Arc::new(MultilinearPolynomial::from(poly)))
-                .collect();
+            let polynomials: Vec<Arc<MultilinearPolynomial<F>>> =
+                polynomials.into_iter().map(|poly| Arc::new(poly)).collect();
             RLCPolynomial::linear_combination(polynomials, &coefficients)
                 .vector_matrix_product(&left_vector)
         };
 
-        assert_eq!(
-            streaming_product,
-            non_streaming_product,
-        )
+        assert_eq!(streaming_product, non_streaming_product,)
     }
 
     #[test]
