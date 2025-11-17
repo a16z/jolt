@@ -64,7 +64,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
                 match ram_op {
                     RAMAccess::Write(write) => Some(MatrixEntry {
                         row: j,
-                        col: remap_address(write.address, &memory_layout).unwrap() as usize,
+                        col: remap_address(write.address, memory_layout).unwrap() as usize,
                         ra_coeff: F::one(),
                         val_coeff: F::from_u64(write.pre_value),
                         prev_val: write.pre_value,
@@ -72,7 +72,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
                     }),
                     RAMAccess::Read(read) => Some(MatrixEntry {
                         row: j,
-                        col: remap_address(read.address, &memory_layout).unwrap() as usize,
+                        col: remap_address(read.address, memory_layout).unwrap() as usize,
                         ra_coeff: F::one(),
                         val_coeff: F::from_u64(read.value),
                         prev_val: read.value,
@@ -214,14 +214,14 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         }
         for remaining_even_entry in even[i..].iter() {
             if !dry_run {
-                let bound_entry = Self::bind_entries(Some(&remaining_even_entry), None, r);
+                let bound_entry = Self::bind_entries(Some(remaining_even_entry), None, r);
                 out[k] = MaybeUninit::new(bound_entry);
             }
             k += 1;
         }
         for remaining_odd_entry in odd[j..].iter() {
             if !dry_run {
-                let bound_entry = Self::bind_entries(None, Some(&remaining_odd_entry), r);
+                let bound_entry = Self::bind_entries(None, Some(remaining_odd_entry), r);
                 out[k] = MaybeUninit::new(bound_entry);
             }
             k += 1;
@@ -296,7 +296,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
                 let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
                 let (even_row, odd_row) = entries.split_at(odd_row_start_index);
                 // Dry run to compute output length
-                let bound_len = Self::bind_rows(&even_row, &odd_row, r, &mut vec![], true);
+                let bound_len = Self::bind_rows(even_row, odd_row, r, &mut [], true);
                 (entries.len(), bound_len)
             })
             .collect();
@@ -324,7 +324,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             .for_each(|(input_slice, output_slice)| {
                 let odd_row_start_index = input_slice.partition_point(|entry| entry.row.is_even());
                 let (even_row, odd_row) = input_slice.split_at(odd_row_start_index);
-                let _ = Self::bind_rows(&even_row, &odd_row, r, output_slice, false);
+                let _ = Self::bind_rows(even_row, odd_row, r, output_slice, false);
             });
 
         unsafe {
@@ -418,12 +418,12 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             }
         }
         for remaining_even_entry in even[i..].iter() {
-            let evals = Self::compute_evals(Some(&remaining_even_entry), None, inc_evals, gamma);
+            let evals = Self::compute_evals(Some(remaining_even_entry), None, inc_evals, gamma);
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }
         for remaining_odd_entry in odd[j..].iter() {
-            let evals = Self::compute_evals(None, Some(&remaining_odd_entry), inc_evals, gamma);
+            let evals = Self::compute_evals(None, Some(remaining_odd_entry), inc_evals, gamma);
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }

@@ -123,7 +123,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             trace,
             compute_d_parameter(ram_K),
         );
-        let sparse_matrix = SparseMatrixPolynomial::new(&trace, memory_layout);
+        let sparse_matrix = SparseMatrixPolynomial::new(trace, memory_layout);
         let val_init = initial_memory_state
             .par_iter()
             .map(|x| F::from_u64(*x))
