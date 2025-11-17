@@ -501,6 +501,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Arc::clone(&self.trace),
             &self.preprocessing.bytecode,
             &uni_skip_state,
+            schedule,
         );
 
         let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
