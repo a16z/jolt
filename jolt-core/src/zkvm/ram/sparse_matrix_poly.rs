@@ -1,3 +1,4 @@
+use std::mem::MaybeUninit;
 use std::sync::{Arc, Mutex};
 
 use allocative::Allocative;
@@ -13,7 +14,7 @@ use tracer::instruction::{Cycle, RAMAccess};
 /// Represents a non-zero coefficient of the ra(k, j) polynomial and the
 /// corresponding coefficient of the Val(k, j) polynomial. Conceptually,
 /// both ra and Val can be seen as K x T matrices, hence `MatrixEntry`.
-#[derive(Allocative, Debug, PartialEq)]
+#[derive(Allocative, Debug, PartialEq, Clone, Copy)]
 pub struct MatrixEntry<F: JoltField> {
     /// The row index. Before binding, row \in [0, T)
     pub row: usize,
@@ -89,13 +90,14 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         even_row: &[MatrixEntry<F>],
         odd_row: &[MatrixEntry<F>],
         r: F::Challenge,
-    ) -> Vec<MatrixEntry<F>> {
+        out: &mut [MaybeUninit<MatrixEntry<F>>],
+    ) -> usize {
         /// Threshold where we stop parallelizing and do a plain linear merge.
         const PAR_THRESHOLD: usize = 32_768;
 
         // small inputs: do the O(n) sequential merge
         if even_row.len() + odd_row.len() <= PAR_THRESHOLD {
-            return Self::seq_bind_rows(even_row, odd_row, r);
+            return Self::seq_bind_rows(even_row, odd_row, r, out);
         }
 
         // Split the longer row at its midpoint; find where that pivot would land in the other row.
@@ -111,53 +113,85 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             (even_pivot_idx, odd_pivot_idx)
         };
 
+        let (left_out, right_out) = out.split_at_mut(even_pivot_idx + odd_pivot_idx);
         // Now we know the global order: everything in even_row[..even_pivot_idx] and
         // odd_row[..odd_pivot_idx] comes before everything in even_row[even_pivot_idx..]
         // and odd_row[odd_pivot_idx..]. Merge those two regions in parallel.
-        let (mut left, mut right) = rayon::join(
-            || Self::bind_rows(&even_row[..even_pivot_idx], &odd_row[..odd_pivot_idx], r),
-            || Self::bind_rows(&even_row[even_pivot_idx..], &odd_row[odd_pivot_idx..], r),
+        let (left_merged_len, right_merged_len) = rayon::join(
+            || {
+                Self::bind_rows(
+                    &even_row[..even_pivot_idx],
+                    &odd_row[..odd_pivot_idx],
+                    r,
+                    left_out,
+                )
+            },
+            || {
+                Self::bind_rows(
+                    &even_row[even_pivot_idx..],
+                    &odd_row[odd_pivot_idx..],
+                    r,
+                    right_out,
+                )
+            },
         );
 
-        // Stitch results. (Avoids unsafe; one extra reallocation at most.)
-        left.append(&mut right);
-        left
+        // Compact: move right chunk down to be contiguous after left.
+        if left_merged_len != even_pivot_idx + odd_pivot_idx {
+            unsafe {
+                let src = out.as_ptr().add(even_pivot_idx + odd_pivot_idx)
+                    as *const MaybeUninit<MatrixEntry<F>>;
+                let dst = out.as_mut_ptr().add(left_merged_len) as *mut MaybeUninit<MatrixEntry<F>>;
+                std::ptr::copy(src, dst, right_merged_len);
+            }
+        }
+
+        left_merged_len + right_merged_len
     }
 
     fn seq_bind_rows(
         even: &[MatrixEntry<F>],
         odd: &[MatrixEntry<F>],
         r: F::Challenge,
-    ) -> Vec<MatrixEntry<F>> {
+        out: &mut [MaybeUninit<MatrixEntry<F>>],
+    ) -> usize {
+        // Even index
         let mut i = 0;
+        // Odd index
         let mut j = 0;
-        let mut out = Vec::with_capacity(even.len() + odd.len());
+        // Out index
+        let mut k = 0;
 
         while i < even.len() && j < odd.len() {
             if even[i].col == odd[j].col {
                 let bound_entry = Self::bind_entries(Some(&even[i]), Some(&odd[j]), r);
-                out.push(bound_entry);
+                out[k] = MaybeUninit::new(bound_entry);
                 i += 1;
                 j += 1;
+                k += 1;
             } else if even[i].col < odd[j].col {
                 let bound_entry = Self::bind_entries(Some(&even[i]), None, r);
-                out.push(bound_entry);
+                out[k] = MaybeUninit::new(bound_entry);
                 i += 1;
+                k += 1;
             } else {
                 let bound_entry = Self::bind_entries(None, Some(&odd[j]), r);
-                out.push(bound_entry);
+                out[k] = MaybeUninit::new(bound_entry);
                 j += 1;
+                k += 1;
             }
         }
         for remaining_even_entry in even[i..].iter() {
             let bound_entry = Self::bind_entries(Some(&remaining_even_entry), None, r);
-            out.push(bound_entry);
+            out[k] = MaybeUninit::new(bound_entry);
+            k += 1;
         }
         for remaining_odd_entry in odd[j..].iter() {
             let bound_entry = Self::bind_entries(None, Some(&remaining_odd_entry), r);
-            out.push(bound_entry);
+            out[k] = MaybeUninit::new(bound_entry);
+            k += 1;
         }
-        out
+        k
     }
 
     fn bind_entries(
@@ -223,7 +257,19 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             .flat_map(|entries| {
                 let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
                 let (even_row, odd_row) = entries.split_at(odd_row_start_index);
-                Self::bind_rows(&even_row, &odd_row, r)
+                let mut buf = Vec::with_capacity(entries.len());
+                let bound_row_length =
+                    Self::bind_rows(&even_row, &odd_row, r, buf.spare_capacity_mut());
+
+                unsafe {
+                    buf.set_len(bound_row_length);
+                    // Turn Vec<MaybeUninit<MatrixEntry<F>>> into Vec<MatrixEntry<F>> without reallocation/copies.
+                    let ptr = buf.as_mut_ptr() as *mut MatrixEntry<F>;
+                    let cap = buf.capacity();
+                    let len = buf.len();
+                    std::mem::forget(buf);
+                    Vec::from_raw_parts(ptr, len, cap)
+                }
             })
             .collect();
     }
