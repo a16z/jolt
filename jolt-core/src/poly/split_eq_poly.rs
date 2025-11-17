@@ -741,4 +741,107 @@ mod tests {
         assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
         assert_eq!(regular_eq.Z, coeffs);
     }
+
+    /// For window_size = 1, `E_out_in_for_window` should factor the eq polynomial
+    /// over the head bits `w[..current_index-1]` into a product of two tables.
+    #[test]
+    fn window_size_one_matches_current() {
+        const NUM_VARS: usize = 10;
+        let mut rng = test_rng();
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(NUM_VARS)
+                .collect();
+
+        let mut split_eq: GruenSplitEqPolynomial<Fr> =
+            GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
+
+        for _round in 0..NUM_VARS {
+            let num_unbound = split_eq.current_index;
+            if num_unbound <= 1 {
+                break;
+            }
+
+            // Factor head = w[..num_unbound-1] into (E_out, E_in).
+            let (e_out_window, e_in_window) = split_eq.E_out_in_for_window(1);
+            let w_head = &split_eq.w[..num_unbound - 1];
+            let head_evals = EqPolynomial::evals(w_head);
+
+            let num_x_out = e_out_window.len();
+            let num_x_in = e_in_window.len();
+            assert_eq!(num_x_out * num_x_in, head_evals.len());
+
+            let x_in_bits = num_x_in.log_2();
+            for x_out in 0..num_x_out {
+                for x_in in 0..num_x_in {
+                    let idx = (x_out << x_in_bits) | x_in;
+                    assert_eq!(
+                        e_out_window[x_out] * e_in_window[x_in],
+                        head_evals[idx],
+                        "factorisation mismatch at round={}, x_out={}, x_in={}",
+                        _round,
+                        x_out,
+                        x_in
+                    );
+                }
+            }
+
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
+            split_eq.bind(r);
+        }
+    }
+
+    /// Check basic bit-accounting invariants for the streaming factorisation:
+    ///   log2(|E_out|) + log2(|E_in|) + log2(|E_active|) + 1 = number of unbound variables
+    /// for all window sizes and all rounds (LowToHigh).
+    #[test]
+    fn window_bit_accounting_invariants() {
+        const NUM_VARS: usize = 8;
+        let mut rng = test_rng();
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(NUM_VARS)
+                .collect();
+
+        let mut split_eq: GruenSplitEqPolynomial<Fr> =
+            GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
+
+        // Walk through all rounds, checking all window sizes that are
+        // meaningful at that point (at least one unbound variable).
+        for _round in 0..NUM_VARS {
+            let num_unbound = split_eq.len().log_2();
+            if num_unbound == 0 {
+                break;
+            }
+
+            for window_size in 1..=num_unbound {
+                let (e_out, e_in) = split_eq.E_out_in_for_window(window_size);
+                let e_active = split_eq.E_active_for_window(window_size);
+                // By construction, each side represents at least one entry.
+                debug_assert!(!e_out.is_empty());
+                debug_assert!(!e_in.is_empty());
+                debug_assert!(!e_active.is_empty());
+
+                let bits_out = e_out.len().log_2();
+                let bits_in = e_in.len().log_2();
+                let bits_active = e_active.len().log_2();
+
+                // One bit is reserved for the current variable in the Gruen
+                // cubic (the eq polynomial is linear in that bit).
+                assert_eq!(
+                    bits_out + bits_in + bits_active + 1,
+                    num_unbound,
+                    "bit accounting failed for window_size={} (bits_out={}, bits_in={}, bits_active={}, num_unbound={})",
+                    window_size,
+                    bits_out,
+                    bits_in,
+                    bits_active,
+                    num_unbound,
+                );
+            }
+
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
+            split_eq.bind(r);
+        }
+    }
 }
