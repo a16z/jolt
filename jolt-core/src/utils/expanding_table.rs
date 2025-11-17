@@ -22,6 +22,10 @@ impl<F: JoltField> ExpandingTable<F> {
         self.len
     }
 
+    pub fn oder(&self) -> BindingOrder {
+        self.binding_order
+    }
+
     /// Initializes an `ExpandingTable` with the given `capacity`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
     pub fn new(capacity: usize, binding_order: BindingOrder) -> Self {

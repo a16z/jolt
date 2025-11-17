@@ -281,19 +281,11 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
                 Some(lagrange_tau_r0),
             );
 
-        // THIS NEEDS TO CHANGE
         // TODO: Double check this binding order
-        let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::LowToHigh);
+        let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::HighToLow);
         //let mut r_grid =
         //    ExpandingTable::new_with_order(1 << n_cycle_vars, ExpansionOrder::MostSignificantBit);
         r_grid.reset(F::one());
-
-        //let (t0, t_inf, az_bound, bz_bound) = Self::compute_first_quadratic_evals_and_bound_polys(
-        //    &bytecode_preprocessing,
-        //    &trace,
-        //    &lagrange_evals_r,
-        //    &split_eq_poly,
-        //);
 
         Self {
             split_eq_poly,
