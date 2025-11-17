@@ -22,7 +22,7 @@ impl<F: JoltField> ExpandingTable<F> {
         self.len
     }
 
-    pub fn oder(&self) -> BindingOrder {
+    pub fn order(&self) -> BindingOrder {
         self.binding_order
     }
 
