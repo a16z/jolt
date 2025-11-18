@@ -55,6 +55,9 @@ pub struct SparseMatrixPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> SparseMatrixPolynomial<F> {
+    /// Creates a new `SparseMatrixPolynomial` to represent the ra and Val polynomials
+    /// for the RAM read/write checking sumcheck.
+    #[tracing::instrument(skip_all, name = "SparseMatrixPolynomial::new")]
     pub fn new(trace: &[Cycle], memory_layout: &MemoryLayout) -> Self {
         let entries: Vec<_> = trace
             .par_iter()
@@ -86,6 +89,16 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         SparseMatrixPolynomial { entries }
     }
 
+    /// Binds two adjacent rows in the sparse matrix together with the randomness `r`.
+    /// This is a parallel, recursive function (similar to a parallel merge of two
+    /// sorted lists) that assumes `even_row` and `odd_row` are sorted by column
+    /// (i.e. address) and (b) writes the output (i.e. bound row) to the `out` buffer
+    /// in sorted order as well.
+    ///
+    /// Returns the number of entries in the bound row.
+    /// If the `dry_run` parameter is true, `bind_rows` ignores `out` and just computes
+    /// the number of entries that would be in the bound row, which can be used to
+    /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn bind_rows(
         even_row: &[MatrixEntry<F>],
         odd_row: &[MatrixEntry<F>],
@@ -116,11 +129,15 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
 
         let out_len = out.len();
         let (left_out, right_out) = if dry_run {
+            // `out` may be empty in a dry run
             out.split_at_mut(0)
         } else {
             out.split_at_mut(even_pivot_idx + odd_pivot_idx)
         };
 
+        // Now we know the global order: everything in even_row[..even_pivot_idx] and
+        // odd_row[..odd_pivot_idx] comes before everything in even_row[even_pivot_idx..]
+        // and odd_row[odd_pivot_idx..]. Compute the merged lengths of each half
         let (left_merged_len, right_merged_len) = rayon::join(
             || {
                 Self::bind_rows(
@@ -145,9 +162,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         if !dry_run {
             assert_eq!(out_len, left_merged_len + right_merged_len);
             let (left_out, right_out) = out.split_at_mut(left_merged_len);
-            // Now we know the global order: everything in even_row[..even_pivot_idx] and
-            // odd_row[..odd_pivot_idx] comes before everything in even_row[even_pivot_idx..]
-            // and odd_row[odd_pivot_idx..]. Merge those two regions in parallel.
+            // If not a dry run, perform the actual merge now.
             rayon::join(
                 || {
                     Self::bind_rows(
@@ -173,6 +188,15 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         left_merged_len + right_merged_len
     }
 
+    /// Binds two adjacent rows in the sparse matrix together with the randomness `r`.
+    /// This is a sequential function (unlike `bind_rows`) that assumes `even_row` and
+    /// `odd_row` are sorted by column (i.e. address) and (b) writes the output (i.e.
+    /// bound row) to the `out` buffer in sorted order as well.
+    ///
+    /// Returns the number of entries in the bound row.
+    /// If the `dry_run` parameter is true, `bind_rows` ignores `out` and just computes
+    /// the number of entries that would be in the bound row, which can be used to
+    /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn seq_bind_rows(
         even: &[MatrixEntry<F>],
         odd: &[MatrixEntry<F>],
@@ -232,6 +256,12 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         k
     }
 
+    /// Binds adjacent entries of the matrix together using the random challenge `r`.
+    /// By "adjacent", here we mean entries that are in the same column and adjacent
+    /// rows (rows 2j and 2j+1).
+    /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
+    /// entry is not explicitly represented in the `SparseMatrixPolynomial` data structure.
+    /// Instead, we can infer its values from the matrix entry that is `Some`.
     fn bind_entries(
         even: Option<&MatrixEntry<F>>,
         odd: Option<&MatrixEntry<F>>,
@@ -287,6 +317,8 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         }
     }
 
+    /// Binds a cycle variable of the ra and Val polynomials represented by
+    /// this `SparseMatrixPolynomial` to the random challenge `r`.
     #[tracing::instrument(skip_all, name = "SparseMatrixPolynomial::bind")]
     pub fn bind(&mut self, r: F::Challenge) {
         let row_lengths: Vec<_> = self
@@ -309,6 +341,8 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         let mut output_slices = Vec::with_capacity(row_lengths.len());
         let mut input_slices = Vec::with_capacity(row_lengths.len());
 
+        // Split `self.entries` and the output buffer into vectors of non-overlapping slices
+        // that can be zipped together and parallelized over.
         for (unbound_len, bound_len) in row_lengths.iter() {
             let output_slice;
             (output_slice, bound_entries_slice) = bound_entries_slice.split_at_mut(*bound_len);
@@ -333,6 +367,8 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         self.entries = bound_entries;
     }
 
+    /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
+    /// sumcheck message. This is a recursive, parallel algorithm.
     pub fn prover_message_contribution(
         even_row: &[MatrixEntry<F>],
         odd_row: &[MatrixEntry<F>],
@@ -362,7 +398,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
 
         // Now we know the global order: everything in even_row[..even_pivot_idx] and
         // odd_row[..odd_pivot_idx] comes before everything in even_row[even_pivot_idx..]
-        // and odd_row[odd_pivot_idx..]. Merge those two regions in parallel.
+        // and odd_row[odd_pivot_idx..]. Compute each half's contribution in parallel.
         let (left_evals, right_evals) = rayon::join(
             || {
                 Self::prover_message_contribution(
@@ -388,6 +424,8 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         ]
     }
 
+    /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
+    /// sumcheck message. This is the sequential counterpart of `prover_message_contribution`.
     fn seq_prover_message_contribution(
         even: &[MatrixEntry<F>],
         odd: &[MatrixEntry<F>],
@@ -431,6 +469,12 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         evals_accumulator
     }
 
+    /// For the given pair of adjacent entries, computes the pair's contribution to the prover's
+    /// sumcheck message. By "adjacent", here we mean entries that are in the same column and
+    /// adjacent rows (rows 2j and 2j+1).
+    /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
+    /// entry is not explicitly represented in the `SparseMatrixPolynomial` data structure.
+    /// Instead, we can infer its values from the matrix entry that is `Some`.
     fn compute_evals(
         even: Option<&MatrixEntry<F>>,
         odd: Option<&MatrixEntry<F>>,
@@ -481,6 +525,9 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         }
     }
 
+    /// Materializes the ra and Val polynomials represented by this `SparseMatrixPolynomial`.
+    /// All cycle variables must be bound at this point, so the materialized ra and Val
+    /// have K coefficients each.
     #[tracing::instrument(skip_all, name = "SparseMatrixPolynomial::materialize")]
     pub fn materialize(
         self,
