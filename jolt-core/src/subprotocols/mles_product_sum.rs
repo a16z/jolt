@@ -789,9 +789,14 @@ pub fn eval_linear_prod_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut
     }
 
     // Evaluate at x = 1..(d-1) by sliding x ↦ x+1 using the precomputed pinfs.
+    //
+    // Micro-optimization: initialize the accumulator from the first element so
+    // that each product uses (d - 1) multiplications instead of d.
     for idx in 0..(d - 1) {
-        let mut acc = F::one();
-        for (cur_val, _) in cur_vals_pinfs.iter() {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0 is enforced above");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
             acc *= *cur_val;
         }
         evals[idx] = acc;
@@ -802,8 +807,12 @@ pub fn eval_linear_prod_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut
     }
 
     // Evaluate at infinity (product of leading coefficients).
-    let mut acc_inf = F::one();
-    for (_, pinf) in cur_vals_pinfs.iter() {
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter
+        .next()
+        .expect("d > 0 is enforced above; there is at least one leading coefficient");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
         acc_inf *= *pinf;
     }
     evals[d - 1] = acc_inf;
