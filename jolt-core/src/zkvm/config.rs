@@ -219,14 +219,6 @@ fn build_params(padded_trace_length: usize) -> JoltParams {
 fn validate_log_chunk(log_chunk: usize) {
     assert!(log_chunk > 0, "one-hot chunk log must be > 0");
     assert!(
-        log_chunk <= 32,
-        "one-hot chunk log must be <= 32, otherwise RA polys take too much space"
-    );
-    assert!(
-        LOG_K % log_chunk == 0,
-        "one-hot chunk log must divide LOG_K ({LOG_K}), got {log_chunk}"
-    );
-    assert!(
         log_chunk <= u16::BITS as usize,
         "one-hot chunk log {log_chunk} exceeds storage capacity of RaPolynomial"
     );

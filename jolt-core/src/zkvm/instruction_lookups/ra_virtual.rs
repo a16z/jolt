@@ -63,6 +63,9 @@ impl<F: JoltField> RaSumcheckProver<F> {
 
         let (r_address, _) = r.split_at_r(log_k);
 
+        // Compute r_address_chunks with proper padding
+        let r_address_chunks = params.compute_r_address_chunks(r_address);
+
         let H_indices: Vec<Vec<Option<u16>>> = (0..d)
             .map(|i| {
                 trace
@@ -82,8 +85,7 @@ impl<F: JoltField> RaSumcheckProver<F> {
             .into_par_iter()
             .enumerate()
             .map(|(i, lookup_indices)| {
-                let r = &r_address[log_k_chunk * i..log_k_chunk * (i + 1)];
-                let eq_evals = EqPolynomial::evals(r);
+                let eq_evals = EqPolynomial::evals(&r_address_chunks[i]);
                 RaPolynomial::new(Arc::new(lookup_indices), eq_evals)
             })
             .collect();
@@ -136,12 +138,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
             SumcheckId::InstructionReadRaf,
         );
 
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r
-            .split_at_r(log_k())
-            .0
-            .chunks(log_k_chunk())
-            .map(|chunk| chunk.to_vec())
-            .collect();
+        let (r_address, _) = r.split_at_r(log_k());
+
+        // Compute r_address_chunks with proper padding
+        let r_address_chunks = self.params.compute_r_address_chunks(r_address);
 
         for (i, r_address) in r_address_chunks.into_iter().enumerate() {
             let claim = self.ra_i_polys[i].final_sumcheck_claim();
@@ -218,17 +218,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
             SumcheckId::InstructionReadRaf,
         );
 
-        let log_k = log_k();
-        let log_k_chunk = log_k_chunk();
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r
-            .split_at_r(log_k)
-            .0
-            .chunks(log_k_chunk)
-            .map(|chunk| chunk.to_vec())
-            .collect();
+        let (r_address, _) = r.split_at_r(log_k());
+
+        // Compute r_address_chunks with proper padding
+        let r_address_chunks = self.params.compute_r_address_chunks(r_address);
 
         for (i, r_address) in r_address_chunks.iter().enumerate() {
-            let opening_point = [r_address, r_cycle.r.as_slice()].concat();
+            let opening_point = [r_address.as_slice(), r_cycle.r.as_slice()].concat();
 
             accumulator.append_sparse(
                 transcript,
@@ -264,6 +260,31 @@ impl<F: JoltField> RaSumcheckParams<F> {
             SumcheckId::InstructionReadRaf,
         );
         ra_claim
+    }
+
+    /// Compute r_address_chunks from r_address with proper padding
+    fn compute_r_address_chunks(&self, r_address: &[F::Challenge]) -> Vec<Vec<F::Challenge>> {
+        let log_k_chunk = log_k_chunk();
+
+        // Pad r_address if necessary to make it divisible by log_k_chunk
+        let r_address = if r_address.len() % log_k_chunk == 0 {
+            r_address.to_vec()
+        } else {
+            [
+                vec![F::Challenge::from(0_u128); log_k_chunk - (r_address.len() % log_k_chunk)],
+                r_address.to_vec(),
+            ]
+            .concat()
+        };
+
+        // Split r_address into d chunks
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
+            .chunks(log_k_chunk)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        debug_assert_eq!(r_address_chunks.len(), d());
+        r_address_chunks
     }
 }
 

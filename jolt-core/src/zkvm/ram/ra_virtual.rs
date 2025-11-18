@@ -336,23 +336,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let log_chunk = config::params().ram.log_chunk;
-        let r_address = if r_address.len().is_multiple_of(log_chunk) {
-            r_address.to_vec()
-        } else {
-            // Pad with zeros
-            [
-                &vec![F::Challenge::from(0_u128); log_chunk - (r_address.len() % log_chunk)],
-                r_address,
-            ]
-            .concat()
-        };
-        // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(log_chunk)
-            .map(|chunk| chunk.to_vec())
-            .collect();
-        debug_assert_eq!(r_address_chunks.len(), d);
+        let r_address_chunks = Self::compute_r_address_chunks(r_address, d);
 
         let r_cycle = [
             r_cycle_val.to_vec(),
@@ -395,6 +379,32 @@ impl<F: JoltField> RaSumcheckParams<F> {
         self.gamma_powers[0] * ra_claim_val
             + self.gamma_powers[1] * ra_claim_rw
             + self.gamma_powers[2] * ra_claim_raf
+    }
+
+    /// Compute r_address_chunks from r_address with proper padding
+    fn compute_r_address_chunks(r_address: &[F::Challenge], d: usize) -> Vec<Vec<F::Challenge>> {
+        let log_chunk = config::params().ram.log_chunk;
+
+        // Pad r_address if necessary to make it divisible by log_chunk
+        let r_address = if r_address.len().is_multiple_of(log_chunk) {
+            r_address.to_vec()
+        } else {
+            // Pad with zeros on the HIGH end (MSB side)
+            [
+                &vec![F::Challenge::from(0_u128); log_chunk - (r_address.len() % log_chunk)],
+                r_address,
+            ]
+            .concat()
+        };
+
+        // Split r_address into d chunks
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
+            .chunks(log_chunk)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        debug_assert_eq!(r_address_chunks.len(), d);
+        r_address_chunks
     }
 }
 
