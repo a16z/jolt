@@ -16,10 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use crate::utils::math::Math;
-use common::constants::XLEN;
-
-/// Number of rounds in instruction read RAF (two times the word size which is 64-bit).
-const LOG_K: usize = XLEN * 2;
+use crate::zkvm::instruction_lookups;
 
 /// The default one-hot chunk logarithm (i.e., log2 of the expansion factor)
 const DEFAULT_ONE_HOT_CHUNK_LOG: usize = 8;
@@ -60,7 +57,6 @@ impl OneHotParams {
 /// bytecode decompositions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstructionLookupParams {
-    pub log_k: usize,
     pub log_k_chunk: usize,
     pub k_chunk: usize,
     pub d: usize,
@@ -171,14 +167,18 @@ fn build_params(padded_trace_length: usize) -> JoltParams {
         8
     };
     assert!(phases == 8 || phases == 16, "phases must be either 8 or 16");
-    assert!(LOG_K % phases == 0, "Number of phases must divide LOG_K");
+    assert!(
+        instruction_lookups::LOG_K % phases == 0,
+        "Number of phases must divide LOG_K"
+    );
 
-    let log_m = LOG_K / phases;
+    let log_m = instruction_lookups::LOG_K / phases;
     let m = 1usize << log_m;
-    let d = LOG_K.div_ceil(log_chunk);
+    let d = instruction_lookups::LOG_K.div_ceil(log_chunk);
     assert!(
         log_m > 0,
-        "log_m must be positive (LOG_K={LOG_K}, phases={phases})"
+        "log_m must be positive (LOG_K={}, phases={phases})",
+        instruction_lookups::LOG_K
     );
 
     let one_hot = OneHotParams {
@@ -188,7 +188,6 @@ fn build_params(padded_trace_length: usize) -> JoltParams {
 
     // Instruction lookups share the same chunking configuration as the one-hot encoding.
     let instruction = InstructionLookupParams {
-        log_k: LOG_K,
         log_k_chunk: one_hot.log_chunk,
         k_chunk: one_hot.chunk_size,
         d,

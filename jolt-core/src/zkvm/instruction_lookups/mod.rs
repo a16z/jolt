@@ -22,7 +22,7 @@ use tracer::instruction::Cycle;
 pub mod ra_virtual;
 pub mod read_raf_checking;
 
-const LOG_K: usize = XLEN * 2;
+pub const LOG_K: usize = XLEN * 2;
 
 // TODO: transition read_raf_checking to use dynamic phase configuration from `config`.
 // pub const PHASES: usize = 8;

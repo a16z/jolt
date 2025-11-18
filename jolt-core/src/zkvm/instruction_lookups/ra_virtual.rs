@@ -21,6 +21,7 @@ use crate::{
     zkvm::{
         config,
         instruction::LookupQuery,
+        instruction_lookups::LOG_K,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -56,12 +57,11 @@ impl<F: JoltField> RaSumcheckProver<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let log_k = config::params().instruction.log_k;
         let log_k_chunk = config::params().instruction.log_k_chunk;
         let k_chunk = config::params().instruction.k_chunk;
         let d = config::params().instruction.d;
 
-        let (r_address, _) = r.split_at_r(log_k);
+        let (r_address, _) = r.split_at_r(LOG_K);
 
         // Compute r_address_chunks with proper padding
         let r_address_chunks = params.compute_r_address_chunks(r_address);
@@ -138,7 +138,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
             SumcheckId::InstructionReadRaf,
         );
 
-        let (r_address, _) = r.split_at_r(config::params().instruction.log_k);
+        let (r_address, _) = r.split_at_r(LOG_K);
 
         // Compute r_address_chunks with proper padding
         let r_address_chunks = self.params.compute_r_address_chunks(r_address);
@@ -218,7 +218,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
             SumcheckId::InstructionReadRaf,
         );
 
-        let (r_address, _) = r.split_at_r(config::params().instruction.log_k);
+        let (r_address, _) = r.split_at_r(LOG_K);
 
         // Compute r_address_chunks with proper padding
         let r_address_chunks = self.params.compute_r_address_chunks(r_address);
@@ -246,7 +246,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
-        let (_, r_cycle) = r.split_at(config::params().instruction.log_k);
+        let (_, r_cycle) = r.split_at(LOG_K);
         Self { r_cycle }
     }
 
