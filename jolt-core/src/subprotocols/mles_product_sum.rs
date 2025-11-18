@@ -553,133 +553,49 @@ mod tests {
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
 
-    #[test]
-    fn test_naive_eval_matches_optimized_with_4_mles() {
-        const N_MLE: usize = 4;
+    fn check_optimized_product_sum_matches_naive<const N_MLE: usize>() {
         let mut rng = &mut test_rng();
         let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
         let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let base_mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let claim = gen_product_mle(&base_mles).evaluate(r);
+        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
+        let claim = gen_product_mle(&mles).evaluate(r);
+
         let challenge_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
         let challenge: &[<Fr as JoltField>::Challenge; 1] = &challenge_whole;
-        // Direct definition computed before consuming base_mles
-        let mle_challenge_product = base_mles
-            .iter()
-            .map(|p| p.evaluate(challenge))
-            .product::<Fr>();
-        let rhs = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = base_mles.map(RaPolynomial::RoundN);
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
         let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
         let lhs = sum_poly.evaluate(&challenge[0]);
-        assert_eq!(lhs, rhs);
+
+        assert_eq!(lhs, eval);
     }
 
     #[test]
-    fn test_naive_eval_matches_optimized_with_8_mles() {
-        const N_MLE: usize = 8;
-        let mut rng = &mut test_rng();
-        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
-        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let base_mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let claim = gen_product_mle(&base_mles).evaluate(r);
-        let challenge_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
-        let challenge: &[<Fr as JoltField>::Challenge; 1] = &challenge_whole;
-        // Direct definition computed before consuming base_mles
-        let mle_challenge_product = base_mles
-            .iter()
-            .map(|p| p.evaluate(challenge))
-            .product::<Fr>();
-        let rhs = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = base_mles.map(RaPolynomial::RoundN);
-
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
-        let lhs = sum_poly.evaluate(&challenge[0]);
-        assert_eq!(lhs, rhs);
+    fn optimized_product_sum_matches_naive_2_mles() {
+        check_optimized_product_sum_matches_naive::<2>();
     }
 
     #[test]
-    fn test_compute_mles_product_sum_with_2_mles() {
-        const N_MLE: usize = 2;
-        let mut rng = &mut test_rng();
-        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
-        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let claim = gen_product_mle(&mles).evaluate(r);
-
-        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
-        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
-        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = mles.map(RaPolynomial::RoundN);
-
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
-
-        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
+    fn optimized_product_sum_matches_naive_4_mles() {
+        check_optimized_product_sum_matches_naive::<4>();
     }
 
     #[test]
-    fn test_compute_mles_product_sum_with_4_mles() {
-        const N_MLE: usize = 4;
-        let mut rng = &mut test_rng();
-        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
-        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let claim = gen_product_mle(&mles).evaluate(r);
-        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
-        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
-        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = mles.map(RaPolynomial::RoundN);
-
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
-
-        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
+    fn optimized_product_sum_matches_naive_8_mles() {
+        check_optimized_product_sum_matches_naive::<8>();
     }
 
     #[test]
-    fn test_compute_mles_product_sum_with_8_mles() {
-        const N_MLE: usize = 8;
-        let mut rng = &mut test_rng();
-        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
-        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let claim = gen_product_mle(&mles).evaluate(r);
-        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
-        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
-        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = mles.map(RaPolynomial::RoundN);
-
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
-
-        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
+    fn optimized_product_sum_matches_naive_16_mles() {
+        check_optimized_product_sum_matches_naive::<16>();
     }
 
     #[test]
-    fn test_compute_mles_product_sum_with_16_mles() {
-        const N_MLE: usize = 16;
-        let mut rng = &mut test_rng();
-        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
-        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let claim = gen_product_mle(&mles).evaluate(r);
-        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
-        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
-        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = mles.map(RaPolynomial::RoundN);
-
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
-
-        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
+    fn optimized_product_sum_matches_naive_32_mles() {
+        check_optimized_product_sum_matches_naive::<32>();
     }
 
     fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {
