@@ -534,79 +534,159 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     /// unbound_coeffs_{a,b}(x_out, x_in, {0,∞}, y)`
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
-    //#[inline]
-    //fn compute_first_quadratic_evals_and_bound_polys(
-    //    bytecode_preprocessing: &BytecodePreprocessing,
-    //    trace: &[Cycle],
-    //    lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-    //    split_eq_poly: &GruenSplitEqPolynomial<F>,
-    //) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {
-    //    let num_x_out_vals = split_eq_poly.E_out_current_len();
-    //    let num_x_in_vals = split_eq_poly.E_in_current_len();
-    //    let iter_num_x_in_vars = num_x_in_vals.log_2();
-    //
-    //    let groups_exact = num_x_out_vals
-    //        .checked_mul(num_x_in_vals)
-    //        .expect("overflow computing groups_exact");
-    //
-    //    // Preallocate interleaved buffers once ([lo, hi] per entry)
-    //    let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-    //    let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
-    //
-    //    // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
-    //    let (t0_acc_unr, t_inf_acc_unr) = az_bound
-    //        .par_chunks_exact_mut(2 * num_x_in_vals)
-    //        .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
-    //        .enumerate()
-    //        .fold(
-    //            || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-    //            |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
-    //                let mut inner_sum0 = F::Unreduced::<9>::zero();
-    //                let mut inner_sum_inf = F::Unreduced::<9>::zero();
-    //                for x_in_val in 0..num_x_in_vals {
-    //                    let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-    //                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
-    //                        bytecode_preprocessing,
-    //                        trace,
-    //                        current_step_idx,
-    //                    );
-    //                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-    //                    let az0 = eval.az_at_r_first_group(lagrange_evals_r);
-    //                    let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
-    //                    let az1 = eval.az_at_r_second_group(lagrange_evals_r);
-    //                    let bz1 = eval.bz_at_r_second_group(lagrange_evals_r);
-    //                    let p0 = az0 * bz0;
-    //                    let slope = (az1 - az0) * (bz1 - bz0);
-    //                    let e_in = split_eq_poly.E_in_current()[x_in_val];
-    //                    inner_sum0 += e_in.mul_unreduced::<9>(p0);
-    //                    inner_sum_inf += e_in.mul_unreduced::<9>(slope);
-    //                    let off = 2 * x_in_val;
-    //                    az_chunk[off] = az0;
-    //                    az_chunk[off + 1] = az1;
-    //                    bz_chunk[off] = bz0;
-    //                    bz_chunk[off + 1] = bz1;
-    //                }
-    //                let e_out = split_eq_poly.E_out_current()[x_out_val];
-    //                let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
-    //                let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-    //                acc0 += e_out.mul_unreduced::<9>(reduced0);
-    //                acci += e_out.mul_unreduced::<9>(reduced_inf);
-    //                (acc0, acci)
-    //            },
-    //        )
-    //        .reduce(
-    //            || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-    //            |a, b| (a.0 + b.0, a.1 + b.1),
-    //        );
-    //
-    //    (
-    //        F::from_montgomery_reduce::<9>(t0_acc_unr),
-    //        F::from_montgomery_reduce::<9>(t_inf_acc_unr),
-    //        DensePolynomial::new(az_bound),
-    //        DensePolynomial::new(bz_bound),
-    //    )
-    //}
+    #[inline]
+    fn _compute_first_quadratic_evals_and_bound_polys(
+        bytecode_preprocessing: &BytecodePreprocessing,
+        trace: &[Cycle],
+        lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        split_eq_poly: &GruenSplitEqPolynomial<F>,
+    ) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {
+        let num_x_out_vals = split_eq_poly.E_out_current_len();
+        let num_x_in_vals = split_eq_poly.E_in_current_len();
+        let iter_num_x_in_vars = num_x_in_vals.log_2();
 
+        let groups_exact = num_x_out_vals
+            .checked_mul(num_x_in_vals)
+            .expect("overflow computing groups_exact");
+
+        // Preallocate interleaved buffers once ([lo, hi] per entry)
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+
+        // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
+        let (t0_acc_unr, t_inf_acc_unr) = az_bound
+            .par_chunks_exact_mut(2 * num_x_in_vals)
+            .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
+            .enumerate()
+            .fold(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
+                    let mut inner_sum0 = F::Unreduced::<9>::zero();
+                    let mut inner_sum_inf = F::Unreduced::<9>::zero();
+                    for x_in_val in 0..num_x_in_vals {
+                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            bytecode_preprocessing,
+                            trace,
+                            current_step_idx,
+                        );
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        let az0 = eval.az_at_r_first_group(lagrange_evals_r);
+                        let bz0 = eval.bz_at_r_first_group(lagrange_evals_r);
+                        let az1 = eval.az_at_r_second_group(lagrange_evals_r);
+                        let bz1 = eval.bz_at_r_second_group(lagrange_evals_r);
+                        let p0 = az0 * bz0;
+                        let slope = (az1 - az0) * (bz1 - bz0);
+                        let e_in = split_eq_poly.E_in_current()[x_in_val];
+                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
+                        inner_sum_inf += e_in.mul_unreduced::<9>(slope);
+                        let off = 2 * x_in_val;
+                        az_chunk[off] = az0;
+                        az_chunk[off + 1] = az1;
+                        bz_chunk[off] = bz0;
+                        bz_chunk[off + 1] = bz1;
+                    }
+                    let e_out = split_eq_poly.E_out_current()[x_out_val];
+                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
+                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
+                    acc0 += e_out.mul_unreduced::<9>(reduced0);
+                    acci += e_out.mul_unreduced::<9>(reduced_inf);
+                    (acc0, acci)
+                },
+            )
+            .reduce(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            );
+
+        (
+            F::from_montgomery_reduce::<9>(t0_acc_unr),
+            F::from_montgomery_reduce::<9>(t_inf_acc_unr),
+            DensePolynomial::new(az_bound),
+            DensePolynomial::new(bz_bound),
+        )
+    }
+
+    // FIXME: This doesn't work directly, I need to handle the challenges as well
+    fn stream_to_linear_time_fast(&mut self) -> (F, F) {
+        let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
+        let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
+        let iter_num_x_in_vars = num_x_in_vals.log_2();
+
+        let r_grid = &self.r_grid;
+        println!(
+            "num_out_vals: {:?}, num_in_vals: {:?} r_grid len {:?}",
+            num_x_out_vals,
+            num_x_in_vals,
+            r_grid.len()
+        );
+        let groups_exact = num_x_out_vals
+            .checked_mul(num_x_in_vals)
+            .expect("overflow computing groups_exact");
+
+        // Preallocate interleaved buffers once ([lo, hi] per entry)
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
+
+        // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
+        let (t0_acc_unr, t_inf_acc_unr) = az_bound
+            .par_chunks_exact_mut(2 * num_x_in_vals)
+            .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
+            .enumerate()
+            .fold(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |(mut acc0, mut acci), (x_out_val, (az_chunk, bz_chunk))| {
+                    let mut inner_sum0 = F::Unreduced::<9>::zero();
+                    let mut inner_sum_inf = F::Unreduced::<9>::zero();
+                    for x_in_val in 0..num_x_in_vals {
+                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            &self.bytecode_preprocessing,
+                            &self.trace,
+                            current_step_idx,
+                        );
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
+                        let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
+                        let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
+                        let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
+                        let p0 = az0 * bz0;
+                        let slope = (az1 - az0) * (bz1 - bz0);
+                        let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
+                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
+                        inner_sum_inf += e_in.mul_unreduced::<9>(slope);
+                        let off = 2 * x_in_val;
+                        az_chunk[off] = az0;
+                        az_chunk[off + 1] = az1;
+                        bz_chunk[off] = bz0;
+                        bz_chunk[off + 1] = bz1;
+                    }
+                    let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
+                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
+                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
+                    acc0 += e_out.mul_unreduced::<9>(reduced0);
+                    acci += e_out.mul_unreduced::<9>(reduced_inf);
+                    (acc0, acci)
+                },
+            )
+            .reduce(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            );
+
+        //self.az = Some(DensePolynomial::new(az_bound));
+        //self.bz = Some(DensePolynomial::new(bz_bound));
+
+        (
+            F::from_montgomery_reduce::<9>(t0_acc_unr),
+            F::from_montgomery_reduce::<9>(t_inf_acc_unr),
+            //    DensePolynomial::new(az_bound),
+            //    DensePolynomial::new(bz_bound),
+        )
+    }
+
+    // TODO:(ari) This is 2.5x slower than it needs to be right now.
+    // Currently this is binding Az and Bz -- but I can fuse this.
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::stream_to_linear_time")]
     fn stream_to_linear_time(&mut self) {
         let split_eq_poly = &self.split_eq_poly;
@@ -762,10 +842,7 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule> SumcheckInstanceProver<F
     //    self.split_eq_poly
     //        .gruen_poly_deg_3(t0, t_inf, previous_claim)
     //}
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterRemainingSumcheckProver::compute_prover_message"
-    )]
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let (t0, t_inf) = if self.schedule.is_streaming(round) {
             let num_unbound_vars = self.schedule.num_unbound_vars(round);
@@ -786,25 +863,12 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule> SumcheckInstanceProver<F
             let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
             let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
 
-            //if round == 0 {
-            //    let (t0_expected, t_inf_expected) = self.first_round_evals;
-            //    assert_eq!(t0_expected, t_prime_0);
-            //    assert_eq!(t_inf_expected, t_prime_inf);
-            //} else {
-            //    let (t0_expected, t_inf_expected) = self.remaining_quadratic_evals();
-            //    assert_eq!(t0_expected, t_prime_0, "t0 mismatch at round {}", round);
-            //    assert_eq!(
-            //        t_inf_expected, t_prime_inf,
-            //        "t_inf mismatch at round {}",
-            //        round
-            //    );
-            //}
-
             (t_prime_0, t_prime_inf)
         } else {
             // LINEAR PHASE
             if self.schedule.is_first_linear(round) {
                 self.stream_to_linear_time();
+                self.stream_to_linear_time_fast();
             }
             // For now, just use quadratic evals
             let (t0, t_inf) = self.remaining_quadratic_evals();

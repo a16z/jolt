@@ -56,6 +56,7 @@ impl<F: JoltField> ExpandingTable<F> {
 
     /// Updates this table (expanding it by a factor of 2) to incorporate
     /// the new random challenge `r_j`.
+    /// TODO: this is bad parallelisation.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
     pub fn update(&mut self, r_j: F::Challenge) {
         match self.binding_order {
