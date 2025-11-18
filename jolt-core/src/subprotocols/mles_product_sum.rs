@@ -115,12 +115,11 @@ fn compute_mles_product_sum_d16<F: JoltField>(
     // combined sum over (x_out, x_in) after Montgomery reduction.
     let sum_evals_arr: [F; 16] = eq_poly.par_fold_out_in_unreduced::<9, 16>(&|g| {
         // Build pairs[(p0, p1); 16] on the stack.
-        let mut pairs: [(F, F); 16] = core::array::from_fn(|_| (F::zero(), F::zero()));
-        for (i, mle) in mles.iter().enumerate() {
-            let p0 = mle.get_bound_coeff(2 * g);
-            let p1 = mle.get_bound_coeff(2 * g + 1);
-            pairs[i] = (p0, p1);
-        }
+        let mut pairs: [(F, F); 16] = core::array::from_fn(|i| {
+            let p0 = mles[i].get_bound_coeff(2 * g);
+            let p1 = mles[i].get_bound_coeff(2 * g + 1);
+            (p0, p1)            
+        });
 
         // Evaluate the product of the 16 linear polynomials on the 16-point grid.
         let mut endpoints = [F::zero(); 16];
