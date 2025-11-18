@@ -188,27 +188,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         merged
     }
 
-    /// Returns an interleaved vector merging the current bit `w` with `E_in_current()`.
-    ///
-    /// For each entry `low = E_in_current()[x_in]`, produces the pair:
-    ///   [ low * (1 - w), low * w ]
-    ///
-    /// The returned vector has length `2 * E_in_current_len()`, laid out as
-    ///   [low0_0, low0_1, low1_0, low1_1, ...] matching index pairs (j, j+1).
-    pub fn merged_in_with_current_w(&self) -> Vec<F> {
-        let e_in = self.E_in_current();
-        let w = self.get_current_w();
-        let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
-        for (i, &low) in e_in.iter().enumerate() {
-            let eval1 = low * w;
-            let eval0 = low - eval1;
-            let off = 2 * i;
-            merged[off] = eval0;
-            merged[off + 1] = eval1;
-        }
-        merged
-    }
-
     /// Compute the cubic polynomial s(X) = l(X) * q(X), where l(X) is the
     /// current (linear) eq polynomial and q(X) = c + dX + eX^2, given the following:
     /// - c, the constant term of q
