@@ -558,12 +558,16 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     // PHASES is assumed to be > 0 here.
                     let (first_prefix, _) = k.split((PHASES - 1) * LOG_M);
                     // Masking is equivalent to modulo here since M is a power of two (M = 1 << LOG_M).
-                    let first_k_bound: usize = usize::from(first_prefix) & (M - 1);
+                    // Apply the mask in u128 before casting to avoid usize overflow for wide prefixes.
+                    let first_k_bound: usize =
+                        (u128::from(&first_prefix) & ((M - 1) as u128)) as usize;
                     let mut acc = self.v[0][first_k_bound];
 
                     for phase in 1..PHASES {
                         let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                        let k_bound: usize = usize::from(prefix) & (M - 1);
+                        // Masking is equivalent to modulo here since M is a power of two (M = 1 << LOG_M).
+                        // Apply the mask in u128 before casting to avoid usize overflow for wide prefixes.
+                        let k_bound: usize = (u128::from(&prefix) & ((M - 1) as u128)) as usize;
                         acc *= self.v[phase][k_bound];
                     }
 
@@ -578,14 +582,12 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             .into_iter()
             .map(|checkpoint| checkpoint.unwrap())
             .collect();
-        let mut combined_val_poly: Vec<F> = unsafe_allocate_zero_vec(self.lookup_indices.len());
-        {
+        let combined_val_poly: Vec<F> = {
             let span = tracing::span!(tracing::Level::INFO, "Materialize combined_val_poly");
             let _guard = span.enter();
-            combined_val_poly
-                .par_iter_mut()
-                .zip(std::mem::take(&mut self.lookup_tables))
-                .for_each(|(val, table)| {
+            std::mem::take(&mut self.lookup_tables)
+                .into_par_iter()
+                .map(|table| {
                     if let Some(table) = table {
                         let suffixes: Vec<_> = table
                             .suffixes()
@@ -595,14 +597,16 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                             })
                             .collect();
                         // Each cycle contributes at most one lookup table, so we can assign directly.
-                        *val = table.combine(&prefixes, &suffixes);
+                        table.combine(&prefixes, &suffixes)
+                    } else {
+                        F::zero()
                     }
-                });
-        }
+                })
+                .collect()
+        };
         let gamma_cub = gamma * gamma_sqr;
 
-        let mut combined_raf_val_poly: Vec<F> = unsafe_allocate_zero_vec(self.lookup_indices.len());
-        {
+        let combined_raf_val_poly: Vec<F> = {
             let span = tracing::span!(tracing::Level::INFO, "Materialize combined_raf_val_poly");
             let _guard = span.enter();
 
@@ -614,17 +618,17 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             let raf_val_interleaved = gamma_sqr * left_prefix + gamma_cub * right_prefix;
             let raf_val_identity = gamma_cub * identity_prefix;
 
-            combined_raf_val_poly
-                .par_iter_mut()
-                .zip(std::mem::take(&mut self.is_interleaved_operands))
-                .for_each(|(val, is_interleaved_operands)| {
+            std::mem::take(&mut self.is_interleaved_operands)
+                .into_par_iter()
+                .map(|is_interleaved_operands| {
                     if is_interleaved_operands {
-                        *val = raf_val_interleaved;
+                        raf_val_interleaved
                     } else {
-                        *val = raf_val_identity;
+                        raf_val_identity
                     }
-                });
-        }
+                })
+                .collect()
+        };
 
         // The first log(K) rounds of this sumcheck effectively batches the following two sumchecks together:
         // (simplified for exposition)
