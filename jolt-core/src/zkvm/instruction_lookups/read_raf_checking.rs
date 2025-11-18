@@ -554,13 +554,20 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             self.lookup_indices
                 .par_iter()
                 .map(|k| {
-                    (0..PHASES)
-                        .map(|phase| {
-                            let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                            let k_bound: usize = prefix % M;
-                            self.v[phase][k_bound]
-                        })
-                        .product::<F>()
+                    // Initialize accumulator with the first phase value to avoid an extra multiply by F::one().
+                    // PHASES is assumed to be > 0 here.
+                    let (first_prefix, _) = k.split((PHASES - 1) * LOG_M);
+                    // Masking is equivalent to modulo here since M is a power of two (M = 1 << LOG_M).
+                    let first_k_bound: usize = usize::from(first_prefix) & (M - 1);
+                    let mut acc = self.v[0][first_k_bound];
+
+                    for phase in 1..PHASES {
+                        let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                        let k_bound: usize = usize::from(prefix) & (M - 1);
+                        acc *= self.v[phase][k_bound];
+                    }
+
+                    acc
                 })
                 .collect::<Vec<_>>()
         };
