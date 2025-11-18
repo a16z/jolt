@@ -1,7 +1,7 @@
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
-use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACJoltProof, Serializable};
+use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACProof, Serializable};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -243,7 +243,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        match RV64IMACJoltProof::deserialize_compressed(&mut cursor) {
+        match RV64IMACProof::deserialize_compressed(&mut cursor) {
             Ok(_) => info!("✓ Proof {i} deserialized"),
             Err(e) => error!("✗ Failed to deserialize proof {i}: {e:?}"),
         }
@@ -328,7 +328,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         assert!(!device_io.panic, "Guest program panicked during tracing");
 
         info!("  Proving...");
-        let (proof, io_device, _debug) = jolt_sdk::guest::prover::prove(
+        let (proof, io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
             &guest_prog,
             &input_bytes,
             &[],
@@ -496,7 +496,7 @@ fn run_recursion_proof(
     ];
     match run_config {
         RunConfig::Prove => {
-            let (proof, _io_device, _debug) = jolt_sdk::guest::prover::prove(
+            let (proof, _io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
                 &recursion,
                 &input_bytes,
                 &[],

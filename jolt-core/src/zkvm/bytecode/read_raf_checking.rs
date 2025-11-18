@@ -5,7 +5,6 @@ use num_traits::Zero;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         multilinear_polynomial::{
@@ -27,23 +26,22 @@ use crate::{
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::state_manager::StateManager,
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
-        witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
-use itertools::{chain, zip_eq, Itertools};
+use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::{Instruction, NormalizedInstruction};
+use tracer::instruction::{Cycle, Instruction, NormalizedInstruction};
 
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;
@@ -124,14 +122,13 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
 impl<F: JoltField> ReadRafSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::gen")]
     pub fn gen(
-        state_manager: &mut StateManager<F, impl CommitmentScheme<Field = F>>,
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-
         let params = ReadRafSumcheckParams::gen(
-            &preprocessing.bytecode,
+            bytecode_preprocessing,
             trace.len().log_2(),
             opening_accumulator,
             transcript,
@@ -169,7 +166,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     array::from_fn(|_| unsafe_allocate_zero_vec::<F>(params.K));
 
                 for (j, cycle) in trace_chunk.iter().enumerate() {
-                    let pc = preprocessing.bytecode.get_pc(cycle);
+                    let pc = bytecode_preprocessing.get_pc(cycle);
                     for stage in 0..N_STAGES {
                         res_per_stage[stage][pc] += eq_evals[stage][j]
                     }
@@ -221,7 +218,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
         let pc = trace
             .par_iter()
-            .map(|cycle| preprocessing.bytecode.get_pc(cycle))
+            .map(|cycle| bytecode_preprocessing.get_pc(cycle))
             .collect();
 
         Self {
@@ -268,9 +265,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .unwrap(),
         );
 
-        let log_K_chunk = DTH_ROOT_OF_K.log_2();
         self.r_address_prime
-            .par_chunks_mut(log_K_chunk)
+            .par_chunks_mut(self.params.log_K_chunk)
             .rev()
             .enumerate()
             .map(|(i, r_address_prime)| {
@@ -278,7 +274,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     .pc
                     .par_iter()
                     .map(|k| {
-                        let k = (k >> (log_K_chunk * (self.params.d - i - 1))) % DTH_ROOT_OF_K;
+                        let k = (k >> (self.params.log_K_chunk * (self.params.d - i - 1)))
+                            % self.params.K_chunk;
                         Some(k as u8)
                     })
                     .collect();
@@ -306,11 +303,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         self.params.input_claim()
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "BytecodeReadRafSumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::compute_message")]
+    fn compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_K {
             const DEGREE: usize = 2;
 
@@ -371,16 +365,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                 let [eval_at_0, eval_at_2] = evals;
                 let eval_at_1 = self.prev_round_claims[stage] - eval_at_0;
                 let round_poly = UniPoly::from_evals(&[eval_at_0, eval_at_1, eval_at_2]);
-                agg_round_poly += &(&round_poly * &self.params.gamma_powers[stage]);
+                agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
                 round_polys[stage] = round_poly;
             }
 
             self.prev_round_polys = Some(round_polys);
 
-            vec![
-                agg_round_poly.eval_at_zero(),
-                agg_round_poly.evaluate::<F>(&F::from_u8(2)),
-            ]
+            agg_round_poly
         } else {
             let degree = <Self as SumcheckInstanceProver<F, T>>::degree(self);
 
@@ -443,19 +434,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             for (stage, evals) in evals_per_stage.iter().enumerate() {
                 let claim = self.prev_round_claims[stage];
                 let round_poly = self.gruen_eq_polys[stage].compute_round_poly(evals, claim);
-                agg_round_poly += &(&round_poly * &self.params.gamma_powers[stage]);
+                agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
                 round_polys[stage] = round_poly;
             }
 
             self.prev_round_polys = Some(round_polys);
 
-            let domain = chain!([0], 2..).take(degree).map(F::from_u64);
-            domain.map(|x| agg_round_poly.evaluate::<F>(&x)).collect()
+            agg_round_poly
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if let Some(prev_round_polys) = self.prev_round_polys.take() {
             self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
         }
@@ -496,7 +486,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
 
         for i in 0..self.params.d {
             let r_address =
-                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
+                &r_address.r[self.params.log_K_chunk * i..self.params.log_K_chunk * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -612,7 +602,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
         (0..self.params.d).for_each(|i| {
             let r_address =
-                &r_address.r[DTH_ROOT_OF_K.log_2() * i..DTH_ROOT_OF_K.log_2() * (i + 1)];
+                &r_address.r[self.params.log_K_chunk * i..self.params.log_K_chunk * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
@@ -630,6 +620,9 @@ struct ReadRafSumcheckParams<F: JoltField> {
     rv_claim: F,
     /// Bytecode length.
     K: usize,
+    /// Address chunking parameters: split LOG_K into `d` chunks of size `log_K_chunk`.
+    log_K_chunk: usize,
+    K_chunk: usize,
     /// log2(K) and log2(T) used to determine round counts.
     log_K: usize,
     log_T: usize,
@@ -656,6 +649,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let K = bytecode_preprocessing.code_size;
         let log_K = K.log_2();
         let d = bytecode_preprocessing.d;
+        let log_K_chunk = log_K.div_ceil(d);
         let gamma_powers = transcript.challenge_scalar_powers(7);
 
         let bytecode = &bytecode_preprocessing.bytecode;
@@ -751,6 +745,8 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             rv_claim,
             K,
             log_K,
+            log_K_chunk,
+            K_chunk: 1 << log_K_chunk,
             d,
             log_T: n_cycle_vars,
             val_polys,

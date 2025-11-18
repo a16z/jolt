@@ -5,8 +5,7 @@ use jolt_sdk::{self as jolt};
 extern crate alloc;
 
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
-use jolt::Jolt;
-use jolt::{JoltDevice, JoltRV64IMAC, JoltVerifierPreprocessing, RV64IMACJoltProof, F, PCS};
+use jolt::{JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, F, PCS};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
@@ -40,7 +39,7 @@ fn verify(bytes: &[u8]) -> u32 {
     let mut all_valid = true;
     for _ in 0..n {
         start_cycle_tracking("deserialize proof");
-        let proof = RV64IMACJoltProof::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+        let proof = RV64IMACProof::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
         end_cycle_tracking("deserialize proof");
 
         start_cycle_tracking("deserialize device");
@@ -48,7 +47,8 @@ fn verify(bytes: &[u8]) -> u32 {
         end_cycle_tracking("deserialize device");
 
         start_cycle_tracking("verification");
-        let is_valid = JoltRV64IMAC::verify(&verifier_preprocessing, proof, device, None, None).is_ok();
+        let verifier = RV64IMACVerifier::new(&verifier_preprocessing, proof, device, None, None);
+        let is_valid = verifier.is_ok_and(|verifier| verifier.verify().is_ok());
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;
     }

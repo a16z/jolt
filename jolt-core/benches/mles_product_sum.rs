@@ -176,10 +176,11 @@ fn compute_mles_product_sum_naive<F: JoltField>(
 fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
     let rng = &mut test_rng();
     let mle_n_vars = 14;
-    let random_mle: MultilinearPolynomial<Fr> = vec![Fr::random(rng); 1 << mle_n_vars].into();
+    let random_mle: MultilinearPolynomial<Fr> =
+        vec![<Fr as JoltField>::random(rng); 1 << mle_n_vars].into();
     let mles = vec![RaPolynomial::RoundN(random_mle); n_mle];
     let r = vec![<Fr as JoltField>::Challenge::random(rng); mle_n_vars];
-    let claim = Fr::random(rng);
+    let claim = <Fr as JoltField>::random(rng);
     let eq_poly = GruenSplitEqPolynomial::new(&r, BindingOrder::LowToHigh);
 
     let mut group = c.benchmark_group(format!("Product of {n_mle} MLEs sum"));

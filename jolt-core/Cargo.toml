@@ -39,7 +39,9 @@ prover = [
     "ark-ec/parallel",
     "ark-ff/parallel",
     "ark-std/parallel",
-    "dory/parallel",
+    "dory/backends",
+    "dory/cache", # This includes `parallel` feature
+    "dory/disk-persistence"
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.

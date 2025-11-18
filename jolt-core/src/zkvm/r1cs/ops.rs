@@ -428,64 +428,64 @@ impl LC {
         result
     }
 
-    /// Compute Σ_j coeff_j * eq_ry[ j ] + c * eq_ry[ const_col ] without any dynamic iteration.
+    /// Compute Σ_j coeff_j * vector[ j ] + c * vector[ const_col ] without any dynamic iteration.
     /// Returns the column-side contribution (no row weight applied).
     #[inline(always)]
-    pub fn dot_eq_ry<F: JoltField>(&self, eq_ry: &[F], const_col: usize) -> F {
+    pub fn dot_product<F: JoltField>(&self, vector: &[F], const_col: usize) -> F {
         match self {
             LC::Zero => F::zero(),
-            LC::Const(c) => c.field_mul(eq_ry[const_col]),
-            LC::Terms1([t1]) => t1.coeff.field_mul(eq_ry[t1.input_index]),
+            LC::Const(c) => c.field_mul(vector[const_col]),
+            LC::Terms1([t1]) => t1.coeff.field_mul(vector[t1.input_index]),
             LC::Terms2([t1, t2]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
             }
             LC::Terms3([t1, t2, t3]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
             }
             LC::Terms4([t1, t2, t3, t4]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
             }
             LC::Terms5([t1, t2, t3, t4, t5]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
-                    + t5.coeff.field_mul(eq_ry[t5.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
+                    + t5.coeff.field_mul(vector[t5.input_index])
             }
             LC::Terms1Const([t1], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index]) + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index]) + c.field_mul(vector[const_col])
             }
             LC::Terms2Const([t1, t2], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + c.field_mul(vector[const_col])
             }
             LC::Terms3Const([t1, t2, t3], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + c.field_mul(vector[const_col])
             }
             LC::Terms4Const([t1, t2, t3, t4], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
+                    + c.field_mul(vector[const_col])
             }
             LC::Terms5Const([t1, t2, t3, t4, t5], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
-                    + t5.coeff.field_mul(eq_ry[t5.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
+                    + t5.coeff.field_mul(vector[t5.input_index])
+                    + c.field_mul(vector[const_col])
             }
         }
     }
