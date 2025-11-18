@@ -315,13 +315,52 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             })
             .collect();
 
-        let eq_r_spartan = EqPolynomial::evals(&r_spartan.r);
-        let eq_r_branch = EqPolynomial::evals(&r_branch.r);
-        let u_evals_rv = eq_r_spartan
-            .par_iter()
-            .zip(eq_r_branch.into_par_iter())
-            .map(|(a, b)| b * params.gamma + a)
-            .collect::<Vec<_>>();
+        // Build split-eq polynomials and use them to compute u_evals_raf and u_evals_rv
+        let eq_poly_spartan =
+            GruenSplitEqPolynomial::<F>::new(&r_spartan.r, BindingOrder::LowToHigh);
+        let eq_poly_branch = GruenSplitEqPolynomial::<F>::new(&r_branch.r, BindingOrder::LowToHigh);
+
+        // Pre-size and allocate outputs up-front
+        let e_out_s = eq_poly_spartan.E_out_current();
+        let e_out_b = eq_poly_branch.E_out_current();
+        debug_assert_eq!(e_out_s.len(), e_out_b.len());
+        let in_len = eq_poly_spartan.E_in_current_len();
+        debug_assert_eq!(in_len, eq_poly_branch.E_in_current_len());
+        let out_len = e_out_s.len();
+        let merged_in_len = in_len * 2;
+        let total_len = out_len * merged_in_len;
+
+        // Precompute merged inner coeffs [low*(1-w), low*w] for both EQs
+        let merged_s = eq_poly_spartan.merged_in_with_current_w();
+        let merged_b = eq_poly_branch.merged_in_with_current_w();
+
+        let mut u_evals_raf: Vec<F> = unsafe_allocate_zero_vec(total_len);
+        let mut u_evals_rv: Vec<F> = unsafe_allocate_zero_vec(total_len);
+
+        // Fill in parallel within a span
+        let span = tracing::span!(tracing::Level::INFO, "Compute u_evals_raf and u_evals_rv");
+        let _guard = span.enter();
+        u_evals_rv
+            .par_chunks_exact_mut(merged_in_len)
+            .zip(u_evals_raf.par_chunks_exact_mut(merged_in_len))
+            .enumerate()
+            .for_each(|(x_out, (rv_chunk, raf_chunk))| {
+                let high_s = e_out_s[x_out];
+                let high_b = params.gamma * e_out_b[x_out];
+                for x_in in 0..in_len {
+                    let off = 2 * x_in;
+                    let eval0_s = high_s * merged_s[off];
+                    let eval1_s = high_s * merged_s[off + 1];
+                    let eval0_b = high_b * merged_b[off];
+                    let eval1_b = high_b * merged_b[off + 1];
+                    raf_chunk[off] = eval0_s;
+                    raf_chunk[off + 1] = eval1_s;
+                    rv_chunk[off] = eval0_s + eval0_b;
+                    rv_chunk[off + 1] = eval1_s + eval1_b;
+                }
+            });
+        drop(_guard);
+        drop(span);
 
         let mut res = Self {
             r: Vec::with_capacity(log_T + LOG_K),
@@ -337,15 +376,15 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             suffix_polys,
             v: std::array::from_fn(|_| ExpandingTable::new(M, BindingOrder::HighToLow)),
             u_evals_rv,
-            u_evals_raf: eq_r_spartan,
+            u_evals_raf,
             right_operand_ps,
             left_operand_ps,
             identity_ps,
 
             // State for last log(T) rounds
             ra: None,
-            eq_r_spartan: GruenSplitEqPolynomial::new(&r_spartan.r, BindingOrder::LowToHigh),
-            eq_r_branch: GruenSplitEqPolynomial::new(&r_branch.r, BindingOrder::LowToHigh),
+            eq_r_spartan: eq_poly_spartan,
+            eq_r_branch: eq_poly_branch,
             prev_claim_spartan: None,
             prev_claim_branch: None,
             prev_round_poly_spartan: None,
@@ -605,24 +644,66 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let (prev_claim_spartan, prev_claim_branch) = {
             let span = tracing::span!(tracing::Level::INFO, "Compute prev_claims");
             let _guard = span.enter();
-            rayon::join(
-                || {
-                    self.eq_r_spartan
-                        .par_iter_low_to_high()
-                        .map(|(j, eq)| {
-                            eq * ra[j] * (combined_val_poly[j] + combined_raf_val_poly[j])
-                        })
-                        .sum()
-                },
-                || {
-                    self.eq_r_branch
-                        .par_iter_low_to_high()
-                        .map(|(j, eq)| eq * ra[j] * combined_val_poly[j])
-                        .sum()
-                },
-            )
-        };
+            // Compute both sums in a single parallel traversal over j with delayed reduction.
+            let out_evals_spartan = self.eq_r_spartan.E_out_current();
+            let out_evals_branch = self.eq_r_branch.E_out_current();
+            debug_assert_eq!(out_evals_spartan.len(), out_evals_branch.len());
 
+            let in_len = self.eq_r_spartan.E_in_current_len();
+            debug_assert_eq!(in_len, self.eq_r_branch.E_in_current_len());
+            let x_in_bits = in_len.log_2();
+
+            // Precompute merged inner coeffs [low*(1-w), low*w] for both EQs
+            let merged_s = self.eq_r_spartan.merged_in_with_current_w();
+            let merged_b = self.eq_r_branch.merged_in_with_current_w();
+
+            let (prev_claim_spartan_unr, prev_claim_branch_unr) = (0..out_evals_spartan.len())
+                .into_par_iter()
+                .map(|x_out| {
+                    let high_s = out_evals_spartan[x_out];
+                    let high_b = out_evals_branch[x_out];
+
+                    let mut inner_s = F::Unreduced::<9>::zero();
+                    let mut inner_b = F::Unreduced::<9>::zero();
+
+                    for x_in in 0..in_len {
+                        let base_index = (x_out << (x_in_bits + 1)) + (x_in << 1);
+
+                        // Spartan and Branch eq coeffs using premerged inner
+                        let off = 2 * x_in;
+
+                        // j = base_index
+                        {
+                            let j0 = base_index;
+                            let p_s = ra[j0] * (combined_val_poly[j0] + combined_raf_val_poly[j0]);
+                            let p_b = ra[j0] * combined_val_poly[j0];
+                            inner_s += merged_s[off].mul_unreduced::<9>(p_s);
+                            inner_b += merged_b[off].mul_unreduced::<9>(p_b);
+                        }
+                        // j = base_index + 1
+                        {
+                            let j1 = base_index + 1;
+                            let p_s = ra[j1] * (combined_val_poly[j1] + combined_raf_val_poly[j1]);
+                            let p_b = ra[j1] * combined_val_poly[j1];
+                            inner_s += merged_s[off + 1].mul_unreduced::<9>(p_s);
+                            inner_b += merged_b[off + 1].mul_unreduced::<9>(p_b);
+                        }
+                    }
+
+                    let scaled_s =
+                        high_s.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_s));
+                    let scaled_b =
+                        high_b.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_b));
+                    (scaled_s, scaled_b)
+                })
+                .reduce(
+                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                    |(s0, b0), (s1, b1)| (s0 + s1, b0 + b1),
+                );
+            let prev_claim_spartan = F::from_montgomery_reduce::<9>(prev_claim_spartan_unr);
+            let prev_claim_branch = F::from_montgomery_reduce::<9>(prev_claim_branch_unr);
+            (prev_claim_spartan, prev_claim_branch)
+        };
         self.prev_claim_spartan = Some(prev_claim_spartan);
         self.prev_claim_branch = Some(prev_claim_branch);
 

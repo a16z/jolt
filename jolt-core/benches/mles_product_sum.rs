@@ -194,6 +194,8 @@ fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
 }
 
 fn mles_product_sum_benches(c: &mut Criterion) {
+    bench_mles_product_sum(c, 2);
+    bench_mles_product_sum(c, 3);
     bench_mles_product_sum(c, 4);
     bench_mles_product_sum(c, 8);
     bench_mles_product_sum(c, 16);

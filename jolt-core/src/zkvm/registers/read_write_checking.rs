@@ -30,20 +30,27 @@ use tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
 //
-// Proves the relation:
-//   Σ_{k,j} eq(r', (j,k)) ⋅ [ wa(k,j)⋅(inc(j)+Val(k,j)) + γ⋅ra1(k,j)⋅Val(k,j) + γ²⋅ra2(k,j)⋅Val(k,j) ]
-//   = wv_claim + γ⋅rv1_claim + γ²⋅rv2_claim
+// Proves the combined relation
+//   Σ_j eq(r_cycle_stage_1, j) ⋅ ( RdWriteValue(j) + γ⋅ReadVals(j) )
+//     + γ³ ⋅ Σ_j eq(r_cycle_stage_3, j) ⋅ ReadVals(j)
+//   = rd_wv_claim
+//     + γ⋅rs1_rv_claim_stage_1
+//     + γ²⋅rs2_rv_claim_stage_1
+//     + γ³⋅(rs1_rv_claim_stage_3 + γ⋅rs2_rv_claim_stage_3),
 // where:
-// - r' are the fresh challenges for this sumcheck.
-// - wa(k,j) = 1 if register k is written at cycle j (rd=k), 0 otherwise.
-// - ra1(k,j) = 1 if register k is read at cycle j (rs1=k), 0 otherwise.
-// - ra2(k,j) = 1 if register k is read at cycle j (rs2=k), 0 otherwise.
-// - Val(k,j) is the value of register k right before cycle j.
+// - eq(r_cycle_stage_1, ·) and eq(r_cycle_stage_3, ·) are equality MLEs over the cycle index j,
+//   evaluated at two independent challenge points from Spartan stage 1 and the instruction-input
+//   sumcheck (stage 3), respectively;
+// - RdWriteValue(j)   = Σ_k wa(k,j)⋅(inc(j)+Val(k,j));
+// - ReadVals(j)       = Σ_k [ ra1(k,j)⋅Val(k,j) + γ⋅ra2(k,j)⋅Val(k,j) ];
+// - wa(k,j) = 1 if register k is written at cycle j (rd = k), 0 otherwise;
+// - ra1(k,j) = 1 if register k is read at cycle j (rs1 = k), 0 otherwise;
+// - ra2(k,j) = 1 if register k is read at cycle j (rs2 = k), 0 otherwise;
+// - Val(k,j) is the value of register k right before cycle j;
 // - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
-// - wv_claim, rv1_claim, rv2_claim are claimed write/read values from Spartan.
 //
 // This sumcheck ensures that the values read from and written to registers are consistent
-// with the execution trace.
+// with the execution trace and with both outer Spartan relations.
 
 const K: usize = REGISTER_COUNT as usize;
 const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;

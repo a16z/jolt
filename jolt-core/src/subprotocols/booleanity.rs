@@ -140,16 +140,29 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
         let quadratic_coeffs_f: [F; DEGREE_BOUND - 1] = D_poly
             .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
-                zip(&self.H, &self.params.gammas)
-                    .map(|(h, gamma)| {
-                        let h_0 = h.get_bound_coeff(2 * j_prime);
-                        let h_1 = h.get_bound_coeff(2 * j_prime + 1);
-                        let b = h_1 - h_0;
-                        [(h_0.square() - h_0) * *gamma, b.square() * *gamma]
-                    })
-                    .fold([F::zero(); 2], |running, new| {
-                        [running[0] + new[0], running[1] + new[1]]
-                    })
+                // Accumulate in unreduced form to minimize per-term reductions
+                let mut acc_c = F::Unreduced::<9>::zero();
+                let mut acc_e = F::Unreduced::<9>::zero();
+                for (h, gamma) in zip(&self.H, &self.params.gammas) {
+                    let h_0 = h.get_bound_coeff(2 * j_prime);
+                    let h_1 = h.get_bound_coeff(2 * j_prime + 1);
+                    let b = h_1 - h_0;
+
+                    // Compute gamma * h0, then a single unreduced multiply by (h0 - 1)
+                    let g_h0 = *gamma * h_0;
+                    let h0_minus_one = h_0 - F::one();
+                    let c_unr = g_h0.mul_unreduced::<9>(h0_minus_one);
+                    acc_c += c_unr;
+
+                    // Compute gamma * b, then a single unreduced multiply by b
+                    let g_b = *gamma * b;
+                    let e_unr = g_b.mul_unreduced::<9>(b);
+                    acc_e += e_unr;
+                }
+                [
+                    F::from_montgomery_reduce::<9>(acc_c),
+                    F::from_montgomery_reduce::<9>(acc_e),
+                ]
             });
 
         // previous_claim is s(0)+s(1) of the scaled polynomial; divide out eq_r_r to get inner claim

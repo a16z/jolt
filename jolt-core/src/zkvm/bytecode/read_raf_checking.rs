@@ -19,7 +19,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        mles_product_sum::product_eval_univariate_assign, sumcheck_prover::SumcheckInstanceProver,
+        mles_product_sum::eval_linear_prod_assign, sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -395,13 +395,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                         let j = j_lo + (j_hi << in_n_vars);
 
                         for (i, ra_i) in self.ra.iter().enumerate() {
-                            // TODO: Improve memory access.
                             let ra_i_eval_at_j_0 = ra_i.get_bound_coeff(j * 2);
                             let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
                             ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
                         }
                         // Eval prod_i ra_i(x).
-                        product_eval_univariate_assign(&ra_eval_pairs, &mut ra_prod_evals);
+                        eval_linear_prod_assign(&ra_eval_pairs, &mut ra_prod_evals);
 
                         for stage in 0..N_STAGES {
                             let eq_in_eval = self.gruen_eq_polys[stage].E_in_current()[j_lo];

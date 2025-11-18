@@ -644,10 +644,6 @@ impl CommittedPolynomial {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum VirtualPolynomial {
-    SpartanAz,
-    SpartanBz,
-    FusedProductLeft,
-    FusedProductRight,
     PC,
     UnexpandedPC,
     NextPC,
@@ -692,10 +688,6 @@ pub enum VirtualPolynomial {
 
 pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock::new(|| {
     let mut polynomials = vec![
-        VirtualPolynomial::SpartanAz,
-        VirtualPolynomial::SpartanBz,
-        VirtualPolynomial::FusedProductLeft,
-        VirtualPolynomial::FusedProductRight,
         VirtualPolynomial::PC,
         VirtualPolynomial::UnexpandedPC,
         VirtualPolynomial::NextPC,

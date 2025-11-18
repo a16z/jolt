@@ -32,11 +32,8 @@ use crate::zkvm::{
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
-        inner::InnerSumcheckVerifier,
-        instruction_input::InstructionInputSumcheckVerifier,
-        outer::OuterRemainingSumcheckVerifier,
-        product::{ProductVirtualInnerVerifier, ProductVirtualRemainderVerifier},
-        shift::ShiftSumcheckVerifier,
+        instruction_input::InstructionInputSumcheckVerifier, outer::OuterRemainingSumcheckVerifier,
+        product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
     witness::AllCommittedPolynomials,
@@ -188,8 +185,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         .context("Stage 1 univariate skip first round")?;
 
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let spartan_outer_remaining =
-            OuterRemainingSumcheckVerifier::new(n_cycle_vars, &spartan_outer_uni_skip_state);
+        let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
+            n_cycle_vars,
+            &spartan_outer_uni_skip_state,
+            self.spartan_key,
+        );
 
         let _r_stage1 = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
@@ -211,7 +211,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 2 univariate skip first round")?;
 
-        let spartan_inner = InnerSumcheckVerifier::new(&self.spartan_key, &mut self.transcript);
         let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
             self.proof.trace_length.log_2(),
             &product_virtual_uni_skip_state,
@@ -224,7 +223,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             self.proof.ram_K,
             self.proof.trace_length,
-            self.proof.twist_sumcheck_switch_index,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -234,7 +232,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             vec![
-                &spartan_inner as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &spartan_product_virtual_remainder,
                 &ram_raf_evaluation,
                 &ram_read_write_checking,
@@ -256,15 +253,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let spartan_instruction_input =
             InstructionInputSumcheckVerifier::new(&self.opening_accumulator, &mut self.transcript);
-        let spartan_product_virtual_claim_check =
-            ProductVirtualInnerVerifier::new(&self.opening_accumulator, &mut self.transcript);
 
         let _r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
                 &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &spartan_instruction_input,
-                &spartan_product_virtual_claim_check,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
