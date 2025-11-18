@@ -458,48 +458,6 @@ fn assign<T: Sized>(dst: &mut T, src: T) {
 
 /// Naive evaluator for the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
 ///
-/// The evaluations on `U_D` are accumulated into `sums`.
-///
-/// Inputs:
-/// - `pairs[j] = (p_j(0), p_j(1))`
-/// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
-#[allow(dead_code)]
-fn product_eval_univariate_naive_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
-    let d = pairs.len();
-    debug_assert_eq!(sums.len(), d);
-    if d == 0 {
-        return;
-    }
-    // Memoize p(1)=p1, then p(2)=p(1)+pinf, p(3)=p(2)+pinf, ...
-    let mut cur_vals = Vec::with_capacity(d);
-    let mut pinfs = Vec::with_capacity(d);
-    for &(p0, p1) in pairs.iter() {
-        let pinf = p1 - p0;
-        cur_vals.push(p1);
-        pinfs.push(pinf);
-    }
-    // Evaluate at x = 1..(d-1)
-    for idx in 0..(d - 1) {
-        let mut acc = F::one();
-        for v in cur_vals.iter() {
-            acc *= *v;
-        }
-        sums[idx] += acc;
-        // advance all to next x
-        for i in 0..d {
-            cur_vals[i] += pinfs[i];
-        }
-    }
-    // Evaluate at infinity (product of leading coefficients)
-    let mut acc_inf = F::one();
-    for pinf in pinfs.iter() {
-        acc_inf *= *pinf;
-    }
-    sums[d - 1] += acc_inf;
-}
-
-/// Naive evaluator for the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
-///
 /// The evaluations on `U_D` are assigned to `evals`.
 ///
 /// Inputs:
@@ -519,8 +477,8 @@ fn product_eval_univariate_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &
         pinfs.push(pinf);
     }
     for idx in 0..(d - 1) {
-        let mut acc = F::one();
-        for v in cur_vals.iter() {
+        let mut acc = cur_vals[0];
+        for v in cur_vals.iter().skip(1) {
             acc *= *v;
         }
         evals[idx] = acc;
@@ -528,8 +486,8 @@ fn product_eval_univariate_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &
             cur_vals[i] += pinfs[i];
         }
     }
-    let mut acc_inf = F::one();
-    for pinf in pinfs.iter() {
+    let mut acc_inf = pinfs[0];
+    for pinf in pinfs.iter().skip(1) {
         acc_inf *= *pinf;
     }
     evals[d - 1] = acc_inf;
