@@ -178,13 +178,15 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let e_in = self.E_in_current();
         let w = self.get_current_w();
         let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
-        for (i, &low) in e_in.iter().enumerate() {
-            let eval1 = low * w;
-            let eval0 = low - eval1;
-            let off = 2 * i;
-            merged[off] = eval0;
-            merged[off + 1] = eval1;
-        }
+        merged
+            .par_chunks_exact_mut(2)
+            .zip(e_in.par_iter())
+            .for_each(|(chunk, &low)| {
+                let eval1 = low * w;
+                let eval0 = low - eval1;
+                chunk[0] = eval0;
+                chunk[1] = eval1;
+            });
         merged
     }
 

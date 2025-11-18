@@ -346,7 +346,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             .enumerate()
             .for_each(|(x_out, (rv_chunk, raf_chunk))| {
                 let high_s = e_out_s[x_out];
-                let high_b = e_out_b[x_out];
+                let high_b = params.gamma * e_out_b[x_out];
                 for x_in in 0..in_len {
                     let off = 2 * x_in;
                     let eval0_s = high_s * merged_s[off];
@@ -355,8 +355,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     let eval1_b = high_b * merged_b[off + 1];
                     raf_chunk[off] = eval0_s;
                     raf_chunk[off + 1] = eval1_s;
-                    rv_chunk[off] = eval0_s + params.gamma * eval0_b;
-                    rv_chunk[off + 1] = eval1_s + params.gamma * eval1_b;
+                    rv_chunk[off] = eval0_s + eval0_b;
+                    rv_chunk[off + 1] = eval1_s + eval1_b;
                 }
             });
         drop(_guard);
@@ -663,37 +663,38 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     let high_s = out_evals_spartan[x_out];
                     let high_b = out_evals_branch[x_out];
 
-                    let mut acc_s = F::Unreduced::<9>::zero();
-                    let mut acc_b = F::Unreduced::<9>::zero();
+                    let mut inner_s = F::Unreduced::<9>::zero();
+                    let mut inner_b = F::Unreduced::<9>::zero();
 
                     for x_in in 0..in_len {
                         let base_index = (x_out << (x_in_bits + 1)) + (x_in << 1);
 
                         // Spartan and Branch eq coeffs using premerged inner
                         let off = 2 * x_in;
-                        let eval0_s = high_s * merged_s[off];
-                        let eval1_s = high_s * merged_s[off + 1];
-                        let eval0_b = high_b * merged_b[off];
-                        let eval1_b = high_b * merged_b[off + 1];
 
                         // j = base_index
                         {
                             let j0 = base_index;
                             let p_s = ra[j0] * (combined_val_poly[j0] + combined_raf_val_poly[j0]);
                             let p_b = ra[j0] * combined_val_poly[j0];
-                            acc_s += eval0_s.mul_unreduced::<9>(p_s);
-                            acc_b += eval0_b.mul_unreduced::<9>(p_b);
+                            inner_s += merged_s[off].mul_unreduced::<9>(p_s);
+                            inner_b += merged_b[off].mul_unreduced::<9>(p_b);
                         }
                         // j = base_index + 1
                         {
                             let j1 = base_index + 1;
                             let p_s = ra[j1] * (combined_val_poly[j1] + combined_raf_val_poly[j1]);
                             let p_b = ra[j1] * combined_val_poly[j1];
-                            acc_s += eval1_s.mul_unreduced::<9>(p_s);
-                            acc_b += eval1_b.mul_unreduced::<9>(p_b);
+                            inner_s += merged_s[off + 1].mul_unreduced::<9>(p_s);
+                            inner_b += merged_b[off + 1].mul_unreduced::<9>(p_b);
                         }
                     }
-                    (acc_s, acc_b)
+
+                    let scaled_s =
+                        high_s.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_s));
+                    let scaled_b =
+                        high_b.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_b));
+                    (scaled_s, scaled_b)
                 })
                 .reduce(
                     || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),

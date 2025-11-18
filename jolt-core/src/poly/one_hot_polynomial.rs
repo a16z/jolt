@@ -19,6 +19,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
+use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::mem;
@@ -160,11 +161,13 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let x_in_bits = in_len.log_2();
         let merged_in_unreduced: Vec<F::Unreduced<9>> = {
             let mut merged: Vec<F::Unreduced<9>> = unsafe_allocate_zero_vec(2 * in_len);
-            for (x_in, &low) in E_in.iter().enumerate() {
-                let off = 2 * x_in;
-                merged[off] = low.mul_unreduced::<9>(factor_0);
-                merged[off + 1] = low.mul_unreduced::<9>(factor_1);
-            }
+            merged
+                .par_chunks_exact_mut(2)
+                .zip(E_in.par_iter())
+                .for_each(|(chunk, &low)| {
+                    chunk[0] = low.mul_unreduced::<9>(factor_0);
+                    chunk[1] = low.mul_unreduced::<9>(factor_1);
+                });
             merged
         };
 
@@ -175,7 +178,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut local_unreduced: Vec<F::Unreduced<9>> =
                     unsafe_allocate_zero_vec(polynomial.K);
                 let mut touched_indices: Vec<usize> = Vec::new();
-                let mut touched_flags: Vec<u8> = vec![0u8; polynomial.K];
+                let mut touched_flags = FixedBitSet::with_capacity(polynomial.K);
                 let x_out_base = x_out << (x_in_bits + 1);
 
                 for x_in in 0..in_len {
@@ -187,16 +190,16 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
                     if let Some(k0) = nonzero_indices[j0] {
                         let idx = k0 as usize;
-                        if touched_flags[idx] == 0 {
-                            touched_flags[idx] = 1;
+                        if !touched_flags.contains(idx) {
+                            touched_flags.insert(idx);
                             touched_indices.push(idx);
                         }
                         local_unreduced[idx] += add0_unr;
                     }
                     if let Some(k1) = nonzero_indices[j1] {
                         let idx = k1 as usize;
-                        if touched_flags[idx] == 0 {
-                            touched_flags[idx] = 1;
+                        if !touched_flags.contains(idx) {
+                            touched_flags.insert(idx);
                             touched_indices.push(idx);
                         }
                         local_unreduced[idx] += add1_unr;
