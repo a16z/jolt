@@ -25,7 +25,7 @@ const LOG_K: usize = XLEN * 2;
 const DEFAULT_ONE_HOT_CHUNK_LOG: usize = 8;
 
 /// Trace length threshold that selects 16 phases (instead of 8) for the instruction read raf sumcheck.
-const TRACE_LENGTH_THRESHOLD_PHASES_16: usize = 1 << 20;
+const TRACE_LENGTH_THRESHOLD_PHASES_16: usize = 1 << 23;
 
 static ONE_HOT_CHUNK_LOG_OVERRIDE: AtomicUsize = AtomicUsize::new(DEFAULT_ONE_HOT_CHUNK_LOG);
 static JOLT_PARAMS: OnceLock<JoltParams> = OnceLock::new();
