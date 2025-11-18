@@ -163,10 +163,16 @@ fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
         let (f6, f7) = ex4_2(&[f2, f3, f4, f5], &f_inf6);
         (f4, f5, f6, f7)
     }
+
+    // SAFETY: `p[0..4]` and `p[4..8]` are disjoint slices of length 4 each.
+    // We reinterpret them as `[ (F, F); 4 ]` to pass by value into `eval_inter4`,
+    // which avoids per-element copies while preserving alignment.
     let (a1, a2, a3, a4, a_inf) = eval_inter4(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
     let (a5, a6, a7, a8) = batch_helper(a1, a2, a3, a4, a_inf);
     let (b1, b2, b3, b4, b_inf) = eval_inter4(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
+
     let (b5, b6, b7, b8) = batch_helper(b1, b2, b3, b4, b_inf);
+
     [
         a1 * b1,
         a2 * b2,
@@ -188,6 +194,10 @@ fn eval_inter8_final_op<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F], op: im
         let f6 = ex4(&[f2, f3, f4, f5], &f_inf6);
         (f4, f5, f6)
     }
+
+    // SAFETY: as in `eval_inter8`, reinterpreting `p[0..4]` and `p[4..8]` as
+    // fixed-size arrays is sound because those sub-slices are exactly length 4
+    // and properly aligned.
     let (a1, a2, a3, a4, a_inf) = eval_inter4(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
     let (a5, a6, a7) = batch_helper(a1, a2, a3, a4, a_inf);
     let (b1, b2, b3, b4, b_inf) = eval_inter4(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
@@ -209,31 +219,56 @@ fn eval_inter16_final_op<F: JoltField>(
     op: impl Fn(&mut F, F),
 ) {
     debug_assert!(outputs.len() >= 16);
+
+    // First, split the 16 polynomials into two groups of 8 and evaluate each group
+    // on U_8 = [1..7, ∞] using the `eval_inter8` kernel.
+    //
+    // SAFETY: `p[0..8]` and `p[8..16]` are non-overlapping slices of exactly
+    // 8 elements, so reinterpreting them as `[(F, F); 8]` is valid.
     let a = eval_inter8(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
     let b = eval_inter8(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
-    // Emit indices 1..8 directly
+
+    // Emit indices 1..8 directly by multiplying the corresponding values from
+    // the two halves.
     for i in 0..8 {
         let v = a[i] * b[i];
         op(&mut outputs[i], v);
     }
-    // Slide both 8-wide windows using pointer windows over a scratch buffer (no per-iter shifts)
+
+    // Slide both 8-wide windows using pointer windows over a scratch buffer
+    // (no per-iteration shifts). `a[8]`/`b[8]` are the ∞ evaluations for each
+    // half; they are scaled so that `ex8` can reconstruct the next point using
+    // factorial weights (see `ex8` comment).
     let a_inf40320 = a[8].mul_u64(40320);
     let b_inf40320 = b[8].mul_u64(40320);
-    // Scratch buffers: seed first 8, prewrite slot 15 with inf for the final window
+
+    // Scratch buffers: seed first 8 entries with the currently-known values,
+    // and pre-write slot 15 with the ∞ value for the final window.
     let mut aw_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
     let mut bw_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
+
     let aw_ptr = aw_mu.as_mut_ptr();
     let bw_ptr = bw_mu.as_mut_ptr();
+
+    // SAFETY: `aw_ptr`/`bw_ptr` point to uninitialized `[F; 16]` storage. We
+    // immediately treat them as mutable slices of length 16 and initialize all
+    // indices we later read (0..8 + 8..15 and the pre-written 15th entry).
     let aw_slice_ptr = unsafe { (*aw_ptr).as_mut_ptr() };
     let bw_slice_ptr = unsafe { (*bw_ptr).as_mut_ptr() };
+
     unsafe {
         ptr::copy_nonoverlapping(a.as_ptr(), aw_slice_ptr, 8);
         ptr::write(aw_slice_ptr.add(15), a[8]);
+
         ptr::copy_nonoverlapping(b.as_ptr(), bw_slice_ptr, 8);
         ptr::write(bw_slice_ptr.add(15), b[8]);
     }
+
     for i in 0..7 {
-        // Window over aw[i..i+8] and bw[i..i+8] without bounds checks
+        // Window over `aw[i..i+8]` and `bw[i..i+8]` without bounds checks.
+        // Each window represents 8 consecutive evaluations for the half-product,
+        // and `ex8` extrapolates the next value from that window and the
+        // pre-scaled ∞ value.
         let na = unsafe {
             let win_a_ptr = aw_slice_ptr.add(i) as *const [F; 8];
             ex8::<F>(&*win_a_ptr, a_inf40320)
@@ -242,15 +277,21 @@ fn eval_inter16_final_op<F: JoltField>(
             let win_b_ptr = bw_slice_ptr.add(i) as *const [F; 8];
             ex8::<F>(&*win_b_ptr, b_inf40320)
         };
+
         let v = na * nb;
         op(&mut outputs[8 + i], v);
-        // Append newly computed elements for subsequent windows
+
+        // Append newly computed elements for subsequent windows. This grows the
+        // scratch buffer so that `aw[i+1..i+9]` / `bw[i+1..i+9]` are always
+        // valid windows for the next iteration.
         unsafe {
             ptr::write(aw_slice_ptr.add(8 + i), na);
             ptr::write(bw_slice_ptr.add(8 + i), nb);
         }
     }
-    // Write the inf slot at index 15
+
+    // The ∞ evaluation for the full product is just the product of the ∞
+    // evaluations of each half.
     let v_inf = a[8] * b[8];
     op(&mut outputs[15], v_inf);
 }
@@ -357,23 +398,33 @@ fn eval_inter32_final_op<F: JoltField>(
 ) {
     #[inline]
     fn eval_half_16_base<F: JoltField>(p: [(F, F); 16]) -> ([F; 16], F) {
-        // Compute two 8-sized halves
+        // Compute two 8-sized halves and evaluate each on U_8 with `eval_inter8`.
+        //
+        // SAFETY: `p[0..8]` and `p[8..16]` are non-overlapping slices of length 8,
+        // so reinterpreting them as `[(F, F); 8]` is sound.
         let a8 = eval_inter8(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
         let b8 = eval_inter8(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
-        // Expand each 8 to 16 using ex8 sliding (compute 9..16)
+
+        // Expand each 8-sized evaluation grid to 16 points using ex8 sliding
+        // (computing positions 9..16). This gives us the half-product evaluated
+        // at 1..16 plus its ∞ value.
         #[inline]
         fn expand8_to16<F: JoltField>(vals: &[F; 9]) -> ([F; 16], F) {
-            // Build f[1..16] without zero-initialization; return also inf
+            // Build f[1..16] without zero-initialization; return also inf.
             let mut f_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
             let f_ptr = f_mu.as_mut_ptr();
             let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+
             // First 8 from vals
             unsafe {
                 ptr::copy_nonoverlapping(vals.as_ptr(), f_slice_ptr, 8);
             }
+
             let f_inf = vals[8];
             let f_inf40320 = f_inf.mul_u64(40320);
-            // Compute positions 9..16 (indices 8..15)
+
+            // Compute positions 9..16 (indices 8..15) by sliding an 8-wide
+            // window over the prefix of `f` and applying `ex8`.
             for i in 0..8 {
                 unsafe {
                     let win_ptr = f_slice_ptr.add(i) as *const [F; 8];
@@ -382,39 +433,53 @@ fn eval_inter32_final_op<F: JoltField>(
                     ptr::write(f_slice_ptr.add(8 + i), val);
                 }
             }
+
             let f = unsafe { f_mu.assume_init() };
             (f, f_inf)
         }
+
         let (a16_vals, a_inf) = expand8_to16::<F>(&a8);
         let (b16_vals, b_inf) = expand8_to16::<F>(&b8);
-        // Pointwise product to get the 16-base for the half and its inf without zero-initialization
+
+        // Pointwise product to get the 16-base for the half and its inf
+        // without zero-initialization. This yields the product of 16 polynomials
+        // evaluated at 1..16 plus the ∞ value (returned separately as `a_inf * b_inf`).
         let mut base_mu: MaybeUninit<[F; 16]> = MaybeUninit::uninit();
         let base_ptr = base_mu.as_mut_ptr();
         let base_slice_ptr = unsafe { (*base_ptr).as_mut_ptr() };
+
         for i in 0..16 {
             unsafe {
                 ptr::write(base_slice_ptr.add(i), a16_vals[i] * b16_vals[i]);
             }
         }
+
         let base = unsafe { base_mu.assume_init() };
         (base, a_inf * b_inf)
     }
+
     #[inline]
     fn expand16_to_u32<F: JoltField>(base16: &[F; 16], inf: F) -> [F; 32] {
-        // Build [1..31, inf] for a degree-16 product using ex16 sliding without zero-initialization
+        // Build [1..31, inf] for a degree-16 product using ex16 sliding
+        // without zero-initialization.
         let mut f_mu: MaybeUninit<[F; 32]> = MaybeUninit::uninit();
         let f_ptr = f_mu.as_mut_ptr();
         let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+
         // Initialize first 16 with base16
         unsafe {
             ptr::copy_nonoverlapping(base16.as_ptr(), f_slice_ptr, 16);
         }
-        // Write inf at position 31 upfront (needed by the last window)
+
+        // Write inf at position 31 upfront (needed by the last window).
         unsafe {
             ptr::write(f_slice_ptr.add(31), inf);
         }
+
         let f_inf16_fact = inf.mul_u64(20922789888000u64); // 16!
-                                                           // Compute entries 17..31 (indices 16..30)
+
+        // Compute entries 17..31 (indices 16..30) by sliding a 16-wide window
+        // and applying `ex16` with the pre-scaled ∞ value.
         for i in 0..15 {
             unsafe {
                 let win_ptr = f_slice_ptr.add(i) as *const [F; 16];
@@ -423,17 +488,25 @@ fn eval_inter32_final_op<F: JoltField>(
                 ptr::write(f_slice_ptr.add(16 + i), val);
             }
         }
+
         unsafe { f_mu.assume_init() }
     }
-    // First 16 polynomials → half A
+
+    // First 16 polynomials → half A.
+    //
+    // SAFETY: `p[0..16]` and `p[16..32]` are non-overlapping slices of length
+    // 16, so the casts to `[(F, F); 16]` are valid.
     let (a16_base, a_inf) =
         eval_half_16_base::<F>(unsafe { *(p[0..16].as_ptr() as *const [(F, F); 16]) });
     let a_full = expand16_to_u32::<F>(&a16_base, a_inf);
-    // Second 16 polynomials → half B
+
+    // Second 16 polynomials → half B.
     let (b16_base, b_inf) =
         eval_half_16_base::<F>(unsafe { *(p[16..32].as_ptr() as *const [(F, F); 16]) });
     let b_full = expand16_to_u32::<F>(&b16_base, b_inf);
-    // Combine
+
+    // Combine half A and half B pointwise to get the full product evaluated on
+    // [1..31, ∞].
     for i in 0..32 {
         let mut v = a_full[i];
         v *= b_full[i];
