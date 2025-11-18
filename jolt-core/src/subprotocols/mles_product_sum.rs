@@ -1,9 +1,6 @@
 use crate::{
     field::{BarrettReduce, FMAdd, JoltField},
-    poly::{
-        eq_poly::EqPolynomial, ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial,
-        unipoly::UniPoly,
-    },
+    poly::{ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial, unipoly::UniPoly},
     utils::accumulation::Acc5S,
 };
 use core::{mem::MaybeUninit, ptr};
@@ -19,31 +16,66 @@ pub fn compute_mles_product_sum<F: JoltField>(
 ) -> UniPoly<F> {
     // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, ∞] using split-eq fold.
     let d = mles.len();
+
+    // Fast path for when d = 16.
+    //
+    // This uses a fully stack-allocated implementation based on the optimized
+    // 16-way interpolation kernel, and avoids any heap allocations in the inner loop.
+    if d == 16 {
+        return compute_mles_product_sum_d16(mles, claim, eq_poly);
+    }
+
+    /// Per-`x_out` accumulator used inside `par_fold_out_in`.
+    ///
+    /// - `lanes[k]` accumulates the unreduced contribution for output lane `k`.
+    /// - `pairs` and `endpoints` are scratch buffers reused across all `g`
+    ///   values for a given `x_out`, to avoid repeated heap allocations.
+    struct InnerAcc<F: JoltField> {
+        lanes: Vec<F::Unreduced<9>>,
+        pairs: Vec<(F, F)>,
+        endpoints: Vec<F>,
+    }
+
+    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, ∞] using split-eq fold
+    // for the generic (non-16) case.
     let current_scalar = eq_poly.get_current_scalar();
     let sum_evals: Vec<F> = eq_poly
         .par_fold_out_in(
-            || vec![F::Unreduced::<9>::zero(); d],
+            // Allocate one InnerAcc per `x_out` lane; its scratch buffers are
+            // reused across all inner `g` contributions for that lane.
+            //
+            // Note: `pairs` and `endpoints` are pre-sized to length `d` so that
+            // we can update them by index without changing their length.
+            || InnerAcc {
+                lanes: vec![F::Unreduced::<9>::zero(); d],
+                pairs: vec![(F::zero(), F::zero()); d],
+                endpoints: vec![F::zero(); d],
+            },
             |inner, g, _x_in, e_in| {
-                // Build per-g pairs [(p0, p1); D]
-                let mut pairs: Vec<(F, F)> = Vec::with_capacity(d);
-                for mle in mles.iter() {
+                // Build per-g pairs [(p0, p1); D] in-place, reusing `inner.pairs`.
+                for (idx, mle) in mles.iter().enumerate() {
                     let p0 = mle.get_bound_coeff(2 * g);
                     let p1 = mle.get_bound_coeff(2 * g + 1);
-                    pairs.push((p0, p1));
+                    inner.pairs[idx] = (p0, p1);
                 }
-                // Compute endpoints on U_D into a small Vec<F>
-                let mut endpoints = vec![F::zero(); d];
-                product_eval_univariate_assign(&pairs, &mut endpoints);
+
+                // Compute endpoints on the evaluation grid into the scratch
+                // `endpoints` buffer. All entries are overwritten, so no need
+                // to zero between uses.
+                eval_linear_prod_assign(&inner.pairs, &mut inner.endpoints);
+
                 // Accumulate with unreduced arithmetic
                 for k in 0..d {
-                    inner[k] += e_in.mul_unreduced::<9>(endpoints[k]);
+                    inner.lanes[k] += e_in.mul_unreduced::<9>(inner.endpoints[k]);
                 }
             },
             |_x_out, e_out, inner| {
-                // Reduce inner lanes, scale by e_out (unreduced), return outer acc vector
+                // Reduce inner lanes, scale by e_out (unreduced), return outer acc vector.
+                // We reuse the existing `lanes` allocation by transforming it
+                // in-place into the outer accumulator `Vec<F::Unreduced<9>>`.
                 let mut out = vec![F::Unreduced::<9>::zero(); d];
                 for k in 0..d {
-                    let reduced_k = F::from_montgomery_reduce::<9>(inner[k]);
+                    let reduced_k = F::from_montgomery_reduce::<9>(inner.lanes[k]);
                     out[k] = e_out.mul_unreduced::<9>(reduced_k);
                 }
                 out
@@ -59,17 +91,76 @@ pub fn compute_mles_product_sum<F: JoltField>(
         .map(|x| F::from_montgomery_reduce::<9>(x) * current_scalar)
         .collect();
 
-    // Get r[round] from the eq polynomial
+    finish_mles_product_sum_from_evals(&sum_evals, claim, eq_poly)
+}
+
+/// Specialized implementation of `compute_mles_product_sum` for `d = 16`.
+///
+/// This is the main zkVM setting (see `instruction_lookups::D`) and benefits from
+/// a fully stack-allocated path that uses the optimized 16-way interpolation
+/// kernels via `par_fold_out_in_unreduced`.
+#[inline]
+fn compute_mles_product_sum_d16<F: JoltField>(
+    mles: &[RaPolynomial<u8, F>],
+    claim: F,
+    eq_poly: &GruenSplitEqPolynomial<F>,
+) -> UniPoly<F> {
+    debug_assert_eq!(mles.len(), 16);
+
+    let current_scalar = eq_poly.get_current_scalar();
+
+    // For each group index `g`, build the 16 pairs (p_j(0), p_j(1)) and evaluate
+    // the product over j on U_16 = [1..15, ∞] using the optimized kernel.
+    //
+    // `par_fold_out_in_unreduced` handles the split-eq structure and returns the
+    // combined sum over (x_out, x_in) after Montgomery reduction.
+    let sum_evals_arr: [F; 16] = eq_poly.par_fold_out_in_unreduced::<9, 16>(&|g| {
+        // Build pairs[(p0, p1); 16] on the stack.
+        let mut pairs: [(F, F); 16] = core::array::from_fn(|_| (F::zero(), F::zero()));
+        for (i, mle) in mles.iter().enumerate() {
+            let p0 = mle.get_bound_coeff(2 * g);
+            let p1 = mle.get_bound_coeff(2 * g + 1);
+            pairs[i] = (p0, p1);
+        }
+
+        // Evaluate the product of the 16 linear polynomials on the 16-point grid.
+        let mut endpoints = [F::zero(); 16];
+        eval_linear_prod_assign(&pairs, &mut endpoints);
+        endpoints
+    });
+
+    let sum_evals: Vec<F> = sum_evals_arr
+        .into_iter()
+        .map(|x| x * current_scalar)
+        .collect();
+
+    finish_mles_product_sum_from_evals(&sum_evals, claim, eq_poly)
+}
+
+/// Given the evaluations of `g(X) / eq(X, r[round])` on the grid
+/// `[1, 2, ..., d - 1, ∞]`, recover the full univariate polynomial
+/// `g(X) = eq(X, r[round]) * (interpolated quotient)` such that
+/// `g(0) + g(1) = claim`.
+#[inline]
+fn finish_mles_product_sum_from_evals<F: JoltField>(
+    sum_evals: &[F],
+    claim: F,
+    eq_poly: &GruenSplitEqPolynomial<F>,
+) -> UniPoly<F> {
+    // Get r[round] from the eq polynomial and compute the 1-bit equality polynomial
+    // explicitly:
+    //   eq(0, r_round) = 1 - r_round
+    //   eq(1, r_round) = r_round
     let r_round = eq_poly.get_current_w();
-    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r_round]);
-    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r_round]);
+    let eq_eval_at_0 = F::one() - r_round;
+    let eq_eval_at_1 = r_round;
 
     // Obtain the eval at 0 from the claim.
     let eval_at_1 = sum_evals[0];
     let eval_at_0 = (claim - eq_eval_at_1 * eval_at_1) / eq_eval_at_0;
 
     // Interpolate the intermediate polynomial.
-    let toom_evals = [&[eval_at_0], &*sum_evals].concat();
+    let toom_evals = [&[eval_at_0], sum_evals].concat();
     let tmp_coeffs = UniPoly::from_evals_toom(&toom_evals).coeffs;
 
     // Add in the missing eq(X, r[round]) factor.
@@ -85,26 +176,26 @@ pub fn compute_mles_product_sum<F: JoltField>(
     UniPoly::from_coeff(coeffs)
 }
 
-/// Computes the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
+/// Evaluate the product of linear polynomials on the grid `[1, 2, ..., D - 1, ∞]`.
 ///
-/// The evaluations on `U_D` are assigned to `evals`.
-///
-/// Inputs:
-/// - `pairs[j] = (p_j(0), p_j(1))`
-/// - `evals`: output slice with layout `[1, 2, ..., D - 1, ∞]`
-pub fn product_eval_univariate_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
+/// - Each pair satisfies `pairs[j] = (p_j(0), p_j(1))` for a linear `p_j`.
+/// - This writes the evaluations of `P(x) = ∏_j p_j(x)` into `evals` in the
+///   layout `[P(1), P(2), ..., P(D - 1), P(∞)]`.
+pub fn eval_linear_prod_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
     match pairs.len() {
-        2 => eval_inter2_final_op(pairs.try_into().unwrap(), evals, assign),
-        3 => eval_inter3_final_op(pairs.try_into().unwrap(), evals, assign),
-        4 => eval_inter4_final_op(pairs.try_into().unwrap(), evals, assign),
-        8 => eval_inter8_final_op(pairs.try_into().unwrap(), evals, assign),
-        16 => eval_inter16_final_op(pairs.try_into().unwrap(), evals, assign),
-        32 => eval_inter32_final_op(pairs.try_into().unwrap(), evals, assign),
+        2 => eval_prod_2_assign(pairs.try_into().unwrap(), evals),
+        3 => eval_prod_3_assign(pairs.try_into().unwrap(), evals),
+        4 => eval_prod_4_assign(pairs.try_into().unwrap(), evals),
+        8 => eval_prod_8_assign(pairs.try_into().unwrap(), evals),
+        16 => eval_prod_16_assign(pairs.try_into().unwrap(), evals),
+        32 => eval_prod_32_assign(pairs.try_into().unwrap(), evals),
         _ => product_eval_univariate_naive_assign(pairs, evals),
     }
 }
 
-fn eval_inter2<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
+/// Evaluate the product of 2 linear polynomials at the small internal grid used
+/// by the interpolation routines (returns values at 1, 2, and ∞).
+fn eval_linear_prod_2_internal<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
     let p_inf = p1 - p0;
     let p2 = p_inf + p1;
     let q_inf = q1 - q0;
@@ -115,47 +206,52 @@ fn eval_inter2<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
     (r1, r2, r_inf)
 }
 
-fn eval_inter2_final_op<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F], op: impl Fn(&mut F, F)) {
-    op(&mut outputs[0], p[0].1 * p[1].1); // 1
-    op(&mut outputs[1], (p[0].1 - p[0].0) * (p[1].1 - p[1].0)); // ∞
+fn eval_prod_2_assign<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F]) {
+    outputs[0] = p[0].1 * p[1].1; // 1
+    outputs[1] = (p[0].1 - p[0].0) * (p[1].1 - p[1].0); // ∞
 }
 
-fn eval_inter3_final_op<F: JoltField>(
-    pairs: &[(F, F); 3],
-    outputs: &mut [F],
-    op: impl Fn(&mut F, F),
-) {
-    let (a1, a2, a_inf) = eval_inter2(pairs[0], pairs[1]);
+fn eval_prod_3_assign<F: JoltField>(pairs: &[(F, F); 3], outputs: &mut [F]) {
+    let (a1, a2, a_inf) = eval_linear_prod_2_internal(pairs[0], pairs[1]);
     let (b0, b1) = pairs[2];
     let b_inf = b1 - b0;
     let b2 = b1 + b_inf;
-    op(&mut outputs[0], a1 * b1);
-    op(&mut outputs[1], a2 * b2);
-    op(&mut outputs[2], a_inf * b_inf);
+    outputs[0] = a1 * b1;
+    outputs[1] = a2 * b2;
+    outputs[2] = a_inf * b_inf;
 }
 
-fn eval_inter4<F: JoltField>(p: [(F, F); 4]) -> (F, F, F, F, F) {
-    let (a1, a2, a_inf) = eval_inter2(p[0], p[1]);
+/// Evaluate the product of 4 linear polynomials at the internal interpolation
+/// grid used by the higher-degree kernels.
+///
+/// Returns 5 values corresponding to evaluations at points 1..4 and ∞.
+fn eval_linear_prod_4_internal<F: JoltField>(p: [(F, F); 4]) -> (F, F, F, F, F) {
+    let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
     let a3 = ex2(&[a1, a2], &a_inf);
     let a4 = ex2(&[a2, a3], &a_inf);
-    let (b1, b2, b_inf) = eval_inter2(p[2], p[3]);
+    let (b1, b2, b_inf) = eval_linear_prod_2_internal(p[2], p[3]);
     let b3 = ex2(&[b1, b2], &b_inf);
     let b4 = ex2(&[b2, b3], &b_inf);
     (a1 * b1, a2 * b2, a3 * b3, a4 * b4, a_inf * b_inf)
 }
 
-fn eval_inter4_final_op<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F], op: impl Fn(&mut F, F)) {
-    let (a1, a2, a_inf) = eval_inter2(p[0], p[1]);
+fn eval_prod_4_assign<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F]) {
+    let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
     let a3 = ex2(&[a1, a2], &a_inf);
-    let (b1, b2, b_inf) = eval_inter2(p[2], p[3]);
+    let (b1, b2, b_inf) = eval_linear_prod_2_internal(p[2], p[3]);
     let b3 = ex2(&[b1, b2], &b_inf);
-    op(&mut outputs[0], a1 * b1); // 1
-    op(&mut outputs[1], a2 * b2); // 2
-    op(&mut outputs[2], a3 * b3); // 3
-    op(&mut outputs[3], a_inf * b_inf); // ∞
+    outputs[0] = a1 * b1; // 1
+    outputs[1] = a2 * b2; // 2
+    outputs[2] = a3 * b3; // 3
+    outputs[3] = a_inf * b_inf; // ∞
 }
 
-fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
+/// Evaluate the product of 8 linear polynomials on the internal interpolation
+/// grid used by the higher-degree kernels.
+///
+/// Returns 9 values: the first 8 correspond to points 1..8, and the 9th entry
+/// is the value at ∞.
+fn eval_linear_prod_8_internal<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
     #[inline]
     fn batch_helper<F: JoltField>(f0: F, f1: F, f2: F, f3: F, f_inf: F) -> (F, F, F, F) {
         let f_inf6 = f_inf.mul_u64(6);
@@ -165,11 +261,14 @@ fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
     }
 
     // SAFETY: `p[0..4]` and `p[4..8]` are disjoint slices of length 4 each.
-    // We reinterpret them as `[ (F, F); 4 ]` to pass by value into `eval_inter4`,
-    // which avoids per-element copies while preserving alignment.
-    let (a1, a2, a3, a4, a_inf) = eval_inter4(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
+    // We reinterpret them as `[ (F, F); 4 ]` to pass by value into
+    // `eval_linear_prod_4_internal`, which avoids per-element copies while
+    // preserving alignment.
+    let (a1, a2, a3, a4, a_inf) =
+        eval_linear_prod_4_internal(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
     let (a5, a6, a7, a8) = batch_helper(a1, a2, a3, a4, a_inf);
-    let (b1, b2, b3, b4, b_inf) = eval_inter4(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
+    let (b1, b2, b3, b4, b_inf) =
+        eval_linear_prod_4_internal(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
 
     let (b5, b6, b7, b8) = batch_helper(b1, b2, b3, b4, b_inf);
 
@@ -186,7 +285,7 @@ fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
     ]
 }
 
-fn eval_inter8_final_op<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F], op: impl Fn(&mut F, F)) {
+fn eval_prod_8_assign<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F]) {
     #[inline]
     fn batch_helper<F: JoltField>(f0: F, f1: F, f2: F, f3: F, f_inf: F) -> (F, F, F) {
         let f_inf6 = f_inf.mul_u64(6);
@@ -195,44 +294,42 @@ fn eval_inter8_final_op<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F], op: im
         (f4, f5, f6)
     }
 
-    // SAFETY: as in `eval_inter8`, reinterpreting `p[0..4]` and `p[4..8]` as
-    // fixed-size arrays is sound because those sub-slices are exactly length 4
-    // and properly aligned.
-    let (a1, a2, a3, a4, a_inf) = eval_inter4(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
+    // SAFETY: as in `eval_linear_prod_8_internal`, reinterpreting `p[0..4]` and
+    // `p[4..8]` as fixed-size arrays is sound because those sub-slices are
+    // exactly length 4 and properly aligned.
+    let (a1, a2, a3, a4, a_inf) =
+        eval_linear_prod_4_internal(unsafe { *(p[0..4].as_ptr() as *const [(F, F); 4]) });
     let (a5, a6, a7) = batch_helper(a1, a2, a3, a4, a_inf);
-    let (b1, b2, b3, b4, b_inf) = eval_inter4(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
+    let (b1, b2, b3, b4, b_inf) =
+        eval_linear_prod_4_internal(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
     let (b5, b6, b7) = batch_helper(b1, b2, b3, b4, b_inf);
 
-    op(&mut outputs[0], a1 * b1);
-    op(&mut outputs[1], a2 * b2);
-    op(&mut outputs[2], a3 * b3);
-    op(&mut outputs[3], a4 * b4);
-    op(&mut outputs[4], a5 * b5);
-    op(&mut outputs[5], a6 * b6);
-    op(&mut outputs[6], a7 * b7);
-    op(&mut outputs[7], a_inf * b_inf);
+    outputs[0] = a1 * b1;
+    outputs[1] = a2 * b2;
+    outputs[2] = a3 * b3;
+    outputs[3] = a4 * b4;
+    outputs[4] = a5 * b5;
+    outputs[5] = a6 * b6;
+    outputs[6] = a7 * b7;
+    outputs[7] = a_inf * b_inf;
 }
 
-fn eval_inter16_final_op<F: JoltField>(
-    p: &[(F, F); 16],
-    outputs: &mut [F],
-    op: impl Fn(&mut F, F),
-) {
+fn eval_prod_16_assign<F: JoltField>(p: &[(F, F); 16], outputs: &mut [F]) {
     debug_assert!(outputs.len() >= 16);
 
     // First, split the 16 polynomials into two groups of 8 and evaluate each group
-    // on U_8 = [1..7, ∞] using the `eval_inter8` kernel.
+    // on the internal 8-point grid using the `eval_linear_prod_8_internal` kernel.
     //
     // SAFETY: `p[0..8]` and `p[8..16]` are non-overlapping slices of exactly
     // 8 elements, so reinterpreting them as `[(F, F); 8]` is valid.
-    let a = eval_inter8(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
-    let b = eval_inter8(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
+    let a = eval_linear_prod_8_internal(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
+    let b = eval_linear_prod_8_internal(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
 
     // Emit indices 1..8 directly by multiplying the corresponding values from
     // the two halves.
     for i in 0..8 {
         let v = a[i] * b[i];
-        op(&mut outputs[i], v);
+        outputs[i] = v;
     }
 
     // Slide both 8-wide windows using pointer windows over a scratch buffer
@@ -279,7 +376,7 @@ fn eval_inter16_final_op<F: JoltField>(
         };
 
         let v = na * nb;
-        op(&mut outputs[8 + i], v);
+        outputs[8 + i] = v;
 
         // Append newly computed elements for subsequent windows. This grows the
         // scratch buffer so that `aw[i+1..i+9]` / `bw[i+1..i+9]` are always
@@ -293,7 +390,7 @@ fn eval_inter16_final_op<F: JoltField>(
     // The ∞ evaluation for the full product is just the product of the ∞
     // evaluations of each half.
     let v_inf = a[8] * b[8];
-    op(&mut outputs[15], v_inf);
+    outputs[15] = v_inf;
 }
 
 #[inline(always)]
@@ -391,19 +488,16 @@ fn ex16<F: JoltField>(f: &[F; 16], f_inf16_fact: F) -> F {
     acc.barrett_reduce()
 }
 
-fn eval_inter32_final_op<F: JoltField>(
-    p: &[(F, F); 32],
-    outputs: &mut [F],
-    op: impl Fn(&mut F, F),
-) {
+fn eval_prod_32_assign<F: JoltField>(p: &[(F, F); 32], outputs: &mut [F]) {
     #[inline]
     fn eval_half_16_base<F: JoltField>(p: [(F, F); 16]) -> ([F; 16], F) {
-        // Compute two 8-sized halves and evaluate each on U_8 with `eval_inter8`.
+        // Compute two 8-sized halves and evaluate each on the internal 8-point grid
+        // with `eval_linear_prod_8_internal`.
         //
         // SAFETY: `p[0..8]` and `p[8..16]` are non-overlapping slices of length 8,
         // so reinterpreting them as `[(F, F); 8]` is sound.
-        let a8 = eval_inter8(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
-        let b8 = eval_inter8(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
+        let a8 = eval_linear_prod_8_internal(unsafe { *(p[0..8].as_ptr() as *const [(F, F); 8]) });
+        let b8 = eval_linear_prod_8_internal(unsafe { *(p[8..16].as_ptr() as *const [(F, F); 8]) });
 
         // Expand each 8-sized evaluation grid to 16 points using ex8 sliding
         // (computing positions 9..16). This gives us the half-product evaluated
@@ -510,7 +604,7 @@ fn eval_inter32_final_op<F: JoltField>(
     for i in 0..32 {
         let mut v = a_full[i];
         v *= b_full[i];
-        op(&mut outputs[i], v);
+        outputs[i] = v;
     }
 }
 
@@ -522,11 +616,6 @@ fn dbl<F: JoltField>(x: F) -> F {
 #[inline(always)]
 fn dbl_assign<F: JoltField>(x: &mut F) {
     *x += *x;
-}
-
-#[inline(always)]
-fn assign<T: Sized>(dst: &mut T, src: T) {
-    *dst = src;
 }
 
 /// Naive evaluator for the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
