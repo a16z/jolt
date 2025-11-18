@@ -174,45 +174,48 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let G = E_out
             .par_iter()
             .enumerate()
-            .map(|(x_out, &e_out)| {
-                let mut local_unreduced: Vec<F::Unreduced<9>> =
-                    unsafe_allocate_zero_vec(polynomial.K);
-                let mut touched_indices: Vec<usize> = Vec::new();
-                let mut touched_flags = FixedBitSet::with_capacity(polynomial.K);
-                let x_out_base = x_out << (x_in_bits + 1);
+            .fold(
+                || unsafe_allocate_zero_vec(polynomial.K),
+                |mut partial, (x_out, &e_out)| {
+                    let mut local_unreduced: Vec<F::Unreduced<9>> =
+                        unsafe_allocate_zero_vec(polynomial.K);
+                    let mut touched_indices: Vec<usize> = Vec::new();
+                    let mut touched_flags = FixedBitSet::with_capacity(polynomial.K);
+                    let x_out_base = x_out << (x_in_bits + 1);
 
-                for x_in in 0..in_len {
-                    let j0 = x_out_base + (x_in << 1);
-                    let j1 = j0 + 1;
-                    let off = 2 * x_in;
-                    let add0_unr = merged_in_unreduced[off];
-                    let add1_unr = merged_in_unreduced[off + 1];
+                    for x_in in 0..in_len {
+                        let j0 = x_out_base + (x_in << 1);
+                        let j1 = j0 + 1;
+                        let off = 2 * x_in;
+                        let add0_unr = merged_in_unreduced[off];
+                        let add1_unr = merged_in_unreduced[off + 1];
 
-                    if let Some(k0) = nonzero_indices[j0] {
-                        let idx = k0 as usize;
-                        if !touched_flags.contains(idx) {
-                            touched_flags.insert(idx);
-                            touched_indices.push(idx);
+                        if let Some(k0) = nonzero_indices[j0] {
+                            let idx = k0 as usize;
+                            if !touched_flags.contains(idx) {
+                                touched_flags.insert(idx);
+                                touched_indices.push(idx);
+                            }
+                            local_unreduced[idx] += add0_unr;
                         }
-                        local_unreduced[idx] += add0_unr;
-                    }
-                    if let Some(k1) = nonzero_indices[j1] {
-                        let idx = k1 as usize;
-                        if !touched_flags.contains(idx) {
-                            touched_flags.insert(idx);
-                            touched_indices.push(idx);
+                        if let Some(k1) = nonzero_indices[j1] {
+                            let idx = k1 as usize;
+                            if !touched_flags.contains(idx) {
+                                touched_flags.insert(idx);
+                                touched_indices.push(idx);
+                            }
+                            local_unreduced[idx] += add1_unr;
                         }
-                        local_unreduced[idx] += add1_unr;
                     }
-                }
-                // Materialize as reduced F and apply the e_out factor for touched indices
-                let mut local_g: Vec<F> = unsafe_allocate_zero_vec(polynomial.K);
-                for idx in touched_indices {
-                    let reduced = F::from_montgomery_reduce::<9>(local_unreduced[idx]);
-                    local_g[idx] = e_out * reduced;
-                }
-                local_g
-            })
+
+                    for idx in touched_indices {
+                        let reduced = F::from_montgomery_reduce::<9>(local_unreduced[idx]);
+                        partial[idx] += e_out * reduced;
+                    }
+
+                    partial
+                },
+            )
             .reduce(
                 || unsafe_allocate_zero_vec(polynomial.K),
                 |mut a, b| {
