@@ -218,7 +218,7 @@ pub fn eval_linear_prod_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) 
             let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 32]) };
             eval_prod_32_assign(p, evals)
         }
-        _ => product_eval_univariate_naive_assign(pairs, evals),
+        _ => eval_linear_prod_naive_assign(pairs, evals),
     }
 }
 
@@ -774,7 +774,7 @@ fn dbl_assign<F: JoltField>(x: &mut F) {
 /// Complexity is `O(D^2)` field multiplications and is intended only as a
 /// fallback for unsupported `D`; hot paths should go through the specialized
 /// kernels above.
-pub fn product_eval_univariate_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
+pub fn eval_linear_prod_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
     let d = pairs.len();
     debug_assert_eq!(evals.len(), d);
     if d == 0 {

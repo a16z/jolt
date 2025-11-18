@@ -10,8 +10,7 @@ use jolt_core::{
         unipoly::UniPoly,
     },
     subprotocols::mles_product_sum::{
-        compute_mles_product_sum, finish_mles_product_sum_from_evals,
-        product_eval_univariate_naive_assign,
+        compute_mles_product_sum, eval_linear_prod_naive_assign, finish_mles_product_sum_from_evals,
     },
 };
 
@@ -59,7 +58,7 @@ fn compute_mles_product_sum_naive<F: JoltField>(
 
                 // Evaluate the product on the grid using the naive O(d^2) kernel,
                 // then accumulate with the inner eq weight `e_in`.
-                product_eval_univariate_naive_assign(&inner.pairs, &mut inner.evals);
+                eval_linear_prod_naive_assign(&inner.pairs, &mut inner.evals);
                 for k in 0..d {
                     inner.lanes[k] += e_in * inner.evals[k];
                 }
