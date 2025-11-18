@@ -245,7 +245,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     }
 
     fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
-        const DEGREE: usize = 3;
+        const DEGREE: usize = 2;
 
         let Self {
             inc,
@@ -271,25 +271,17 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 [
                     ra_evals[0] * (val_evals[0] + params.gamma * (val_evals[0] + inc_eval)),
                     ra_evals[1] * (val_evals[1] + params.gamma * (val_evals[1] + inc_eval)),
-                    ra_evals[2] * (val_evals[2] + params.gamma * (val_evals[2] + inc_eval)),
                 ]
             })
             .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
                 [
                     running[0] + new[0].as_unreduced_ref(),
                     running[1] + new[1].as_unreduced_ref(),
-                    running[2] + new[2].as_unreduced_ref(),
                 ]
             })
             .reduce(
                 || [F::Unreduced::<5>::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
+                |running, new| [running[0] + new[0], running[1] + new[1]],
             );
 
         UniPoly::from_evals_and_hint(
@@ -297,7 +289,6 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             &[
                 eq_r_prime_eval * F::from_barrett_reduce(evals[0]),
                 eq_r_prime_eval * F::from_barrett_reduce(evals[1]),
-                eq_r_prime_eval * F::from_barrett_reduce(evals[2]),
             ],
         )
     }
