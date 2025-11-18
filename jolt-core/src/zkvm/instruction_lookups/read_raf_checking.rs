@@ -594,7 +594,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 F::from_u64(suffix.suffix_mle::<XLEN>(LookupBits::new(0, 0)))
                             })
                             .collect();
-                        *val += table.combine(&prefixes, &suffixes);
+                        // Each cycle contributes at most one lookup table, so we can assign directly.
+                        *val = table.combine(&prefixes, &suffixes);
                     }
                 });
         }
@@ -604,18 +605,23 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         {
             let span = tracing::span!(tracing::Level::INFO, "Materialize combined_raf_val_poly");
             let _guard = span.enter();
+
+            // These prefix contributions are independent of j, so precompute them once.
+            let left_prefix = self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
+            let right_prefix = self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
+            let identity_prefix = self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
+
+            let raf_val_interleaved = gamma_sqr * left_prefix + gamma_cub * right_prefix;
+            let raf_val_identity = gamma_cub * identity_prefix;
+
             combined_raf_val_poly
                 .par_iter_mut()
                 .zip(std::mem::take(&mut self.is_interleaved_operands))
                 .for_each(|(val, is_interleaved_operands)| {
                     if is_interleaved_operands {
-                        *val += gamma_sqr
-                            * self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
-                            + gamma_cub
-                                * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
+                        *val = raf_val_interleaved;
                     } else {
-                        *val +=
-                            gamma_cub * self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
+                        *val = raf_val_identity;
                     }
                 });
         }
