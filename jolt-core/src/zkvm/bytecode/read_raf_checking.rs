@@ -392,7 +392,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                         let j = j_lo + (j_hi << in_n_vars);
 
                         for (i, ra_i) in self.ra.iter().enumerate() {
-                            // TODO: Improve memory access.
                             let ra_i_eval_at_j_0 = ra_i.get_bound_coeff(j * 2);
                             let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
                             ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
