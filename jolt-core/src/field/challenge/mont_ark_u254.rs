@@ -2,11 +2,13 @@
 //! concrete type being used as JoltField.
 //!
 
+use crate::field::OptimizedMul;
 use crate::field::{tracked_ark::TrackedFr, JoltField};
 use crate::impl_field_ops_inline;
 use allocative::Allocative;
 use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use num::{One, Zero};
 use rand::{Rng, RngCore};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
@@ -104,3 +106,59 @@ impl Into<TrackedFr> for &Mont254BitChallenge<TrackedFr> {
 }
 
 impl_field_ops_inline!(Mont254BitChallenge<TrackedFr>, TrackedFr, standard);
+
+impl OptimizedMul<ark_bn254::Fr, ark_bn254::Fr> for Mont254BitChallenge<ark_bn254::Fr> {
+    fn mul_0_optimized(self, other: ark_bn254::Fr) -> Self::Output {
+        if other.is_zero() {
+            ark_bn254::Fr::zero()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_1_optimized(self, other: ark_bn254::Fr) -> Self::Output {
+        if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_01_optimized(self, other: ark_bn254::Fr) -> Self::Output {
+        if other.is_zero() {
+            ark_bn254::Fr::zero()
+        } else if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+}
+
+impl OptimizedMul<TrackedFr, TrackedFr> for Mont254BitChallenge<TrackedFr> {
+    fn mul_0_optimized(self, other: TrackedFr) -> Self::Output {
+        if other.is_zero() {
+            TrackedFr::zero()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_1_optimized(self, other: TrackedFr) -> Self::Output {
+        if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_01_optimized(self, other: TrackedFr) -> Self::Output {
+        if other.is_zero() {
+            TrackedFr::zero()
+        } else if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+}

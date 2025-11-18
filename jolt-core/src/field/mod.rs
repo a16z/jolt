@@ -170,7 +170,8 @@ pub trait JoltField:
         + From<u128>
         + Into<Self>
         + ChallengeFieldOps<Self>
-        + UniformRand;
+        + UniformRand
+        + OptimizedMul<Self, Self>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.
@@ -320,12 +321,12 @@ pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {
     fn mul_01_optimized(self, other: Rhs) -> Self::Output;
 }
 
-impl<T> OptimizedMul<T, T> for T
+impl<F> OptimizedMul<F, F> for F
 where
-    T: JoltField,
+    F: JoltField,
 {
     #[inline(always)]
-    fn mul_0_optimized(self, other: T) -> T {
+    fn mul_0_optimized(self, other: F) -> F {
         if self.is_zero() || other.is_zero() {
             Self::zero()
         } else {
@@ -334,7 +335,7 @@ where
     }
 
     #[inline(always)]
-    fn mul_1_optimized(self, other: T) -> T {
+    fn mul_1_optimized(self, other: F) -> F {
         if self.is_one() {
             other
         } else if other.is_one() {
@@ -345,7 +346,7 @@ where
     }
 
     #[inline(always)]
-    fn mul_01_optimized(self, other: T) -> T {
+    fn mul_01_optimized(self, other: F) -> F {
         if self.is_zero() || other.is_zero() {
             Self::zero()
         } else {
