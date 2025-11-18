@@ -22,7 +22,6 @@ use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::{
     field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
-    utils::math::Math,
     zkvm::{lookup_table::LookupTables, ram::remap_address},
 };
 
@@ -219,19 +218,17 @@ impl CommittedPolynomial {
                 PCS::process_chunk_onehot(setup, config::params().instruction.k_chunk, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
+                let params = &config::params().bytecode;
                 let d = preprocessing.bytecode.d;
-                let log_K = preprocessing.bytecode.code_size.log_2();
-                let log_K_chunk = log_K.div_ceil(d);
-                let K_chunk = 1 << log_K_chunk;
 
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
                         let pc = preprocessing.bytecode.get_pc(cycle);
-                        Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
+                        Some((pc >> (params.log_chunk * (d - 1 - idx))) % params.chunk_size)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, K_chunk, &row)
+                PCS::process_chunk_onehot(setup, params.chunk_size, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -540,7 +537,7 @@ impl CommittedPolynomial {
 
     pub fn get_onehot_k<F, PCS>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
+        _preprocessing: &JoltProverPreprocessing<F, PCS>,
     ) -> Option<usize>
     where
         F: JoltField,
@@ -551,14 +548,7 @@ impl CommittedPolynomial {
 
         match self {
             CommittedPolynomial::InstructionRa(_) => Some(params.instruction.k_chunk),
-            CommittedPolynomial::BytecodeRa(_) => {
-                // TODO: Compute this up front?
-                let d = preprocessing.bytecode.d;
-                let log_K = preprocessing.bytecode.code_size.log_2();
-                let log_K_chunk = log_K.div_ceil(d);
-                let K_chunk = 1 << log_K_chunk;
-                Some(K_chunk)
-            }
+            CommittedPolynomial::BytecodeRa(_) => Some(params.bytecode.chunk_size),
             CommittedPolynomial::RamRa(_) => Some(one_hot.chunk_size),
             _ => None,
         }
@@ -621,18 +611,16 @@ impl CommittedPolynomial {
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let d = preprocessing.bytecode.d;
-                let log_K = preprocessing.bytecode.code_size.log_2();
-                let log_K_chunk = log_K.div_ceil(d);
-                let K_chunk = 1 << log_K_chunk;
+                let params = &config::params().bytecode;
 
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
                         let pc = preprocessing.bytecode.get_pc(cycle);
-                        Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
+                        Some((pc >> (params.log_chunk * (d - 1 - idx))) % params.chunk_size)
                     })
                     .collect();
-                PCS::process_chunk_onehot(prover_setup, K_chunk, &row)
+                PCS::process_chunk_onehot(prover_setup, params.chunk_size, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles

@@ -37,15 +37,7 @@ impl BytecodePreprocessing {
         let pc_map = BytecodePCMapper::new(&bytecode);
 
         let params = config::params();
-        let bytecode_cfg = &params.bytecode;
-        let chunk_bits = bytecode_cfg.log_chunk;
-        let code_size = (bytecode
-            .len()
-            .next_power_of_two()
-            .log_2()
-            .div_ceil(chunk_bits)
-            * chunk_bits)
-            .pow2();
+        let code_size = bytecode.len().next_power_of_two().max(2);
         let d = params.one_hot.compute_d(code_size);
 
         // Bytecode: Pad to nearest power of 2
@@ -243,8 +235,8 @@ fn compute_bytecode_h_indices(
     trace: &[Cycle],
 ) -> Vec<Vec<Option<u16>>> {
     let d = preprocessing.d;
-    let log_K = preprocessing.code_size.log_2();
-    let log_K_chunk = log_K.div_ceil(d);
+    let bytecode_cfg = &config::params().bytecode;
+    let log_K_chunk = bytecode_cfg.log_chunk;
 
     (0..d)
         .into_par_iter()

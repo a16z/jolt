@@ -2,7 +2,6 @@ use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::utils::math::Math;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::zkvm::config;
 use crate::zkvm::instruction::LookupQuery;
@@ -356,11 +355,9 @@ impl<F: JoltField> RLCPolynomial<F> {
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let d = preprocessing.bytecode.d;
-                let log_K = preprocessing.bytecode.code_size.log_2();
-                let log_K_chunk = log_K.div_ceil(d);
-                let K_chunk = 1 << log_K_chunk;
                 let pc = preprocessing.bytecode.get_pc(cycle);
-                Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
+                let params = &config::params().bytecode;
+                Some((pc >> (params.log_chunk * (d - 1 - idx))) % params.chunk_size)
             }
             CommittedPolynomial::RamRa(idx) => remap_address(
                 cycle.ram_access().address() as u64,

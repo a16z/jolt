@@ -237,6 +237,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     }
 
     fn init_log_t_rounds(&mut self) {
+        let params = &config::params().bytecode;
         let int_poly = self.params.int_poly.final_sumcheck_claim();
 
         // We have a separate Val polynomial for each stage
@@ -266,30 +267,29 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .unwrap(),
         );
 
-        let bytecode_cfg = &config::params().bytecode;
-        let log_K_chunk = bytecode_cfg.log_chunk;
-        let chunk_length = bytecode_cfg.chunk_size;
-        self.r_address_prime
-            .par_chunks_mut(self.params.log_K_chunk)
-            .rev()
+        // Reverse r_address_prime to get the correct order (it was built low-to-high)
+        let mut r_address = self.r_address_prime.clone();
+        r_address.reverse();
+
+        let r_address_chunks = self.params.compute_r_address_chunks(&r_address);
+
+        // Use the computed chunks to build RA polynomials
+        self.ra = r_address_chunks
+            .iter()
             .enumerate()
-            .map(|(i, r_address_prime)| {
+            .map(|(i, r_address_chunk)| {
                 let ra_i: Vec<Option<u16>> = self
                     .pc
                     .par_iter()
                     .map(|k| {
-                        let k = (k >> (log_K_chunk * (self.params.d - i - 1))) % chunk_length;
+                        let k =
+                            (k >> (params.log_chunk * (self.params.d - i - 1))) % params.chunk_size;
                         Some(k as u16)
                     })
                     .collect();
-                r_address_prime.reverse();
-                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_prime))
+                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_chunk))
             })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .for_each(|ra| {
-                self.ra.push(ra);
-            });
+            .collect();
     }
 }
 
@@ -487,14 +487,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         let opening_point = self.params.get_opening_point(sumcheck_challenges);
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
 
-        let bytecode_chunk = config::params().bytecode.log_chunk;
+        // Compute r_address_chunks with proper padding
+        let r_address_chunks = self.params.compute_r_address_chunks(&r_address.r);
+
         for i in 0..self.params.d {
-            let r_address = &r_address.r[bytecode_chunk * i..bytecode_chunk * (i + 1)];
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
-                r_address.to_vec(),
+                r_address_chunks[i].clone(),
                 r_cycle.clone().into(),
                 vec![self.ra[i].final_sumcheck_claim()],
             );
@@ -603,14 +604,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
     ) {
         let opening_point = self.params.get_opening_point(sumcheck_challenges);
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
-        let bytecode_chunk = config::params().bytecode.log_chunk;
+
+        // Compute r_address_chunks with proper padding
+        let r_address_chunks = self.params.compute_r_address_chunks(&r_address.r);
+
         (0..self.params.d).for_each(|i| {
-            let r_slice = &r_address.r[bytecode_chunk * i..bytecode_chunk * (i + 1)];
+            let opening_point = [&r_address_chunks[i][..], &r_cycle.r].concat();
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
-                [r_slice, &r_cycle.r].concat(),
+                opening_point,
             );
         });
     }
@@ -623,8 +627,6 @@ struct ReadRafSumcheckParams<F: JoltField> {
     rv_claim: F,
     /// Bytecode length.
     K: usize,
-    /// Address chunking parameters: split LOG_K into `d` chunks of size `log_K_chunk`.
-    log_K_chunk: usize,
     /// log2(K) and log2(T) used to determine round counts.
     log_K: usize,
     log_T: usize,
@@ -651,7 +653,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let K = bytecode_preprocessing.code_size;
         let log_K = K.log_2();
         let d = bytecode_preprocessing.d;
-        let log_K_chunk = log_K.div_ceil(d);
         let gamma_powers = transcript.challenge_scalar_powers(7);
 
         let bytecode = &bytecode_preprocessing.bytecode;
@@ -742,12 +743,13 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             r_cycle_5.r,
         ];
 
+        // Note: We don't have r_address at this point (it comes from sumcheck_challenges),
+        // so we initialize r_address_chunks as empty and will compute it later
         Self {
             gamma_powers,
             rv_claim,
             K,
             log_K,
-            log_K_chunk,
             d,
             log_T: n_cycle_vars,
             val_polys,
@@ -1203,6 +1205,30 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         r[0..self.log_K].reverse();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
+    }
+
+    fn compute_r_address_chunks(&self, r_address: &[F::Challenge]) -> Vec<Vec<F::Challenge>> {
+        let params = &config::params().bytecode;
+        let r_address = if r_address.len().is_multiple_of(params.log_chunk) {
+            r_address.to_vec()
+        } else {
+            [
+                &vec![
+                    F::Challenge::from(0_u128);
+                    params.log_chunk - (r_address.len() % params.log_chunk)
+                ],
+                r_address,
+            ]
+            .concat()
+        };
+
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
+            .chunks(params.log_chunk)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        debug_assert_eq!(r_address_chunks.len(), self.d);
+        r_address_chunks
     }
 }
 
