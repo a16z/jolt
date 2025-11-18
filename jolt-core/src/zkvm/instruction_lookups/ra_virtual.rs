@@ -19,8 +19,8 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
+        config,
         instruction::LookupQuery,
-        instruction_lookups::{d, k_chunk, log_k, log_k_chunk},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -56,10 +56,10 @@ impl<F: JoltField> RaSumcheckProver<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let log_k = log_k();
-        let log_k_chunk = log_k_chunk();
-        let k_chunk = k_chunk();
-        let d = d();
+        let log_k = config::params().instruction.log_k;
+        let log_k_chunk = config::params().instruction.log_k_chunk;
+        let k_chunk = config::params().instruction.k_chunk;
+        let d = config::params().instruction.d;
 
         let (r_address, _) = r.split_at_r(log_k);
 
@@ -138,7 +138,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
             SumcheckId::InstructionReadRaf,
         );
 
-        let (r_address, _) = r.split_at_r(log_k());
+        let (r_address, _) = r.split_at_r(config::params().instruction.log_k);
 
         // Compute r_address_chunks with proper padding
         let r_address_chunks = self.params.compute_r_address_chunks(r_address);
@@ -175,7 +175,7 @@ impl<F: JoltField> RaSumcheckVerifier<F> {
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckVerifier<F> {
     fn degree(&self) -> usize {
-        d() + 1
+        config::params().instruction.d + 1
     }
 
     fn num_rounds(&self) -> usize {
@@ -193,7 +193,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
     ) -> F {
         let r = get_opening_point::<F>(sumcheck_challenges);
         let eq_eval = EqPolynomial::mle_endian(&self.params.r_cycle, &r);
-        let ra_claim_prod: F = (0..d())
+        let ra_claim_prod: F = (0..config::params().instruction.d)
             .map(|i| {
                 let (_, ra_i_claim) = accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::InstructionRa(i),
@@ -218,7 +218,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
             SumcheckId::InstructionReadRaf,
         );
 
-        let (r_address, _) = r.split_at_r(log_k());
+        let (r_address, _) = r.split_at_r(config::params().instruction.log_k);
 
         // Compute r_address_chunks with proper padding
         let r_address_chunks = self.params.compute_r_address_chunks(r_address);
@@ -246,7 +246,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
-        let (_, r_cycle) = r.split_at(log_k());
+        let (_, r_cycle) = r.split_at(config::params().instruction.log_k);
         Self { r_cycle }
     }
 
@@ -264,7 +264,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
 
     /// Compute r_address_chunks from r_address with proper padding
     fn compute_r_address_chunks(&self, r_address: &[F::Challenge]) -> Vec<Vec<F::Challenge>> {
-        let log_k_chunk = log_k_chunk();
+        let log_k_chunk = config::params().instruction.log_k_chunk;
 
         // Pad r_address if necessary to make it divisible by log_k_chunk
         let r_address = if r_address.len() % log_k_chunk == 0 {
@@ -283,7 +283,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        debug_assert_eq!(r_address_chunks.len(), d());
+        debug_assert_eq!(r_address_chunks.len(), config::params().instruction.d);
         r_address_chunks
     }
 }

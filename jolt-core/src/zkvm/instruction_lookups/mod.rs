@@ -24,46 +24,19 @@ pub mod read_raf_checking;
 
 const LOG_K: usize = XLEN * 2;
 
-pub fn log_k() -> usize {
-    LOG_K
-}
-
-pub fn phases() -> usize {
-    config::params().instruction.phases
-}
-
-pub fn log_m() -> usize {
-    config::params().instruction.log_m
-}
-
-pub fn m() -> usize {
-    config::params().instruction.m
-}
-
-pub fn d() -> usize {
-    config::params().instruction.d
-}
-
-pub fn log_k_chunk() -> usize {
-    config::params().instruction.log_k_chunk
-}
-
-pub fn k_chunk() -> usize {
-    config::params().instruction.k_chunk
-}
-
 // TODO: transition read_raf_checking to use dynamic phase configuration from `config`.
-pub const PHASES: usize = 8;
-pub const LOG_M: usize = LOG_K / PHASES;
-const M: usize = 1 << LOG_M;
+// pub const PHASES: usize = 8;
+// pub const LOG_M: usize = LOG_K / PHASES;
+// const M: usize = 1 << LOG_M;
 
 pub fn gen_ra_one_hot_provers<F: JoltField>(
     trace: &[Cycle],
     opening_accumulator: &ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
-    let d = d();
-    let log_k_chunk = log_k_chunk();
+    let params = &config::params().instruction;
+    let d = params.d;
+    let log_k_chunk = params.log_k_chunk;
     let ra_evals = compute_ra_evals(trace, opening_accumulator);
 
     let gamma_powers = transcript.challenge_scalar_powers(d);
@@ -118,8 +91,9 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
     HammingWeightSumcheckVerifier<F>,
     BooleanitySumcheckVerifier<F>,
 ) {
-    let d = d();
-    let log_k_chunk = log_k_chunk();
+    let params = &config::params().instruction;
+    let d = params.d;
+    let log_k_chunk = params.log_k_chunk;
     let gamma_powers = transcript.challenge_scalar_powers(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
@@ -160,9 +134,10 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
 
 #[tracing::instrument(skip_all, name = "instruction_lookups::compute_instruction_h_indices")]
 fn compute_instruction_h_indices(trace: &[Cycle]) -> Vec<Vec<Option<u16>>> {
-    let d = d();
-    let log_k_chunk = log_k_chunk();
-    let k_chunk = k_chunk() as u128;
+    let params = &config::params().instruction;
+    let d = params.d;
+    let log_k_chunk = params.log_k_chunk;
+    let k_chunk = params.k_chunk as u128;
 
     (0..d)
         .map(|i| {
@@ -190,9 +165,10 @@ fn compute_ra_evals<F: JoltField>(
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
 
-    let d = d();
-    let log_k_chunk = log_k_chunk();
-    let k_chunk = k_chunk();
+    let params = &config::params().instruction;
+    let d = params.d;
+    let log_k_chunk = params.log_k_chunk;
+    let k_chunk = params.k_chunk;
 
     trace
         .par_chunks(chunk_size)
