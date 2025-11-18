@@ -36,10 +36,10 @@ use tracer::instruction::{Cycle, RAMAccess};
 // RAM read-write checking sumcheck
 //
 // Proves the relation:
-//   Σ_{k,j} eq(r', (j, k)) ⋅ ra(k, j) ⋅ (Val(k, j) + γ ⋅ (inc(j) + Val(k, j)))
+//   Σ_{k,j} eq(r_cycle, j) ⋅ ra(k, j) ⋅ (Val(k, j) + γ ⋅ (inc(j) + Val(k, j)))
 //   = rv_claim + γ ⋅ wv_claim
 // where:
-// - r' are the fresh challenges for this sumcheck
+// - r_cycle are the challenges for the cycle variables in this sumcheck (from Spartan outer)
 // - ra(k, j) = 1 if memory address k is accessed at cycle j, and 0 otherwise
 // - Val(k, j) is the value at memory address k right before cycle j
 // - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise
