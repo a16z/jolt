@@ -1,6 +1,6 @@
-use crate::instruction::addw::ADDW;
-use crate::instruction::mulw::MULW;
 use crate::instruction::srai::SRAI;
+use crate::instruction::add::ADD;
+use crate::instruction::mul::MUL;
 use crate::instruction::sub::SUB;
 use crate::instruction::xor::XOR;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
@@ -114,7 +114,7 @@ impl RISCVTrace for DIVW {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient from oracle
-        let a3 = allocator.allocate(); // |remainder| from oracle
+        let a3 = allocator.allocate(); // remainder from oracle
         let t0 = allocator.allocate(); // adjusted divisor
         let t1 = allocator.allocate(); // temporary
         let t2 = allocator.allocate(); // temporary
@@ -131,30 +131,40 @@ impl RISCVTrace for DIVW {
         asm.emit_i::<VirtualSignExtendWord>(*t3, a1, 0); // divisor
 
         // Handle special cases: div-by-zero and overflow
-        asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0); // Check div-by-zero
-        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3); // Adjust for overflow
+        asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0); // if div-by-zero set quotient max
+        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3); // keep divisor 1 if dividend is least
+                                                            // negative and divisor is -1
 
         // Verify quotient fits in 32 bits: sign-extending must yield same value
         asm.emit_i::<VirtualSignExtendWord>(*t1, *a2, 0); // Sign-extend quotient to 64-bit
         asm.emit_b::<VirtualAssertEQ>(*t1, *a2, 0); // Assert quotient was valid 32-bit
 
+        // verify remainder fits in 32 bits signe-extended value
+        asm.emit_i::<VirtualSignExtendWord>(*t2, *a3, 0); // Sign-extend remainder to 64-bit
+        asm.emit_b::<VirtualAssertEQ>(*t2, *a3, 0); // Assert remainder was valid 32-bit
+
         // Compute quotient × divisor for verification
-        asm.emit_r::<MULW>(*t1, *a2, *t0); // 32-bit multiply, sign-extended
-
-        // Apply sign of dividend to remainder
-        asm.emit_i::<SRAI>(*t2, *t4, 31); // Sign bit of dividend
-        asm.emit_r::<XOR>(*t3, *a3, *t2); // XOR with |remainder|
-        asm.emit_r::<SUB>(*t3, *t3, *t2); // Two's complement if negative
-
-        // Verify: dividend = quotient × divisor + remainder (32-bit)
-        asm.emit_r::<ADDW>(*t1, *t1, *t3); // 32-bit add
+        asm.emit_r::<MUL>(*t1, *a2, *t0); // multiply, sign-extended
+        asm.emit_r::<ADD>(*t1, *t1, *a3); // 32-bit add
+        // Verify: dividend = quotient × divisor + remainder 
         asm.emit_b::<VirtualAssertEQ>(*t1, *t4, 0);
 
+        asm.emit_i::<SRAI>(*t2, *t3, 31); // Sign bits of divisor
+        asm.emit_r::<XOR>(*t1, *t3, *t2); // 
+        asm.emit_r::<SUB>(*t1, *t1, *t2); // t1 = abs(divisor)
+
+        asm.emit_i::<SRAI>(*t2, *a3, 31); // Sign bit of remainder
+        asm.emit_r::<XOR>(*t3, *a3, *t2); 
+        asm.emit_r::<SUB>(*t3 , *t3, *t2); // abs(remainder)
+
+
         // Verify: |remainder| < |divisor|
-        asm.emit_i::<SRAI>(*t2, *t0, 31); // Sign bit of adjusted divisor
-        asm.emit_r::<XOR>(*t1, *t0, *t2); // Get magnitude
-        asm.emit_r::<SUB>(*t1, *t1, *t2); // |adjusted_divisor|
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*t3, *t1, 0); 
+
+        asm.emit_r::<XOR>(*t1, *a3, *t4); // remainder ^ dividend
+        asm.emit_i::<SRAI>(*t1, *t1, 31); // Should have same sign
+        asm.emit_r::<XOR>(*t2, *t2, *t2); 
+        asm.emit_b::<VirtualAssertEQ>(*t1, *t2, 0);
 
         // Sign-extend result to 64 bits
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a2, 0);

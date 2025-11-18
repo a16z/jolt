@@ -44,6 +44,7 @@ use tracer::{
         subw::SUBW,
         virtual_advice::VirtualAdvice,
         virtual_assert_eq::VirtualAssertEQ,
+        virtual_assert_lte::VirtualAssertLTE,
         virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
         virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
@@ -199,6 +200,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let val1 = cpu.x[operands.rs1 as usize].clone();
             let val2 = cpu.x[operands.rs2 as usize].clone();
             cpu.asserts.push(val1.eq(&val2));
+        }
+        Instruction::VirtualAssertLTE(VirtualAssertLTE { operands, .. }) => {
+            let val1 = cpu.x[operands.rs1 as usize].clone();
+            let val2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.asserts.push(val1.bvule(&val2));
         }
         Instruction::VirtualAssertHalfwordAlignment(VirtualAssertHalfwordAlignment {
             operands,

@@ -10,6 +10,7 @@ use crate::{
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_lte::VirtualAssertLTE,
     virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, Cycle,
     Instruction, RISCVInstruction, RISCVTrace,
@@ -93,6 +94,7 @@ impl RISCVTrace for REMU {
         let a2 = allocator.allocate(); // quotient from oracle
         let a3 = allocator.allocate(); // remainder from oracle
         let t0 = allocator.allocate(); // temporary for multiplication
+        let t1 = allocator.allocate(); // temporary for addition
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // Get untrusted advice from oracle
@@ -106,8 +108,13 @@ impl RISCVTrace for REMU {
         asm.emit_r::<MUL>(*t0, *a2, a1);
 
         // Verify: dividend = quotient × divisor + remainder
-        asm.emit_r::<ADD>(*t0, *t0, *a3);
-        asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
+        asm.emit_r::<ADD>(*t1, *t0, *a3);
+
+        // Verify:  quotient × divisor + remainder does not overflow
+        // addUnoOverflow(rd, rs1, rs2) = LTE(rd, rs1) & LTE(rd, rs2)
+        asm.emit_b::<VirtualAssertLTE>(*t0, *t1, 0);
+        asm.emit_b::<VirtualAssertLTE>(*a3, *t1, 0);
+        asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0);
 
         // Verify: remainder < divisor (or remainder == dividend when divisor == 0)
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
