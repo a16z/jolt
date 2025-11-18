@@ -1,12 +1,11 @@
-use itertools::chain;
+use common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 use std::{array, iter::zip, sync::Arc};
-use tracer::JoltDevice;
+use tracer::{instruction::Cycle, JoltDevice};
 
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         lt_poly::LtPolynomial,
         multilinear_polynomial::{
@@ -25,9 +24,9 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        dag::state_manager::StateManager,
+        bytecode::BytecodePreprocessing,
         ram::remap_address,
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
@@ -65,15 +64,16 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, PCS>,
+        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
         let T = trace.len();
-        let K = state_manager.ram_K;
+        let K = ram_K;
 
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
@@ -107,8 +107,13 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let inc =
-            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc = CommittedPolynomial::RamInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
         let lt = LtPolynomial::new(&r_cycle);
 
         Self {
@@ -133,11 +138,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "RamValEvaluationSumcheckProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let [eval_at_1, eval_at_2, eval_at_inf] = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
@@ -167,13 +169,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
             .map(F::from_montgomery_reduce);
 
         let eval_at_0 = previous_claim - eval_at_1;
-        let poly = UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf]);
-        let domain = chain!([0], 2..).take(DEGREE_BOUND).map(F::from_u64);
-        domain.map(|x| poly.evaluate::<F>(&x)).collect()
+        UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf])
     }
 
-    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.lt.bind(r_j, BindingOrder::LowToHigh);

@@ -3,12 +3,11 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::VirtualPolynomial;
+use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial};
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
@@ -21,11 +20,12 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
+use common::jolt_device::MemoryLayout;
 use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::array;
-use std::iter::zip;
+use tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
 //
@@ -113,15 +113,17 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        ram_K: usize,
+        twist_sumcheck_switch_index: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-
         let params = RegistersReadWriteCheckingParams::new(
-            state_manager.twist_sumcheck_switch_index,
+            twist_sumcheck_switch_index,
             trace.len().log_2(),
             opening_accumulator,
             transcript,
@@ -223,8 +225,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             GruenSplitEqPolynomial::<F>::new(&params.r_cycle_stage_1.r, BindingOrder::LowToHigh);
         let gruen_eq_r_cycle_stage_3 =
             GruenSplitEqPolynomial::<F>::new(&params.r_cycle_stage_3.r, BindingOrder::LowToHigh);
-        let inc_cycle =
-            CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
 
         let (_, rs1_rv_claim_stage_1) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
@@ -287,7 +294,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         }
     }
 
-    fn phase1_compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn phase1_compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
         const BATCH_SIZE: usize = 2;
         let Self {
             addresses,
@@ -775,30 +782,23 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let [eval_at_0_for_stage_1, eval_at_inf_for_stage_1, eval_at_0_for_stage_3, eval_at_inf_for_stage_3] =
             quadratic_coeffs;
 
-        let univariate_evals_stage_1 = gruen_eq_r_cycle_stage_1.gruen_evals_deg_3(
+        let round_poly_stage_1 = gruen_eq_r_cycle_stage_1.gruen_poly_deg_3(
             eval_at_0_for_stage_1,
             eval_at_inf_for_stage_1,
             *prev_claim_stage_1,
         );
-        let univariate_evals_stage_3 = gruen_eq_r_cycle_stage_3.gruen_evals_deg_3(
+        let round_poly_stage_3 = gruen_eq_r_cycle_stage_3.gruen_poly_deg_3(
             eval_at_0_for_stage_3,
             eval_at_inf_for_stage_3,
             *prev_claim_stage_3,
         );
-        *prev_round_poly_stage_1 = Some(UniPoly::from_evals_and_hint(
-            *prev_claim_stage_1,
-            &univariate_evals_stage_1,
-        ));
-        *prev_round_poly_stage_3 = Some(UniPoly::from_evals_and_hint(
-            *prev_claim_stage_3,
-            &univariate_evals_stage_3,
-        ));
-        zip(univariate_evals_stage_1, univariate_evals_stage_3)
-            .map(|(eval_stage_1, eval_stage_3)| eval_stage_1 + params.gamma_cub * eval_stage_3)
-            .collect()
+        let res = &round_poly_stage_1 + &(&round_poly_stage_3 * params.gamma_cub);
+        *prev_round_poly_stage_1 = Some(round_poly_stage_1);
+        *prev_round_poly_stage_3 = Some(round_poly_stage_3);
+        res
     }
 
-    fn phase2_compute_prover_message(&self) -> Vec<F> {
+    fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         const BATCH_SIZE: usize = 2;
 
         let Self {
@@ -938,10 +938,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eval_at_2 = eval_at_2_for_stage_1 + params.gamma_cub * eval_at_2_for_stage_3;
         let eval_at_3 = eval_at_3_for_stage_1 + params.gamma_cub * eval_at_3_for_stage_3;
 
-        vec![eval_at_0, eval_at_2, eval_at_3]
+        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0, eval_at_2, eval_at_3])
     }
 
-    fn phase3_compute_prover_message(&self) -> Vec<F> {
+    fn phase3_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         const BATCH_SIZE: usize = 2;
 
         let Self {
@@ -1038,7 +1038,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eval_at_3 = eq_r_cycle_stage_1_eval * eval_at_3_for_stage_1
             + params.gamma_cub * eq_r_cycle_stage_3_eval * eval_at_3_for_stage_3;
 
-        vec![eval_at_0, eval_at_2, eval_at_3]
+        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0, eval_at_2, eval_at_3])
     }
 
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
@@ -1299,22 +1299,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "RegistersReadWriteCheckingProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.chunk_size.log_2() {
-            self.phase1_compute_prover_message(round, previous_claim)
+            self.phase1_compute_message(round, previous_claim)
         } else if round < self.params.n_cycle_vars {
-            self.phase2_compute_prover_message()
+            self.phase2_compute_message(previous_claim)
         } else {
-            self.phase3_compute_prover_message()
+            self.phase3_compute_message(previous_claim)
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.chunk_size.log_2() {
             self.phase1_bind(r_j, round);
         } else if round < self.params.n_cycle_vars {

@@ -8,7 +8,11 @@ use rayon::prelude::*;
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math};
+use crate::{
+    field::JoltField,
+    poly::{eq_poly::EqPolynomial, unipoly::UniPoly},
+    utils::math::Math,
+};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -184,18 +188,38 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         merged
     }
 
-    /// Compute the cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
-    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
-    /// q(X) = c + dX + eX^2, given the following:
+    /// Returns an interleaved vector merging the current bit `w` with `E_in_current()`.
+    ///
+    /// For each entry `low = E_in_current()[x_in]`, produces the pair:
+    ///   [ low * (1 - w), low * w ]
+    ///
+    /// The returned vector has length `2 * E_in_current_len()`, laid out as
+    ///   [low0_0, low0_1, low1_0, low1_1, ...] matching index pairs (j, j+1).
+    pub fn merged_in_with_current_w(&self) -> Vec<F> {
+        let e_in = self.E_in_current();
+        let w = self.get_current_w();
+        let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
+        for (i, &low) in e_in.iter().enumerate() {
+            let eval1 = low * w;
+            let eval0 = low - eval1;
+            let off = 2 * i;
+            merged[off] = eval0;
+            merged[off + 1] = eval1;
+        }
+        merged
+    }
+
+    /// Compute the cubic polynomial s(X) = l(X) * q(X), where l(X) is the
+    /// current (linear) eq polynomial and q(X) = c + dX + eX^2, given the following:
     /// - c, the constant term of q
     /// - e, the quadratic term of q
     /// - the previous round claim, s(0) + s(1)
-    pub fn gruen_evals_deg_3(
+    pub fn gruen_poly_deg_3(
         &self,
         q_constant: F,
         q_quadratic_coeff: F,
         s_0_plus_s_1: F,
-    ) -> [F; 3] {
+    ) -> UniPoly<F> {
         // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is quadratic, at the points {0, 2, 3}.
         //
@@ -231,19 +255,19 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let quadratic_eval_3 =
             quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
 
-        [
+        UniPoly::from_evals(&[
             cubic_eval_0,
+            cubic_eval_1,
             eq_eval_2 * quadratic_eval_2,
             eq_eval_3 * quadratic_eval_3,
-        ]
+        ])
     }
 
-    /// Compute the quadratic sumcheck evaluations (i.e., the evaluations at {0, 2}) of a
-    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) Dao-Thaler eq polynomial and
-    /// q(X) = c + dx
+    /// Compute the quadratic polynomial s(X) = l(X) * q(X), where l(X) is the
+    /// current (linear) Dao-Thaler eq polynomial and q(X) = c + dx
     /// - c, the constant term of q
     /// - the previous round claim, s(0) + s(1)
-    pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
+    pub fn gruen_poly_deg_2(&self, q_0: F, previous_claim: F) -> UniPoly<F> {
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is linear, at the points {0, 2}.
         //
@@ -277,7 +301,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // q(2) = c + 2d = 2*q(1) - q(0)
         let linear_eval_2 = linear_eval_1 + linear_eval_1 - linear_eval_0;
 
-        [quadratic_eval_0, eq_eval_2 * linear_eval_2]
+        UniPoly::from_evals(&[
+            quadratic_eval_0,
+            quadratic_eval_1,
+            eq_eval_2 * linear_eval_2,
+        ])
     }
 
     pub fn merge(&self) -> DensePolynomial<F> {

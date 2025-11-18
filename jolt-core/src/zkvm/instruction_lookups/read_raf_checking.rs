@@ -5,13 +5,13 @@ use common::constants::XLEN;
 use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
+use tracer::instruction::Cycle;
 
 use super::{LOG_K, LOG_M, M, PHASES};
 
 use crate::{
     field::{JoltField, MulTrunc},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
@@ -37,7 +37,6 @@ use crate::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
     zkvm::{
-        dag::state_manager::StateManager,
         instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -171,7 +170,7 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     params: ReadRafSumcheckParams<F>,
 }
 
-impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
+impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// Creates a prover-side instance for the Read+RAF batched sumcheck.
     ///
     /// Builds prover-side working state:
@@ -181,11 +180,10 @@ impl<'a, F: JoltField> ReadRafSumcheckProver<F> {
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::gen")]
     pub fn gen(
-        sm: &'a mut StateManager<F, impl CommitmentScheme<Field = F>>,
+        trace: &[Cycle],
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let trace = sm.get_prover_data().2;
         let log_T = trace.len().log_2();
         let params = ReadRafSumcheckParams::new(log_T, transcript);
         let (r_branch, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -727,20 +725,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "InstructionReadRafSumcheckProver::compute_prover_message"
-    )]
+    #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::compute_message")]
     /// Produces the prover's degree-≤3 univariate for the current round.
     ///
     /// - For the first LOG_K rounds: returns two evaluations combining
     ///   read-checking and RAF prefix–suffix messages (at X∈{0,2}).
     /// - For the last log(T) rounds: uses Gruen-split EQs to form the Spartan
     ///   and Branch univariates and returns their γ-weighted sum.
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < LOG_K {
             // Phase 1: First log(K) rounds
-            self.compute_prefix_suffix_prover_message(round).to_vec()
+            self.compute_prefix_suffix_prover_message(round, previous_claim)
         } else {
             let ra = self.ra.as_ref().unwrap();
             let val = self.combined_val_polynomial.as_ref().unwrap();
@@ -822,35 +817,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                     )
                     .map(F::from_montgomery_reduce);
 
-            let univariate_evals_spartan = self.eq_r_spartan.gruen_evals_deg_3(
+            let round_poly_spartan = self.eq_r_spartan.gruen_poly_deg_3(
                 eval_at_0_spartan,
                 eval_at_inf_spartan,
                 self.prev_claim_spartan.unwrap(),
             );
-            let univariate_evals_branch = self.eq_r_branch.gruen_evals_deg_3(
+            let round_poly_branch = self.eq_r_branch.gruen_poly_deg_3(
                 eval_at_0_branch,
                 eval_at_inf_branch,
                 self.prev_claim_branch.unwrap(),
             );
-
-            self.prev_round_poly_spartan = Some(UniPoly::from_evals_and_hint(
-                self.prev_claim_spartan.unwrap(),
-                &univariate_evals_spartan,
-            ));
-            self.prev_round_poly_branch = Some(UniPoly::from_evals_and_hint(
-                self.prev_claim_branch.unwrap(),
-                &univariate_evals_branch,
-            ));
-
-            univariate_evals_spartan
-                .iter()
-                .zip(univariate_evals_branch.iter())
-                .map(|(eval_spartan, eval_branch)| *eval_spartan + self.params.gamma * eval_branch)
-                .collect()
+            let res = &round_poly_spartan + &(&round_poly_branch * self.params.gamma);
+            self.prev_round_poly_spartan = Some(round_poly_spartan);
+            self.prev_round_poly_branch = Some(round_poly_branch);
+            res
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::bind")]
+    #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::ingest_challenge")]
     /// Binds the next variable (address or cycle) and advances state.
     ///
     /// Address rounds: bind all active prefix–suffix polynomials and the
@@ -858,7 +842,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
     /// initialize next phase/handoff when needed. Cycle rounds: bind the ra/Val
     /// polynomials and Gruen EQs; update previous-claim hints via last round's
     /// univariate.
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         self.r.push(r_j);
         if round < LOG_K {
             let phase = round / LOG_M;
@@ -986,7 +970,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     ///
     /// Each component is a degree-2 univariate evaluated at X∈{0,2} using
     /// prefix–suffix decomposition, then added to form the batched message.
-    fn compute_prefix_suffix_prover_message(&self, round: usize) -> [F; 2] {
+    fn compute_prefix_suffix_prover_message(&self, round: usize, previous_claim: F) -> UniPoly<F> {
         let mut read_checking = [F::zero(), F::zero()];
         let mut raf = [F::zero(), F::zero()];
 
@@ -999,7 +983,10 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             },
         );
 
-        [read_checking[0] + raf[0], read_checking[1] + raf[1]]
+        let eval_at_0 = read_checking[0] + raf[0];
+        let eval_at_2 = read_checking[1] + raf[1];
+
+        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0, eval_at_2])
     }
 
     /// RAF part for address rounds.
@@ -1349,18 +1336,11 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
-    use crate::{
-        poly::commitment::mock::MockCommitScheme,
-        zkvm::{bytecode::BytecodePreprocessing, ram::RAMPreprocessing, JoltProverPreprocessing},
-    };
     use ark_bn254::Fr;
     use ark_std::Zero;
-    use common::jolt_device::MemoryLayout;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
-    use tracer::emulator::memory::Memory;
     use tracer::instruction::Cycle;
-    use tracer::{JoltDevice, LazyTraceIterator};
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
@@ -1443,38 +1423,9 @@ mod tests {
         let trace: Vec<_> = (0..T)
             .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
-        let bytecode = vec![];
-        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
-        let memory_layout = MemoryLayout::default();
-        let prover_preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
-            JoltProverPreprocessing {
-                generators: (),
-                bytecode: bytecode_preprocessing,
-                ram: RAMPreprocessing::preprocess(vec![]),
-                memory_layout: memory_layout.clone(),
-            };
 
-        let program_io = JoltDevice {
-            memory_layout,
-            untrusted_advice: vec![],
-            trusted_advice: vec![],
-            inputs: vec![],
-            outputs: vec![],
-            panic: false,
-        };
-        let final_memory_state = Memory::default();
-
-        let lazy_trace = LazyTraceIterator::new_for_test();
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
-        let mut prover_sm = StateManager::<'_, Fr, _>::new_prover(
-            &prover_preprocessing,
-            lazy_trace,
-            trace.clone(),
-            program_io,
-            None,
-            final_memory_state,
-        );
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
         let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
 
@@ -1543,11 +1494,8 @@ mod tests {
             rv_claim_branch,
         );
 
-        let mut prover_sumcheck = ReadRafSumcheckProver::gen(
-            &mut prover_sm,
-            &prover_opening_accumulator,
-            prover_transcript,
-        );
+        let mut prover_sumcheck =
+            ReadRafSumcheckProver::gen(&trace, &prover_opening_accumulator, prover_transcript);
 
         let (proof, r_sumcheck) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],

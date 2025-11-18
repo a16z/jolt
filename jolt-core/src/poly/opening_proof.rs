@@ -5,6 +5,7 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+use crate::poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use allocative::Allocative;
@@ -18,20 +19,24 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
+use tracer::LazyTraceIterator;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::Itertools;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-    rlc_polynomial::RLCPolynomial,
 };
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
-    poly::one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
+    poly::{
+        one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
+        unipoly::UniPoly,
+    },
     subprotocols::{
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
@@ -213,11 +218,8 @@ pub struct DensePolynomialProverOpening<F: JoltField> {
 }
 
 impl<F: JoltField> DensePolynomialProverOpening<F> {
-    #[tracing::instrument(
-        skip_all,
-        name = "DensePolynomialProverOpening::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let shared_eq = self.eq_poly.read().unwrap();
         let polynomial_ref = self.polynomial.as_ref().unwrap();
         let polynomial = &polynomial_ref.read().unwrap().poly;
@@ -230,9 +232,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
             [polynomial.get_bound_coeff(2 * g)]
         });
 
-        let gruen_univariate_evals = gruen_eq.gruen_evals_deg_2(q_0, previous_claim);
-
-        vec![gruen_univariate_evals[0], gruen_univariate_evals[1]]
+        gruen_eq.gruen_poly_deg_2(q_0, previous_claim)
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
@@ -400,14 +400,14 @@ where
         self.input_claim
     }
 
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         match &mut self.prover_state {
-            ProverOpening::Dense(opening) => opening.compute_prover_message(round, previous_claim),
-            ProverOpening::OneHot(opening) => opening.compute_prover_message(round, previous_claim),
+            ProverOpening::Dense(opening) => opening.compute_message(round, previous_claim),
+            ProverOpening::OneHot(opening) => opening.compute_message(round, previous_claim),
         }
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.bind(r_j, round),
             ProverOpening::OneHot(opening) => opening.bind(r_j, round),
@@ -485,13 +485,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             | CommittedPolynomial::BytecodeRa(_)
             | CommittedPolynomial::RamRa(_) => {
                 let log_K = r.len() - self.log_T;
-                debug_assert!(
-                    log_K == 8,
-                    "Expected log_K to be 8 != {log_K}, poly: {:?}",
-                    self.polynomial
-                );
+                // reverse log_T rounds since they are bounded LowToHigh
                 r[log_K..].reverse();
-                r[..log_K].reverse();
             }
         }
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);
@@ -792,6 +787,7 @@ where
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>)>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
@@ -829,7 +825,7 @@ where
         let (sumcheck_proof, mut r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(transcript);
         let log_K = r_sumcheck.len() - self.log_T;
-        r_sumcheck[..log_K].reverse();
+        // reverse log_T rounds since they are bounded LowToHigh
         r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&sumcheck_claims);
@@ -848,14 +844,23 @@ where
                 }
             }
 
-            let (coeffs, polynomials): (Vec<F>, Vec<MultilinearPolynomial<F>>) = rlc_map
+            let (poly_ids, coeffs, polys): (
+                Vec<CommittedPolynomial>,
+                Vec<F>,
+                Vec<MultilinearPolynomial<F>>,
+            ) = rlc_map
                 .iter()
-                .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
-                .unzip();
+                .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
+                .multiunzip();
+
+            let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
+                polys.into_iter().map(Arc::new).collect();
 
             let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-                polynomials.into_iter().map(Arc::new).collect(),
+                poly_ids.clone(),
+                poly_arcs.clone(),
                 &coeffs,
+                streaming_context,
             ));
 
             let hints: Vec<PCS::OpeningProofHint> = rlc_map
@@ -871,11 +876,26 @@ where
             // the hints for the individual sumchecks.
             let hint = PCS::combine_hints(hints, &coeffs);
 
+            #[cfg(test)]
+            let joint_poly = (joint_poly, poly_ids, poly_arcs, coeffs);
+
             (joint_poly, hint)
         };
 
         #[cfg(test)]
-        let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
+        let joint_commitment = {
+            let (joint_poly_ref, poly_ids, poly_arcs, coeffs) = &joint_poly;
+            let materialized_poly = match joint_poly_ref {
+                MultilinearPolynomial::RLC(rlc) => {
+                    MultilinearPolynomial::RLC(rlc.materialize(poly_ids, poly_arcs, coeffs))
+                }
+                _ => joint_poly_ref.clone(),
+            };
+            PCS::commit(&materialized_poly, pcs_setup).0
+        };
+
+        #[cfg(test)]
+        let joint_poly = joint_poly.0;
 
         #[cfg(not(test))]
         {
@@ -884,7 +904,8 @@ where
         }
 
         // Reduced opening proof
-        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+        let joint_opening_proof =
+            PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, Some(hint), transcript);
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -1187,8 +1208,6 @@ where
         let mut r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
         let log_K = r_sumcheck.len() - self.log_T;
-        debug_assert!(log_K == 8, "Expected log_K to be 8");
-        r_sumcheck[..log_K].reverse();
         r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
@@ -1306,7 +1325,7 @@ mod tests {
         let mut previous_claim = input_claim;
 
         for round in 0..LOG_T {
-            let dense_message = dense_opening.compute_prover_message(round, previous_claim);
+            let dense_message = dense_opening.compute_message(round, previous_claim);
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
 
@@ -1321,7 +1340,11 @@ mod tests {
                 .sum();
 
             assert_eq!(
-                dense_message, expected_message,
+                [
+                    dense_message.eval_at_zero(),
+                    dense_message.evaluate::<Fr>(&Fr::from(2))
+                ],
+                *expected_message,
                 "round {round} prover message mismatch"
             );
 
