@@ -179,7 +179,6 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 |mut partial, (x_out, &e_out)| {
                     let mut local_unreduced: Vec<F::Unreduced<9>> =
                         unsafe_allocate_zero_vec(polynomial.K);
-                    let mut touched_indices: Vec<usize> = Vec::new();
                     let mut touched_flags = FixedBitSet::with_capacity(polynomial.K);
                     let x_out_base = x_out << (x_in_bits + 1);
 
@@ -194,7 +193,6 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             let idx = k0 as usize;
                             if !touched_flags.contains(idx) {
                                 touched_flags.insert(idx);
-                                touched_indices.push(idx);
                             }
                             local_unreduced[idx] += add0_unr;
                         }
@@ -202,13 +200,12 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             let idx = k1 as usize;
                             if !touched_flags.contains(idx) {
                                 touched_flags.insert(idx);
-                                touched_indices.push(idx);
                             }
                             local_unreduced[idx] += add1_unr;
                         }
                     }
 
-                    for idx in touched_indices {
+                    for idx in touched_flags.ones() {
                         let reduced = F::from_montgomery_reduce::<9>(local_unreduced[idx]);
                         partial[idx] += e_out * reduced;
                     }
