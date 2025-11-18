@@ -596,7 +596,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 F::from_u64(suffix.suffix_mle::<XLEN>(LookupBits::new(0, 0)))
                             })
                             .collect();
-                        // Each cycle contributes at most one lookup table, so we can assign directly.
                         table.combine(&prefixes, &suffixes)
                     } else {
                         F::zero()
