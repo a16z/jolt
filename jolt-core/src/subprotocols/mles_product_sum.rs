@@ -69,16 +69,15 @@ pub fn compute_mles_product_sum<F: JoltField>(
                     inner.lanes[k] += e_in.mul_unreduced::<9>(inner.endpoints[k]);
                 }
             },
-            |_x_out, e_out, inner| {
-                // Reduce inner lanes, scale by e_out (unreduced), return outer acc vector.
-                // We reuse the existing `lanes` allocation by transforming it
-                // in-place into the outer accumulator `Vec<F::Unreduced<9>>`.
-                let mut out = vec![F::Unreduced::<9>::zero(); d];
+            |_x_out, e_out, mut inner| {
+                // Reduce inner lanes, scale by e_out (unreduced), and reuse the
+                // existing `lanes` allocation as the outer accumulator
+                // `Vec<F::Unreduced<9>>`, avoiding an extra allocation.
                 for k in 0..d {
                     let reduced_k = F::from_montgomery_reduce::<9>(inner.lanes[k]);
-                    out[k] = e_out.mul_unreduced::<9>(reduced_k);
+                    inner.lanes[k] = e_out.mul_unreduced::<9>(reduced_k);
                 }
-                out
+                inner.lanes
             },
             |mut a, b| {
                 for k in 0..d {
@@ -142,7 +141,7 @@ fn compute_mles_product_sum_d16<F: JoltField>(
 /// `g(X) = eq(X, r[round]) * (interpolated quotient)` such that
 /// `g(0) + g(1) = claim`.
 #[inline]
-fn finish_mles_product_sum_from_evals<F: JoltField>(
+pub fn finish_mles_product_sum_from_evals<F: JoltField>(
     sum_evals: &[F],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
@@ -185,13 +184,40 @@ fn finish_mles_product_sum_from_evals<F: JoltField>(
 /// - This writes the evaluations of `P(x) = ∏_j p_j(x)` into `evals` in the
 ///   layout `[P(1), P(2), ..., P(D - 1), P(∞)]`.
 pub fn eval_linear_prod_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
+    debug_assert_eq!(pairs.len(), evals.len());
     match pairs.len() {
-        2 => eval_prod_2_assign(pairs.try_into().unwrap(), evals),
-        3 => eval_prod_3_assign(pairs.try_into().unwrap(), evals),
-        4 => eval_prod_4_assign(pairs.try_into().unwrap(), evals),
-        8 => eval_prod_8_assign(pairs.try_into().unwrap(), evals),
-        16 => eval_prod_16_assign(pairs.try_into().unwrap(), evals),
-        32 => eval_prod_32_assign(pairs.try_into().unwrap(), evals),
+        2 => {
+            debug_assert!(evals.len() >= 2);
+            // SAFETY: `pairs` has length 2 in this branch, so it is valid to
+            // reinterpret the backing memory as `[(F, F); 2]`.
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 2]) };
+            eval_prod_2_assign(p, evals)
+        }
+        3 => {
+            debug_assert!(evals.len() >= 3);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 3]) };
+            eval_prod_3_assign(p, evals)
+        }
+        4 => {
+            debug_assert!(evals.len() >= 4);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 4]) };
+            eval_prod_4_assign(p, evals)
+        }
+        8 => {
+            debug_assert!(evals.len() >= 8);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 8]) };
+            eval_prod_8_assign(p, evals)
+        }
+        16 => {
+            debug_assert!(evals.len() >= 16);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 16]) };
+            eval_prod_16_assign(p, evals)
+        }
+        32 => {
+            debug_assert!(evals.len() >= 32);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 32]) };
+            eval_prod_32_assign(p, evals)
+        }
         _ => product_eval_univariate_naive_assign(pairs, evals),
     }
 }
@@ -748,7 +774,7 @@ fn dbl_assign<F: JoltField>(x: &mut F) {
 /// Complexity is `O(D^2)` field multiplications and is intended only as a
 /// fallback for unsupported `D`; hot paths should go through the specialized
 /// kernels above.
-fn product_eval_univariate_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
+pub fn product_eval_univariate_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
     let d = pairs.len();
     debug_assert_eq!(evals.len(), d);
     if d == 0 {

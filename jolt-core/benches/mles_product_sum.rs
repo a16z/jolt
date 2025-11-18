@@ -4,173 +4,87 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use jolt_core::{
     field::JoltField,
     poly::{
-        eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial},
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
-    subprotocols::mles_product_sum::compute_mles_product_sum,
-    utils::math::Math,
+    subprotocols::mles_product_sum::{
+        compute_mles_product_sum, finish_mles_product_sum_from_evals,
+        product_eval_univariate_naive_assign,
+    },
 };
-use num_traits::Zero;
-use rayon::prelude::*;
-
-fn product_eval_univariate_naive_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
-    let d = pairs.len();
-    debug_assert_eq!(sums.len(), d);
-    if d == 0 {
-        return;
-    }
-    // Memoize p(1)=p1, then p(2)=p(1)+pinf, p(3)=p(2)+pinf, ...
-    let mut cur_vals = Vec::with_capacity(d);
-    let mut pinfs = Vec::with_capacity(d);
-    for &(p0, p1) in pairs.iter() {
-        let pinf = p1 - p0;
-        cur_vals.push(p1);
-        pinfs.push(pinf);
-    }
-    // Evaluate at x = 1..(d-1)
-    for sums_slot in sums.iter_mut().take(d - 1) {
-        let mut acc = F::one();
-        for v in cur_vals.iter() {
-            acc *= *v;
-        }
-        *sums_slot += acc;
-        // advance all to next x
-        for (cur_val, pinf) in cur_vals.iter_mut().zip(pinfs.iter()) {
-            *cur_val += *pinf;
-        }
-    }
-    // Evaluate at infinity (product of leading coefficients)
-    let mut acc_inf = F::one();
-    for pinf in pinfs.iter() {
-        acc_inf *= *pinf;
-    }
-    sums[d - 1] += acc_inf;
-}
 
 fn compute_mles_product_sum_naive<F: JoltField>(
     mles: &[RaPolynomial<u8, F>],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
-    let num_x_out = eq_poly.E_out_current_len();
-    let num_x_in = eq_poly.E_in_current_len();
-    let current_scalar = eq_poly.get_current_scalar();
-
-    let sum_evals: Vec<F> = if num_x_in == 1 {
-        let eq_in_eval = eq_poly.E_in_current()[0] * current_scalar;
-        let eq_out_evals = eq_poly.E_out_current();
-
-        (0..num_x_out)
-            .into_par_iter()
-            .map(|j_out| {
-                // partial_evals layout: [1, 2, ..., D-1, ∞]
-                let mut partial_evals = vec![F::zero(); mles.len()];
-                let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
-
-                for (i, mle) in mles.iter().enumerate() {
-                    let v0 = mle.get_bound_coeff(2 * j_out);
-                    let v1 = mle.get_bound_coeff(2 * j_out + 1);
-                    mle_eval_pairs[i] = (v0, v1);
-                }
-                // incorporate eq_in * current_scalar as a common factor by scaling one pair
-                mle_eval_pairs[0].0 *= eq_in_eval;
-                mle_eval_pairs[0].1 *= eq_in_eval;
-
-                product_eval_univariate_naive_accumulate(&mle_eval_pairs, &mut partial_evals);
-
-                partial_evals
-                    .into_iter()
-                    .map(|v| {
-                        let result = v * eq_out_evals[j_out];
-                        *result.as_unreduced_ref()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .fold_with(
-                vec![F::Unreduced::<5>::zero(); mles.len()],
-                |running, new: Vec<F::Unreduced<4>>| {
-                    running.into_iter().zip(new).map(|(a, b)| a + b).collect()
-                },
-            )
-            .reduce(
-                || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| running.into_iter().zip(new).map(|(a, b)| a + b).collect(),
-            )
-            .into_iter()
-            .map(F::from_barrett_reduce)
-            .collect()
-    } else {
-        let num_x_in_bits = num_x_in.log_2();
-        let eq_in_evals = eq_poly.E_in_current();
-        let eq_out_evals = eq_poly.E_out_current();
-
-        (0..num_x_out)
-            .into_par_iter()
-            .map(|j_out| {
-                let mut partial_evals = vec![F::zero(); mles.len()];
-                let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
-
-                for (j_in, eq_in_eval) in eq_in_evals.iter().take(num_x_in).enumerate() {
-                    let j = (j_out << num_x_in_bits) | j_in;
-
-                    for (i, mle) in mles.iter().enumerate() {
-                        let v0 = mle.get_bound_coeff(2 * j);
-                        let v1 = mle.get_bound_coeff(2 * j + 1);
-                        mle_eval_pairs[i] = (v0, v1);
-                    }
-
-                    let scale = *eq_in_eval * current_scalar;
-                    mle_eval_pairs[0].0 *= scale;
-                    mle_eval_pairs[0].1 *= scale;
-                    product_eval_univariate_naive_accumulate(&mle_eval_pairs, &mut partial_evals);
-                }
-
-                partial_evals
-                    .into_iter()
-                    .map(|v| {
-                        let result = v * eq_out_evals[j_out];
-                        *result.as_unreduced_ref()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .fold_with(
-                vec![F::Unreduced::<5>::zero(); mles.len()],
-                |running, new: Vec<F::Unreduced<4>>| {
-                    running.into_iter().zip(new).map(|(a, b)| a + b).collect()
-                },
-            )
-            .reduce(
-                || vec![F::Unreduced::zero(); mles.len()],
-                |running, new| running.into_iter().zip(new).map(|(a, b)| a + b).collect(),
-            )
-            .into_iter()
-            .map(F::from_barrett_reduce)
-            .collect()
-    };
-
-    let r_round = eq_poly.get_current_w();
-    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r_round]);
-    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r_round]);
-
-    let eval_at_1 = sum_evals[0];
-    let eval_at_0 = (claim - eq_eval_at_1 * eval_at_1) / eq_eval_at_0;
-
-    let toom_evals = [&[eval_at_0], &*sum_evals].concat();
-    let tmp_coeffs = UniPoly::from_evals_toom(&toom_evals).coeffs;
-
-    // Multiply by eq(X, r_round) = (1 - r_round) + (2r_round - 1)X
-    let constant_coeff = F::one() - r_round;
-    let x_coeff = r_round + r_round - F::one();
-    let mut coeffs = vec![F::zero(); tmp_coeffs.len() + 1];
-    for (i, coeff) in tmp_coeffs.into_iter().enumerate() {
-        coeffs[i] += coeff * constant_coeff;
-        coeffs[i + 1] += coeff * x_coeff;
+    /// Per-`x_out` accumulator used inside `par_fold_out_in` for the naive path.
+    ///
+    /// - `lanes[k]` accumulates the contribution for output lane `k`.
+    /// - `pairs` and `evals` are scratch buffers reused across all `g` values
+    ///   for a given `x_out`, to avoid repeated allocations and zeroing.
+    struct NaiveInnerAcc<F: JoltField> {
+        lanes: Vec<F>,
+        pairs: Vec<(F, F)>,
+        evals: Vec<F>,
     }
 
-    UniPoly::from_coeff(coeffs)
+    let d = mles.len();
+    let current_scalar = eq_poly.get_current_scalar();
+
+    // Naive implementation using the same split-eq parallel structure as the
+    // optimized version, but with the O(d^2) product evaluator.
+    //
+    // We fold over the current split-eq weights:
+    //   Σ_{x_out} E_out[x_out] · Σ_{x_in} E_in[x_in] · P_g(x)
+    // where `g = group_index(x_out, x_in)` and `P_g` is the product over MLEs.
+    let sum_evals: Vec<F> = eq_poly
+        .par_fold_out_in(
+            // Per-`x_out` accumulator: one lane per output point plus scratch
+            // buffers for the naive product evaluation.
+            || NaiveInnerAcc {
+                lanes: vec![F::zero(); d],
+                pairs: vec![(F::zero(), F::zero()); d],
+                evals: vec![F::zero(); d],
+            },
+            |inner, g, _x_in, e_in| {
+                // Build per-g pairs [(p0, p1); d] in-place.
+                for (i, mle) in mles.iter().enumerate() {
+                    let v0 = mle.get_bound_coeff(2 * g);
+                    let v1 = mle.get_bound_coeff(2 * g + 1);
+                    inner.pairs[i] = (v0, v1);
+                }
+
+                // Evaluate the product on the grid using the naive O(d^2) kernel,
+                // then accumulate with the inner eq weight `e_in`.
+                product_eval_univariate_naive_assign(&inner.pairs, &mut inner.evals);
+                for k in 0..d {
+                    inner.lanes[k] += e_in * inner.evals[k];
+                }
+            },
+            |_x_out, e_out, mut inner| {
+                // Scale by the outer eq weight, reusing the `lanes` allocation
+                // as the outer accumulator.
+                for v in &mut inner.lanes {
+                    *v *= e_out;
+                }
+                inner.lanes
+            },
+            |mut a, b| {
+                // Merge accumulators across `x_out`.
+                for k in 0..d {
+                    a[k] += b[k];
+                }
+                a
+            },
+        )
+        .into_iter()
+        .map(|x| x * current_scalar)
+        .collect();
+
+    finish_mles_product_sum_from_evals(&sum_evals, claim, eq_poly)
 }
 
 fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
