@@ -472,16 +472,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = ProductVirtualRemainderParams::get_opening_point(sumcheck_challenges);
-        let claims =
-            ProductVirtualEval::compute_claimed_factors::<F>(&self.trace, &opening_point.r);
-
+        let r_cycle = ProductVirtualRemainderParams::get_opening_point(sumcheck_challenges);
+        let claims = ProductVirtualEval::compute_claimed_factors::<F>(&self.trace, &r_cycle);
         for (poly, claim) in zip(PRODUCT_UNIQUE_FACTOR_VIRTUALS, claims) {
             accumulator.append_virtual(
                 transcript,
                 poly,
                 SumcheckId::ProductVirtualization,
-                opening_point.clone(),
+                r_cycle.clone(),
                 claim,
             );
         }
