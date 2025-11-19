@@ -3,12 +3,11 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::VirtualPolynomial;
+use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial};
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
@@ -21,28 +20,36 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
+use common::jolt_device::MemoryLayout;
 use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::array;
-use std::iter::zip;
+use tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
 //
-// Proves the relation:
-//   Σ_{k,j} eq(r', (j,k)) ⋅ [ wa(k,j)⋅(inc(j)+Val(k,j)) + γ⋅ra1(k,j)⋅Val(k,j) + γ²⋅ra2(k,j)⋅Val(k,j) ]
-//   = wv_claim + γ⋅rv1_claim + γ²⋅rv2_claim
+// Proves the combined relation
+//   Σ_j eq(r_cycle_stage_1, j) ⋅ ( RdWriteValue(j) + γ⋅ReadVals(j) )
+//     + γ³ ⋅ Σ_j eq(r_cycle_stage_3, j) ⋅ ReadVals(j)
+//   = rd_wv_claim
+//     + γ⋅rs1_rv_claim_stage_1
+//     + γ²⋅rs2_rv_claim_stage_1
+//     + γ³⋅(rs1_rv_claim_stage_3 + γ⋅rs2_rv_claim_stage_3),
 // where:
-// - r' are the fresh challenges for this sumcheck.
-// - wa(k,j) = 1 if register k is written at cycle j (rd=k), 0 otherwise.
-// - ra1(k,j) = 1 if register k is read at cycle j (rs1=k), 0 otherwise.
-// - ra2(k,j) = 1 if register k is read at cycle j (rs2=k), 0 otherwise.
-// - Val(k,j) is the value of register k right before cycle j.
+// - eq(r_cycle_stage_1, ·) and eq(r_cycle_stage_3, ·) are equality MLEs over the cycle index j,
+//   evaluated at two independent challenge points from Spartan stage 1 and the instruction-input
+//   sumcheck (stage 3), respectively;
+// - RdWriteValue(j)   = Σ_k wa(k,j)⋅(inc(j)+Val(k,j));
+// - ReadVals(j)       = Σ_k [ ra1(k,j)⋅Val(k,j) + γ⋅ra2(k,j)⋅Val(k,j) ];
+// - wa(k,j) = 1 if register k is written at cycle j (rd = k), 0 otherwise;
+// - ra1(k,j) = 1 if register k is read at cycle j (rs1 = k), 0 otherwise;
+// - ra2(k,j) = 1 if register k is read at cycle j (rs2 = k), 0 otherwise;
+// - Val(k,j) is the value of register k right before cycle j;
 // - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
-// - wv_claim, rv1_claim, rv2_claim are claimed write/read values from Spartan.
 //
 // This sumcheck ensures that the values read from and written to registers are consistent
-// with the execution trace.
+// with the execution trace and with both outer Spartan relations.
 
 const K: usize = REGISTER_COUNT as usize;
 const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
@@ -113,12 +120,21 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        ram_K: usize,
+        twist_sumcheck_switch_index: usize,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new(state_manager);
-
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
+        let params = RegistersReadWriteCheckingParams::new(
+            twist_sumcheck_switch_index,
+            trace.len().log_2(),
+            opening_accumulator,
+            transcript,
+        );
 
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -216,22 +232,27 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             GruenSplitEqPolynomial::<F>::new(&params.r_cycle_stage_1.r, BindingOrder::LowToHigh);
         let gruen_eq_r_cycle_stage_3 =
             GruenSplitEqPolynomial::<F>::new(&params.r_cycle_stage_3.r, BindingOrder::LowToHigh);
-        let inc_cycle =
-            CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let ram_d = compute_d_parameter(ram_K);
+        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(
+            bytecode_preprocessing,
+            memory_layout,
+            trace,
+            ram_d,
+        );
 
-        let (_, rs1_rv_claim_stage_1) = state_manager
+        let (_, rs1_rv_claim_stage_1) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (_, rd_wv_claim) = state_manager.get_virtual_polynomial_opening(
+        let (_, rd_wv_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWriteValue,
             SumcheckId::SpartanOuter,
         );
-        let (_, rs2_rv_claim_stage_1) = state_manager
+        let (_, rs2_rv_claim_stage_1) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        let (_, rs1_rv_claim_stage_3) = state_manager.get_virtual_polynomial_opening(
+        let (_, rs1_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
         );
-        let (_, rs2_rv_claim_stage_3) = state_manager.get_virtual_polynomial_opening(
+        let (_, rs2_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs2Value,
             SumcheckId::InstructionInputVirtualization,
         );
@@ -280,7 +301,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         }
     }
 
-    fn phase1_compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn phase1_compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
         const BATCH_SIZE: usize = 2;
         let Self {
             addresses,
@@ -511,10 +532,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                     let mut eval_at_0_for_stage_3 = F::Unreduced::<9>::zero();
                     let mut eval_at_inf_for_stage_3 = F::Unreduced::<9>::zero();
 
-                    let mut eval_at_0_for_current_stage_1 = F::zero();
-                    let mut eval_at_inf_for_current_stage_1 = F::zero();
-                    let mut eval_at_0_for_current_stage_3 = F::zero();
-                    let mut eval_at_inf_for_current_stage_3 = F::zero();
+                    let mut eval_at_0_for_current_stage_1 = F::Unreduced::<9>::zero();
+                    let mut eval_at_inf_for_current_stage_1 = F::Unreduced::<9>::zero();
+                    let mut eval_at_0_for_current_stage_3 = F::Unreduced::<9>::zero();
+                    let mut eval_at_inf_for_current_stage_3 = F::Unreduced::<9>::zero();
 
                     let mut x_out_prev: Option<usize> = None;
 
@@ -633,19 +654,31 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                                     let E_out_stage_3_eval =
                                         gruen_eq_r_cycle_stage_3.E_out_current()[x];
 
-                                    eval_at_0_for_stage_1 += eval_at_0_for_current_stage_1
-                                        .mul_unreduced::<9>(E_out_stage_1_eval);
-                                    eval_at_inf_for_stage_1 += eval_at_inf_for_current_stage_1
-                                        .mul_unreduced::<9>(E_out_stage_1_eval);
-                                    eval_at_0_for_stage_3 += eval_at_0_for_current_stage_3
-                                        .mul_unreduced::<9>(E_out_stage_3_eval);
-                                    eval_at_inf_for_stage_3 += eval_at_inf_for_current_stage_3
-                                        .mul_unreduced::<9>(E_out_stage_3_eval);
+                                    let red0_s1 = F::from_montgomery_reduce::<9>(
+                                        eval_at_0_for_current_stage_1,
+                                    );
+                                    let redi_s1 = F::from_montgomery_reduce::<9>(
+                                        eval_at_inf_for_current_stage_1,
+                                    );
+                                    let red0_s3 = F::from_montgomery_reduce::<9>(
+                                        eval_at_0_for_current_stage_3,
+                                    );
+                                    let redi_s3 = F::from_montgomery_reduce::<9>(
+                                        eval_at_inf_for_current_stage_3,
+                                    );
+                                    eval_at_0_for_stage_1 +=
+                                        E_out_stage_1_eval.mul_unreduced::<9>(red0_s1);
+                                    eval_at_inf_for_stage_1 +=
+                                        E_out_stage_1_eval.mul_unreduced::<9>(redi_s1);
+                                    eval_at_0_for_stage_3 +=
+                                        E_out_stage_3_eval.mul_unreduced::<9>(red0_s3);
+                                    eval_at_inf_for_stage_3 +=
+                                        E_out_stage_3_eval.mul_unreduced::<9>(redi_s3);
 
-                                    eval_at_0_for_current_stage_1 = F::zero();
-                                    eval_at_inf_for_current_stage_1 = F::zero();
-                                    eval_at_0_for_current_stage_3 = F::zero();
-                                    eval_at_inf_for_current_stage_3 = F::zero();
+                                    eval_at_0_for_current_stage_1 = F::Unreduced::<9>::zero();
+                                    eval_at_inf_for_current_stage_1 = F::Unreduced::<9>::zero();
+                                    eval_at_0_for_current_stage_3 = F::Unreduced::<9>::zero();
+                                    eval_at_inf_for_current_stage_3 = F::Unreduced::<9>::zero();
                                 }
                                 _ => (),
                             }
@@ -707,13 +740,17 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                                 rs1_inner_sum_evals[1] + params.gamma * rs2_inner_sum_evals[1],
                             ];
 
-                            eval_at_0_for_current_stage_1 += E_in_stage_1_eval
-                                * (rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0]);
+                            eval_at_0_for_current_stage_1 += E_in_stage_1_eval.mul_unreduced::<9>(
+                                rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0],
+                            );
                             eval_at_inf_for_current_stage_1 += E_in_stage_1_eval
-                                * (rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1]);
-                            eval_at_0_for_current_stage_3 += E_in_stage_3_eval * read_vals_evals[0];
+                                .mul_unreduced::<9>(
+                                    rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1],
+                                );
+                            eval_at_0_for_current_stage_3 +=
+                                E_in_stage_3_eval.mul_unreduced::<9>(read_vals_evals[0]);
                             eval_at_inf_for_current_stage_3 +=
-                                E_in_stage_3_eval * read_vals_evals[1];
+                                E_in_stage_3_eval.mul_unreduced::<9>(read_vals_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
@@ -721,14 +758,16 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                     if let Some(x) = x_out_prev {
                         let E_out_stage_1_eval = gruen_eq_r_cycle_stage_1.E_out_current()[x];
                         let E_out_stage_3_eval = gruen_eq_r_cycle_stage_3.E_out_current()[x];
-                        eval_at_0_for_stage_1 +=
-                            E_out_stage_1_eval.mul_unreduced::<9>(eval_at_0_for_current_stage_1);
-                        eval_at_inf_for_stage_1 +=
-                            E_out_stage_1_eval.mul_unreduced::<9>(eval_at_inf_for_current_stage_1);
-                        eval_at_0_for_stage_3 +=
-                            E_out_stage_3_eval.mul_unreduced::<9>(eval_at_0_for_current_stage_3);
-                        eval_at_inf_for_stage_3 +=
-                            E_out_stage_3_eval.mul_unreduced::<9>(eval_at_inf_for_current_stage_3);
+                        let red0_s1 = F::from_montgomery_reduce::<9>(eval_at_0_for_current_stage_1);
+                        let redi_s1 =
+                            F::from_montgomery_reduce::<9>(eval_at_inf_for_current_stage_1);
+                        let red0_s3 = F::from_montgomery_reduce::<9>(eval_at_0_for_current_stage_3);
+                        let redi_s3 =
+                            F::from_montgomery_reduce::<9>(eval_at_inf_for_current_stage_3);
+                        eval_at_0_for_stage_1 += E_out_stage_1_eval.mul_unreduced::<9>(red0_s1);
+                        eval_at_inf_for_stage_1 += E_out_stage_1_eval.mul_unreduced::<9>(redi_s1);
+                        eval_at_0_for_stage_3 += E_out_stage_3_eval.mul_unreduced::<9>(red0_s3);
+                        eval_at_inf_for_stage_3 += E_out_stage_3_eval.mul_unreduced::<9>(redi_s3);
                     }
                     [
                         eval_at_0_for_stage_1,
@@ -750,30 +789,23 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let [eval_at_0_for_stage_1, eval_at_inf_for_stage_1, eval_at_0_for_stage_3, eval_at_inf_for_stage_3] =
             quadratic_coeffs;
 
-        let univariate_evals_stage_1 = gruen_eq_r_cycle_stage_1.gruen_evals_deg_3(
+        let round_poly_stage_1 = gruen_eq_r_cycle_stage_1.gruen_poly_deg_3(
             eval_at_0_for_stage_1,
             eval_at_inf_for_stage_1,
             *prev_claim_stage_1,
         );
-        let univariate_evals_stage_3 = gruen_eq_r_cycle_stage_3.gruen_evals_deg_3(
+        let round_poly_stage_3 = gruen_eq_r_cycle_stage_3.gruen_poly_deg_3(
             eval_at_0_for_stage_3,
             eval_at_inf_for_stage_3,
             *prev_claim_stage_3,
         );
-        *prev_round_poly_stage_1 = Some(UniPoly::from_evals_and_hint(
-            *prev_claim_stage_1,
-            &univariate_evals_stage_1,
-        ));
-        *prev_round_poly_stage_3 = Some(UniPoly::from_evals_and_hint(
-            *prev_claim_stage_3,
-            &univariate_evals_stage_3,
-        ));
-        zip(univariate_evals_stage_1, univariate_evals_stage_3)
-            .map(|(eval_stage_1, eval_stage_3)| eval_stage_1 + params.gamma_cub * eval_stage_3)
-            .collect()
+        let res = &round_poly_stage_1 + &(&round_poly_stage_3 * params.gamma_cub);
+        *prev_round_poly_stage_1 = Some(round_poly_stage_1);
+        *prev_round_poly_stage_3 = Some(round_poly_stage_3);
+        res
     }
 
-    fn phase2_compute_prover_message(&self) -> Vec<F> {
+    fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         const BATCH_SIZE: usize = 2;
 
         let Self {
@@ -913,10 +945,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eval_at_2 = eval_at_2_for_stage_1 + params.gamma_cub * eval_at_2_for_stage_3;
         let eval_at_3 = eval_at_3_for_stage_1 + params.gamma_cub * eval_at_3_for_stage_3;
 
-        vec![eval_at_0, eval_at_2, eval_at_3]
+        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0, eval_at_2, eval_at_3])
     }
 
-    fn phase3_compute_prover_message(&self) -> Vec<F> {
+    fn phase3_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         const BATCH_SIZE: usize = 2;
 
         let Self {
@@ -946,13 +978,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             .into_par_iter()
             .map(|k| {
                 let rs1_ra_evals =
-                    rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
                 let rs2_ra_evals =
-                    rs2_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    rs2_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
                 let wa_evals =
-                    rd_wa.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    rd_wa.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
                 let val_evals =
-                    val.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    val.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
 
                 // Eval RdWriteValue(x) at (r', {0, 2, 3}, k).
                 let rd_write_value_at_0_k = wa_evals[0] * (inc_eval + val_evals[0]);
@@ -1013,7 +1045,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eval_at_3 = eq_r_cycle_stage_1_eval * eval_at_3_for_stage_1
             + params.gamma_cub * eq_r_cycle_stage_3_eval * eval_at_3_for_stage_3;
 
-        vec![eval_at_0, eval_at_2, eval_at_3]
+        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0, eval_at_2, eval_at_3])
     }
 
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
@@ -1229,17 +1261,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eq_r_cycle_stage_1 = eq_r_cycle_stage_1.as_mut().unwrap();
         let eq_r_cycle_stage_3 = eq_r_cycle_stage_3.as_mut().unwrap();
 
-        [
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
-            inc_cycle,
-            eq_r_cycle_stage_1,
-            eq_r_cycle_stage_3,
-        ]
-        .into_par_iter()
-        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+        rs1_ra.bind_parallel(r_j, BindingOrder::HighToLow);
+        rs2_ra.bind_parallel(r_j, BindingOrder::HighToLow);
+        rd_wa.bind_parallel(r_j, BindingOrder::HighToLow);
+        val.bind_parallel(r_j, BindingOrder::HighToLow);
+        inc_cycle.bind_parallel(r_j, BindingOrder::HighToLow);
+        eq_r_cycle_stage_1.bind_parallel(r_j, BindingOrder::HighToLow);
+        eq_r_cycle_stage_3.bind_parallel(r_j, BindingOrder::HighToLow);
     }
 
     fn phase3_bind(&mut self, r_j: F::Challenge) {
@@ -1259,7 +1287,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         // variables, so they are not bound here
         [rs1_ra, rs2_ra, rd_wa, val]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 }
 
@@ -1278,22 +1306,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "RegistersReadWriteCheckingProver::compute_prover_message"
-    )]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.chunk_size.log_2() {
-            self.phase1_compute_prover_message(round, previous_claim)
+            self.phase1_compute_message(round, previous_claim)
         } else if round < self.params.n_cycle_vars {
-            self.phase2_compute_prover_message()
+            self.phase2_compute_message(previous_claim)
         } else {
-            self.phase3_compute_prover_message()
+            self.phase3_compute_message(previous_claim)
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.chunk_size.log_2() {
             self.phase1_bind(r_j, round);
         } else if round < self.params.n_cycle_vars {
@@ -1385,9 +1410,17 @@ pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        twist_sumcheck_switch_index: usize,
+        n_cycle_vars: usize,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new(state_manager);
+        let params = RegistersReadWriteCheckingParams::new(
+            twist_sumcheck_switch_index,
+            n_cycle_vars,
+            opening_accumulator,
+            transcript,
+        );
         Self { params }
     }
 }
@@ -1496,7 +1529,7 @@ struct RegistersReadWriteCheckingParams<F: JoltField> {
     gamma: F,
     /// Equals `gamma^3`.
     gamma_cub: F,
-    sumcheck_switch_index: usize,
+    twist_sumcheck_switch_index: usize,
     n_cycle_vars: usize, // = log(T)
     r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
     r_cycle_stage_3: OpeningPoint<BIG_ENDIAN, F>,
@@ -1504,24 +1537,23 @@ struct RegistersReadWriteCheckingParams<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
     pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        twist_sumcheck_switch_index: usize,
+        n_cycle_vars: usize,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma = state_manager.transcript.challenge_scalar::<F>();
+        let gamma = transcript.challenge_scalar::<F>();
         let gamma_cub = gamma.square() * gamma;
-        let sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
-        let n_cycle_vars = state_manager.get_trace_len().log_2();
-
-        let (r_cycle_stage_1, _) = state_manager
+        let (r_cycle_stage_1, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (r_cycle_stage_3, _) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle_stage_3, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
         );
-
         Self {
             gamma,
             gamma_cub,
-            sumcheck_switch_index,
+            twist_sumcheck_switch_index,
             n_cycle_vars,
             r_cycle_stage_1,
             r_cycle_stage_3,
@@ -1561,14 +1593,18 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let sumcheck_switch_index = self.sumcheck_switch_index;
+        let sumcheck_switch_index = self.twist_sumcheck_switch_index;
         let n_cycle_vars = self.n_cycle_vars;
         // The high-order cycle variables are bound after the switch
         let mut r_cycle = sumcheck_challenges[sumcheck_switch_index..n_cycle_vars].to_vec();
         // First sumcheck_switch_index rounds bind cycle variables from low to high
         r_cycle.extend(sumcheck_challenges[..sumcheck_switch_index].iter().rev());
         // Address variables are bound high-to-low
-        let r_address = sumcheck_challenges[n_cycle_vars..].to_vec();
+        let r_address = sumcheck_challenges[n_cycle_vars..]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
         [r_address, r_cycle].concat().into()
     }
 }

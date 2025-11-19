@@ -7,27 +7,20 @@
 //!
 //! For implementation details and benchmarks, see: *TODO: LINK*
 
+use crate::field::OptimizedMul;
 use crate::field::{tracked_ark::TrackedFr, JoltField};
 use crate::impl_field_ops_inline;
 use allocative::Allocative;
 use ark_ff::{BigInt, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use num::{One, Zero};
 use rand::{Rng, RngCore};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{Add, Mul, Sub};
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    Allocative,
+    Copy, Clone, Default, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize, Allocative,
 )]
 pub struct MontU128Challenge<F: JoltField> {
     value: [u64; 4],
@@ -36,11 +29,15 @@ pub struct MontU128Challenge<F: JoltField> {
 
 impl<F: JoltField> Display for MontU128Challenge<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "MontU128Challenge([{}, {}, {}, {}]",
-            self.value[0], self.value[1], self.value[2], self.value[3]
-        )
+        let bigint = BigInt::new(self.value);
+        write!(f, "{bigint}")
+    }
+}
+
+impl<F: JoltField> Debug for MontU128Challenge<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bigint = BigInt::new(self.value);
+        write!(f, "{bigint}")
     }
 }
 
@@ -109,3 +106,59 @@ impl Into<TrackedFr> for &MontU128Challenge<TrackedFr> {
 }
 
 impl_field_ops_inline!(MontU128Challenge<TrackedFr>, TrackedFr, optimized);
+
+impl OptimizedMul<ark_bn254::Fr, ark_bn254::Fr> for MontU128Challenge<ark_bn254::Fr> {
+    fn mul_0_optimized(self, other: ark_bn254::Fr) -> Self::Output {
+        if other.is_zero() {
+            ark_bn254::Fr::zero()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_1_optimized(self, other: ark_bn254::Fr) -> Self::Output {
+        if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_01_optimized(self, other: ark_bn254::Fr) -> Self::Output {
+        if other.is_zero() {
+            ark_bn254::Fr::zero()
+        } else if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+}
+
+impl OptimizedMul<TrackedFr, TrackedFr> for MontU128Challenge<TrackedFr> {
+    fn mul_0_optimized(self, other: TrackedFr) -> Self::Output {
+        if other.is_zero() {
+            TrackedFr::zero()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_1_optimized(self, other: TrackedFr) -> Self::Output {
+        if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_01_optimized(self, other: TrackedFr) -> Self::Output {
+        if other.is_zero() {
+            TrackedFr::zero()
+        } else if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+}

@@ -1,5 +1,5 @@
-#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
-#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
+//#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
+//#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
 
 use std::path::PathBuf;
 
@@ -7,16 +7,15 @@ mod constants;
 use crate::constants::*;
 mod mle_ast;
 use crate::mle_ast::*;
+mod lookups;
 mod util;
-//use crate::util::*;
-mod subtable;
-use crate::subtable::*;
+use crate::lookups::*;
 mod instruction;
 use crate::instruction::*;
 mod r1cs;
 use crate::r1cs::*;
-mod flags;
-use crate::flags::*;
+mod lean_tests;
+use crate::lean_tests::*;
 mod modules;
 use crate::modules::*;
 
@@ -75,16 +74,25 @@ fn write_flat_file(
     Ok(())
 }
 
-type ParameterSet = RV32IParameterSet;
+type ParameterSet = RV64IParameterSet;
 
 fn main() -> Result<(), FSError> {
     let args = Args::parse();
+    let mut rng = rand_core::OsRng;
 
     let modules: Vec<Box<dyn AsModule>> = vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
-        Box::new(ZkLeanSubtables::<MleAst<16000>, ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
-        Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
+        match ParameterSet::XLEN {
+            32 => Box::new(ZkLeanLookupTables::<32>::extract()),
+            64 => Box::new(ZkLeanLookupTables::<64>::extract()),
+            _ => panic!("Unsupported architecture size"),
+        },
+        match ParameterSet::XLEN {
+            32 => Box::new(ZkLeanTests::<32>::extract(&mut rng)),
+            64 => Box::new(ZkLeanTests::<64>::extract(&mut rng)),
+            _ => panic!("Unsupported architecture size"),
+        },
     ];
 
     if let Some(package_path) = args.package_path {

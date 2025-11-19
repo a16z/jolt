@@ -1,0 +1,26 @@
+name = "Extracted Jolt circuits"
+defaultTargets = ["Jolt"]
+testDriver = "Tests"
+
+[[lean_lib]]
+name = "Jolt"
+
+[[lean_lib]]
+name = "Tests"
+
+[[require]]
+name = "zkLean"
+git = "https://github.com/GaloisInc/zk-lean.git"
+rev = "8c461198e19cd419f3854c59d6e266bb19adb2af"
+subDir = "src"
+
+# TODO: This is present only so we can copy the BN254 scalar field
+# from ArkLib. We need to do this because ArkLib doesn't currently
+# use the most recent version of Lean. We can replace this
+# requirement with ArkLib once that's updated.
+[[lean_lib]]
+name = "ArkLib"
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.23.0"

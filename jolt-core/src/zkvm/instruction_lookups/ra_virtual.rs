@@ -3,14 +3,15 @@ use std::sync::Arc;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
     },
     subprotocols::{
         mles_product_sum::compute_mles_product_sum, sumcheck_prover::SumcheckInstanceProver,
@@ -18,7 +19,6 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        dag::state_manager::StateManager,
         instruction::LookupQuery,
         instruction_lookups::{D, K_CHUNK, LOG_K, LOG_K_CHUNK},
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -26,8 +26,8 @@ use crate::{
 };
 use allocative::Allocative;
 use common::constants::XLEN;
-use itertools::chain;
 use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 /// Degree bound of the sumcheck round polynomials in [`RaSumcheckVerifier`].
 const DEGREE_BOUND: usize = D + 1;
@@ -44,22 +44,17 @@ const DEGREE_BOUND: usize = D + 1;
 #[derive(Allocative)]
 pub struct RaSumcheckProver<F: JoltField> {
     ra_i_polys: Vec<RaPolynomial<u8, F>>,
-    /// Challenges drawn throughout  the sumcheck.
-    r_sumcheck: Vec<F::Challenge>,
+    eq_poly: GruenSplitEqPolynomial<F>,
     #[allocative(skip)]
     params: RaSumcheckParams<F>,
 }
 
 impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::gen")]
-    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Self {
-        let params = RaSumcheckParams::new(state_manager);
+    pub fn gen(trace: &[Cycle], opening_accumulator: &ProverOpeningAccumulator<F>) -> Self {
+        let params = RaSumcheckParams::new(opening_accumulator);
 
-        let (_preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
@@ -88,7 +83,7 @@ impl<F: JoltField> RaSumcheckProver<F> {
 
         Self {
             ra_i_polys,
-            r_sumcheck: vec![],
+            eq_poly: GruenSplitEqPolynomial::new(&params.r_cycle.r, BindingOrder::LowToHigh),
             params,
         }
     }
@@ -107,26 +102,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let ra_i_polys = &self.ra_i_polys;
-        let r_cycle = &self.params.r_cycle.r;
-        let r_sumcheck = &self.r_sumcheck;
-
-        let poly = compute_mles_product_sum(ra_i_polys, previous_claim, r_cycle, r_sumcheck);
-
-        // Evaluate the poly at 0, 2, 3, ..., degree.
-        debug_assert_eq!(DEGREE_BOUND, self.ra_i_polys.len() + 1);
-        let domain = chain!([0], 2..).map(F::from_u64).take(DEGREE_BOUND);
-        domain.map(|x| poly.evaluate::<F>(&x)).collect()
+        let eq_poly = &self.eq_poly;
+        compute_mles_product_sum(ra_i_polys, previous_claim, eq_poly)
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.ra_i_polys
-            .par_iter_mut()
-            .for_each(|p| p.bind_parallel(r_j, BindingOrder::HighToLow));
-        self.r_sumcheck.push(r_j);
+            .iter_mut()
+            .for_each(|p| p.bind_parallel(r_j, BindingOrder::LowToHigh));
+        self.eq_poly.bind(r_j);
     }
 
     fn cache_openings(
@@ -172,10 +160,8 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
-    pub fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let params = RaSumcheckParams::new(state_manager);
+    pub fn new(opening_accumulator: &VerifierOpeningAccumulator<F>) -> Self {
+        let params = RaSumcheckParams::new(opening_accumulator);
         Self { params }
     }
 }
@@ -250,10 +236,8 @@ struct RaSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckParams<F> {
-    fn new(
-        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+    fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
@@ -277,5 +261,5 @@ impl<F: JoltField> RaSumcheckParams<F> {
 fn get_opening_point<F: JoltField>(
     sumcheck_challenges: &[F::Challenge],
 ) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::new(sumcheck_challenges.to_vec())
+    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }

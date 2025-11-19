@@ -19,13 +19,10 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F;
 
     /// Computes the prover's message for a specific round of the sumcheck protocol.
-    /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
-    /// The point evaluation at 1 can be interpolated using the previous round's claim.
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F>;
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F>;
 
-    /// Binds this sumcheck instance to the verifier's challenge from a specific round.
-    /// This updates the internal state to prepare for the next round.
-    fn bind(&mut self, r_j: F::Challenge, round: usize);
+    /// Ingest the verifier's challenge for a sumcheck round.
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize);
 
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
@@ -50,23 +47,12 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
 pub trait UniSkipFirstRoundInstanceProver<F: JoltField, T: Transcript>:
     Send + Sync + MaybeAllocative
 {
-    /// The degree of the sum-check
-    const DEGREE_BOUND: usize;
-
-    /// The domain size of the sum-check. Canonically instantiated to the domain
-    /// [-floor(DOMAIN_SIZE/2), ceil(DOMAIN_SIZE)/2]
-    const DOMAIN_SIZE: usize;
-
     /// Returns the initial claim of this univariate skip round, i.e.
-    /// input_claim = \sum_{-floor(S/2) <= z <= ceil(S/2)} \sum_{x \in \{0, 1}^n} P(z, x)
-    /// where S = DOMAIN_SIZE
+    /// input_claim = \sum_{-floor(N/2) <= z <= ceil(N/2)} \sum_{x \in \{0, 1}^n} P(z, x)
+    /// where N is the domain size (one more than the degree of univariate skip)
     fn input_claim(&self) -> F;
 
     /// Computes the full univariate polynomial to be sent in the uni-skip round.
     /// Returns a degree-bounded `UniPoly` with exactly `DEGREE_BOUND + 1` coefficients.
     fn compute_poly(&mut self) -> UniPoly<F>;
-
-    // TODO: add flamegraph support
-    // #[cfg(feature = "allocative")]
-    // fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
 }

@@ -1,10 +1,12 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
-use jolt_core::zkvm::dag::state_manager::ProofKeys;
-use jolt_core::zkvm::JoltVerifierPreprocessing;
-use jolt_core::zkvm::{Jolt, JoltRV64IMAC};
+use jolt_core::zkvm::{
+    prover::JoltProverPreprocessing, verifier::JoltVerifierPreprocessing, RV64IMACProver,
+    RV64IMACVerifier,
+};
 use std::fs;
 use std::io::Write;
+use std::time::Instant;
 
 // Empirically measured cycles per operation for RV64IMAC
 const CYCLES_PER_SHA256: f64 = 3396.0;
@@ -232,7 +234,7 @@ fn prove_example(
     drop(trace);
 
     let task = move || {
-        let preprocessing = JoltRV64IMAC::prover_preprocess(
+        let preprocessing = JoltProverPreprocessing::gen(
             bytecode,
             program_io.memory_layout.clone(),
             init_memory_state,
@@ -241,7 +243,7 @@ fn prove_example(
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, program_io, _, _) = JoltRV64IMAC::prove(
+        let prover = RV64IMACProver::gen_from_elf(
             &preprocessing,
             elf_contents,
             &serialized_input,
@@ -249,15 +251,14 @@ fn prove_example(
             &[],
             None,
         );
+        let program_io = prover.program_io.clone();
+        let (jolt_proof, _) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None, None);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
+        let verifier =
+            RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
+                .expect("Failed to create verifier");
+        verifier.verify().unwrap();
     };
 
     tasks.push((
@@ -284,7 +285,7 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
-    let preprocessing = JoltRV64IMAC::prover_preprocess(
+    let preprocessing = JoltProverPreprocessing::gen(
         bytecode.clone(),
         program_io.memory_layout.clone(),
         init_memory_state,
@@ -294,22 +295,26 @@ fn prove_example_with_trace(
     let elf_contents_opt = program.get_elf_contents();
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
-    let span = tracing::info_span!("E2E");
-    let (jolt_proof, program_io, _, prove_duration) = span.in_scope(|| {
-        JoltRV64IMAC::prove(
-            &preprocessing,
-            elf_contents,
-            &serialized_input,
-            &[],
-            &[],
-            None,
-        )
-    });
+    let span = tracing::info_span!("E2E").entered();
+    let prover = RV64IMACProver::gen_from_elf(
+        &preprocessing,
+        elf_contents,
+        &serialized_input,
+        &[],
+        &[],
+        None,
+    );
+    let now = Instant::now();
+    let (jolt_proof, _) = prover.prove();
+    let prove_duration = now.elapsed();
+    drop(span);
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
     let proof_size_full_compressed = proof_size
-        - jolt_proof.proofs[&ProofKeys::ReducedOpeningProof]
+        - jolt_proof
+            .reduced_opening_proof
             .serialized_size(ark_serialize::Compress::Yes)
-        + (jolt_proof.proofs[&ProofKeys::ReducedOpeningProof]
+        + (jolt_proof
+            .reduced_opening_proof
             .serialized_size(ark_serialize::Compress::No)
             / 3)
         - jolt_proof
@@ -321,13 +326,10 @@ fn prove_example_with_trace(
             / 3);
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-    let verification_result =
-        JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None, None);
-    assert!(
-        verification_result.is_ok(),
-        "Verification failed with error: {:?}",
-        verification_result.err()
-    );
+    let verifier =
+        RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
+            .expect("Failed to create verifier");
+    verifier.verify().unwrap();
 
     (
         prove_duration,

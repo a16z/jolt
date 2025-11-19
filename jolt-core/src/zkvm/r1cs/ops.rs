@@ -1,21 +1,11 @@
 //! Const-friendly R1CS linear combination operations
 //!
 //! This module provides compile-time constant operations for building R1CS constraints.
-//! Unlike the legacy dynamic operations, these are designed to work with const contexts
-//! and provide better performance in the prover's hot path.
 
 use super::inputs::JoltR1CSInputs;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
-
-/// Helper for JoltR1CSInputs to get indices
-impl JoltR1CSInputs {
-    /// Convert this input to a usable index
-    pub const fn idx(self) -> usize {
-        self.to_index()
-    }
-}
 
 /// A single term in a linear combination: (input_index, coefficient)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,17 +78,17 @@ impl LC {
 
     /// Create an LC from a single input with unit coefficient.
     pub const fn from_input(inp: JoltR1CSInputs) -> LC {
-        LC::single_term(inp.idx(), 1)
+        LC::single_term(inp.to_index(), 1)
     }
 
     /// Create an LC from a single input with explicit coefficient.
     pub const fn from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> LC {
-        LC::single_term(inp.idx(), coeff)
+        LC::single_term(inp.to_index(), coeff)
     }
 
     /// Create an LC from a single input with explicit i128 coefficient.
     pub const fn from_input_with_coeff_i128(inp: JoltR1CSInputs, coeff: i128) -> LC {
-        LC::single_term_i128(inp.idx(), coeff)
+        LC::single_term_i128(inp.to_index(), coeff)
     }
 
     /// Create a constant LC.
@@ -106,9 +96,6 @@ impl LC {
         LC::constant(k)
     }
 
-    // =========================
-    // Introspection
-    // =========================
     pub const fn num_terms(&self) -> usize {
         match self {
             LC::Zero | LC::Const(_) => 0,
@@ -240,7 +227,7 @@ impl LC {
     }
 
     /// Break a LC into (terms, len, const)
-    const fn decompose(lc: LC) -> ([Term; 5], usize, i128) {
+    pub const fn decompose(lc: LC) -> ([Term; 5], usize, i128) {
         let mut terms = [Term {
             input_index: 0,
             coeff: 0,
@@ -441,64 +428,64 @@ impl LC {
         result
     }
 
-    /// Compute Σ_j coeff_j * eq_ry[ j ] + c * eq_ry[ const_col ] without any dynamic iteration.
+    /// Compute Σ_j coeff_j * vector[ j ] + c * vector[ const_col ] without any dynamic iteration.
     /// Returns the column-side contribution (no row weight applied).
     #[inline(always)]
-    pub fn dot_eq_ry<F: JoltField>(&self, eq_ry: &[F], const_col: usize) -> F {
+    pub fn dot_product<F: JoltField>(&self, vector: &[F], const_col: usize) -> F {
         match self {
             LC::Zero => F::zero(),
-            LC::Const(c) => c.field_mul(eq_ry[const_col]),
-            LC::Terms1([t1]) => t1.coeff.field_mul(eq_ry[t1.input_index]),
+            LC::Const(c) => c.field_mul(vector[const_col]),
+            LC::Terms1([t1]) => t1.coeff.field_mul(vector[t1.input_index]),
             LC::Terms2([t1, t2]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
             }
             LC::Terms3([t1, t2, t3]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
             }
             LC::Terms4([t1, t2, t3, t4]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
             }
             LC::Terms5([t1, t2, t3, t4, t5]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
-                    + t5.coeff.field_mul(eq_ry[t5.input_index])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
+                    + t5.coeff.field_mul(vector[t5.input_index])
             }
             LC::Terms1Const([t1], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index]) + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index]) + c.field_mul(vector[const_col])
             }
             LC::Terms2Const([t1, t2], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + c.field_mul(vector[const_col])
             }
             LC::Terms3Const([t1, t2, t3], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + c.field_mul(vector[const_col])
             }
             LC::Terms4Const([t1, t2, t3, t4], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
+                    + c.field_mul(vector[const_col])
             }
             LC::Terms5Const([t1, t2, t3, t4, t5], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
-                    + t3.coeff.field_mul(eq_ry[t3.input_index])
-                    + t4.coeff.field_mul(eq_ry[t4.input_index])
-                    + t5.coeff.field_mul(eq_ry[t5.input_index])
-                    + c.field_mul(eq_ry[const_col])
+                t1.coeff.field_mul(vector[t1.input_index])
+                    + t2.coeff.field_mul(vector[t2.input_index])
+                    + t3.coeff.field_mul(vector[t3.input_index])
+                    + t4.coeff.field_mul(vector[t4.input_index])
+                    + t5.coeff.field_mul(vector[t5.input_index])
+                    + c.field_mul(vector[const_col])
             }
         }
     }
@@ -682,9 +669,6 @@ impl LC {
     }
 }
 
-// =============================================================================
-// LC MACRO
-// =============================================================================
 /// lc!: parse a linear combination with +, -, and literal * expr
 /// Examples:
 /// - lc!({ JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })

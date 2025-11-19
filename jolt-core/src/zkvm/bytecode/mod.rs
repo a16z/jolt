@@ -1,23 +1,14 @@
-use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
-use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::poly::opening_proof::{OpeningAccumulator, ProverOpeningAccumulator, SumcheckId};
 use crate::subprotocols::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
     HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
 };
 use crate::utils::math::Math;
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::bytecode::read_raf_checking::{ReadRafSumcheckProver, ReadRafSumcheckVerifier};
-use crate::zkvm::dag::stage::{SumcheckStagesProver, SumcheckStagesVerifier};
-use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::{
     compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
 };
 use crate::{
-    field::JoltField,
-    poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
-    transcripts::Transcript,
+    field::JoltField, poly::eq_poly::EqPolynomial, transcripts::Transcript,
     utils::thread::unsafe_allocate_zero_vec,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -133,59 +124,13 @@ impl BytecodePCMapper {
     }
 }
 
-pub struct BytecodeDagProver;
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStagesProver<F, T, PCS>
-    for BytecodeDagProver
-{
-    fn stage6_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceProver<F, T>>> {
-        let read_raf = ReadRafSumcheckProver::gen(sm);
-        let (hamming_weight, booleanity) = gen_ra_one_hot_provers(sm);
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("Bytecode ReadRafSumcheck", &read_raf);
-            print_data_structure_heap_usage("Bytecode HammingWeightSumcheck", &hamming_weight);
-            print_data_structure_heap_usage("Bytecode BooleanitySumcheck", &booleanity);
-        }
-
-        vec![
-            Box::new(read_raf),
-            Box::new(hamming_weight),
-            Box::new(booleanity),
-        ]
-    }
-}
-
-pub struct BytecodeDagVerifier;
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript>
-    SumcheckStagesVerifier<F, T, PCS> for BytecodeDagVerifier
-{
-    fn stage6_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> {
-        let read_checking = ReadRafSumcheckVerifier::gen(sm);
-        let (hamming_weight, booleanity) = new_ra_one_hot_verifiers(sm);
-        vec![
-            Box::new(read_checking),
-            Box::new(hamming_weight),
-            Box::new(booleanity),
-        ]
-    }
-}
-
-fn gen_ra_one_hot_provers<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+pub fn gen_ra_one_hot_provers<F: JoltField>(
+    trace: &[Cycle],
+    bytecode_preprocessing: &BytecodePreprocessing,
+    opening_accumulator: &ProverOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
-    let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-    let bytecode_preprocessing = &preprocessing.shared.bytecode;
-
-    let r_cycle: Vec<F::Challenge> = state_manager
+    let r_cycle: Vec<F::Challenge> = opening_accumulator
         .get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter)
         .0
         .r;
@@ -199,7 +144,7 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     let log_k_chunk = log_K.div_ceil(d);
     let log_t = trace.len().log_2();
 
-    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers::<F>(d);
+    let hamming_weight_gamma_powers = transcript.challenge_scalar_powers::<F>(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
@@ -214,11 +159,9 @@ fn gen_ra_one_hot_provers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
+    let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
 
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_k_chunk);
+    let r_address: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(log_k_chunk);
 
     let booleanity_params = BooleanitySumcheckParams {
         d,
@@ -238,21 +181,20 @@ fn gen_ra_one_hot_provers<F: JoltField>(
     )
 }
 
-fn new_ra_one_hot_verifiers<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+pub fn new_ra_one_hot_verifiers<F: JoltField>(
+    bytecode_preprocessing: &BytecodePreprocessing,
+    n_cycle_vars: usize,
+    transcript: &mut impl Transcript,
 ) -> (
     HammingWeightSumcheckVerifier<F>,
     BooleanitySumcheckVerifier<F>,
 ) {
-    let (preprocessing, _, T_val) = state_manager.get_verifier_data();
-    let bytecode_preprocessing = &preprocessing.shared.bytecode;
     let d = bytecode_preprocessing.d;
     let log_K = bytecode_preprocessing.code_size.log_2();
     let log_k_chunk = log_K.div_ceil(d);
-    let log_t = T_val.log_2();
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::BytecodeRa).collect();
-    let hamming_weight_gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
+    let hamming_weight_gamma_powers = transcript.challenge_scalar_powers(d);
 
     let hamming_weight_params = HammingWeightSumcheckParams {
         d,
@@ -264,15 +206,13 @@ fn new_ra_one_hot_verifiers<F: JoltField>(
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let booleanity_gammas = state_manager.transcript.challenge_vector_optimized::<F>(d);
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_k_chunk);
+    let booleanity_gammas = transcript.challenge_vector_optimized::<F>(d);
+    let r_address: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(log_k_chunk);
 
     let booleanity_params = BooleanitySumcheckParams {
         d,
         log_k_chunk,
-        log_t,
+        log_t: n_cycle_vars,
         gammas: booleanity_gammas,
         r_address,
         r_cycle: Vec::new(),

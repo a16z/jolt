@@ -1,41 +1,20 @@
 #![allow(clippy::too_many_arguments)]
 
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
     HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
 };
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::dag::stage::{SumcheckStagesProver, SumcheckStagesVerifier};
-use crate::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheckVerifier;
 use crate::{
     field::{self, JoltField},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
-    subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
-    },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::{
-        dag::state_manager::StateManager,
-        ram::{
-            hamming_booleanity::HammingBooleanitySumcheckProver,
-            output_check::{
-                OutputSumcheckProver, OutputSumcheckVerifier, ValFinalSumcheckProver,
-                ValFinalSumcheckVerifier,
-            },
-            ra_virtual::{RaSumcheckProver, RaSumcheckVerifier},
-            raf_evaluation::{RafEvaluationSumcheckProver, RafEvaluationSumcheckVerifier},
-            read_write_checking::{RamReadWriteCheckingProver, RamReadWriteCheckingVerifier},
-            val_evaluation::{ValEvaluationSumcheckProver, ValEvaluationSumcheckVerifier},
-        },
-        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
-    },
+    zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
 };
 use std::vec;
 
@@ -45,13 +24,16 @@ use common::{
     jolt_device::MemoryLayout,
 };
 use rayon::prelude::*;
+use tracer::emulator::memory::Memory;
 use tracer::instruction::Cycle;
+use tracer::JoltDevice;
 
 pub mod hamming_booleanity;
 pub mod output_check;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
+pub mod sparse_matrix_poly;
 pub mod val_evaluation;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -112,184 +94,55 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     }
 }
 
-pub struct RamDagProver {
-    initial_memory_state: Vec<u64>,
-    final_memory_state: Vec<u64>,
-}
-
-impl RamDagProver {
-    pub fn new<F: JoltField>(
-        state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let (preprocessing, _, _, program_io, final_memory) = state_manager.get_prover_data();
-        let ram_preprocessing = &preprocessing.shared.ram;
-
-        let K = state_manager.ram_K;
-
-        let mut initial_memory_state: Vec<u64> = vec![0; K];
-        // Copy bytecode
-        let mut index = remap_address(
-            ram_preprocessing.min_bytecode_address,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        for word in &ram_preprocessing.bytecode_words {
-            initial_memory_state[index] = *word;
-            index += 1;
+/// Populate memory states
+///
+/// # Arguments
+/// * `index` - Where to start writing
+/// * `bytes` - Input bytes to be written
+/// * `initial_state` - Memory state at program start
+/// * `final_state` - Memory state at program end
+pub fn populate_memory_states(
+    mut index: usize,
+    bytes: &[u8],
+    mut initial_state: Option<&mut Vec<u64>>,
+    mut final_state: Option<&mut Vec<u64>>,
+) {
+    for chunk in bytes.chunks(8) {
+        let mut word = [0u8; 8];
+        for (i, byte) in chunk.iter().enumerate() {
+            word[i] = *byte;
         }
+        let word = u64::from_le_bytes(word);
 
-        let dram_start_index =
-            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
-        let mut final_memory_state: Vec<u64> = vec![0; K];
-        // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
-        // so we will still need to populate `final_memory_state` with the contents of
-        // `program_io`, which lives at addresses < `RAM_START_ADDRESS`
-        final_memory_state[dram_start_index..]
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(k, word)| {
-                *word = final_memory.read_doubleword(8 * k as u64);
-            });
-
-        index = remap_address(
-            program_io.memory_layout.trusted_advice_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        for chunk in program_io.trusted_advice.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            final_memory_state[index] = word;
-            index += 1;
+        if let Some(ref mut initial) = initial_state {
+            initial[index] = word;
         }
-
-        index = remap_address(
-            program_io.memory_layout.untrusted_advice_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        for chunk in program_io.untrusted_advice.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            final_memory_state[index] = word;
-            index += 1;
+        if let Some(ref mut final_st) = final_state {
+            final_st[index] = word;
         }
-
-        index = remap_address(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        // Convert input bytes into words and populate
-        // `initial_memory_state` and `final_memory_state`
-        for chunk in program_io.inputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            final_memory_state[index] = word;
-            index += 1;
-        }
-
-        // Convert output bytes into words and populate
-        // `final_memory_state`
-        index = remap_address(
-            program_io.memory_layout.output_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        for chunk in program_io.outputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            final_memory_state[index] = word;
-            index += 1;
-        }
-
-        // Copy panic bit
-        let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout)
-            .unwrap() as usize;
-        final_memory_state[panic_index] = program_io.panic as u64;
-        if !program_io.panic {
-            // Set termination bit
-            let termination_index = remap_address(
-                program_io.memory_layout.termination,
-                &program_io.memory_layout,
-            )
-            .unwrap() as usize;
-            final_memory_state[termination_index] = 1;
-        }
-
-        #[cfg(test)]
-        {
-            use crate::zkvm::witness::CommittedPolynomial;
-
-            let trace = state_manager.get_prover_data().2;
-
-            let mut expected_final_memory_state: Vec<_> = initial_memory_state
-                .iter()
-                .map(|word| *word as i128)
-                .collect();
-            let ram_d = state_manager.ram_d;
-            let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, ram_d);
-            for (j, cycle) in trace.iter().enumerate() {
-                use tracer::instruction::RAMAccess;
-
-                if let RAMAccess::Write(write) = cycle.ram_access() {
-                    if let Some(k) = remap_address(write.address, &program_io.memory_layout) {
-                        expected_final_memory_state[k as usize] += inc.get_coeff_i128(j);
-                    }
-                }
-            }
-            let expected_final_memory_state: Vec<u64> = expected_final_memory_state
-                .into_iter()
-                .map(|word| word.try_into().unwrap())
-                .collect();
-            assert_eq!(expected_final_memory_state, final_memory_state);
-        }
-
-        Self {
-            initial_memory_state,
-            final_memory_state,
-        }
+        index += 1;
     }
 }
 
 /// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
-pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
-    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-) where
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-{
-    let prover_state = state_manager
-        .prover_state
-        .as_ref()
-        .expect("prover_state must be present when accumulating advice");
-
-    let accumulate_closure = |state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+pub fn prover_accumulate_advice<F: JoltField>(
+    untrusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
+    trusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
+    memory_layout: &MemoryLayout,
+    ram_K: usize,
+    opening_accumulator: &mut ProverOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+) {
+    let accumulate_closure = |opening_accumulator: &ProverOpeningAccumulator<F>,
                               advice_poly: &MultilinearPolynomial<F>,
                               max_advice_size: usize| {
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+        let (r_address, _) = r.split_at(ram_K.log_2());
 
-        let total_variables = state_manager.ram_K.log_2();
+        let total_variables = ram_K.log_2();
         let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
 
         // Use the last number_of_vals elements for evaluation
@@ -300,60 +153,41 @@ pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
         (advice_point, eval)
     };
 
-    if let Some(untrusted_advice_poly) = &prover_state.untrusted_advice_polynomial {
+    if let Some(ref untrusted_advice_poly) = untrusted_advice_polynomial {
         let (point, eval) = accumulate_closure(
-            state_manager,
+            opening_accumulator,
             untrusted_advice_poly,
-            state_manager
-                .program_io
-                .memory_layout
-                .max_untrusted_advice_size as usize,
+            memory_layout.max_untrusted_advice_size as usize,
         );
-
-        prover_state
-            .accumulator
-            .borrow_mut()
-            .append_untrusted_advice(&mut state_manager.transcript, point, eval);
+        opening_accumulator.append_untrusted_advice(transcript, point, eval);
     }
 
-    if let Some(trusted_advice_poly) = &prover_state.trusted_advice_polynomial {
+    if let Some(ref trusted_advice_poly) = trusted_advice_polynomial {
         let (point, eval) = accumulate_closure(
-            state_manager,
+            opening_accumulator,
             trusted_advice_poly,
-            state_manager
-                .program_io
-                .memory_layout
-                .max_trusted_advice_size as usize,
+            memory_layout.max_trusted_advice_size as usize,
         );
-
-        prover_state.accumulator.borrow_mut().append_trusted_advice(
-            &mut state_manager.transcript,
-            point,
-            eval,
-        );
+        opening_accumulator.append_trusted_advice(transcript, point, eval);
     }
 }
 
 /// Accumulates advice commitments into the verifier's accumulator.
-pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
-    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-) where
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-{
-    let verifier_state = state_manager
-        .verifier_state
-        .as_ref()
-        .expect("verifier_state must be present when accumulating advice");
-
-    let get_advice_point = |state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+pub fn verifier_accumulate_advice<F: JoltField>(
+    ram_K: usize,
+    program_io: &JoltDevice,
+    has_untrusted_advice_commitment: bool,
+    has_trusted_advice_commitment: bool,
+    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+) {
+    let get_advice_point = |opening_accumulator: &VerifierOpeningAccumulator<F>,
                             max_advice_size: usize| {
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+        let (r_address, _) = r.split_at(ram_K.log_2());
 
         let total_vars = r_address.r.len();
         let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
@@ -363,34 +197,20 @@ pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
         advice_point
     };
 
-    if state_manager.untrusted_advice_commitment.is_some() {
+    if has_untrusted_advice_commitment {
         let point = get_advice_point(
-            state_manager,
-            state_manager
-                .program_io
-                .memory_layout
-                .max_untrusted_advice_size as usize,
+            opening_accumulator,
+            program_io.memory_layout.max_untrusted_advice_size as usize,
         );
-
-        verifier_state
-            .accumulator
-            .borrow_mut()
-            .append_untrusted_advice(&mut state_manager.transcript, point);
+        opening_accumulator.append_untrusted_advice(transcript, point);
     }
 
-    if state_manager.trusted_advice_commitment.is_some() {
+    if has_trusted_advice_commitment {
         let point = get_advice_point(
-            state_manager,
-            state_manager
-                .program_io
-                .memory_layout
-                .max_trusted_advice_size as usize,
+            opening_accumulator,
+            program_io.memory_layout.max_trusted_advice_size as usize,
         );
-
-        verifier_state
-            .accumulator
-            .borrow_mut()
-            .append_trusted_advice(&mut state_manager.transcript, point);
+        opening_accumulator.append_trusted_advice(transcript, point);
     }
 }
 
@@ -443,7 +263,7 @@ pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
 ///
 /// The scaled evaluation: `eval * scaling_factor`, where the scaling factor is the selector polynomial
 /// evaluated at the challenge point. Returns zero if no advice opening is provided.
-pub fn calculate_advice_memory_evaluation<F: JoltField>(
+fn calculate_advice_memory_evaluation<F: JoltField>(
     advice_opening: Option<(OpeningPoint<BIG_ENDIAN, F>, F)>,
     advice_num_vars: usize,
     advice_start: u64,
@@ -480,224 +300,158 @@ pub fn calculate_advice_memory_evaluation<F: JoltField>(
     }
 }
 
-impl<F, ProofTranscript, PCS> SumcheckStagesProver<F, ProofTranscript, PCS> for RamDagProver
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-{
-    fn stage2_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let raf_evaluation = RafEvaluationSumcheckProver::gen(state_manager);
+/// Returns `(initial_memory_state, final_memory_state)`
+pub fn gen_ram_memory_states<F: JoltField>(
+    ram_K: usize,
+    ram_preprocessing: &RAMPreprocessing,
+    program_io: &JoltDevice,
+    final_memory: &Memory,
+) -> (Vec<u64>, Vec<u64>) {
+    let K = ram_K;
 
-        let read_write_checking =
-            RamReadWriteCheckingProver::gen(&self.initial_memory_state, state_manager);
-
-        let output_check = OutputSumcheckProver::gen(
-            &self.initial_memory_state,
-            &self.final_memory_state,
-            state_manager,
-        );
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("RAM RafEvaluationSumcheck", &raf_evaluation);
-            print_data_structure_heap_usage("RAM RamReadWriteChecking", &read_write_checking);
-            print_data_structure_heap_usage("RAM OutputSumcheck", &output_check);
-        }
-
-        vec![
-            Box::new(raf_evaluation),
-            Box::new(read_write_checking),
-            Box::new(output_check),
-        ]
+    let mut initial_memory_state: Vec<u64> = vec![0; K];
+    // Copy bytecode
+    let mut index = remap_address(
+        ram_preprocessing.min_bytecode_address,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    for word in &ram_preprocessing.bytecode_words {
+        initial_memory_state[index] = *word;
+        index += 1;
     }
 
-    fn stage4_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        prover_accumulate_advice(state_manager);
-        let booleanity = gen_ra_booleanity_prover(state_manager);
+    let dram_start_index =
+        remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
+    let mut final_memory_state: Vec<u64> = vec![0; K];
+    // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
+    // so we will still need to populate `final_memory_state` with the contents of
+    // `program_io`, which lives at addresses < `RAM_START_ADDRESS`
+    final_memory_state[dram_start_index..]
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(k, word)| {
+            *word = final_memory.read_doubleword(8 * k as u64);
+        });
 
-        let val_evaluation =
-            ValEvaluationSumcheckProver::gen(&self.initial_memory_state, state_manager);
-        let val_final_evaluation = ValFinalSumcheckProver::gen(state_manager);
+    index = remap_address(
+        program_io.memory_layout.trusted_advice_start,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    populate_memory_states(
+        index,
+        &program_io.trusted_advice,
+        Some(&mut initial_memory_state),
+        Some(&mut final_memory_state),
+    );
 
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("RAM BooleanitySumcheck", &booleanity);
-            print_data_structure_heap_usage("RAM ValEvaluationSumcheck", &val_evaluation);
-            print_data_structure_heap_usage("RAM ValFinalSumcheck", &val_final_evaluation);
-        }
+    index = remap_address(
+        program_io.memory_layout.untrusted_advice_start,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    populate_memory_states(
+        index,
+        &program_io.untrusted_advice,
+        Some(&mut initial_memory_state),
+        Some(&mut final_memory_state),
+    );
 
-        vec![
-            Box::new(booleanity),
-            Box::new(val_evaluation),
-            Box::new(val_final_evaluation),
-        ]
-    }
+    index = remap_address(
+        program_io.memory_layout.input_start,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    populate_memory_states(
+        index,
+        &program_io.inputs,
+        Some(&mut initial_memory_state),
+        Some(&mut final_memory_state),
+    );
 
-    fn stage5_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let hamming_booleanity = HammingBooleanitySumcheckProver::gen(state_manager);
-        let ra_virtual = RaSumcheckProver::gen(state_manager);
+    // Convert output bytes into words and populate
+    // `final_memory_state`
+    index = remap_address(
+        program_io.memory_layout.output_start,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    populate_memory_states(
+        index,
+        &program_io.outputs,
+        None,
+        Some(&mut final_memory_state),
+    );
 
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("RAM HammingBooleanitySumcheck", &hamming_booleanity);
-            print_data_structure_heap_usage("RAM RASumcheck", &ra_virtual);
-        }
-
-        vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
-    }
-
-    fn stage6_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
-        let hamming_weight = gen_ra_hamming_weight_prover(state_manager);
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("RAM HammingWeightSumcheck", &hamming_weight);
-        }
-
-        vec![Box::new(hamming_weight)]
-    }
-}
-
-pub struct RamDagVerifier {
-    initial_memory_state: Vec<u64>,
-}
-
-impl RamDagVerifier {
-    pub fn new<F: JoltField>(
-        state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let (preprocessing, program_io, _) = state_manager.get_verifier_data();
-        let ram_preprocessing = &preprocessing.shared.ram;
-
-        let K = state_manager.ram_K;
-
-        let mut initial_memory_state = vec![0; K];
-        // Copy bytecode
-        let mut index = remap_address(
-            ram_preprocessing.min_bytecode_address,
+    // Copy panic bit
+    let panic_index =
+        remap_address(program_io.memory_layout.panic, &program_io.memory_layout).unwrap() as usize;
+    final_memory_state[panic_index] = program_io.panic as u64;
+    if !program_io.panic {
+        // Set termination bit
+        let termination_index = remap_address(
+            program_io.memory_layout.termination,
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        for word in &ram_preprocessing.bytecode_words {
-            initial_memory_state[index] = *word;
-            index += 1;
-        }
-
-        index = remap_address(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        // Convert input bytes into words and populate
-        // `initial_memory_state` and `final_memory_state`
-        for chunk in program_io.inputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            index += 1;
-        }
-
-        Self {
-            initial_memory_state,
-        }
+        final_memory_state[termination_index] = 1;
     }
+
+    (initial_memory_state, final_memory_state)
 }
 
-impl<F, ProofTranscript, PCS> SumcheckStagesVerifier<F, ProofTranscript, PCS> for RamDagVerifier
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-{
-    fn stage2_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        let raf_evaluation = RafEvaluationSumcheckVerifier::new(state_manager);
-        let read_write_checking = RamReadWriteCheckingVerifier::new(state_manager);
-        let output_check = OutputSumcheckVerifier::new(state_manager);
-
-        vec![
-            Box::new(raf_evaluation),
-            Box::new(read_write_checking),
-            Box::new(output_check),
-        ]
+pub fn gen_ram_initial_memory_state<F: JoltField>(
+    ram_K: usize,
+    ram_preprocessing: &RAMPreprocessing,
+    program_io: &JoltDevice,
+) -> Vec<u64> {
+    let mut initial_memory_state = vec![0; ram_K];
+    // Copy bytecode
+    let mut index = remap_address(
+        ram_preprocessing.min_bytecode_address,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    for word in &ram_preprocessing.bytecode_words {
+        initial_memory_state[index] = *word;
+        index += 1;
     }
 
-    fn stage4_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        // Accumulate advice commitments if present
-        verifier_accumulate_advice(state_manager);
-        let booleanity = new_ra_booleanity_verifier(state_manager);
-
-        let val_evaluation =
-            ValEvaluationSumcheckVerifier::new(&self.initial_memory_state, state_manager);
-        let val_final_evaluation =
-            ValFinalSumcheckVerifier::new(&self.initial_memory_state, state_manager);
-
-        vec![
-            Box::new(booleanity),
-            Box::new(val_evaluation),
-            Box::new(val_final_evaluation),
-        ]
+    index = remap_address(
+        program_io.memory_layout.input_start,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    // Convert input bytes into words and populate
+    // `initial_memory_state` and `final_memory_state`
+    for chunk in program_io.inputs.chunks(8) {
+        let mut word = [0u8; 8];
+        for (i, byte) in chunk.iter().enumerate() {
+            word[i] = *byte;
+        }
+        let word = u64::from_le_bytes(word);
+        initial_memory_state[index] = word;
+        index += 1;
     }
 
-    fn stage5_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        let hamming_booleanity = HammingBooleanitySumcheckVerifier::new(state_manager);
-        let ra_virtual = RaSumcheckVerifier::new(state_manager);
-        vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
-    }
-
-    fn stage6_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
-        let hamming_weight = new_ra_hamming_weight_verifier(state_manager);
-        vec![Box::new(hamming_weight)]
-    }
+    initial_memory_state
 }
 
-fn gen_ra_booleanity_prover<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+pub fn gen_ra_booleanity_prover<F: JoltField>(
+    trace: &[Cycle],
+    memory_layout: &MemoryLayout,
+    ram_K: usize,
+    transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckProver<F> {
-    let K = state_manager.ram_K;
-
     let log_k_chunk = DTH_ROOT_OF_K.log_2();
-    let log_t = state_manager.get_trace_len().log_2();
+    let log_t = trace.len().log_2();
 
-    let r_cycle: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_t);
-
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_k_chunk);
+    let r_cycle = transcript.challenge_vector_optimized::<F>(log_t);
+    let r_address = transcript.challenge_vector_optimized::<F>(log_k_chunk);
 
     // Compute G and H for RAM
-    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
-    let memory_layout = &program_io.memory_layout;
-    let d = compute_d_parameter(K);
+    let d = compute_d_parameter(ram_K);
     let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
     let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
     let H_indices = compute_ram_h_indices(trace, memory_layout, d);
@@ -705,7 +459,7 @@ fn gen_ra_booleanity_prover<F: JoltField>(
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();
 
-    let gammas: Vec<F::Challenge> = state_manager.transcript.challenge_vector_optimized::<F>(d);
+    let gammas: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(d);
 
     let params = BooleanitySumcheckParams {
         d,
@@ -722,15 +476,17 @@ fn gen_ra_booleanity_prover<F: JoltField>(
     BooleanitySumcheckProver::gen(params, G, H_indices)
 }
 
-fn gen_ra_hamming_weight_prover<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+pub fn gen_ra_hamming_weight_prover<F: JoltField>(
+    trace: &[Cycle],
+    memory_layout: &MemoryLayout,
+    ram_K: usize,
+    opening_accumulator: &ProverOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
 ) -> HammingWeightSumcheckProver<F> {
-    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
-    let memory_layout = &program_io.memory_layout;
-    let d = compute_d_parameter(state_manager.ram_K);
+    let d = compute_d_parameter(ram_K);
     let num_rounds = DTH_ROOT_OF_K.log_2();
 
-    let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
+    let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RamHammingWeight,
         SumcheckId::RamHammingBooleanity,
     );
@@ -738,7 +494,7 @@ fn gen_ra_hamming_weight_prover<F: JoltField>(
 
     let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
 
-    let gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
+    let gamma_powers = transcript.challenge_scalar_powers(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();
@@ -756,24 +512,18 @@ fn gen_ra_hamming_weight_prover<F: JoltField>(
     HammingWeightSumcheckProver::gen(params, G)
 }
 
-fn new_ra_booleanity_verifier<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+pub fn new_ra_booleanity_verifier<F: JoltField>(
+    ram_K: usize,
+    n_cycle_vars: usize,
+    transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckVerifier<F> {
-    let (_, _, T) = state_manager.get_verifier_data();
-    let K = state_manager.ram_K;
-    let d = compute_d_parameter(K);
+    let d = compute_d_parameter(ram_K);
     let log_k_chunk = DTH_ROOT_OF_K.log_2();
-    let log_t = T.log_2();
 
-    let r_cycle: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_t);
+    let r_cycle = transcript.challenge_vector_optimized::<F>(n_cycle_vars);
+    let r_address = transcript.challenge_vector_optimized::<F>(log_k_chunk);
 
-    let r_address: Vec<F::Challenge> = state_manager
-        .transcript
-        .challenge_vector_optimized::<F>(log_k_chunk);
-
-    let gammas: Vec<F::Challenge> = state_manager.transcript.challenge_vector_optimized::<F>(d);
+    let gammas = transcript.challenge_vector_optimized::<F>(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();
@@ -781,7 +531,7 @@ fn new_ra_booleanity_verifier<F: JoltField>(
     let params = BooleanitySumcheckParams {
         d,
         log_k_chunk,
-        log_t,
+        log_t: n_cycle_vars,
         gammas,
         r_address,
         r_cycle,
@@ -793,13 +543,14 @@ fn new_ra_booleanity_verifier<F: JoltField>(
     BooleanitySumcheckVerifier::new(params)
 }
 
-fn new_ra_hamming_weight_verifier<F: JoltField>(
-    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+pub fn new_ra_hamming_weight_verifier<F: JoltField>(
+    ram_K: usize,
+    transcript: &mut impl Transcript,
 ) -> HammingWeightSumcheckVerifier<F> {
-    let d = compute_d_parameter(state_manager.ram_K);
+    let d = compute_d_parameter(ram_K);
     let num_rounds = DTH_ROOT_OF_K.log_2();
 
-    let gamma_powers = state_manager.transcript.challenge_scalar_powers(d);
+    let gamma_powers = transcript.challenge_scalar_powers(d);
 
     let polynomial_types: Vec<CommittedPolynomial> =
         (0..d).map(CommittedPolynomial::RamRa).collect();
