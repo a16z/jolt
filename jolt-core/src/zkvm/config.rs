@@ -7,7 +7,7 @@ use crate::zkvm::instruction_lookups::LOG_K;
 /// TODO: explore using other number of phases
 #[inline]
 pub const fn get_log_k_chunk(log_T: usize) -> usize {
-    if log_T < 24 {
+    if log_T < 25 {
         4
     } else {
         8
@@ -17,6 +17,7 @@ pub const fn get_log_k_chunk(log_T: usize) -> usize {
 /// Compute the number of phases for instruction lookups based on trace length.
 /// For traces below 2^23 cycles we want to use 16 phases, otherwise 8.
 /// TODO: explore using other number of phases
+/// NOTE: currently only divisors of 128 are supported
 #[inline]
 pub const fn instruction_sumcheck_phases(log_T: usize) -> usize {
     if log_T < 23 {
