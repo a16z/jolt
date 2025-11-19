@@ -1,4 +1,4 @@
-use crate::zkvm::witness::DTH_ROOT_OF_K;
+use crate::{subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::witness::DTH_ROOT_OF_K};
 use std::{
     collections::HashMap,
     fs::File,
@@ -494,10 +494,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
+        // TODO: (ari) this needs to change completely.
+        // gen needs a schedule
+        let schedule = LinearOnlySchedule::new(uni_skip_state.tau.len() - 1);
+        //let schedule = HalfSplitSchedule::new(uni_skip_state.tau.len() - 1, 3);
         let mut spartan_outer_remaining = OuterRemainingSumcheckProver::gen(
             Arc::clone(&self.trace),
             &self.preprocessing.bytecode,
             &uni_skip_state,
+            schedule,
         );
 
         let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
