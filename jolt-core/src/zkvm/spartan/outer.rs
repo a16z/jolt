@@ -563,7 +563,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     #[inline]
-    fn compute_first_quadratic_evals_and_bound_polys(
+    fn _compute_first_quadratic_evals_and_bound_polys(
         bytecode_preprocessing: &BytecodePreprocessing,
         trace: &[Cycle],
         lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
@@ -1091,15 +1091,21 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
             //self.bz = Some(DensePolynomial::new(ret_bz));
 
             // A simpler parallel version without small value optimisations
+            // And no unsafe code
             self.stream_to_linear_time_parallel();
         } else {
             //debug_assert_eq!(klen, 1);
+
+            //let jlen = 1 << (split_eq_poly.get_num_vars() - split_eq_poly.num_challenges());
+            //let mut scaled_w = vec![[F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; klen];
+            //let lagrange_evals_r = &self.lagrange_evals_r0;
             //scaled_w[0].copy_from_slice(lagrange_evals_r);
             //let mut ret_az = unsafe_allocate_zero_vec(jlen);
             //let mut ret_bz = unsafe_allocate_zero_vec(jlen);
             //self.build_grids(&mut ret_az, &mut ret_bz, jlen, klen, 0, true, &scaled_w);
             //self.az = Some(DensePolynomial::new(ret_az));
             //self.bz = Some(DensePolynomial::new(ret_bz));
+            //
             self.stream_to_linear_time_round_zero();
         }
     }
