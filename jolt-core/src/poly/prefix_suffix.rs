@@ -281,44 +281,46 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (indices.len() / num_chunks).max(1);
 
-        let new_Q = indices
+        // Accumulate in row-major for write locality: rows are r_index in [0, poly_len)
+        let new_Q_rows: Vec<[F::Unreduced<7>; ORDER]> = indices
             .par_chunks(chunk_size)
-            .map(|chunk| {
-                let mut chunk_result: [Vec<F::Unreduced<7>>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-
-                for j in chunk {
-                    let k = lookup_bits[*j];
-                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                    for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
-                        let t = suffix.suffix_mle(suffix_bits);
-                        if t != 0 {
-                            if let Some(u) = u_evals.get(*j) {
-                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
+            .fold(
+                || vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
+                |mut acc, chunk| {
+                    for j in chunk {
+                        let k = lookup_bits[*j];
+                        let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                        let r_index: usize = (u128::from(&prefix_bits) as usize) & (poly_len - 1);
+                        if let Some(u) = u_evals.get(*j) {
+                            for (s_idx, suffix) in suffixes.iter().enumerate() {
+                                let t = suffix.suffix_mle(suffix_bits);
+                                if t != 0 {
+                                    acc[r_index][s_idx] += u.mul_u128_unreduced(t);
+                                }
                             }
                         }
                     }
-                }
-
-                chunk_result
-            })
+                    acc
+                },
+            )
             .reduce(
-                || std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                || vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
                 |mut acc, new| {
-                    for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
-                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
-                            *acc_coeff += new_coeff;
+                    for (acc_row, new_row) in acc.iter_mut().zip(new.iter()) {
+                        for s in 0..ORDER {
+                            acc_row[s] += new_row[s];
                         }
                     }
                     acc
                 },
             );
 
+        // Transpose rows back to suffix-major and reduce to field
         let mut reduced_Q: [Vec<F>; ORDER] =
             std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-        for (q, reduced_q) in new_Q.iter().zip(reduced_Q.iter_mut()) {
-            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
-                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+        for r_idx in 0..poly_len {
+            for s in 0..ORDER {
+                reduced_Q[s][r_idx] = F::from_barrett_reduce(new_Q_rows[r_idx][s]);
             }
         }
 
@@ -349,78 +351,79 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (indices.len() / num_chunks).max(1);
 
-        let (new_left, new_right) = indices
+        #[allow(clippy::type_complexity)]
+        let (new_left_rows, new_right_rows): (
+            Vec<[F::Unreduced<7>; ORDER]>,
+            Vec<[F::Unreduced<7>; ORDER]>,
+        ) = indices
             .par_chunks(chunk_size)
-            .map(|chunk| {
-                let mut chunk_left: [Vec<F::Unreduced<7>>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-                let mut chunk_right: [Vec<F::Unreduced<7>>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-
-                for j in chunk {
-                    let k = lookup_bits[*j];
-                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
-
-                    // Left accumulators
-                    for (suffix, result) in suffixes_left.iter().zip(chunk_left.iter_mut()) {
-                        let t = suffix.suffix_mle(suffix_bits);
-                        if t != 0 {
-                            if let Some(u) = u_evals.get(*j) {
-                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
+            .fold(
+                || {
+                    (
+                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
+                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
+                    )
+                },
+                |(mut acc_l, mut acc_r), chunk| {
+                    for j in chunk {
+                        let k = lookup_bits[*j];
+                        let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                        let r_index: usize = (u128::from(&prefix_bits) as usize) & (poly_len - 1);
+                        if let Some(u) = u_evals.get(*j) {
+                            // Left
+                            for (s_idx, suffix) in suffixes_left.iter().enumerate() {
+                                let t = suffix.suffix_mle(suffix_bits);
+                                if t != 0 {
+                                    acc_l[r_index][s_idx] += u.mul_u128_unreduced(t);
+                                }
+                            }
+                            // Right
+                            for (s_idx, suffix) in suffixes_right.iter().enumerate() {
+                                let t = suffix.suffix_mle(suffix_bits);
+                                if t != 0 {
+                                    acc_r[r_index][s_idx] += u.mul_u128_unreduced(t);
+                                }
                             }
                         }
                     }
-
-                    // Right accumulators
-                    for (suffix, result) in suffixes_right.iter().zip(chunk_right.iter_mut()) {
-                        let t = suffix.suffix_mle(suffix_bits);
-                        if t != 0 {
-                            if let Some(u) = u_evals.get(*j) {
-                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
-                            }
-                        }
-                    }
-                }
-
-                (chunk_left, chunk_right)
-            })
+                    (acc_l, acc_r)
+                },
+            )
             .reduce(
                 || {
                     (
-                        std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
-                        std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
+                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
                     )
                 },
                 |(mut acc_l, mut acc_r), (new_l, new_r)| {
-                    for (acc_i, new_i) in acc_l.iter_mut().zip(new_l.iter()) {
-                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
-                            *acc_coeff += new_coeff;
+                    for (acc_row, new_row) in acc_l.iter_mut().zip(new_l.iter()) {
+                        for s in 0..ORDER {
+                            acc_row[s] += new_row[s];
                         }
                     }
-                    for (acc_i, new_i) in acc_r.iter_mut().zip(new_r.iter()) {
-                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
-                            *acc_coeff += new_coeff;
+                    for (acc_row, new_row) in acc_r.iter_mut().zip(new_r.iter()) {
+                        for s in 0..ORDER {
+                            acc_row[s] += new_row[s];
                         }
                     }
                     (acc_l, acc_r)
                 },
             );
 
-        // Reduce to field for left
+        // Reduce to field for left and right (transpose rows to suffix-major)
         let mut reduced_left: [Vec<F>; ORDER] =
             std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-        for (q, reduced_q) in new_left.iter().zip(reduced_left.iter_mut()) {
-            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
-                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+        for r_idx in 0..poly_len {
+            for s in 0..ORDER {
+                reduced_left[s][r_idx] = F::from_barrett_reduce(new_left_rows[r_idx][s]);
             }
         }
-
-        // Reduce to field for right
         let mut reduced_right: [Vec<F>; ORDER] =
             std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-        for (q, reduced_q) in new_right.iter().zip(reduced_right.iter_mut()) {
-            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
-                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+        for r_idx in 0..poly_len {
+            for s in 0..ORDER {
+                reduced_right[s][r_idx] = F::from_barrett_reduce(new_right_rows[r_idx][s]);
             }
         }
 
