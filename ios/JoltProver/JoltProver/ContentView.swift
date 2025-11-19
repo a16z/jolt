@@ -23,6 +23,21 @@ struct ContentView: View {
                 // Scrollable content area
                 ScrollView {
                     VStack(spacing: 20) {
+                        // Demo Selection
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Select Demo")
+                                .font(.headline)
+                                .padding(.horizontal)
+
+                            Picker("Demo", selection: $viewModel.selectedDemo) {
+                                ForEach(viewModel.availableDemos) { demo in
+                                    Text(demo.name).tag(demo)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(.horizontal)
+                        }
+
                         // Demo Proof Button
                         Button(action: {
                             viewModel.generateDemoProof()
@@ -36,7 +51,7 @@ struct ContentView: View {
                                     Image(systemName: "sparkles")
                                 }
 
-                                Text("Generate Fibonacci Demo Proof")
+                                Text("Generate \(viewModel.selectedDemo.name) Proof")
                                     .fontWeight(.semibold)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.8)
@@ -78,7 +93,6 @@ struct ContentView: View {
                                 title: "Select Preprocessing File",
                                 selectedFileName: viewModel.preprocessingFileName,
                                 action: {
-                                    print("DEBUG: Setting activeFilePicker to .preprocessing")
                                     viewModel.activeFilePicker = .preprocessing
                                 }
                             )
@@ -88,7 +102,6 @@ struct ContentView: View {
                                 title: "Select ELF File",
                                 selectedFileName: viewModel.elfFileName,
                                 action: {
-                                    print("DEBUG: Setting activeFilePicker to .elf")
                                     viewModel.activeFilePicker = .elf
                                 }
                             )
@@ -195,11 +208,9 @@ struct ContentView: View {
                         // Capture the type before it gets cleared
                         viewModel.lastActiveFilePicker = viewModel.activeFilePicker
                     }
-                    print("DEBUG: fileImporter isPresented = \(isPresented), activeFilePicker = \(String(describing: viewModel.activeFilePicker))")
                     return isPresented
                 },
                 set: { newValue in
-                    print("DEBUG: fileImporter set to \(newValue)")
                     if !newValue {
                         viewModel.activeFilePicker = nil
                         // Don't clear lastActiveFilePicker here - we need it in the completion
@@ -213,17 +224,13 @@ struct ContentView: View {
         ) { result in
             // Use the captured value instead of the current one
             let pickerType = viewModel.lastActiveFilePicker
-            print("DEBUG: fileImporter completion called with lastActiveFilePicker = \(String(describing: pickerType))")
             
             switch pickerType {
             case .preprocessing:
-                print("DEBUG: Handling preprocessing file")
                 viewModel.handlePreprocessingFileSelection(result: result)
             case .elf:
-                print("DEBUG: Handling ELF file")
                 viewModel.handleElfFileSelection(result: result)
             case .none:
-                print("DEBUG: lastActiveFilePicker is none")
                 break
             }
             
@@ -244,7 +251,6 @@ struct FilePickerButton: View {
 
     var body: some View {
         Button(action: {
-            print("DEBUG: Button tapped for \(title)")
             action()
         }) {
             HStack {

@@ -25,6 +25,20 @@ enum JoltFFIError: Error {
     }
 }
 
+var logging_init = false
+func init_logging() {
+    if !logging_init {
+        logging_init = true
+        jolt_ios_logging_init()
+    }
+}
+
+/// Reset Dory global state before generating a new proof
+/// This prevents issues when switching between proofs with different dimensions
+func reset_dory() {
+    jolt_reset_dory_globals()
+}
+
 /// Swift wrapper for JoltCpuProver
 class JoltProver {
     private let preprocessing: OpaquePointer
@@ -32,6 +46,8 @@ class JoltProver {
 
     /// Initialize by loading preprocessing from file
     init(preprocessingPath: String) throws {
+        init_logging()
+        
         guard let cPath = preprocessingPath.cString(using: .utf8) else {
             throw JoltFFIError.invalidFilePath
         }
@@ -129,10 +145,148 @@ class JoltProver {
     }
 
     /// Get the last error message from the FFI layer
-    private static func getLastError() -> String {
+    static func getLastError() -> String {
         if let errorPtr = jolt_last_error() {
             return String(cString: errorPtr)
         }
         return "Unknown error"
+    }
+}
+
+// MARK: - Postcard Serialization Helpers
+
+/// Helper class for postcard serialization via FFI
+class PostcardSerializer {
+    /// Serialize a single UInt64 value using postcard
+    static func serialize(_ value: UInt64) throws -> Data {
+        guard let handle = jolt_serialize_u64(value) else {
+            let _ = JoltProver.getLastError()
+            throw JoltFFIError.unknownError
+        }
+
+        defer { jolt_serialized_free(handle) }
+
+        var dataPtr: UnsafePointer<UInt8>?
+        var dataLen: UInt = 0
+
+        guard jolt_serialized_get_data(handle, &dataPtr, &dataLen) == 0,
+              let ptr = dataPtr else {
+            throw JoltFFIError.unknownError
+        }
+
+        return Data(bytes: ptr, count: Int(dataLen))
+    }
+
+    /// Serialize an array of UInt64 values using postcard
+    static func serialize(_ values: [UInt64]) throws -> Data {
+        guard let handle = values.withUnsafeBufferPointer({ bufferPtr in
+            jolt_serialize_u64_array(bufferPtr.baseAddress, UInt(bufferPtr.count))
+        }) else {
+            let _ = JoltProver.getLastError()
+            throw JoltFFIError.unknownError
+        }
+
+        defer { jolt_serialized_free(handle) }
+
+        var dataPtr: UnsafePointer<UInt8>?
+        var dataLen: UInt = 0
+
+        guard jolt_serialized_get_data(handle, &dataPtr, &dataLen) == 0,
+              let ptr = dataPtr else {
+            throw JoltFFIError.unknownError
+        }
+
+        return Data(bytes: ptr, count: Int(dataLen))
+    }
+
+    /// Serialize a single UInt32 value using postcard
+    static func serialize(_ value: UInt32) throws -> Data {
+        guard let handle = jolt_serialize_u32(value) else {
+            let _ = JoltProver.getLastError()
+            throw JoltFFIError.unknownError
+        }
+
+        defer { jolt_serialized_free(handle) }
+
+        var dataPtr: UnsafePointer<UInt8>?
+        var dataLen: UInt = 0
+
+        guard jolt_serialized_get_data(handle, &dataPtr, &dataLen) == 0,
+              let ptr = dataPtr else {
+            throw JoltFFIError.unknownError
+        }
+
+        return Data(bytes: ptr, count: Int(dataLen))
+    }
+
+    /// Serialize a String using postcard
+    static func serialize(_ string: String) throws -> Data {
+        guard let utf8Data = string.data(using: .utf8) else {
+            throw JoltFFIError.unknownError
+        }
+
+        let handle = utf8Data.withUnsafeBytes { bufferPtr -> OpaquePointer? in
+            guard let baseAddress = bufferPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return nil
+            }
+            return jolt_serialize_string(baseAddress, UInt(bufferPtr.count))
+        }
+
+        guard let handle = handle else {
+            let _ = JoltProver.getLastError()
+            throw JoltFFIError.unknownError
+        }
+
+        defer { jolt_serialized_free(handle) }
+
+        var dataPtr: UnsafePointer<UInt8>?
+        var dataLen: UInt = 0
+
+        guard jolt_serialized_get_data(handle, &dataPtr, &dataLen) == 0,
+              let ptr = dataPtr else {
+            throw JoltFFIError.unknownError
+        }
+
+        return Data(bytes: ptr, count: Int(dataLen))
+    }
+
+    /// Concatenate multiple serialized values (for multi-parameter functions)
+    static func concatenate(_ parts: Data...) -> Data {
+        var result = Data()
+        for part in parts {
+            result.append(part)
+        }
+        return result
+    }
+}
+
+// MARK: - Convenience Extensions
+
+extension JoltProver {
+    /// Generate a prover from ELF file with postcard-serialized inputs
+    /// - Parameters:
+    ///   - elfPath: Path to the ELF file
+    ///   - u64Input: Single u64 input to serialize with postcard
+    func generateProver(elfPath: String, u64Input: UInt64) throws {
+        let serializedInput = try PostcardSerializer.serialize(u64Input)
+        try generateProver(elfPath: elfPath, inputs: serializedInput)
+    }
+
+    /// Generate a prover from ELF file with postcard-serialized array inputs
+    /// - Parameters:
+    ///   - elfPath: Path to the ELF file
+    ///   - u64ArrayInput: Array of u64 inputs to serialize with postcard
+    func generateProver(elfPath: String, u64ArrayInput: [UInt64]) throws {
+        let serializedInput = try PostcardSerializer.serialize(u64ArrayInput)
+        try generateProver(elfPath: elfPath, inputs: serializedInput)
+    }
+
+    /// Generate a prover from ELF file with postcard-serialized string input
+    /// - Parameters:
+    ///   - elfPath: Path to the ELF file
+    ///   - stringInput: String input to serialize with postcard
+    func generateProver(elfPath: String, stringInput: String) throws {
+        let serializedInput = try PostcardSerializer.serialize(stringInput)
+        try generateProver(elfPath: elfPath, inputs: serializedInput)
     }
 }

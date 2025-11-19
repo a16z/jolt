@@ -7,9 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4C26D7272ECE94E200E87A88 /* ecdsa-sign-preprocessing.bin in Resources */ = {isa = PBXBuildFile; fileRef = 4C26D7262ECE94E200E87A88 /* ecdsa-sign-preprocessing.bin */; };
+		4C26D7282ECE94E200E87A88 /* ecdsa-sign.elf in Resources */ = {isa = PBXBuildFile; fileRef = 4C26D7252ECE94E200E87A88 /* ecdsa-sign.elf */; };
+		4C26D72D2ECE952A00E87A88 /* sha3-chain-preprocessing.bin in Resources */ = {isa = PBXBuildFile; fileRef = 4C26D72C2ECE952A00E87A88 /* sha3-chain-preprocessing.bin */; };
+		4C26D72E2ECE952A00E87A88 /* fibonacci-preprocessing.bin in Resources */ = {isa = PBXBuildFile; fileRef = 4C26D72A2ECE952A00E87A88 /* fibonacci-preprocessing.bin */; };
+		4C26D72F2ECE952A00E87A88 /* fibonacci.elf in Resources */ = {isa = PBXBuildFile; fileRef = 4C26D7292ECE952A00E87A88 /* fibonacci.elf */; };
+		4C26D7302ECE952A00E87A88 /* sha3-chain.elf in Resources */ = {isa = PBXBuildFile; fileRef = 4C26D72B2ECE952A00E87A88 /* sha3-chain.elf */; };
 		4C5338092EC79F8400DB8F3F /* libjolt_ffi_device.a in Frameworks */ = {isa = PBXBuildFile; fileRef = AA0000120000000000000001 /* libjolt_ffi_device.a */; };
-		4C53380F2EC7A89A00DB8F3F /* fibonacci-guest.elf in Resources */ = {isa = PBXBuildFile; fileRef = 4C53380E2EC7A63A00DB8F3F /* fibonacci-guest.elf */; };
-		4C5338102EC7A89A00DB8F3F /* fibonacci-guest-preprocessing.bin in Resources */ = {isa = PBXBuildFile; fileRef = 4C53380D2EC7A63A00DB8F3F /* fibonacci-guest-preprocessing.bin */; };
 		AA0000010000000000000001 /* JoltProverApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000020000000000000001 /* JoltProverApp.swift */; };
 		AA0000030000000000000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000040000000000000001 /* ContentView.swift */; };
 		AA0000050000000000000001 /* JoltProverViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000060000000000000001 /* JoltProverViewModel.swift */; };
@@ -18,8 +22,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		4C53380D2EC7A63A00DB8F3F /* fibonacci-guest-preprocessing.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; name = "fibonacci-guest-preprocessing.bin"; path = "../../jolt-ffi/examples/c/fibonacci-guest-preprocessing.bin"; sourceTree = "<group>"; };
-		4C53380E2EC7A63A00DB8F3F /* fibonacci-guest.elf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "fibonacci-guest.elf"; path = "../../jolt-ffi/examples/c/fibonacci-guest.elf"; sourceTree = "<group>"; };
+		4C26D7252ECE94E200E87A88 /* ecdsa-sign.elf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "ecdsa-sign.elf"; sourceTree = "<group>"; };
+		4C26D7262ECE94E200E87A88 /* ecdsa-sign-preprocessing.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = "ecdsa-sign-preprocessing.bin"; sourceTree = "<group>"; };
+		4C26D7292ECE952A00E87A88 /* fibonacci.elf */ = {isa = PBXFileReference; lastKnownFileType = file; path = fibonacci.elf; sourceTree = "<group>"; };
+		4C26D72A2ECE952A00E87A88 /* fibonacci-preprocessing.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = "fibonacci-preprocessing.bin"; sourceTree = "<group>"; };
+		4C26D72B2ECE952A00E87A88 /* sha3-chain.elf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "sha3-chain.elf"; sourceTree = "<group>"; };
+		4C26D72C2ECE952A00E87A88 /* sha3-chain-preprocessing.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = "sha3-chain-preprocessing.bin"; sourceTree = "<group>"; };
 		AA0000020000000000000001 /* JoltProverApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoltProverApp.swift; sourceTree = "<group>"; };
 		AA0000040000000000000001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AA0000060000000000000001 /* JoltProverViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoltProverViewModel.swift; sourceTree = "<group>"; };
@@ -44,21 +52,25 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		4C53380C2EC7A63A00DB8F3F /* Frameworks */ = {
+		4C26D71E2ECE46A800E87A88 /* demos */ = {
 			isa = PBXGroup;
 			children = (
-				4C53380E2EC7A63A00DB8F3F /* fibonacci-guest.elf */,
-				4C53380D2EC7A63A00DB8F3F /* fibonacci-guest-preprocessing.bin */,
+				4C26D7252ECE94E200E87A88 /* ecdsa-sign.elf */,
+				4C26D7262ECE94E200E87A88 /* ecdsa-sign-preprocessing.bin */,
+				4C26D7292ECE952A00E87A88 /* fibonacci.elf */,
+				4C26D72A2ECE952A00E87A88 /* fibonacci-preprocessing.bin */,
+				4C26D72B2ECE952A00E87A88 /* sha3-chain.elf */,
+				4C26D72C2ECE952A00E87A88 /* sha3-chain-preprocessing.bin */,
 			);
-			name = Frameworks;
+			path = demos;
 			sourceTree = "<group>";
 		};
 		AA0000170000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				4C26D71E2ECE46A800E87A88 /* demos */,
 				AA0000180000000000000001 /* JoltProver */,
 				AA0000190000000000000001 /* libs */,
-				4C53380C2EC7A63A00DB8F3F /* Frameworks */,
 				AA0000200000000000000001 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -152,8 +164,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4C53380F2EC7A89A00DB8F3F /* fibonacci-guest.elf in Resources */,
-				4C5338102EC7A89A00DB8F3F /* fibonacci-guest-preprocessing.bin in Resources */,
+				4C26D7272ECE94E200E87A88 /* ecdsa-sign-preprocessing.bin in Resources */,
+				4C26D7282ECE94E200E87A88 /* ecdsa-sign.elf in Resources */,
+				4C26D72D2ECE952A00E87A88 /* sha3-chain-preprocessing.bin in Resources */,
+				4C26D72E2ECE952A00E87A88 /* fibonacci-preprocessing.bin in Resources */,
+				4C26D72F2ECE952A00E87A88 /* fibonacci.elf in Resources */,
+				4C26D7302ECE952A00E87A88 /* sha3-chain.elf in Resources */,
 				AA0000090000000000000001 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -304,7 +320,8 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "../../jolt-ffi/examples/c/fibonacci-guest.elf ../../jolt-ffi/examples/c/fibonacci-guest-preprocessing.bin";
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = L5D48LTQ38;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Jolt Prover";
@@ -345,7 +362,8 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "../../jolt-ffi/examples/c/fibonacci-guest.elf ../../jolt-ffi/examples/c/fibonacci-guest-preprocessing.bin";
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = L5D48LTQ38;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Jolt Prover";

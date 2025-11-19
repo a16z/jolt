@@ -1,22 +1,22 @@
 use clap::Parser;
 use eyre::Result;
-use jolt_core::host;
-use jolt_core::zkvm::prover::JoltProverPreprocessing;
+use jolt_core::host::Program;
 use jolt_core::zkvm::Serializable;
 use std::fs;
 use std::path::PathBuf;
 
-use ark_bn254::Fr;
-use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
-
-type RV64IMACPreprocessing = JoltProverPreprocessing<Fr, DoryCommitmentScheme>;
+enum GuestProgram {
+    Fibonacci,
+    Sha3Chain,
+    EcdsaSign,
+}
 
 /// Utility to prepare a Jolt guest program for use with the C FFI.
 /// This builds the guest program, extracts the ELF, and generates preprocessing.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Name of the guest program to build (e.g., "fibonacci-guest")
+    /// Name of the guest program to build (e.g., "fibonacci", "sha3", "ecdsa")
     #[arg(short, long)]
     guest: String,
 
@@ -28,83 +28,150 @@ struct Args {
     #[arg(short, long, default_value = "preprocessing.bin")]
     preprocessing_output: PathBuf,
 
-    /// Maximum trace length (power of 2)
-    #[arg(short, long, default_value = "16777216")]
-    max_trace_length: usize,
-
     /// Target directory for cargo build
     #[arg(short, long, default_value = "target")]
     target_dir: String,
+
+    /// Quiet mode: minimal output
+    #[arg(short, long)]
+    quiet: bool,
+}
+
+fn extract_elf(program: &Program, elf_output: &PathBuf, quiet: bool) -> Result<()> {
+    let elf_contents = program
+        .get_elf_contents()
+        .ok_or_else(|| eyre::eyre!("Failed to get ELF contents"))?;
+
+    fs::write(elf_output, &elf_contents)?;
+    if !quiet {
+        println!(
+            "  ✓ Saved ELF ({} bytes) to: {}",
+            elf_contents.len(),
+            elf_output.display()
+        );
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
+    // Initialize inline handlers (keccak256/SHA3, SHA2, etc.)
+    let _ = jolt_inlines_keccak256::init_inlines();
+    let _ = jolt_inlines_sha2::init_inlines();
+
     let args = Args::parse();
 
-    println!("Jolt Guest Preparation Utility");
-    println!("===============================\n");
+    if !args.quiet {
+        println!("Jolt Guest Preparation Utility");
+        println!("===============================\n");
+    }
 
-    // Step 1: Build the guest program
-    println!("Step 1: Building guest program '{}'...", args.guest);
-    let mut program = host::Program::new(&args.guest);
-    program.build(&args.target_dir);
-    println!("  ✓ Guest program built successfully\n");
+    // Determine which guest program to use
+    let guest_program = if args.guest.contains("fib") {
+        GuestProgram::Fibonacci
+    } else if args.guest.contains("sha3") {
+        GuestProgram::Sha3Chain
+    } else if args.guest.contains("sign") || args.guest.contains("ecdsa") {
+        GuestProgram::EcdsaSign
+    } else {
+        return Err(eyre::eyre!(
+            "Unknown guest program: {}. Supported: fibonacci, sha3-chain, ecdsa-sign",
+            args.guest
+        ));
+    };
 
-    // Step 2: Extract and save ELF
-    println!("Step 2: Extracting ELF binary...");
-    let elf_contents = program
-        .get_elf_contents()
-        .ok_or_else(|| eyre::eyre!("Failed to get ELF contents"))?;
+    if !args.quiet {
+        println!("Step 1: Building guest program '{}'...", args.guest);
+    }
 
-    fs::write(&args.elf_output, &elf_contents)?;
-    println!("  ✓ Saved ELF ({} bytes) to: {}",
-        elf_contents.len(),
-        args.elf_output.display()
-    );
-    println!();
+    // Determine target directory
+    let target_dir = if args.target_dir == "target" {
+        "/tmp/jolt-guest-targets"
+    } else {
+        &args.target_dir
+    };
 
-    // Step 3: Generate preprocessing
-    println!("Step 3: Generating preprocessing (this may take a while)...");
-
-    // Decode the program to get bytecode and memory initialization
-    let (bytecode, init_memory_state, _) = program.decode();
-
-    // Trace once to get the memory layout
-    let fib_input: u64 = 80000;
-    let input = &mut postcard::to_stdvec(&fib_input)?;
-    let (_, _, _, io_device) = program.trace(input, &[], &[]);
-
-    println!("  - Bytecode size: {} instructions", bytecode.len());
-    println!("  - Memory layout: {} bytes", io_device.memory_layout.memory_size);
-    println!("  - Max trace length: {}", args.max_trace_length);
-
-    let preprocessing = RV64IMACPreprocessing::gen(
-        bytecode,
-        io_device.memory_layout,
-        init_memory_state,
-        args.max_trace_length,
-    );
+    // Compile guest program using macro-generated functions
+    let preprocessing = match guest_program {
+        GuestProgram::Fibonacci => {
+            let mut program = fibonacci_guest::compile_fib(target_dir);
+            if !args.quiet {
+                println!("  ✓ Guest program built successfully\n");
+                println!("Step 2: Extracting ELF binary...");
+            }
+            extract_elf(&program, &args.elf_output, args.quiet)?;
+            if !args.quiet {
+                println!();
+                println!("Step 3: Generating preprocessing (this may take a while)...");
+            }
+            fibonacci_guest::preprocess_prover_fib(&mut program)
+        }
+        GuestProgram::Sha3Chain => {
+            let mut program = sha3_chain_guest::compile_sha3_chain(target_dir);
+            if !args.quiet {
+                println!("  ✓ Guest program built successfully\n");
+                println!("Step 2: Extracting ELF binary...");
+            }
+            extract_elf(&program, &args.elf_output, args.quiet)?;
+            if !args.quiet {
+                println!();
+                println!("Step 3: Generating preprocessing (this may take a while)...");
+            }
+            sha3_chain_guest::preprocess_prover_sha3_chain(&mut program)
+        }
+        GuestProgram::EcdsaSign => {
+            let mut program = ecdsa_sign_guest::compile_ecdsa_sign(target_dir);
+            if !args.quiet {
+                println!("  ✓ Guest program built successfully\n");
+                println!("Step 2: Extracting ELF binary...");
+            }
+            extract_elf(&program, &args.elf_output, args.quiet)?;
+            if !args.quiet {
+                println!();
+                println!("Step 3: Generating preprocessing (this may take a while)...");
+            }
+            ecdsa_sign_guest::preprocess_prover_ecdsa_sign(&mut program)
+        }
+    };
 
     // Save preprocessing to file
     preprocessing.save_to_file(&args.preprocessing_output)?;
 
-    let preprocessing_size = fs::metadata(&args.preprocessing_output)?.len();
-    println!("  ✓ Saved preprocessing ({} bytes) to: {}",
-        preprocessing_size,
-        args.preprocessing_output.display()
-    );
-    println!();
+    if args.quiet {
+        // Quiet mode: just confirm success
+        println!(
+            "✓ Generated {} ({} bytes) and {} ({} bytes)",
+            args.elf_output.file_name().unwrap().to_str().unwrap(),
+            fs::metadata(&args.elf_output)?.len(),
+            args.preprocessing_output
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            fs::metadata(&args.preprocessing_output)?.len()
+        );
+    } else {
+        // Verbose mode: show all details
+        let preprocessing_size = fs::metadata(&args.preprocessing_output)?.len();
+        println!(
+            "  ✓ Saved preprocessing ({} bytes) to: {}",
+            preprocessing_size,
+            args.preprocessing_output.display()
+        );
+        println!();
 
-    println!("Done! Generated files:");
-    println!("  ELF:           {}", args.elf_output.display());
-    println!("  Preprocessing: {}", args.preprocessing_output.display());
-    println!();
-    println!("You can now use these files with the C FFI:");
-    println!("  ./jolt_example {} proof.bin {}",
-        args.elf_output.display(),
-        args.preprocessing_output.display()
-    );
+        println!("Done! Generated files:");
+        println!("  ELF:           {}", args.elf_output.display());
+        println!("  Preprocessing: {}", args.preprocessing_output.display());
+        println!();
+        println!("You can now use these files with the C FFI:");
+        println!(
+            "  ./jolt_example {} proof.bin {}",
+            args.elf_output.display(),
+            args.preprocessing_output.display()
+        );
+    }
 
     Ok(())
 }

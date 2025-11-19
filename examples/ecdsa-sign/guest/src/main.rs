@@ -1,4 +1,5 @@
 #![no_main]
+#![no_std]
 
 #[allow(unused_imports)]
-use sha3_chain_guest::*;
+use ecdsa_sign_guest::*;

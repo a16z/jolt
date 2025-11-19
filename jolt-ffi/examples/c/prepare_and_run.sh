@@ -7,16 +7,12 @@ set -e
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <guest-name> [elf-output] [preprocessing-output]"
     echo ""
-    echo "Example: $0 fibonacci-guest"
+    echo "Example: $0 fibonacci"
     echo ""
     echo "Available guests:"
-    echo "  - fibonacci-guest"
-    echo "  - sha2-guest"
-    echo "  - sha3-guest"
-    echo "  - merkle-tree-guest"
-    echo "  - collatz-guest"
-    echo "  - btreemap-guest"
-    echo "  - (and more in examples/*/guest)"
+    echo "  - fibonacci"
+    echo "  - sha3-chain"
+    echo "  - ecdsa-sign"
     exit 1
 fi
 

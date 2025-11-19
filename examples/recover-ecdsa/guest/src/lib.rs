@@ -1,6 +1,6 @@
 #![cfg_attr(feature = "guest", no_std)]
 extern crate alloc;
-use jolt::{end_cycle_tracking, start_cycle_tracking};
+use jolt::{end_cycle_tracking, jolt_println, start_cycle_tracking};
 
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -26,6 +26,10 @@ fn recover(sig: &[u8], msg: [u8; 32]) -> PublicKey {
         .recover_ecdsa(&Message::from_digest(msg), &sig)
         .unwrap();
     end_cycle_tracking("recover");
+
+    // let sk = secp256k1::SecretKey::from_byte_array(&msg).unwrap();
+    // let msg = Message::from_digest(msg);
+    // let signature = secp.sign_ecdsa(&msg, &sk);
 
     public
 }

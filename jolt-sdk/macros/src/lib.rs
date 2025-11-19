@@ -714,6 +714,14 @@ impl MacroBuilder {
         let max_trusted_advice_len = attributes.max_trusted_advice_size as usize;
         let termination_bit = memory_layout.termination as usize;
 
+        // Generate embedded memory config
+        let max_input_size = attributes.max_input_size;
+        let max_output_size = attributes.max_output_size;
+        let max_untrusted_advice_size = attributes.max_untrusted_advice_size;
+        let max_trusted_advice_size = attributes.max_trusted_advice_size;
+        let stack_size = attributes.stack_size;
+        let memory_size = attributes.memory_size;
+
         let get_input_slice = quote! {
             let input_ptr = #input_start as *const u8;
             let input_slice = unsafe {
@@ -789,6 +797,48 @@ impl MacroBuilder {
                     call main\n\
                     j .\n\
             ");
+
+            // Embed memory configuration as ELF symbols (read-only data)
+            #[cfg(feature = "guest")]
+            ::core::arch::global_asm!(
+                ".section .rodata",
+                ".globl __jolt_max_input_size",
+                ".type __jolt_max_input_size, @object",
+                ".size __jolt_max_input_size, 8",
+                "__jolt_max_input_size:",
+                ".quad {max_input}",
+                ".globl __jolt_max_output_size",
+                ".type __jolt_max_output_size, @object",
+                ".size __jolt_max_output_size, 8",
+                "__jolt_max_output_size:",
+                ".quad {max_output}",
+                ".globl __jolt_max_untrusted_advice_size",
+                ".type __jolt_max_untrusted_advice_size, @object",
+                ".size __jolt_max_untrusted_advice_size, 8",
+                "__jolt_max_untrusted_advice_size:",
+                ".quad {max_untrusted}",
+                ".globl __jolt_max_trusted_advice_size",
+                ".type __jolt_max_trusted_advice_size, @object",
+                ".size __jolt_max_trusted_advice_size, 8",
+                "__jolt_max_trusted_advice_size:",
+                ".quad {max_trusted}",
+                ".globl __jolt_stack_size",
+                ".type __jolt_stack_size, @object",
+                ".size __jolt_stack_size, 8",
+                "__jolt_stack_size:",
+                ".quad {stack}",
+                ".globl __jolt_memory_size",
+                ".type __jolt_memory_size, @object",
+                ".size __jolt_memory_size, 8",
+                "__jolt_memory_size:",
+                ".quad {memory}",
+                max_input = const #max_input_size,
+                max_output = const #max_output_size,
+                max_untrusted = const #max_untrusted_advice_size,
+                max_trusted = const #max_trusted_advice_size,
+                stack = const #stack_size,
+                memory = const #memory_size,
+            );
 
             #declare_alloc
 

@@ -18,9 +18,18 @@ name = "verify"
 path = "src/bin/verify.rs"
 
 [dependencies]
-jolt-core = { workspace = true, features = ["prover", "host"] }
+jolt-sdk = { workspace = true, features = ["host"] }
+jolt-core = { workspace = true, default-features = true }
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+
 tracer = { workspace = true }
 common = { workspace = true }
+
+# Supported example guest programs
+fibonacci_guest = { package = "fibonacci-guest", path = "../examples/fibonacci/guest" }
+sha3_chain_guest = { package = "sha3-chain-guest", path = "../examples/sha3-chain/guest" }
+ecdsa_sign_guest = { package = "ecdsa-sign-guest", path = "../examples/ecdsa-sign/guest" }
 
 ark-bn254 = { workspace = true }
 ark-serialize = { workspace = true }
@@ -29,6 +38,8 @@ clap = { workspace = true }
 eyre = { workspace = true }
 tracing-subscriber = { workspace = true }
 hex = "0.4"
+tracing = "0.1.41"
+tracing-oslog = "0.3.0"
 
 [build-dependencies]
 cbindgen = "0.27"

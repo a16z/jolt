@@ -224,7 +224,7 @@ impl DoryGlobals {
     }
 
     /// Reset global state
-    #[cfg(test)]
+    /// This is needed when switching between proofs with different dimensions
     pub fn reset() {
         #[allow(static_mut_refs)]
         unsafe {

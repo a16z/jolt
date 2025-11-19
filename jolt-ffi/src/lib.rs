@@ -6,12 +6,15 @@ use std::ptr;
 use std::slice;
 
 use ark_bn254::Fr;
+use common::jolt_device::MemoryLayout;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
 use jolt_core::zkvm::Serializable;
 use tracer::instruction::Instruction;
-use common::jolt_device::MemoryLayout;
+use tracing_oslog::OsLogger;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 // Provide dummy heap pointer for jolt-platform (only used in guest code, not needed for host FFI)
 #[no_mangle]
@@ -26,9 +29,10 @@ thread_local! {
 
 fn set_last_error(err: String) {
     LAST_ERROR.with(|last| {
-        *last.borrow_mut() = Some(CString::new(err).unwrap_or_else(|_| {
-            CString::new("Error message contained null byte").unwrap()
-        }));
+        *last.borrow_mut() = Some(
+            CString::new(err)
+                .unwrap_or_else(|_| CString::new("Error message contained null byte").unwrap()),
+        );
     });
 }
 
@@ -42,11 +46,9 @@ fn clear_last_error() {
 /// The returned string is valid until the next error occurs or the thread exits.
 #[no_mangle]
 pub extern "C" fn jolt_last_error() -> *const c_char {
-    LAST_ERROR.with(|last| {
-        match &*last.borrow() {
-            Some(err) => err.as_ptr(),
-            None => ptr::null(),
-        }
+    LAST_ERROR.with(|last| match &*last.borrow() {
+        Some(err) => err.as_ptr(),
+        None => ptr::null(),
     })
 }
 
@@ -58,6 +60,21 @@ pub struct JoltProverPreprocessingHandle {
 /// Opaque type representing JoltCpuProver
 pub struct JoltCpuProverHandle<'a> {
     prover: RV64IMACProver<'a>,
+}
+
+#[no_mangle]
+pub extern "C" fn jolt_ios_logging_init() {
+    tracing_subscriber::registry()
+        .with(OsLogger::new("testingtesting.JoltProver", "jolt_core"))
+        .init();
+}
+
+/// Reset Dory global state
+/// This should be called before generating a proof to clear any cached state
+/// from previous proofs with different dimensions
+#[no_mangle]
+pub extern "C" fn jolt_reset_dory_globals() {
+    jolt_core::poly::commitment::dory::DoryGlobals::reset();
 }
 
 /// Create preprocessing from bytecode, memory layout, memory init, and max trace length.
@@ -90,8 +107,14 @@ pub extern "C" fn jolt_prover_preprocessing_gen(
             return ptr::null_mut();
         }
 
+        // TODO this might not be the right place to do this
+        // Initialize inline handlers (keccak256/SHA3, SHA2, etc.)
+        let _ = jolt_inlines_keccak256::init_inlines();
+        let _ = jolt_inlines_sha2::init_inlines();
+
         let bytecode_bytes = unsafe { slice::from_raw_parts(bytecode_ptr, bytecode_len) };
-        let memory_layout_bytes = unsafe { slice::from_raw_parts(memory_layout_ptr, memory_layout_len) };
+        let memory_layout_bytes =
+            unsafe { slice::from_raw_parts(memory_layout_ptr, memory_layout_len) };
         let memory_init_bytes = unsafe { slice::from_raw_parts(memory_init_ptr, memory_init_len) };
 
         let bytecode: Vec<Instruction> = match postcard::from_bytes(bytecode_bytes) {
@@ -118,12 +141,8 @@ pub extern "C" fn jolt_prover_preprocessing_gen(
             }
         };
 
-        let preprocessing = RV64IMACPreprocessing::gen(
-            bytecode,
-            memory_layout,
-            memory_init,
-            max_trace_length,
-        );
+        let preprocessing =
+            RV64IMACPreprocessing::gen(bytecode, memory_layout, memory_init, max_trace_length);
 
         Box::into_raw(Box::new(JoltProverPreprocessingHandle { preprocessing }))
     });
@@ -249,7 +268,9 @@ pub extern "C" fn jolt_prover_preprocessing_load(
 /// # Safety
 /// The preprocessing pointer must be valid and not used after this call.
 #[no_mangle]
-pub extern "C" fn jolt_prover_preprocessing_free(preprocessing: *mut JoltProverPreprocessingHandle) {
+pub extern "C" fn jolt_prover_preprocessing_free(
+    preprocessing: *mut JoltProverPreprocessingHandle,
+) {
     if !preprocessing.is_null() {
         unsafe {
             drop(Box::from_raw(preprocessing));
@@ -314,9 +335,8 @@ pub extern "C" fn jolt_cpu_prover_gen_from_elf(
 
         // SAFETY: We're extending the lifetime here because we need to store the prover
         // in a Box. The caller must ensure the preprocessing outlives the prover.
-        let preprocessing_static: &'static RV64IMACPreprocessing = unsafe {
-            std::mem::transmute(&preprocessing_ref.preprocessing)
-        };
+        let preprocessing_static: &'static RV64IMACPreprocessing =
+            unsafe { std::mem::transmute(&preprocessing_ref.preprocessing) };
 
         let prover = RV64IMACProver::gen_from_elf(
             preprocessing_static,
@@ -410,6 +430,167 @@ pub extern "C" fn jolt_cpu_prover_free(prover: *mut JoltCpuProverHandle<'static>
     if !prover.is_null() {
         unsafe {
             drop(Box::from_raw(prover));
+        }
+    }
+}
+
+// ============================================================================
+// Postcard Serialization Helpers
+// ============================================================================
+
+/// Opaque handle for serialized data
+pub struct SerializedDataHandle {
+    data: Vec<u8>,
+}
+
+/// Serialize a single u32 value using postcard.
+///
+/// # Returns
+/// A handle to the serialized data, or NULL on error.
+/// The caller must free the handle using jolt_serialized_free().
+#[no_mangle]
+pub extern "C" fn jolt_serialize_u32(value: u32) -> *mut SerializedDataHandle {
+    clear_last_error();
+
+    match postcard::to_stdvec(&value) {
+        Ok(data) => Box::into_raw(Box::new(SerializedDataHandle { data })),
+        Err(e) => {
+            set_last_error(format!("Failed to serialize u32: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Serialize a single u64 value using postcard.
+///
+/// # Returns
+/// A handle to the serialized data, or NULL on error.
+/// The caller must free the handle using jolt_serialized_free().
+#[no_mangle]
+pub extern "C" fn jolt_serialize_u64(value: u64) -> *mut SerializedDataHandle {
+    clear_last_error();
+
+    match postcard::to_stdvec(&value) {
+        Ok(data) => Box::into_raw(Box::new(SerializedDataHandle { data })),
+        Err(e) => {
+            set_last_error(format!("Failed to serialize u64: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Serialize an array of u64 values using postcard.
+///
+/// # Arguments
+/// * `values` - Pointer to array of u64 values
+/// * `len` - Number of elements in the array
+///
+/// # Returns
+/// A handle to the serialized data, or NULL on error.
+/// The caller must free the handle using jolt_serialized_free().
+#[no_mangle]
+pub extern "C" fn jolt_serialize_u64_array(
+    values: *const u64,
+    len: usize,
+) -> *mut SerializedDataHandle {
+    clear_last_error();
+
+    if values.is_null() {
+        set_last_error("Null pointer passed to jolt_serialize_u64_array".to_string());
+        return ptr::null_mut();
+    }
+
+    let slice = unsafe { slice::from_raw_parts(values, len) };
+    let vec: Vec<u64> = slice.to_vec();
+
+    match postcard::to_stdvec(&vec) {
+        Ok(data) => Box::into_raw(Box::new(SerializedDataHandle { data })),
+        Err(e) => {
+            set_last_error(format!("Failed to serialize u64 array: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Serialize a string using postcard.
+///
+/// # Arguments
+/// * `str_ptr` - Pointer to UTF-8 string bytes
+/// * `str_len` - Length of string in bytes
+///
+/// # Returns
+/// A handle to the serialized data, or NULL on error.
+/// The caller must free the handle using jolt_serialized_free().
+#[no_mangle]
+pub extern "C" fn jolt_serialize_string(
+    str_ptr: *const u8,
+    str_len: usize,
+) -> *mut SerializedDataHandle {
+    clear_last_error();
+
+    if str_ptr.is_null() {
+        set_last_error("Null pointer passed to jolt_serialize_string".to_string());
+        return ptr::null_mut();
+    }
+
+    let bytes = unsafe { slice::from_raw_parts(str_ptr, str_len) };
+    let string = match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_last_error(format!("Invalid UTF-8 in string: {}", e));
+            return ptr::null_mut();
+        }
+    };
+
+    match postcard::to_stdvec(&string) {
+        Ok(data) => Box::into_raw(Box::new(SerializedDataHandle { data })),
+        Err(e) => {
+            set_last_error(format!("Failed to serialize string: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Get pointer and length of serialized data.
+///
+/// # Arguments
+/// * `handle` - Handle to serialized data
+/// * `out_ptr` - Output pointer to data bytes
+/// * `out_len` - Output length of data
+///
+/// # Returns
+/// 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn jolt_serialized_get_data(
+    handle: *const SerializedDataHandle,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) -> c_int {
+    clear_last_error();
+
+    if handle.is_null() || out_ptr.is_null() || out_len.is_null() {
+        set_last_error("Null pointer passed to jolt_serialized_get_data".to_string());
+        return -1;
+    }
+
+    let handle_ref = unsafe { &*handle };
+    unsafe {
+        *out_ptr = handle_ref.data.as_ptr();
+        *out_len = handle_ref.data.len();
+    }
+
+    0
+}
+
+/// Free serialized data handle.
+///
+/// # Safety
+/// The handle pointer must be valid and not used after this call.
+#[no_mangle]
+pub extern "C" fn jolt_serialized_free(handle: *mut SerializedDataHandle) {
+    if !handle.is_null() {
+        unsafe {
+            drop(Box::from_raw(handle));
         }
     }
 }

@@ -66,6 +66,8 @@ members = [
     "examples/recursion/guest",
     "examples/recover-ecdsa",
     "examples/recover-ecdsa/guest",
+    "examples/ecdsa-sign",
+    "examples/ecdsa-sign/guest",
     "examples/random",
     "examples/random/guest",
     "examples/malloc",
