@@ -43,6 +43,13 @@ pub struct MatrixEntry<F: JoltField> {
     pub ra_coeff: F,
 }
 
+#[derive(Allocative, Debug, Default)]
+pub enum MatrixOrder {
+    #[default]
+    RowMajor,
+    ColumnMajor,
+}
+
 /// Represents the ra(k, j) and Val(k, j) polynomials for the RAM
 /// read/write-checking sumcheck. Conceptually, both ra and Val can
 /// be seen as K x T matrices. This is far too large to explicitly
@@ -52,6 +59,7 @@ pub struct MatrixEntry<F: JoltField> {
 #[derive(Allocative, Debug, Default)]
 pub struct SparseMatrixPolynomial<F: JoltField> {
     pub entries: Vec<MatrixEntry<F>>,
+    order: MatrixOrder,
 }
 
 impl<F: JoltField> SparseMatrixPolynomial<F> {
@@ -86,7 +94,10 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             })
             .collect();
 
-        SparseMatrixPolynomial { entries }
+        SparseMatrixPolynomial {
+            entries,
+            order: MatrixOrder::RowMajor,
+        }
     }
 
     /// Binds two adjacent rows in the sparse matrix together with the randomness `r`.
