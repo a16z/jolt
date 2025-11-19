@@ -1,7 +1,4 @@
-use crate::{
-    subprotocols::streaming_schedule::{HalfSplitSchedule, LinearOnlySchedule},
-    zkvm::witness::DTH_ROOT_OF_K,
-};
+use crate::{subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::witness::DTH_ROOT_OF_K};
 use std::{
     collections::HashMap,
     fs::File,

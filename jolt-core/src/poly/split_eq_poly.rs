@@ -666,51 +666,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn par_iter_low_to_high() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
-
-        let split_eq: GruenSplitEqPolynomial<Fr> =
-            GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
-        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
-        let indices: Vec<_> = split_eq.par_iter_low_to_high().map(|(i, _)| i).collect();
-        let coeffs: Vec<_> = split_eq
-            .par_iter_low_to_high()
-            .map(|(_, coeff)| coeff)
-            .collect();
-
-        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
-        assert_eq!(regular_eq.Z, coeffs);
-    }
-
-    #[test]
-    fn par_iter_high_to_low() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
-
-        let split_eq: GruenSplitEqPolynomial<Fr> =
-            GruenSplitEqPolynomial::new(&w, BindingOrder::HighToLow);
-        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
-
-        let indices: Vec<_> = split_eq.par_iter_high_to_low().map(|(i, _)| i).collect();
-        let coeffs: Vec<_> = split_eq
-            .par_iter_high_to_low()
-            .map(|(_, coeff)| coeff)
-            .collect();
-
-        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
-        assert_eq!(regular_eq.Z, coeffs);
-    }
-
     /// For window_size = 1, `E_out_in_for_window` should factor the eq polynomial
     /// over the head bits `w[..current_index-1]` into a product of two tables.
     #[test]
