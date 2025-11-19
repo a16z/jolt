@@ -9,7 +9,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::ram::sparse_matrix_poly::SparseMatrixPolynomial;
+use crate::zkvm::ram::sparse_matrix_poly::{SparseMatrixPolynomial, COL_MAJOR, ROW_MAJOR};
 use crate::zkvm::witness::compute_d_parameter;
 use crate::{
     field::JoltField,
@@ -84,7 +84,8 @@ pub struct ReadWriteSumcheckClaims<F: JoltField> {
 #[derive(Allocative)]
 pub struct RamReadWriteCheckingProver<F: JoltField> {
     val_init: Vec<F>,
-    sparse_matrix: SparseMatrixPolynomial<F>,
+    sparse_matrix_phase1: SparseMatrixPolynomial<ROW_MAJOR, F>,
+    sparse_matrix_phase2: SparseMatrixPolynomial<COL_MAJOR, F>,
     eq_r_prime: GruenSplitEqPolynomial<F>,
     inc: MultilinearPolynomial<F>,
     // The following polynomials are instantiated after
@@ -123,14 +124,16 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             trace,
             compute_d_parameter(ram_K),
         );
-        let sparse_matrix = SparseMatrixPolynomial::new(trace, memory_layout);
-        let val_init = initial_memory_state
+        let val_init: Vec<_> = initial_memory_state
             .par_iter()
             .map(|x| F::from_u64(*x))
             .collect();
+        let sparse_matrix_phase1 =
+            SparseMatrixPolynomial::new(trace, val_init.clone(), memory_layout);
 
         Self {
-            sparse_matrix,
+            sparse_matrix_phase1,
+            sparse_matrix_phase2: Default::default(),
             val_init,
             eq_r_prime,
             inc,
@@ -145,7 +148,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             inc,
             eq_r_prime,
             params,
-            sparse_matrix,
+            sparse_matrix_phase1: sparse_matrix,
             ..
         } = self;
 
@@ -167,12 +170,13 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                         [inc_0, inc_infty]
                     };
 
-                    let inner_sum_evals = SparseMatrixPolynomial::prover_message_contribution(
-                        even_row,
-                        odd_row,
-                        inc_evals,
-                        params.gamma,
-                    );
+                    let inner_sum_evals =
+                        SparseMatrixPolynomial::<ROW_MAJOR, _>::prover_message_contribution(
+                            even_row,
+                            odd_row,
+                            inc_evals,
+                            params.gamma,
+                        );
 
                     [
                         eq_eval.mul_unreduced::<9>(inner_sum_evals[0]),
@@ -211,7 +215,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             [inc_0, inc_infty]
                         };
 
-                        let inner_sum_evals = SparseMatrixPolynomial::prover_message_contribution(
+                        let inner_sum_evals = SparseMatrixPolynomial::<ROW_MAJOR, _>::prover_message_contribution(
                             even_row,
                             odd_row,
                             inc_evals,
@@ -245,57 +249,29 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     }
 
     fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
-        const DEGREE: usize = 2;
-
         let Self {
             inc,
             eq_r_prime,
-            ra,
-            val,
+            sparse_matrix_phase2,
             params,
             ..
         } = self;
-        let ra = ra.as_ref().unwrap();
-        let val = val.as_ref().unwrap();
 
         // Cycle variables are fully bound, so eq(r', r_cycle) is a constant
         let eq_r_prime_eval = eq_r_prime.current_scalar;
-
-        let evals = (0..ra.len() / 2)
-            .into_par_iter()
-            .map(|k| {
-                let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
-                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
-                let inc_eval = inc.final_sumcheck_claim();
-
-                [
-                    ra_evals[0] * (val_evals[0] + params.gamma * (val_evals[0] + inc_eval)),
-                    ra_evals[1] * (val_evals[1] + params.gamma * (val_evals[1] + inc_eval)),
-                ]
-            })
-            .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
-                [
-                    running[0] + new[0].as_unreduced_ref(),
-                    running[1] + new[1].as_unreduced_ref(),
-                ]
-            })
-            .reduce(
-                || [F::Unreduced::<5>::zero(); DEGREE],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        UniPoly::from_evals_and_hint(
+        // and Inc(r_cycle) is a constant
+        let inc_eval = inc.final_sumcheck_claim();
+        sparse_matrix_phase2.compute_prover_message(
+            &[inc_eval],
+            params.gamma,
+            eq_r_prime_eval,
             previous_claim,
-            &[
-                eq_r_prime_eval * F::from_barrett_reduce(evals[0]),
-                eq_r_prime_eval * F::from_barrett_reduce(evals[1]),
-            ],
         )
     }
 
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
         let Self {
-            sparse_matrix,
+            sparse_matrix_phase1: sparse_matrix,
             inc,
             eq_r_prime,
             val_init,
@@ -314,6 +290,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             // standard sumcheck directly using those polynomials.
 
             let sparse_matrix = std::mem::take(sparse_matrix);
+            self.sparse_matrix_phase2 = sparse_matrix.clone().into();
             let (ra, val) = sparse_matrix.materialize(params.K, val_init);
             self.ra = Some(ra);
             self.val = Some(val);
@@ -329,6 +306,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         // variables, so they are not bound here
         ra.bind_parallel(r_j, BindingOrder::LowToHigh);
         val.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.sparse_matrix_phase2.bind(r_j);
     }
 }
 
