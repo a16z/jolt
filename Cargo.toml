@@ -73,6 +73,8 @@ members = [
     "examples/merkle-tree/guest",
     "examples/hash-bench",
     "examples/hash-bench/guest",
+    "examples/modexp",
+    "examples/modexp/guest",
 ]
 
 [features]
