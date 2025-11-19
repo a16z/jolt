@@ -364,6 +364,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
             // per k from `scaled_w`, avoiding redundant tensor products.
             acc_az
                 .par_iter_mut()
+                .with_min_len(4096)
                 .zip(acc_bz_first.par_iter_mut())
                 .zip(acc_bz_second.par_iter_mut())
                 .enumerate()
@@ -388,13 +389,36 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         }
 
         // Final reductions once per j.
-        for j in 0..jlen {
-            let az_j = acc_az[j].barrett_reduce();
-            let bz_first_j = acc_bz_first[j].barrett_reduce();
-            let bz_second_j = acc_bz_second[j].barrett_reduce();
-            grid_az[j] = az_j;
-            grid_bz[j] = bz_first_j + bz_second_j;
-        }
+        //for j in 0..jlen {
+        //    let az_j = acc_az[j].barrett_reduce();
+        //    let bz_first_j = acc_bz_first[j].barrett_reduce();
+        //    let bz_second_j = acc_bz_second[j].barrett_reduce();
+        //    grid_az[j] = az_j;
+        //    grid_bz[j] = bz_first_j + bz_second_j;
+        //}
+
+        let grid_az_ptr = grid_az.as_mut_ptr() as usize;
+        let grid_bz_ptr = grid_bz.as_mut_ptr() as usize;
+        let chunk_size = 4096;
+        let num_chunks = (jlen + chunk_size - 1) / chunk_size;
+        (0..num_chunks).into_par_iter().for_each(move |chunk_idx| {
+            let start = chunk_idx * chunk_size;
+            let end = (start + chunk_size).min(jlen);
+
+            let az_ptr = grid_az_ptr as *mut F;
+            let bz_ptr = grid_bz_ptr as *mut F;
+
+            for j in start..end {
+                let az_j = acc_az[j].barrett_reduce();
+                let bz_first_j = acc_bz_first[j].barrett_reduce();
+                let bz_second_j = acc_bz_second[j].barrett_reduce();
+
+                unsafe {
+                    *az_ptr.add(j) = az_j;
+                    *bz_ptr.add(j) = bz_first_j + bz_second_j;
+                }
+            }
+        });
     }
 
     // returns the grid of evaluations on {0,1,inf}^window_size
@@ -610,20 +634,11 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
             DensePolynomial::new(bz_bound),
         )
     }
-
-    fn stream_to_linear_time_serial(&mut self) {
+    fn stream_to_linear_time_parallel(&mut self) {
         let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
         let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
         let r_grid = &self.r_grid;
         let num_r_vals = r_grid.len();
-
-        println!(
-            "num_out_vals: {:?}, num_in_vals: {:?} r_grid len {:?}",
-            num_x_out_vals, num_x_in_vals, num_r_vals
-        );
-
-        let groups_exact = num_x_out_vals * num_x_in_vals * num_r_vals;
-        debug_assert_eq!(groups_exact, (&self.trace).len());
 
         // Output arrays are sized by (x_out, x_in) pairs
         let output_size = num_x_out_vals * num_x_in_vals;
@@ -633,6 +648,263 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         let num_r_bits = num_r_vals.log_2();
         let num_x_in_bits = num_x_in_vals.log_2();
 
+        // Dynamic chunking for parallelization
+        let num_threads = rayon::current_num_threads();
+        let target_chunks = num_threads * 4;
+        let min_chunk_pairs = 16;
+        let pairs_per_chunk =
+            ((output_size + target_chunks - 1) / target_chunks).max(min_chunk_pairs);
+        let chunk_size = pairs_per_chunk * 2;
+
+        // Parallel computation with reduction
+        let (t0_acc, t_inf_acc) = az_bound
+            .par_chunks_mut(chunk_size)
+            .zip(bz_bound.par_chunks_mut(chunk_size))
+            .enumerate()
+            .fold(
+                || (F::zero(), F::zero()),
+                |(mut t0_local, mut t_inf_local), (chunk_idx, (az_chunk, bz_chunk))| {
+                    let start_pair = chunk_idx * pairs_per_chunk;
+                    let end_pair = (start_pair + pairs_per_chunk).min(output_size);
+
+                    for pair_idx in start_pair..end_pair {
+                        let x_in_val = pair_idx % num_x_in_vals;
+                        let x_out_val = pair_idx / num_x_in_vals;
+
+                        let mut az0_sum = F::zero(); // For X=0
+                        let mut az1_sum = F::zero(); // For X=1
+                        let mut bz0_sum = F::zero(); // For X=0
+                        let mut bz1_sum = F::zero(); // For X=1
+
+                        // Single loop over r values, computing both X=0 and X=1
+                        for r_idx in 0..num_r_vals {
+                            let r_eval = r_grid[r_idx];
+
+                            // Build indices for both X=0 and X=1
+                            let base_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
+                                | (x_in_val << (1 + num_r_bits));
+
+                            let full_idx_x0 = base_idx | (0 << num_r_bits) | r_idx;
+                            let full_idx_x1 = base_idx | (1 << num_r_bits) | r_idx;
+
+                            // Process X=0
+                            let step_idx_x0 = full_idx_x0 >> 1;
+                            let selector_x0 = (full_idx_x0 & 1) == 1;
+
+                            let row_inputs_x0 = R1CSCycleInputs::from_trace::<F>(
+                                &self.bytecode_preprocessing,
+                                &self.trace,
+                                step_idx_x0,
+                            );
+                            let eval_x0 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x0);
+
+                            let (az_x0, bz_x0) = if !selector_x0 {
+                                (
+                                    eval_x0.az_at_r_first_group(&self.lagrange_evals_r0),
+                                    eval_x0.bz_at_r_first_group(&self.lagrange_evals_r0),
+                                )
+                            } else {
+                                (
+                                    eval_x0.az_at_r_second_group(&self.lagrange_evals_r0),
+                                    eval_x0.bz_at_r_second_group(&self.lagrange_evals_r0),
+                                )
+                            };
+
+                            // Process X=1
+                            let step_idx_x1 = full_idx_x1 >> 1;
+                            let selector_x1 = (full_idx_x1 & 1) == 1;
+
+                            let row_inputs_x1 = R1CSCycleInputs::from_trace::<F>(
+                                &self.bytecode_preprocessing,
+                                &self.trace,
+                                step_idx_x1,
+                            );
+                            let eval_x1 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x1);
+
+                            let (az_x1, bz_x1) = if !selector_x1 {
+                                (
+                                    eval_x1.az_at_r_first_group(&self.lagrange_evals_r0),
+                                    eval_x1.bz_at_r_first_group(&self.lagrange_evals_r0),
+                                )
+                            } else {
+                                (
+                                    eval_x1.az_at_r_second_group(&self.lagrange_evals_r0),
+                                    eval_x1.bz_at_r_second_group(&self.lagrange_evals_r0),
+                                )
+                            };
+
+                            // Accumulate both with the same r_eval
+                            az0_sum += az_x0 * r_eval;
+                            bz0_sum += bz_x0 * r_eval;
+                            az1_sum += az_x1 * r_eval;
+                            bz1_sum += bz_x1 * r_eval;
+                        }
+
+                        // Store in chunk-relative position
+                        let buffer_offset = 2 * (pair_idx - start_pair);
+                        az_chunk[buffer_offset] = az0_sum;
+                        az_chunk[buffer_offset + 1] = az1_sum;
+                        bz_chunk[buffer_offset] = bz0_sum;
+                        bz_chunk[buffer_offset + 1] = bz1_sum;
+
+                        // Local accumulation for t_0 and t_inf
+                        let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
+                        let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
+                        let p0 = az0_sum * bz0_sum;
+                        let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
+
+                        t0_local += e_out * e_in * p0;
+                        t_inf_local += e_out * e_in * slope;
+                    }
+
+                    (t0_local, t_inf_local)
+                },
+            )
+            .reduce(
+                || (F::zero(), F::zero()),
+                |(t0_a, t_inf_a), (t0_b, t_inf_b)| (t0_a + t0_b, t_inf_a + t_inf_b),
+            );
+
+        self.az = Some(DensePolynomial::new(az_bound));
+        self.bz = Some(DensePolynomial::new(bz_bound));
+        self.t_0 = Some(t0_acc);
+        self.t_inf = Some(t_inf_acc);
+    }
+    //fn stream_to_linear_time_parallel(&mut self) {
+    //    let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
+    //    let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
+    //    let r_grid = &self.r_grid;
+    //    let num_r_vals = r_grid.len();
+    //
+    //    // Output arrays are sized by (x_out, x_in) pairs
+    //    let output_size = num_x_out_vals * num_x_in_vals;
+    //    let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
+    //    let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
+    //
+    //    let num_r_bits = num_r_vals.log_2();
+    //    let num_x_in_bits = num_x_in_vals.log_2();
+    //
+    //    // Dynamic chunking for parallelization
+    //    let num_threads = rayon::current_num_threads();
+    //    let target_chunks = num_threads * 4; // 4x oversubscription
+    //    let min_chunk_pairs = 16; // Minimum pairs per chunk to avoid overhead
+    //    let pairs_per_chunk =
+    //        ((output_size + target_chunks - 1) / target_chunks).max(min_chunk_pairs);
+    //    let chunk_size = pairs_per_chunk * 2; // *2 for [X=0, X=1] storage
+    //
+    //    // Parallel computation with reduction
+    //    let (t0_acc, t_inf_acc) = az_bound
+    //        .par_chunks_mut(chunk_size)
+    //        .zip(bz_bound.par_chunks_mut(chunk_size))
+    //        .enumerate()
+    //        .fold(
+    //            || (F::zero(), F::zero()),
+    //            |(mut t0_local, mut t_inf_local), (chunk_idx, (az_chunk, bz_chunk))| {
+    //                let start_pair = chunk_idx * pairs_per_chunk;
+    //                let end_pair = (start_pair + pairs_per_chunk).min(output_size);
+    //
+    //                for pair_idx in start_pair..end_pair {
+    //                    // Decompose pair index into x_out, x_in
+    //                    let x_in_val = pair_idx % num_x_in_vals;
+    //                    let x_out_val = pair_idx / num_x_in_vals;
+    //
+    //                    // Initialize accumulators for this (x_out, x_in) pair
+    //                    let mut az0_sum = F::zero(); // For X=0
+    //                    let mut az1_sum = F::zero(); // For X=1
+    //                    let mut bz0_sum = F::zero(); // For X=0
+    //                    let mut bz1_sum = F::zero(); // For X=1
+    //
+    //                    // Iterate over X bit and r values
+    //                    for x_bit in 0..2 {
+    //                        for r_idx in 0..num_r_vals {
+    //                            // Build the full index: x_out || x_in || X || x_r
+    //                            let full_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
+    //                                | (x_in_val << (1 + num_r_bits))
+    //                                | (x_bit << num_r_bits)
+    //                                | r_idx;
+    //
+    //                            // Extract step index and selector
+    //                            let current_step_idx = full_idx >> 1;
+    //                            let selector = (full_idx & 1) == 1;
+    //
+    //                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
+    //                                &self.bytecode_preprocessing,
+    //                                &self.trace,
+    //                                current_step_idx,
+    //                            );
+    //
+    //                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+    //
+    //                            let (az, bz) = if !selector {
+    //                                // First group (selector = 0)
+    //                                (
+    //                                    eval.az_at_r_first_group(&self.lagrange_evals_r0),
+    //                                    eval.bz_at_r_first_group(&self.lagrange_evals_r0),
+    //                                )
+    //                            } else {
+    //                                // Second group (selector = 1)
+    //                                (
+    //                                    eval.az_at_r_second_group(&self.lagrange_evals_r0),
+    //                                    eval.bz_at_r_second_group(&self.lagrange_evals_r0),
+    //                                )
+    //                            };
+    //
+    //                            let r_eval = r_grid[r_idx];
+    //
+    //                            if x_bit == 0 {
+    //                                az0_sum += az * r_eval;
+    //                                bz0_sum += bz * r_eval;
+    //                            } else {
+    //                                az1_sum += az * r_eval;
+    //                                bz1_sum += bz * r_eval;
+    //                            }
+    //                        }
+    //                    }
+    //
+    //                    // Store in chunk-relative position
+    //                    let buffer_offset = 2 * (pair_idx - start_pair);
+    //                    az_chunk[buffer_offset] = az0_sum;
+    //                    az_chunk[buffer_offset + 1] = az1_sum;
+    //                    bz_chunk[buffer_offset] = bz0_sum;
+    //                    bz_chunk[buffer_offset + 1] = bz1_sum;
+    //
+    //                    // Local accumulation for t_0 and t_inf
+    //                    let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
+    //                    let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
+    //                    let p0 = az0_sum * bz0_sum;
+    //                    let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
+    //
+    //                    t0_local += e_out * e_in * p0;
+    //                    t_inf_local += e_out * e_in * slope;
+    //                }
+    //
+    //                (t0_local, t_inf_local)
+    //            },
+    //        )
+    //        .reduce(
+    //            || (F::zero(), F::zero()),
+    //            |(t0_a, t_inf_a), (t0_b, t_inf_b)| (t0_a + t0_b, t_inf_a + t_inf_b),
+    //        );
+    //
+    //    self.az = Some(DensePolynomial::new(az_bound));
+    //    self.bz = Some(DensePolynomial::new(bz_bound));
+    //    self.t_0 = Some(t0_acc);
+    //    self.t_inf = Some(t_inf_acc);
+    //}
+    //
+    fn _stream_to_linear_time_serial(&mut self) {
+        let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
+        let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
+        let r_grid = &self.r_grid;
+        let num_r_vals = r_grid.len();
+
+        // Output arrays are sized by (x_out, x_in) pairs
+        let output_size = num_x_out_vals * num_x_in_vals;
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
+
+        let num_r_bits = num_r_vals.log_2();
+        let num_x_in_bits = num_x_in_vals.log_2();
         let mut t0_acc = F::zero();
         let mut t_inf_acc = F::zero();
 
@@ -640,54 +912,72 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         for x_out_val in 0..num_x_out_vals {
             for x_in_val in 0..num_x_in_vals {
                 // Initialize accumulators for this (x_out, x_in) pair
-                let mut az0_sum = F::zero();
-                let mut az1_sum = F::zero();
-                let mut bz0_sum = F::zero();
-                let mut bz1_sum = F::zero();
+                let mut az0_sum = F::zero(); // For X=0
+                let mut az1_sum = F::zero(); // For X=1
+                let mut bz0_sum = F::zero(); // For X=0
+                let mut bz1_sum = F::zero(); // For X=1
 
-                // Sum over all r values
-                for r_idx in 0..num_r_vals {
-                    let current_step_idx = (x_out_val << (num_x_in_bits + num_r_bits))
-                        | (x_in_val << num_r_bits)
-                        | r_idx;
-                    println!("Current step idx: {:?}", current_step_idx);
-                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                        &self.bytecode_preprocessing,
-                        &self.trace,
-                        current_step_idx,
-                    );
+                // Iterate over X bit and r values
+                for x_bit in 0..2 {
+                    for r_idx in 0..num_r_vals {
+                        // Build the full index: x_out || x_in || X || x_r
+                        let full_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
+                            | (x_in_val << (1 + num_r_bits))
+                            | (x_bit << num_r_bits)
+                            | r_idx;
 
-                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                    let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
-                    let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
-                    let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
-                    let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
+                        // Extract step index and selector
+                        let current_step_idx = full_idx >> 1;
+                        let selector = (full_idx & 1) == 1;
 
-                    let r_eval = r_grid[r_idx];
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            &self.bytecode_preprocessing,
+                            &self.trace,
+                            current_step_idx,
+                        );
 
-                    // Accumulate: A[x_out||x_in||r] * r_val[r] (NO eq polynomials)
-                    az0_sum += az0 * r_eval;
-                    az1_sum += az1 * r_eval;
-                    bz0_sum += bz0 * r_eval;
-                    bz1_sum += bz1 * r_eval;
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                        let (az, bz) = if !selector {
+                            // First group (selector = 0)
+                            (
+                                eval.az_at_r_first_group(&self.lagrange_evals_r0),
+                                eval.bz_at_r_first_group(&self.lagrange_evals_r0),
+                            )
+                        } else {
+                            // Second group (selector = 1)
+                            (
+                                eval.az_at_r_second_group(&self.lagrange_evals_r0),
+                                eval.bz_at_r_second_group(&self.lagrange_evals_r0),
+                            )
+                        };
+
+                        let r_eval = r_grid[r_idx];
+
+                        if x_bit == 0 {
+                            az0_sum += az * r_eval;
+                            bz0_sum += bz * r_eval;
+                        } else {
+                            az1_sum += az * r_eval;
+                            bz1_sum += bz * r_eval;
+                        }
+                    }
                 }
 
                 // Store the summed values in Az and Bz arrays
                 let pair_idx = x_out_val * num_x_in_vals + x_in_val;
                 let buffer_offset = 2 * pair_idx;
-                az_bound[buffer_offset] = az0_sum;
-                az_bound[buffer_offset + 1] = az1_sum;
-                bz_bound[buffer_offset] = bz0_sum;
-                bz_bound[buffer_offset + 1] = bz1_sum;
+                az_bound[buffer_offset] = az0_sum; // A(x_out, x_in, 0, r2, r1)
+                az_bound[buffer_offset + 1] = az1_sum; // A(x_out, x_in, 1, r2, r1)
+                bz_bound[buffer_offset] = bz0_sum; // B(x_out, x_in, 0, r2, r1)
+                bz_bound[buffer_offset + 1] = bz1_sum; // B(x_out, x_in, 1, r2, r1)
 
-                // For t_0 and t_inf, NOW apply eq polynomials
+                // For t_0 and t_inf, apply eq polynomials
                 let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
                 let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
-
                 let p0 = az0_sum * bz0_sum;
                 let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
 
-                // Accumulate with eq polynomial weighting
                 t0_acc += e_out * e_in * p0;
                 t_inf_acc += e_out * e_in * slope;
             }
@@ -695,10 +985,13 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
 
         self.az = Some(DensePolynomial::new(az_bound));
         self.bz = Some(DensePolynomial::new(bz_bound));
-        //self.t_0 = Some(t0_acc);
-        //self.t_inf = Some(t_inf_acc);
     }
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::stream_to_linear_time")]
+
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::stream_to_linear_time_helper"
+    )]
+
     fn stream_to_linear_time_round_zero(&mut self) {
         let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
         let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
@@ -770,32 +1063,43 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     fn stream_to_linear_time(&mut self) {
         let split_eq_poly = &self.split_eq_poly;
         // helper constants
-        let jlen = 1 << (split_eq_poly.get_num_vars() - split_eq_poly.num_challenges());
         let klen = 1 << split_eq_poly.num_challenges();
         // Precompute scaled Lagrange weights for all k so the parallel
         // conversion reuses them instead of recomputing per (j, k).
-        let lagrange_evals_r = &self.lagrange_evals_r0;
-        let r_grid = &self.r_grid;
 
-        let mut scaled_w = vec![[F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; klen];
         if klen > 1 {
-            debug_assert_eq!(klen, r_grid.len());
-            for k in 0..klen {
-                let weight = r_grid[k];
-                let row = &mut scaled_w[k];
-                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
-                    row[t] = lagrange_evals_r[t] * weight;
-                }
-            }
-            let mut ret_az = unsafe_allocate_zero_vec(jlen);
-            let mut ret_bz = unsafe_allocate_zero_vec(jlen);
-            // Parallelize over j for the linear-time conversion.
-            self.build_grids(&mut ret_az, &mut ret_bz, jlen, klen, 0, true, &scaled_w);
-            self.az = Some(DensePolynomial::new(ret_az));
-            self.bz = Some(DensePolynomial::new(ret_bz));
+            // Uncomment the following lines for the more structured bind
+            // with small value optimisations
+
+            //let mut scaled_w = vec![[F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; klen];
+            //let lagrange_evals_r = &self.lagrange_evals_r0;
+            //let r_grid = &self.r_grid;
+            //debug_assert_eq!(klen, r_grid.len());
+            //let jlen = 1 << (split_eq_poly.get_num_vars() - split_eq_poly.num_challenges());
+            //for k in 0..klen {
+            //    let weight = r_grid[k];
+            //    let row = &mut scaled_w[k];
+            //    for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+            //        row[t] = lagrange_evals_r[t] * weight;
+            //    }
+            //}
+            //let mut ret_az = unsafe_allocate_zero_vec(jlen);
+            //let mut ret_bz = unsafe_allocate_zero_vec(jlen);
+            //// Parallelize over j for the linear-time conversion.
+            //self.build_grids(&mut ret_az, &mut ret_bz, jlen, klen, 0, true, &scaled_w);
+            //self.az = Some(DensePolynomial::new(ret_az));
+            //self.bz = Some(DensePolynomial::new(ret_bz));
+
+            // A simpler parallel version without small value optimisations
+            self.stream_to_linear_time_parallel();
         } else {
             //debug_assert_eq!(klen, 1);
             //scaled_w[0].copy_from_slice(lagrange_evals_r);
+            //let mut ret_az = unsafe_allocate_zero_vec(jlen);
+            //let mut ret_bz = unsafe_allocate_zero_vec(jlen);
+            //self.build_grids(&mut ret_az, &mut ret_bz, jlen, klen, 0, true, &scaled_w);
+            //self.az = Some(DensePolynomial::new(ret_az));
+            //self.bz = Some(DensePolynomial::new(ret_bz));
             self.stream_to_linear_time_round_zero();
         }
     }
@@ -817,7 +1121,6 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     #[inline]
     fn remaining_quadratic_evals(&mut self) -> (F, F) {
         if self.t_0.is_some() {
-            println!("Brilliant someone already did my work.");
             let t_0 = self.t_0.unwrap();
             let t_inf = self.t_inf.unwrap();
             self.t_0 = None;
