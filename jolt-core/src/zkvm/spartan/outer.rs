@@ -247,6 +247,8 @@ pub struct OuterRemainingSumcheckProver<F: JoltField, S: StreamingSchedule> {
     params: OuterRemainingSumcheckParams<F>,
     lagrange_evals_r0: [F; 10],
     schedule: S,
+    t_0: Option<F>,
+    t_inf: Option<F>,
 }
 
 impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
@@ -298,6 +300,8 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
             params: outer_params,
             lagrange_evals_r0: lagrange_evals_r,
             schedule,
+            t_0: None,
+            t_inf: None,
         }
     }
 
@@ -535,7 +539,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     #[inline]
-    fn _compute_first_quadratic_evals_and_bound_polys(
+    fn compute_first_quadratic_evals_and_bound_polys(
         bytecode_preprocessing: &BytecodePreprocessing,
         trace: &[Cycle],
         lagrange_evals_r: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
@@ -607,19 +611,99 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         )
     }
 
-    // FIXME: This doesn't work directly, I need to handle the challenges as well
-    fn stream_to_linear_time_fast(&mut self) -> (F, F) {
+    fn stream_to_linear_time_serial(&mut self) {
+        let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
+        let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
+        let r_grid = &self.r_grid;
+        let num_r_vals = r_grid.len();
+
+        println!(
+            "num_out_vals: {:?}, num_in_vals: {:?} r_grid len {:?}",
+            num_x_out_vals, num_x_in_vals, num_r_vals
+        );
+
+        let groups_exact = num_x_out_vals * num_x_in_vals * num_r_vals;
+        debug_assert_eq!(groups_exact, (&self.trace).len());
+
+        // Output arrays are sized by (x_out, x_in) pairs
+        let output_size = num_x_out_vals * num_x_in_vals;
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
+
+        let num_r_bits = num_r_vals.log_2();
+        let num_x_in_bits = num_x_in_vals.log_2();
+
+        let mut t0_acc = F::zero();
+        let mut t_inf_acc = F::zero();
+
+        // Serial iteration over all (x_out, x_in) pairs
+        for x_out_val in 0..num_x_out_vals {
+            for x_in_val in 0..num_x_in_vals {
+                // Initialize accumulators for this (x_out, x_in) pair
+                let mut az0_sum = F::zero();
+                let mut az1_sum = F::zero();
+                let mut bz0_sum = F::zero();
+                let mut bz1_sum = F::zero();
+
+                // Sum over all r values
+                for r_idx in 0..num_r_vals {
+                    let current_step_idx = (x_out_val << (num_x_in_bits + num_r_bits))
+                        | (x_in_val << num_r_bits)
+                        | r_idx;
+                    println!("Current step idx: {:?}", current_step_idx);
+                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                        &self.bytecode_preprocessing,
+                        &self.trace,
+                        current_step_idx,
+                    );
+
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
+                    let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
+                    let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
+                    let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
+
+                    let r_eval = r_grid[r_idx];
+
+                    // Accumulate: A[x_out||x_in||r] * r_val[r] (NO eq polynomials)
+                    az0_sum += az0 * r_eval;
+                    az1_sum += az1 * r_eval;
+                    bz0_sum += bz0 * r_eval;
+                    bz1_sum += bz1 * r_eval;
+                }
+
+                // Store the summed values in Az and Bz arrays
+                let pair_idx = x_out_val * num_x_in_vals + x_in_val;
+                let buffer_offset = 2 * pair_idx;
+                az_bound[buffer_offset] = az0_sum;
+                az_bound[buffer_offset + 1] = az1_sum;
+                bz_bound[buffer_offset] = bz0_sum;
+                bz_bound[buffer_offset + 1] = bz1_sum;
+
+                // For t_0 and t_inf, NOW apply eq polynomials
+                let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
+                let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
+
+                let p0 = az0_sum * bz0_sum;
+                let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
+
+                // Accumulate with eq polynomial weighting
+                t0_acc += e_out * e_in * p0;
+                t_inf_acc += e_out * e_in * slope;
+            }
+        }
+
+        self.az = Some(DensePolynomial::new(az_bound));
+        self.bz = Some(DensePolynomial::new(bz_bound));
+        //self.t_0 = Some(t0_acc);
+        //self.t_inf = Some(t_inf_acc);
+    }
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::stream_to_linear_time")]
+    fn stream_to_linear_time_round_zero(&mut self) {
         let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
         let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
 
-        let r_grid = &self.r_grid;
-        println!(
-            "num_out_vals: {:?}, num_in_vals: {:?} r_grid len {:?}",
-            num_x_out_vals,
-            num_x_in_vals,
-            r_grid.len()
-        );
         let groups_exact = num_x_out_vals
             .checked_mul(num_x_in_vals)
             .expect("overflow computing groups_exact");
@@ -674,15 +758,10 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
                 |a, b| (a.0 + b.0, a.1 + b.1),
             );
 
-        //self.az = Some(DensePolynomial::new(az_bound));
-        //self.bz = Some(DensePolynomial::new(bz_bound));
-
-        (
-            F::from_montgomery_reduce::<9>(t0_acc_unr),
-            F::from_montgomery_reduce::<9>(t_inf_acc_unr),
-            //    DensePolynomial::new(az_bound),
-            //    DensePolynomial::new(bz_bound),
-        )
+        self.az = Some(DensePolynomial::new(az_bound));
+        self.bz = Some(DensePolynomial::new(bz_bound));
+        self.t_0 = Some(F::from_montgomery_reduce::<9>(t0_acc_unr));
+        self.t_inf = Some(F::from_montgomery_reduce::<9>(t_inf_acc_unr))
     }
 
     // TODO:(ari) This is 2.5x slower than it needs to be right now.
@@ -697,6 +776,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         // conversion reuses them instead of recomputing per (j, k).
         let lagrange_evals_r = &self.lagrange_evals_r0;
         let r_grid = &self.r_grid;
+
         let mut scaled_w = vec![[F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; klen];
         if klen > 1 {
             debug_assert_eq!(klen, r_grid.len());
@@ -707,18 +787,18 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
                     row[t] = lagrange_evals_r[t] * weight;
                 }
             }
+            let mut ret_az = unsafe_allocate_zero_vec(jlen);
+            let mut ret_bz = unsafe_allocate_zero_vec(jlen);
+            // Parallelize over j for the linear-time conversion.
+            self.build_grids(&mut ret_az, &mut ret_bz, jlen, klen, 0, true, &scaled_w);
+            self.az = Some(DensePolynomial::new(ret_az));
+            self.bz = Some(DensePolynomial::new(ret_bz));
         } else {
-            debug_assert_eq!(klen, 1);
-            scaled_w[0].copy_from_slice(lagrange_evals_r);
+            //debug_assert_eq!(klen, 1);
+            //scaled_w[0].copy_from_slice(lagrange_evals_r);
+            self.stream_to_linear_time_round_zero();
         }
-        let mut ret_az = unsafe_allocate_zero_vec(jlen);
-        let mut ret_bz = unsafe_allocate_zero_vec(jlen);
-        // Parallelize over j for the linear-time conversion.
-        self.build_grids(&mut ret_az, &mut ret_bz, jlen, klen, 0, true, &scaled_w);
-        self.az = Some(DensePolynomial::new(ret_az));
-        self.bz = Some(DensePolynomial::new(ret_bz));
     }
-
     /// Compute the polynomial for each of the remaining rounds, using the
     /// linear-time algorithm with split-eq optimizations.
     ///
@@ -735,7 +815,15 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     ///
     /// (ordering of indices is MSB to LSB, so x_out is the MSB and x_in is the LSB)
     #[inline]
-    fn remaining_quadratic_evals(&self) -> (F, F) {
+    fn remaining_quadratic_evals(&mut self) -> (F, F) {
+        if self.t_0.is_some() {
+            println!("Brilliant someone already did my work.");
+            let t_0 = self.t_0.unwrap();
+            let t_inf = self.t_inf.unwrap();
+            self.t_0 = None;
+            self.t_inf = None;
+            return (t_0, t_inf);
+        }
         let eq_poly = &self.split_eq_poly;
 
         let n = self.az.as_ref().expect("az should be initialized").len();
@@ -866,9 +954,9 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule> SumcheckInstanceProver<F
             (t_prime_0, t_prime_inf)
         } else {
             // LINEAR PHASE
+            //println!("In Linear phase| Round: {:?}", round);
             if self.schedule.is_first_linear(round) {
                 self.stream_to_linear_time();
-                self.stream_to_linear_time_fast();
             }
             // For now, just use quadratic evals
             let (t0, t_inf) = self.remaining_quadratic_evals();
@@ -879,20 +967,9 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule> SumcheckInstanceProver<F
             .gruen_poly_deg_3(t0, t_inf, previous_claim)
         //vec![evals[0], evals[1], evals[2]]
     }
-    //#[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
-    //fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-    //    rayon::join(
-    //        || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
-    //        || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
-    //    );
-    //
-    //    // Bind eq_poly for next round
-    //    self.split_eq_poly.bind(r_j);
-    //}
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        // Bind the split-eq instance in lock-step with the outer sumcheck.
         self.split_eq_poly.bind(r_j);
 
         if self.schedule.is_streaming(round) {
@@ -903,6 +980,10 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule> SumcheckInstanceProver<F
             t_prime_poly.bind(r_j, BindingOrder::LowToHigh);
             self.r_grid.update(r_j);
         } else {
+            // TODO: Unless this is the last round I should also
+            // manifest evals for next round : Fused bind + eval;
+            // Bind the split-eq instance in lock-step with the outer sumcheck.
+            // TODO: so we need a new bind_parallel algorithm
             rayon::join(
                 || {
                     self.az
