@@ -88,15 +88,17 @@ struct SymbolicCpu {
 
 impl SymbolicCpu {
     fn new(var_prefix: &str, xlen: Xlen) -> Self {
-        SymbolicCpu {
-            var_prefix: var_prefix.to_string(),
-            x: (0..REGISTER_COUNT)
+        let regs: [BV; REGISTER_COUNT as usize] = (0..REGISTER_COUNT)
                 .map(|i| BV::new_const(format!("{}_x{}", var_prefix, i), 64))
                 .collect::<Vec<_>>()
                 .try_into()
-                .unwrap(),
+                .unwrap();
+        let asserts = vec![(&regs[0]).eq(&BV::from_u64(0, 64))];
+        SymbolicCpu {
+            var_prefix: var_prefix.to_string(),
+            x: regs,
             advice_vars: Vec::new(),
-            asserts: Vec::new(),
+            asserts: asserts, // x0 is always 0
             xlen,
         }
     }
