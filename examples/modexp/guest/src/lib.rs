@@ -29,9 +29,9 @@ fn modexp_chain(base: u128, exp: u128, modulus: u128, num_iters: u32) -> u128 {
         result
     }
 
-    let mut out: u128 = 0;
+    let mut out: u128 = base;
     for _ in 0..num_iters {
-        out = mod_pow(base, exp, modulus);
+        out = mod_pow(out, exp, modulus);
     }
     out
 }
