@@ -76,6 +76,8 @@ members = [
     "examples/modexp",
     "examples/modexp/guest",
     "zklean-extractor",
+]
+
 [features]
 host = ["jolt-sdk/host"]
 
