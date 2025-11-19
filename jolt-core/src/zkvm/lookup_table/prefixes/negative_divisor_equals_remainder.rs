@@ -72,6 +72,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
         r_x: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

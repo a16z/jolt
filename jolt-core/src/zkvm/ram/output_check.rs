@@ -23,7 +23,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
-        config,
+        config::RaPolynomialParams,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -87,10 +87,10 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
         program_io: &JoltDevice,
-        ram_K: usize,
+        ra_params: &RaPolynomialParams,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = OutputSumcheckParams::new(ram_K, program_io, transcript);
+        let params = OutputSumcheckParams::new(ra_params.ram_k, program_io, transcript);
 
         let K = final_ram_state.len();
         debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
@@ -365,7 +365,6 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let T = trace.len();
@@ -399,12 +398,11 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let ram_d = config::params().one_hot.compute_d(ram_K);
         let inc = CommittedPolynomial::RamInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
             trace,
-            ram_d,
+            None,
         );
 
         // #[cfg(test)]

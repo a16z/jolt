@@ -4,7 +4,6 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::config;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -125,7 +124,6 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        ram_K: usize,
         twist_sumcheck_switch_index: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
@@ -237,7 +235,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             bytecode_preprocessing,
             memory_layout,
             trace,
-            config::params().one_hot.compute_d(ram_K),
+            None,
         );
 
         let (_, rs1_rv_claim_stage_1) = opening_accumulator

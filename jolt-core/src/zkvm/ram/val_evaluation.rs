@@ -25,7 +25,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
-        config,
+        config::RaPolynomialParams,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -70,11 +70,11 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],
-        ram_K: usize,
+        ra_params: &RaPolynomialParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let T = trace.len();
-        let K = ram_K;
+        let K = ra_params.ram_k;
 
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
@@ -108,12 +108,11 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let ram_d = config::params().one_hot.compute_d(ram_K);
         let inc = CommittedPolynomial::RamInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
             trace,
-            ram_d,
+            None,
         );
         let lt = LtPolynomial::new(&r_cycle);
 

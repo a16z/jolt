@@ -3,7 +3,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
-use crate::zkvm::config;
+use crate::zkvm::config::RaPolynomialParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
@@ -23,7 +23,6 @@ use tracing::trace_span;
 pub struct RLCStreamingData {
     pub bytecode: BytecodePreprocessing,
     pub memory_layout: MemoryLayout,
-    pub ram_d: usize,
 }
 
 /// Streaming context for lazy RLC evaluation
@@ -33,6 +32,7 @@ pub struct StreamingRLCContext<F: JoltField> {
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
     pub lazy_trace: LazyTraceIterator,
     pub preprocessing: Arc<RLCStreamingData>,
+    pub ra_params: RaPolynomialParams,
 }
 
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
@@ -77,6 +77,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         onehot_polys: Vec<(CommittedPolynomial, F)>,
         lazy_trace: LazyTraceIterator,
         preprocessing: Arc<RLCStreamingData>,
+        ra_params: &RaPolynomialParams,
     ) -> Self {
         Self {
             dense_rlc: vec![],   // Not materialized in streaming mode
@@ -86,6 +87,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 onehot_polys,
                 lazy_trace,
                 preprocessing,
+                ra_params: ra_params.clone(),
             })),
         }
     }
@@ -95,12 +97,12 @@ impl<F: JoltField> RLCPolynomial<F> {
         poly_ids: Vec<CommittedPolynomial>,
         polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
         coefficients: &[F],
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>)>,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, RaPolynomialParams)>,
     ) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
-        let (lazy_trace, preprocessing) =
+        let (lazy_trace, preprocessing, ra_params) =
             streaming_context.expect("Streaming context must be provided");
 
         let mut dense_polys = Vec::new();
@@ -119,7 +121,13 @@ impl<F: JoltField> RLCPolynomial<F> {
             }
         }
 
-        Self::new_streaming(dense_polys, onehot_polys, lazy_trace, preprocessing)
+        Self::new_streaming(
+            dense_polys,
+            onehot_polys,
+            lazy_trace,
+            preprocessing,
+            &ra_params,
+        )
     }
 
     /// Materializes a streaming RLC polynomial for testing purposes.
@@ -344,30 +352,22 @@ impl<F: JoltField> RLCPolynomial<F> {
         poly_id: &CommittedPolynomial,
         cycle: &Cycle,
         preprocessing: &RLCStreamingData,
+        ra_params: &RaPolynomialParams,
     ) -> Option<usize> {
         match poly_id {
             CommittedPolynomial::InstructionRa(idx) => {
-                let params = &config::params().instruction;
                 let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                let k = (lookup_index >> (params.log_k_chunk * (params.d - 1 - idx)))
-                    % params.k_chunk as u128;
-                Some(k as usize)
+                Some(ra_params.lookup_index_chunk(lookup_index, *idx) as usize)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
-                let d = preprocessing.bytecode.d;
                 let pc = preprocessing.bytecode.get_pc(cycle);
-                let params = &config::params().bytecode;
-                Some((pc >> (params.log_chunk * (d - 1 - idx))) % params.chunk_size)
+                Some(ra_params.bytecode_pc_chunk(pc, *idx) as usize)
             }
             CommittedPolynomial::RamRa(idx) => remap_address(
                 cycle.ram_access().address() as u64,
                 &preprocessing.memory_layout,
             )
-            .map(|address| {
-                (address as usize
-                    >> (config::params().ram.log_chunk * (preprocessing.ram_d - 1 - idx)))
-                    % config::params().ram.chunk_size
-            }),
+            .map(|address| ra_params.ram_address_chunk(address, *idx) as usize),
             CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
                 panic!("Dense polynomials should not be passed to extract_onehot_k")
             }
@@ -407,9 +407,12 @@ impl<F: JoltField> RLCPolynomial<F> {
 
                         // Process ONE-HOT POLYNOMIALS (InstructionRa, BytecodeRa, RamRa)
                         for (poly_id, coeff) in &ctx.onehot_polys {
-                            if let Some(k) =
-                                Self::extract_onehot_k(poly_id, cycle, &ctx.preprocessing)
-                            {
+                            if let Some(k) = Self::extract_onehot_k(
+                                poly_id,
+                                cycle,
+                                &ctx.preprocessing,
+                                &ctx.ra_params,
+                            ) {
                                 let rows_per_k = T / num_columns;
                                 let onehot_row = k * rows_per_k + row_idx;
                                 val += left_vec[onehot_row] * *coeff;
