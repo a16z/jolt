@@ -450,6 +450,86 @@ impl_eval_linear_prod_internal!(eval_linear_prod_7_internal, 7);
 impl_eval_linear_prod_internal!(eval_linear_prod_9_internal, 9);
 impl_eval_linear_prod_internal!(eval_linear_prod_10_internal, 10);
 
+/// Evaluate the product of 6 linear polynomials on `U_6 = [1, 2, 3, 4, 5, ∞]`.
+///
+/// This uses the internal 6-way sliding kernel to compute `[P(1), ..., P(5), P(∞)]`
+/// without going through the generic naive evaluator.
+#[inline]
+fn eval_prod_6_assign<F: JoltField>(p: &[(F, F); 6], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 6);
+
+    // Build (current value, leading coefficient) per polynomial.
+    let mut cur_vals_pinfs: [(F, F); 6] = [(F::zero(), F::zero()); 6];
+    for (i, (p0, p1)) in p.iter().copied().enumerate() {
+        let pinf = p1 - p0;
+        cur_vals_pinfs[i] = (p1, pinf);
+    }
+
+    // Evaluate at x = 1..5 by sliding x ↦ x + 1 using the precomputed pinfs.
+    for idx in 0..5 {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
+            acc *= *cur_val;
+        }
+        outputs[idx] = acc;
+
+        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+            *cur_val += *pinf;
+        }
+    }
+
+    // Evaluate at infinity (product of leading coefficients).
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter.next().expect("d > 0");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
+        acc_inf *= *pinf;
+    }
+    outputs[5] = acc_inf;
+}
+
+/// Evaluate the product of 7 linear polynomials on `U_7 = [1, 2, 3, 4, 5, 6, ∞]`.
+///
+/// This uses the internal 7-way sliding kernel to compute `[P(1), ..., P(6), P(∞)]`
+/// without going through the generic naive evaluator.
+#[inline]
+fn eval_prod_7_assign<F: JoltField>(p: &[(F, F); 7], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 7);
+
+    // Build (current value, leading coefficient) per polynomial.
+    let mut cur_vals_pinfs: [(F, F); 7] = [(F::zero(), F::zero()); 7];
+    for (i, (p0, p1)) in p.iter().copied().enumerate() {
+        let pinf = p1 - p0;
+        cur_vals_pinfs[i] = (p1, pinf);
+    }
+
+    // Evaluate at x = 1..6 by sliding x ↦ x + 1.
+    for idx in 0..6 {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
+            acc *= *cur_val;
+        }
+        outputs[idx] = acc;
+
+        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+            *cur_val += *pinf;
+        }
+    }
+
+    // Evaluate at infinity (product of leading coefficients).
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter.next().expect("d > 0");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
+        acc_inf *= *pinf;
+    }
+    outputs[6] = acc_inf;
+}
+
 /// Evaluate the product of 11 linear polynomials on `U_11 = [1, 2, ..., 10, ∞]`.
 ///
 /// We split 11 = 5 + 6 into two halves:
@@ -523,41 +603,6 @@ fn eval_prod_11_assign<F: JoltField>(p: &[(F, F); 11], outputs: &mut [F]) {
 
     // ∞ evaluation is the product of leading coefficients.
     outputs[10] = a_inf * b_inf;
-}
-
-/// Evaluate the product of 6 linear polynomials on `U_6 = [1, 2, 3, 4, 5, ∞]`.
-///
-/// This will eventually be implemented via a recursive split (e.g. 3 + 3 or
-/// 2 + 4) in the same spirit as the 8/16/32 kernels. For now, it forwards to
-/// the generic naive evaluator so that higher-level recursive kernels (like
-/// the planned 6 + 7 decomposition for `d = 13`) can be prototyped.
-#[inline]
-fn eval_prod_6_assign<F: JoltField>(p: &[(F, F); 6], outputs: &mut [F]) {
-    debug_assert!(outputs.len() >= 6);
-
-    // Internally evaluate the 6-way product on [1..6, ∞].
-    let vals = eval_linear_prod_6_internal::<F>(*p);
-
-    // Public grid U_6 = [1, 2, 3, 4, 5, ∞]: drop P(6) and keep ∞.
-    outputs[0..5].copy_from_slice(&vals[0..5]);
-    outputs[5] = vals[6];
-}
-
-/// Evaluate the product of 7 linear polynomials on `U_7 = [1, 2, 3, 4, 5, 6, ∞]`.
-///
-/// As with `eval_prod_6_assign`, this is currently a thin wrapper around the
-/// naive evaluator, serving as a hook for a future recursive specialization
-/// and as a building block for the recursive `d = 13` kernel (6 + 7 split).
-#[inline]
-fn eval_prod_7_assign<F: JoltField>(p: &[(F, F); 7], outputs: &mut [F]) {
-    debug_assert!(outputs.len() >= 7);
-
-    // Internally evaluate the 7-way product on [1..7, ∞].
-    let vals = eval_linear_prod_7_internal::<F>(*p);
-
-    // Public grid U_7 = [1, 2, 3, 4, 5, 6, ∞]: drop P(7) and keep ∞.
-    outputs[0..6].copy_from_slice(&vals[0..6]);
-    outputs[6] = vals[7];
 }
 
 #[inline]
