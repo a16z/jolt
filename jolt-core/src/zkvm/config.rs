@@ -3,13 +3,12 @@ use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::LOG_K;
 
 /// Helper to get log_k_chunk based on log_T
-/// For traces below 2^24 cycles we want to use log_k_chunk = 4
-/// For bigger traces we want to use log_k_chunk = 8
-/// TODO: explore using other number of phases
 #[inline]
 pub const fn get_log_k_chunk(log_T: usize) -> usize {
-    if log_T < 25 {
-        4
+    if log_T <= 21 {
+        6
+    } else if log_T <= 24 {
+        7
     } else {
         8
     }
