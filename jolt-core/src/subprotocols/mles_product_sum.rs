@@ -1319,6 +1319,41 @@ fn ex7<F: JoltField>(f: &[F; 7], f_inf7_fact: F) -> F {
     acc.barrett_reduce()
 }
 
+#[inline(always)]
+fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
+    // Extrapolate `P(9)` from `f[i] = P(i+1)` for a degree-8 polynomial.
+    //
+    // The coefficients correspond to the 9th-row binomial weights with
+    // alternating signs, grouped to minimize fmadd calls:
+    //
+    //   P(9) = 8(f[1] + f[7])
+    //        + 56(f[3] + f[5])
+    //        - 28(f[2] + f[6])
+    //        - 70 f[4]
+    //        - f[0]
+    //        + f_inf40320
+    //
+    // where `f_inf40320 = 8! * a8` and `a8` is the leading coefficient.
+    // We use a signed accumulator in Montgomery form to reduce only once.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+    let t1 = f[1] + f[7];
+    acc.fmadd(&t1, &8u64);
+    let t2 = f[3] + f[5];
+    acc.fmadd(&t2, &56u64);
+    // Coefficient +1: add the unreduced representation directly to the positive
+    // accumulator instead of going through `mul_u64_unreduced(1)`.
+    acc.pos += *f_inf40320.as_unreduced_ref();
+
+    let t3 = f[2] + f[6];
+    acc.fmadd(&t3, &(-28i64));
+    acc.fmadd(&f[4], &(-70i64));
+    // Coefficient -1: add the unreduced representation directly to the negative
+    // accumulator instead of going through `mul_u64_unreduced(1)` with a sign.
+    acc.neg += *f[0].as_unreduced_ref();
+
+    acc.barrett_reduce()
+}
+
 #[inline]
 fn ex9<F: JoltField>(f: &[F; 9], f_inf9_fact: F) -> F {
     // Extrapolate the next value of a degree-9 polynomial on the natural grid.
@@ -1371,51 +1406,56 @@ fn ex9<F: JoltField>(f: &[F; 9], f_inf9_fact: F) -> F {
 }
 
 #[inline]
-fn ex13<F: JoltField>(f: &[F; 13], f_inf13_fact: F) -> F {
-    // Extrapolate the next value of a degree-13 polynomial on the natural grid.
+fn ex10<F: JoltField>(f: &[F; 10], f_inf10_fact: F) -> F {
+    // Extrapolate the next value of a degree-10 polynomial on the natural grid.
     //
     // Inputs:
-    //   f[i]         = P(x + i) for i = 0..12
-    //   f_inf13_fact = 13! * P(∞) = 6227020800 * a13 where a13 is the leading coefficient
+    //   f[i]         = P(x + i) for i = 0..9
+    //   f_inf10_fact = 10! * P(∞) = 3628800 * a10 where a10 is the leading coefficient
     //
-    // Coefficients obtained from solving the interpolation system yield:
+    // Coefficients derived from binomial weights with alternating signs give:
     //
-    //   P(x + 13) =  1  * P(x + 0)
-    //             - 13  * P(x + 1)
-    //             + 78  * P(x + 2)
-    //             - 286 * P(x + 3)
-    //             + 715 * P(x + 4)
-    //             - 1287* P(x + 5)
-    //             + 1716* P(x + 6)
-    //             - 1716* P(x + 7)
-    //             + 1287* P(x + 8)
-    //             - 715 * P(x + 9)
-    //             + 286 * P(x + 10)
-    //             - 78  * P(x + 11)
-    //             + 13  * P(x + 12)
-    //             + 13! * P(∞).
+    //   P(x + 10) = -1  * P(x + 0)
+    //              +10  * P(x + 1)
+    //              -45  * P(x + 2)
+    //             +120  * P(x + 3)
+    //             -210  * P(x + 4)
+    //             +252  * P(x + 5)
+    //             -210  * P(x + 6)
+    //             +120  * P(x + 7)
+    //              -45  * P(x + 8)
+    //              +10  * P(x + 9)
+    //              +10! * P(∞).
     //
-    // We use a signed accumulator to combine all terms before a single reduction.
+    // Group symmetric terms where coefficients match:
+    //   10 (f[1] + f[9])
+    //   -45(f[2] + f[8])
+    //   120(f[3] + f[7])
+    //   -210(f[4] + f[6])
+    //   252 f[5]
+    // and handle the -1 on f[0] and +1 on 10! * P(∞) via direct accumulator
+    // updates.
     let mut acc: Acc5S<F> = Acc5S::zero();
 
-    // Coefficient +1 on f[0]: add directly to positive accumulator.
-    acc.pos += *f[0].as_unreduced_ref();
+    // -1 * f[0]
+    acc.neg += *f[0].as_unreduced_ref();
 
-    acc.fmadd(&f[1], &(-13i64));
-    acc.fmadd(&f[2], &78u64);
-    acc.fmadd(&f[3], &(-286i64));
-    acc.fmadd(&f[4], &715u64);
-    acc.fmadd(&f[5], &(-1287i64));
-    acc.fmadd(&f[6], &1716u64);
-    acc.fmadd(&f[7], &(-1716i64));
-    acc.fmadd(&f[8], &1287u64);
-    acc.fmadd(&f[9], &(-715i64));
-    acc.fmadd(&f[10], &286u64);
-    acc.fmadd(&f[11], &(-78i64));
-    acc.fmadd(&f[12], &13u64);
+    let s10 = f[1] + f[9];
+    acc.fmadd(&s10, &10u64);
 
-    // Coefficient +1 on 13! * P(∞).
-    acc.pos += *f_inf13_fact.as_unreduced_ref();
+    let s45 = f[2] + f[8];
+    acc.fmadd(&s45, &(-45i64));
+
+    let s120 = f[3] + f[7];
+    acc.fmadd(&s120, &120u64);
+
+    let s210 = f[4] + f[6];
+    acc.fmadd(&s210, &(-210i64));
+
+    acc.fmadd(&f[5], &252u64);
+
+    // +1 * (10! * P(∞))
+    acc.pos += *f_inf10_fact.as_unreduced_ref();
 
     acc.barrett_reduce()
 }
@@ -1478,91 +1518,51 @@ fn ex11<F: JoltField>(f: &[F; 11], f_inf11_fact: F) -> F {
 }
 
 #[inline]
-fn ex10<F: JoltField>(f: &[F; 10], f_inf10_fact: F) -> F {
-    // Extrapolate the next value of a degree-10 polynomial on the natural grid.
+fn ex13<F: JoltField>(f: &[F; 13], f_inf13_fact: F) -> F {
+    // Extrapolate the next value of a degree-13 polynomial on the natural grid.
     //
     // Inputs:
-    //   f[i]         = P(x + i) for i = 0..9
-    //   f_inf10_fact = 10! * P(∞) = 3628800 * a10 where a10 is the leading coefficient
+    //   f[i]         = P(x + i) for i = 0..12
+    //   f_inf13_fact = 13! * P(∞) = 6227020800 * a13 where a13 is the leading coefficient
     //
-    // Coefficients derived from binomial weights with alternating signs give:
+    // Coefficients obtained from solving the interpolation system yield:
     //
-    //   P(x + 10) = -1  * P(x + 0)
-    //              +10  * P(x + 1)
-    //              -45  * P(x + 2)
-    //             +120  * P(x + 3)
-    //             -210  * P(x + 4)
-    //             +252  * P(x + 5)
-    //             -210  * P(x + 6)
-    //             +120  * P(x + 7)
-    //              -45  * P(x + 8)
-    //              +10  * P(x + 9)
-    //              +10! * P(∞).
+    //   P(x + 13) =  1  * P(x + 0)
+    //             - 13  * P(x + 1)
+    //             + 78  * P(x + 2)
+    //             - 286 * P(x + 3)
+    //             + 715 * P(x + 4)
+    //             - 1287* P(x + 5)
+    //             + 1716* P(x + 6)
+    //             - 1716* P(x + 7)
+    //             + 1287* P(x + 8)
+    //             - 715 * P(x + 9)
+    //             + 286 * P(x + 10)
+    //             - 78  * P(x + 11)
+    //             + 13  * P(x + 12)
+    //             + 13! * P(∞).
     //
-    // Group symmetric terms where coefficients match:
-    //   10 (f[1] + f[9])
-    //   -45(f[2] + f[8])
-    //   120(f[3] + f[7])
-    //   -210(f[4] + f[6])
-    //   252 f[5]
-    // and handle the -1 on f[0] and +1 on 10! * P(∞) via direct accumulator
-    // updates.
+    // We use a signed accumulator to combine all terms before a single reduction.
     let mut acc: Acc5S<F> = Acc5S::zero();
 
-    // -1 * f[0]
-    acc.neg += *f[0].as_unreduced_ref();
+    // Coefficient +1 on f[0]: add directly to positive accumulator.
+    acc.pos += *f[0].as_unreduced_ref();
 
-    let s10 = f[1] + f[9];
-    acc.fmadd(&s10, &10u64);
+    acc.fmadd(&f[1], &(-13i64));
+    acc.fmadd(&f[2], &78u64);
+    acc.fmadd(&f[3], &(-286i64));
+    acc.fmadd(&f[4], &715u64);
+    acc.fmadd(&f[5], &(-1287i64));
+    acc.fmadd(&f[6], &1716u64);
+    acc.fmadd(&f[7], &(-1716i64));
+    acc.fmadd(&f[8], &1287u64);
+    acc.fmadd(&f[9], &(-715i64));
+    acc.fmadd(&f[10], &286u64);
+    acc.fmadd(&f[11], &(-78i64));
+    acc.fmadd(&f[12], &13u64);
 
-    let s45 = f[2] + f[8];
-    acc.fmadd(&s45, &(-45i64));
-
-    let s120 = f[3] + f[7];
-    acc.fmadd(&s120, &120u64);
-
-    let s210 = f[4] + f[6];
-    acc.fmadd(&s210, &(-210i64));
-
-    acc.fmadd(&f[5], &252u64);
-
-    // +1 * (10! * P(∞))
-    acc.pos += *f_inf10_fact.as_unreduced_ref();
-
-    acc.barrett_reduce()
-}
-
-#[inline(always)]
-fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
-    // Extrapolate `P(9)` from `f[i] = P(i+1)` for a degree-8 polynomial.
-    //
-    // The coefficients correspond to the 9th-row binomial weights with
-    // alternating signs, grouped to minimize fmadd calls:
-    //
-    //   P(9) = 8(f[1] + f[7])
-    //        + 56(f[3] + f[5])
-    //        - 28(f[2] + f[6])
-    //        - 70 f[4]
-    //        - f[0]
-    //        + f_inf40320
-    //
-    // where `f_inf40320 = 8! * a8` and `a8` is the leading coefficient.
-    // We use a signed accumulator in Montgomery form to reduce only once.
-    let mut acc: Acc5S<F> = Acc5S::zero();
-    let t1 = f[1] + f[7];
-    acc.fmadd(&t1, &8u64);
-    let t2 = f[3] + f[5];
-    acc.fmadd(&t2, &56u64);
-    // Coefficient +1: add the unreduced representation directly to the positive
-    // accumulator instead of going through `mul_u64_unreduced(1)`.
-    acc.pos += *f_inf40320.as_unreduced_ref();
-
-    let t3 = f[2] + f[6];
-    acc.fmadd(&t3, &(-28i64));
-    acc.fmadd(&f[4], &(-70i64));
-    // Coefficient -1: add the unreduced representation directly to the negative
-    // accumulator instead of going through `mul_u64_unreduced(1)` with a sign.
-    acc.neg += *f[0].as_unreduced_ref();
+    // Coefficient +1 on 13! * P(∞).
+    acc.pos += *f_inf13_fact.as_unreduced_ref();
 
     acc.barrett_reduce()
 }
