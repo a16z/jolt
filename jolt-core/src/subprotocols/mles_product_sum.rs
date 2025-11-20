@@ -171,7 +171,7 @@ fn compute_mles_product_sum_evals_d16<F: JoltField>(
 
         // Evaluate the product of the 16 linear polynomials on the 16-point grid.
         let mut endpoints = [F::zero(); 16];
-        eval_linear_prod_assign(&pairs, &mut endpoints);
+        eval_prod_16_assign(&pairs, &mut endpoints);
         endpoints
     });
 
@@ -202,7 +202,7 @@ fn compute_mles_product_sum_evals_d32<F: JoltField>(
         });
 
         let mut endpoints = [F::zero(); 32];
-        eval_linear_prod_assign(&pairs, &mut endpoints);
+        eval_prod_32_assign(&pairs, &mut endpoints);
         endpoints
     });
 
@@ -458,6 +458,48 @@ fn eval_prod_5_assign<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F]) {
     outputs[4] = a_inf * b_inf; // ∞
 }
 
+/// Internal evaluator for the product of 5 linear polynomials on the grid
+/// `[1, 2, ..., 5, ∞]`.
+///
+/// Returns `[P(1), P(2), ..., P(5), P(∞)]` where
+/// `P(x) = ∏_j (p_j(0) + (p_j(1) - p_j(0)) x)`.
+#[inline]
+fn eval_linear_prod_5_internal<F: JoltField>(pairs: [(F, F); 5]) -> [F; 6] {
+    let mut cur_vals_pinfs: [(F, F); 5] = [(F::zero(), F::zero()); 5];
+    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
+        let pinf = p1 - p0;
+        cur_vals_pinfs[i] = (p1, pinf);
+    }
+
+    let mut out = [F::zero(); 6];
+
+    // Evaluate at x = 1..5 by sliding x ↦ x + 1 using the precomputed pinfs.
+    for idx in 0..5 {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
+            acc *= *cur_val;
+        }
+        out[idx] = acc;
+
+        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+            *cur_val += *pinf;
+        }
+    }
+
+    // Evaluate at infinity (product of leading coefficients).
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter.next().expect("d > 0");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
+        acc_inf *= *pinf;
+    }
+    out[5] = acc_inf;
+
+    out
+}
+
 /// Internal evaluator for the product of 6 linear polynomials on the grid
 /// `[1, 2, ..., 6, ∞]`.
 ///
@@ -540,6 +582,163 @@ fn eval_linear_prod_7_internal<F: JoltField>(pairs: [(F, F); 7]) -> [F; 8] {
     out[7] = acc_inf;
 
     out
+}
+
+/// Internal evaluator for the product of 9 linear polynomials on the grid
+/// `[1, 2, ..., 9, ∞]`.
+///
+/// Returns `[P(1), P(2), ..., P(9), P(∞)]`.
+#[inline]
+fn eval_linear_prod_9_internal<F: JoltField>(pairs: [(F, F); 9]) -> [F; 10] {
+    let mut cur_vals_pinfs: [(F, F); 9] = [(F::zero(), F::zero()); 9];
+    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
+        let pinf = p1 - p0;
+        cur_vals_pinfs[i] = (p1, pinf);
+    }
+
+    let mut out = [F::zero(); 10];
+
+    // Evaluate at x = 1..9 by sliding x ↦ x + 1 using the precomputed pinfs.
+    for idx in 0..9 {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
+            acc *= *cur_val;
+        }
+        out[idx] = acc;
+
+        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+            *cur_val += *pinf;
+        }
+    }
+
+    // Evaluate at infinity (product of leading coefficients).
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter.next().expect("d > 0");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
+        acc_inf *= *pinf;
+    }
+    out[9] = acc_inf;
+
+    out
+}
+
+/// Internal evaluator for the product of 10 linear polynomials on the grid
+/// `[1, 2, ..., 10, ∞]`.
+///
+/// Returns `[P(1), P(2), ..., P(10), P(∞)]`.
+#[inline]
+fn eval_linear_prod_10_internal<F: JoltField>(pairs: [(F, F); 10]) -> [F; 11] {
+    let mut cur_vals_pinfs: [(F, F); 10] = [(F::zero(), F::zero()); 10];
+    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
+        let pinf = p1 - p0;
+        cur_vals_pinfs[i] = (p1, pinf);
+    }
+
+    let mut out = [F::zero(); 11];
+
+    // Evaluate at x = 1..10 by sliding x ↦ x + 1 using the precomputed pinfs.
+    for idx in 0..10 {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
+            acc *= *cur_val;
+        }
+        out[idx] = acc;
+
+        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+            *cur_val += *pinf;
+        }
+    }
+
+    // Evaluate at infinity (product of leading coefficients).
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter.next().expect("d > 0");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
+        acc_inf *= *pinf;
+    }
+    out[10] = acc_inf;
+
+    out
+}
+
+/// Evaluate the product of 11 linear polynomials on `U_11 = [1, 2, ..., 10, ∞]`.
+///
+/// We split 11 = 5 + 6 into two halves:
+///   - A(x): product of the first 5 polynomials (degree ≤ 5)
+///   - B(x): product of the last 6 polynomials (degree ≤ 6)
+///
+/// The evaluation proceeds as:
+///   1) Evaluate A on [1..5, ∞] with `eval_linear_prod_5_internal`.
+///   2) Evaluate B on [1..6, ∞] with `eval_linear_prod_6_internal`.
+///   3) Expand A to [1..10] using the degree-5 sliding kernel `ex5`.
+///   4) Expand B to [1..10] using the degree-6 sliding kernel `ex6`.
+///   5) Multiply pointwise and set P(∞) = A(∞) * B(∞).
+#[inline]
+fn eval_prod_11_assign<F: JoltField>(p: &[(F, F); 11], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 11);
+
+    // SAFETY: `p[0..5]` and `p[5..11]` are disjoint slices of lengths 5 and 6.
+    let a_vals =
+        eval_linear_prod_5_internal::<F>(unsafe { *(p[0..5].as_ptr() as *const [(F, F); 5]) });
+    let b_vals =
+        eval_linear_prod_6_internal::<F>(unsafe { *(p[5..11].as_ptr() as *const [(F, F); 6]) });
+
+    let a_inf = a_vals[5];
+    let b_inf = b_vals[6];
+
+    // Expand A to [1..10] using ex5 sliding from the base [1..5, ∞].
+    let mut a_mu: MaybeUninit<[F; 10]> = MaybeUninit::uninit();
+    let a_ptr = a_mu.as_mut_ptr();
+    let a_slice_ptr = unsafe { (*a_ptr).as_mut_ptr() };
+
+    // Seed A(1..5).
+    unsafe {
+        ptr::copy_nonoverlapping(a_vals.as_ptr(), a_slice_ptr, 5);
+    }
+
+    let a_inf5_fact = a_inf.mul_u64(120u64); // 5!
+    for i in 0..5 {
+        unsafe {
+            let win_ptr = a_slice_ptr.add(i) as *const [F; 5];
+            let next = ex5::<F>(&*win_ptr, a_inf5_fact);
+            ptr::write(a_slice_ptr.add(5 + i), next);
+        }
+    }
+
+    // Expand B to [1..10] using ex6 sliding from the base [1..6, ∞].
+    let mut b_mu: MaybeUninit<[F; 10]> = MaybeUninit::uninit();
+    let b_ptr = b_mu.as_mut_ptr();
+    let b_slice_ptr = unsafe { (*b_ptr).as_mut_ptr() };
+
+    unsafe {
+        ptr::copy_nonoverlapping(b_vals.as_ptr(), b_slice_ptr, 6);
+    }
+
+    let b_inf6_fact = b_inf.mul_u64(720u64); // 6!
+    for i in 0..4 {
+        unsafe {
+            let win_ptr = b_slice_ptr.add(i) as *const [F; 6];
+            let next = ex6::<F>(&*win_ptr, b_inf6_fact);
+            ptr::write(b_slice_ptr.add(6 + i), next);
+        }
+    }
+
+    // SAFETY: all indices 0..9 have been written for both halves.
+    let a_full = unsafe { a_mu.assume_init() }; // A(1..10)
+    let b_full = unsafe { b_mu.assume_init() }; // B(1..10)
+
+    // Pointwise product P(x) = A(x) * B(x) on [1..10].
+    for i in 0..10 {
+        outputs[i] = a_full[i] * b_full[i];
+    }
+
+    // ∞ evaluation is the product of leading coefficients.
+    outputs[10] = a_inf * b_inf;
 }
 
 /// Evaluate the product of 6 linear polynomials on `U_6 = [1, 2, 3, 4, 5, ∞]`.
@@ -670,17 +869,83 @@ fn eval_prod_15_assign<F: JoltField>(p: &[(F, F); 15], outputs: &mut [F]) {
 /// be specialized in follow-up work.
 fn eval_prod_19_assign<F: JoltField>(p: &[(F, F); 19], outputs: &mut [F]) {
     debug_assert!(outputs.len() >= 19);
-    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..19]);
+
+    // Factor 19 = 9 + 10 into two halves:
+    //   - A(x): product of the first 9 polynomials (degree ≤ 9)
+    //   - B(x): product of the last 10 polynomials (degree ≤ 10)
+    //
+    // We:
+    //   1) Evaluate A on [1..9, ∞] via `eval_linear_prod_9_internal`.
+    //   2) Evaluate B on [1..10, ∞] via `eval_linear_prod_10_internal`.
+    //   3) Expand each half to [1..18, ∞] using degree-specific sliding kernels
+    //      `ex9` / `ex10` via `expand9_to_u19` / `expand10_to_u19`.
+    //   4) Multiply pointwise and set P(∞) = A(∞) * B(∞).
+
+    // SAFETY: `p[0..9]` and `p[9..19]` are non-overlapping slices of length 9
+    // and 10, respectively.
+    let a_vals =
+        eval_linear_prod_9_internal::<F>(unsafe { *(p[0..9].as_ptr() as *const [(F, F); 9]) });
+    let b_vals =
+        eval_linear_prod_10_internal::<F>(unsafe { *(p[9..19].as_ptr() as *const [(F, F); 10]) });
+
+    let a_inf = a_vals[9];
+    let b_inf = b_vals[10];
+
+    // Build base grids for A and B on [1..9] and [1..10], respectively.
+    let mut a_base: [F; 9] = [F::zero(); 9];
+    a_base.copy_from_slice(&a_vals[0..9]);
+
+    let mut b_base: [F; 10] = [F::zero(); 10];
+    b_base.copy_from_slice(&b_vals[0..10]);
+
+    let a_full = expand9_to_u19::<F>(&a_base, a_inf);
+    let b_full = expand10_to_u19::<F>(&b_base, b_inf);
+
+    // Multiply pointwise on [1..18] and set ∞ value.
+    for i in 0..19 {
+        let mut v = a_full[i];
+        v *= b_full[i];
+        outputs[i] = v;
+    }
 }
 
 /// Evaluate the product of 22 linear polynomials on `U_22 = [1, 2, ..., 21, ∞]`.
 ///
-/// This degree corresponds to `d = ceil(128 / 6)` (K = 6). Like the other
-/// non-power-of-two kernels, this is initially a naive wrapper providing a
-/// dedicated entry point for later optimization.
+/// This degree corresponds to `d = ceil(128 / 6)` (K = 6). We factor the
+/// product evenly as 11 + 11 polynomials:
+///   - A(x): product of the first 11 linears (degree ≤ 11)
+///   - B(x): product of the last 11 linears (degree ≤ 11)
+///
+/// Each 11-way half is itself built from a 5 + 6 split (see
+/// `eval_prod_11_assign`), and we:
+///   1) Obtain A and B bases on [1..11, ∞] via `eval_half_11_base`.
+///   2) Expand each half to [1..21, ∞] using the degree-11 sliding kernel
+///      `ex11` via `expand11_to_u22`.
+///   3) Multiply pointwise and set P(∞) = A(∞) * B(∞).
+#[inline]
 fn eval_prod_22_assign<F: JoltField>(p: &[(F, F); 22], outputs: &mut [F]) {
     debug_assert!(outputs.len() >= 22);
-    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..22]);
+
+    // First 11 polynomials → half A.
+    //
+    // SAFETY: `p[0..11]` and `p[11..22]` are non-overlapping slices of length
+    // 11, so the casts to `[(F, F); 11]` are valid.
+    let (a11_base, a_inf) =
+        eval_half_11_base::<F>(unsafe { *(p[0..11].as_ptr() as *const [(F, F); 11]) });
+    let a_full = expand11_to_u22::<F>(&a11_base, a_inf);
+
+    // Second 11 polynomials → half B.
+    let (b11_base, b_inf) =
+        eval_half_11_base::<F>(unsafe { *(p[11..22].as_ptr() as *const [(F, F); 11]) });
+    let b_full = expand11_to_u22::<F>(&b11_base, b_inf);
+
+    // Combine half A and half B pointwise to get the full product evaluated on
+    // [1..21, ∞].
+    for i in 0..22 {
+        let mut v = a_full[i];
+        v *= b_full[i];
+        outputs[i] = v;
+    }
 }
 
 /// Evaluate the product of 26 linear polynomials on `U_26 = [1, 2, ..., 25, ∞]`.
@@ -688,9 +953,32 @@ fn eval_prod_22_assign<F: JoltField>(p: &[(F, F); 22], outputs: &mut [F]) {
 /// This degree corresponds to `d = ceil(128 / 5)` (K = 5). The implementation
 /// will eventually mirror the recursive structure of the 16- and 32-way kernels;
 /// for now we just forward to the generic naive evaluator.
+#[inline]
 fn eval_prod_26_assign<F: JoltField>(p: &[(F, F); 26], outputs: &mut [F]) {
     debug_assert!(outputs.len() >= 26);
-    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..26]);
+
+    // First 13 polynomials → half A.
+    //
+    // SAFETY: `p[0..13]` and `p[13..26]` are non-overlapping slices of length
+    // 13, so the casts to `[(F, F); 13]` are valid.
+    let (a13_base, a_inf) = eval_half_13_base::<F>(unsafe {
+        *(p[0..13].as_ptr() as *const [(F, F); 13])
+    });
+    let a_full = expand13_to_u26::<F>(&a13_base, a_inf);
+
+    // Second 13 polynomials → half B.
+    let (b13_base, b_inf) = eval_half_13_base::<F>(unsafe {
+        *(p[13..26].as_ptr() as *const [(F, F); 13])
+    });
+    let b_full = expand13_to_u26::<F>(&b13_base, b_inf);
+
+    // Combine half A and half B pointwise to get the full product evaluated on
+    // [1..25, ∞].
+    for i in 0..26 {
+        let mut v = a_full[i];
+        v *= b_full[i];
+        outputs[i] = v;
+    }
 }
 
 /// Evaluate the product of 8 linear polynomials on the internal interpolation
@@ -931,6 +1219,37 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
 }
 
 #[inline]
+fn ex5<F: JoltField>(f: &[F; 5], f_inf5_fact: F) -> F {
+    // Extrapolate the next value of a degree-5 polynomial on the natural grid.
+    //
+    // Inputs:
+    //   f[i]        = P(x + i) for i = 0..4
+    //   f_inf5_fact = 5! * P(∞) = 120 * a5 where a5 is the leading coefficient
+    //
+    // Coefficients derived from the 6th-row binomial weights with alternating
+    // signs give:
+    //
+    //   P(x + 5) =  1  * P(x + 0)
+    //            -  5  * P(x + 1)
+    //            + 10  * P(x + 2)
+    //            - 10  * P(x + 3)
+    //            +  5  * P(x + 4)
+    //            +  5! * P(∞).
+    let mut acc: Acc5S<F> = Acc5S::zero();
+
+    acc.fmadd(&f[0], &1u64);
+    acc.fmadd(&f[1], &(-5i64));
+    acc.fmadd(&f[2], &10u64);
+    acc.fmadd(&f[3], &(-10i64));
+    acc.fmadd(&f[4], &5u64);
+
+    // Coefficient +1 on 5! * P(∞).
+    acc.pos += *f_inf5_fact.as_unreduced_ref();
+
+    acc.barrett_reduce()
+}
+
+#[inline]
 fn ex6<F: JoltField>(f: &[F; 6], f_inf6_fact: F) -> F {
     // Extrapolate the next value of a degree-6 polynomial on the natural grid.
     //
@@ -998,6 +1317,219 @@ fn ex7<F: JoltField>(f: &[F; 7], f_inf7_fact: F) -> F {
 
     // Coefficient +1 on 7! * P(∞).
     acc.pos += *f_inf7_fact.as_unreduced_ref();
+
+    acc.barrett_reduce()
+}
+
+#[inline]
+fn ex9<F: JoltField>(f: &[F; 9], f_inf9_fact: F) -> F {
+    // Extrapolate the next value of a degree-9 polynomial on the natural grid.
+    //
+    // Inputs:
+    //   f[i]        = P(x + i) for i = 0..8
+    //   f_inf9_fact = 9! * P(∞) = 362880 * a9 where a9 is the leading coefficient
+    //
+    // Coefficients derived from binomial weights with alternating signs give:
+    //
+    //   P(x + 9) =  1  * P(x + 0)
+    //            -  9  * P(x + 1)
+    //            + 36  * P(x + 2)
+    //            - 84  * P(x + 3)
+    //            + 126 * P(x + 4)
+    //            - 126 * P(x + 5)
+    //            + 84  * P(x + 6)
+    //            - 36  * P(x + 7)
+    //            +  9  * P(x + 8)
+    //            +  9! * P(∞).
+    //
+    // Group symmetric terms:
+    //   9  (f[8] - f[1])
+    //   36 (f[2] - f[7])
+    //   84 (f[6] - f[3])
+    //   126(f[4] - f[5])
+    // and handle coefficient +1 on f[0] and on 9! * P(∞) via direct accumulator
+    // updates.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+
+    // +1 * f[0]
+    acc.pos += *f[0].as_unreduced_ref();
+
+    let t9 = f[8] - f[1];
+    acc.fmadd(&t9, &9u64);
+
+    let t36 = f[2] - f[7];
+    acc.fmadd(&t36, &36u64);
+
+    let t84 = f[6] - f[3];
+    acc.fmadd(&t84, &84u64);
+
+    let t126 = f[4] - f[5];
+    acc.fmadd(&t126, &126u64);
+
+    // +1 * (9! * P(∞))
+    acc.pos += *f_inf9_fact.as_unreduced_ref();
+
+    acc.barrett_reduce()
+}
+
+#[inline]
+fn ex13<F: JoltField>(f: &[F; 13], f_inf13_fact: F) -> F {
+    // Extrapolate the next value of a degree-13 polynomial on the natural grid.
+    //
+    // Inputs:
+    //   f[i]         = P(x + i) for i = 0..12
+    //   f_inf13_fact = 13! * P(∞) = 6227020800 * a13 where a13 is the leading coefficient
+    //
+    // Coefficients obtained from solving the interpolation system yield:
+    //
+    //   P(x + 13) =  1  * P(x + 0)
+    //             - 13  * P(x + 1)
+    //             + 78  * P(x + 2)
+    //             - 286 * P(x + 3)
+    //             + 715 * P(x + 4)
+    //             - 1287* P(x + 5)
+    //             + 1716* P(x + 6)
+    //             - 1716* P(x + 7)
+    //             + 1287* P(x + 8)
+    //             - 715 * P(x + 9)
+    //             + 286 * P(x + 10)
+    //             - 78  * P(x + 11)
+    //             + 13  * P(x + 12)
+    //             + 13! * P(∞).
+    //
+    // We use a signed accumulator to combine all terms before a single reduction.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+
+    // Coefficient +1 on f[0]: add directly to positive accumulator.
+    acc.pos += *f[0].as_unreduced_ref();
+
+    acc.fmadd(&f[1], &(-13i64));
+    acc.fmadd(&f[2], &78u64);
+    acc.fmadd(&f[3], &(-286i64));
+    acc.fmadd(&f[4], &715u64);
+    acc.fmadd(&f[5], &(-1287i64));
+    acc.fmadd(&f[6], &1716u64);
+    acc.fmadd(&f[7], &(-1716i64));
+    acc.fmadd(&f[8], &1287u64);
+    acc.fmadd(&f[9], &(-715i64));
+    acc.fmadd(&f[10], &286u64);
+    acc.fmadd(&f[11], &(-78i64));
+    acc.fmadd(&f[12], &13u64);
+
+    // Coefficient +1 on 13! * P(∞).
+    acc.pos += *f_inf13_fact.as_unreduced_ref();
+
+    acc.barrett_reduce()
+}
+
+#[inline]
+fn ex11<F: JoltField>(f: &[F; 11], f_inf11_fact: F) -> F {
+    // Extrapolate the next value of a degree-11 polynomial on the natural grid.
+    //
+    // Inputs:
+    //   f[i]         = P(x + i) for i = 0..10
+    //   f_inf11_fact = 11! * P(∞) = 39916800 * a11 where a11 is the leading coefficient
+    //
+    // Coefficients obtained from binomial weights yield:
+    //
+    //   P(x + 11) =  1  * P(x + 0)
+    //             - 11  * P(x + 1)
+    //             + 55  * P(x + 2)
+    //             - 165 * P(x + 3)
+    //             + 330 * P(x + 4)
+    //             - 462 * P(x + 5)
+    //             + 462 * P(x + 6)
+    //             - 330 * P(x + 7)
+    //             + 165 * P(x + 8)
+    //             - 55  * P(x + 9)
+    //             + 11  * P(x + 10)
+    //             + 11! * P(∞).
+    //
+    // We group symmetric terms with opposite signs where possible:
+    //   11 (f[10] - f[1])
+    //   55 (f[2]  - f[9])
+    //   165(f[8]  - f[3])
+    //   330(f[4]  - f[7])
+    //   462(f[6]  - f[5])
+    // and handle coefficient +1 on f[0] and on 11! * P(∞) via direct
+    // accumulator updates to avoid redundant scalar multiplies.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+
+    // Coefficient +1 on f[0].
+    acc.pos += *f[0].as_unreduced_ref();
+
+    let t11 = f[10] - f[1];
+    acc.fmadd(&t11, &11u64);
+
+    let t55 = f[2] - f[9];
+    acc.fmadd(&t55, &55u64);
+
+    let t165 = f[8] - f[3];
+    acc.fmadd(&t165, &165u64);
+
+    let t330 = f[4] - f[7];
+    acc.fmadd(&t330, &330u64);
+
+    let t462 = f[6] - f[5];
+    acc.fmadd(&t462, &462u64);
+
+    // Coefficient +1 on 11! * P(∞).
+    acc.pos += *f_inf11_fact.as_unreduced_ref();
+
+    acc.barrett_reduce()
+}
+
+#[inline]
+fn ex10<F: JoltField>(f: &[F; 10], f_inf10_fact: F) -> F {
+    // Extrapolate the next value of a degree-10 polynomial on the natural grid.
+    //
+    // Inputs:
+    //   f[i]         = P(x + i) for i = 0..9
+    //   f_inf10_fact = 10! * P(∞) = 3628800 * a10 where a10 is the leading coefficient
+    //
+    // Coefficients derived from binomial weights with alternating signs give:
+    //
+    //   P(x + 10) = -1  * P(x + 0)
+    //              +10  * P(x + 1)
+    //              -45  * P(x + 2)
+    //             +120  * P(x + 3)
+    //             -210  * P(x + 4)
+    //             +252  * P(x + 5)
+    //             -210  * P(x + 6)
+    //             +120  * P(x + 7)
+    //              -45  * P(x + 8)
+    //              +10  * P(x + 9)
+    //              +10! * P(∞).
+    //
+    // Group symmetric terms where coefficients match:
+    //   10 (f[1] + f[9])
+    //   -45(f[2] + f[8])
+    //   120(f[3] + f[7])
+    //   -210(f[4] + f[6])
+    //   252 f[5]
+    // and handle the -1 on f[0] and +1 on 10! * P(∞) via direct accumulator
+    // updates.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+
+    // -1 * f[0]
+    acc.neg += *f[0].as_unreduced_ref();
+
+    let s10 = f[1] + f[9];
+    acc.fmadd(&s10, &10u64);
+
+    let s45 = f[2] + f[8];
+    acc.fmadd(&s45, &(-45i64));
+
+    let s120 = f[3] + f[7];
+    acc.fmadd(&s120, &120u64);
+
+    let s210 = f[4] + f[6];
+    acc.fmadd(&s210, &(-210i64));
+
+    acc.fmadd(&f[5], &252u64);
+
+    // +1 * (10! * P(∞))
+    acc.pos += *f_inf10_fact.as_unreduced_ref();
 
     acc.barrett_reduce()
 }
@@ -1144,6 +1676,202 @@ fn eval_half_16_base<F: JoltField>(p: [(F, F); 16]) -> ([F; 16], F) {
     // initialized before we call `assume_init`.
     let base = unsafe { base_mu.assume_init() };
     (base, a_inf * b_inf)
+}
+
+#[inline]
+fn eval_half_13_base<F: JoltField>(p: [(F, F); 13]) -> ([F; 13], F) {
+    // Compute the half-product evaluated at 1..13 plus its ∞ value, without
+    // zero-initialization.
+    let mut tmp: [F; 13] = [F::zero(); 13];
+    eval_prod_13_assign(&p, &mut tmp);
+
+    let inf = tmp[12];
+
+    // Compute the value at x = 13 directly: P(13) = ∏_j p_j(13).
+    let mut p13 = F::one();
+    for (p0, p1) in p.into_iter() {
+        let pinf = p1 - p0;
+        let v13 = p0 + pinf.mul_u64(13u64);
+        p13 *= v13;
+    }
+
+    let mut base: [F; 13] = [F::zero(); 13];
+    // Copy P(1..12).
+    base[0..12].copy_from_slice(&tmp[0..12]);
+    // Set P(13).
+    base[12] = p13;
+
+    (base, inf)
+}
+
+#[inline]
+fn eval_half_11_base<F: JoltField>(p: [(F, F); 11]) -> ([F; 11], F) {
+    // Compute the half-product evaluated at 1..11 plus its ∞ value, without
+    // zero-initialization.
+    let mut tmp: [F; 11] = [F::zero(); 11];
+    eval_prod_11_assign(&p, &mut tmp);
+
+    let inf = tmp[10];
+
+    // Compute the value at x = 11 directly: P(11) = ∏_j p_j(11).
+    let mut p11 = F::one();
+    for (p0, p1) in p.into_iter() {
+        let pinf = p1 - p0;
+        let v11 = p0 + pinf.mul_u64(11u64);
+        p11 *= v11;
+    }
+
+    let mut base: [F; 11] = [F::zero(); 11];
+    // Copy P(1..10).
+    base[0..10].copy_from_slice(&tmp[0..10]);
+    // Set P(11).
+    base[10] = p11;
+
+    (base, inf)
+}
+
+#[inline]
+fn expand11_to_u22<F: JoltField>(base11: &[F; 11], inf: F) -> [F; 22] {
+    // Build [1..21, inf] for a degree-11 product using ex11 sliding without
+    // zero-initialization.
+    let mut f_mu: MaybeUninit<[F; 22]> = MaybeUninit::uninit();
+    let f_ptr = f_mu.as_mut_ptr();
+    let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+
+    // Initialize first 11 with base11.
+    unsafe {
+        ptr::copy_nonoverlapping(base11.as_ptr(), f_slice_ptr, 11);
+    }
+
+    // Write inf at position 21 upfront (needed as the final output).
+    unsafe {
+        ptr::write(f_slice_ptr.add(21), inf);
+    }
+
+    let f_inf11_fact = inf.mul_u64(39916800u64); // 11!
+
+    // Compute entries 12..21 (indices 11..20) by sliding an 11-wide window
+    // and applying `ex11` with the pre-scaled ∞ value.
+    for i in 0..10 {
+        unsafe {
+            let win_ptr = f_slice_ptr.add(i) as *const [F; 11];
+            let win_ref: &[F; 11] = &*win_ptr;
+            let val = ex11::<F>(win_ref, f_inf11_fact);
+            ptr::write(f_slice_ptr.add(11 + i), val);
+        }
+    }
+
+    // SAFETY: all indices 0..21 are written above, so the array is fully
+    // initialized before we call `assume_init`.
+    unsafe { f_mu.assume_init() }
+}
+
+#[inline]
+fn expand9_to_u19<F: JoltField>(base9: &[F; 9], inf: F) -> [F; 19] {
+    // Build [1..18, inf] for a degree-9 product using ex9 sliding without
+    // zero-initialization.
+    let mut f_mu: MaybeUninit<[F; 19]> = MaybeUninit::uninit();
+    let f_ptr = f_mu.as_mut_ptr();
+    let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+
+    // Initialize first 9 with base9.
+    unsafe {
+        ptr::copy_nonoverlapping(base9.as_ptr(), f_slice_ptr, 9);
+    }
+
+    // Write inf at position 18 upfront (needed as the final output).
+    unsafe {
+        ptr::write(f_slice_ptr.add(18), inf);
+    }
+
+    let f_inf9_fact = inf.mul_u64(362880u64); // 9!
+
+    // Compute entries 10..18 (indices 9..17) by sliding a 9-wide window
+    // and applying `ex9` with the pre-scaled ∞ value.
+    for i in 0..9 {
+        unsafe {
+            let win_ptr = f_slice_ptr.add(i) as *const [F; 9];
+            let win_ref: &[F; 9] = &*win_ptr;
+            let val = ex9::<F>(win_ref, f_inf9_fact);
+            ptr::write(f_slice_ptr.add(9 + i), val);
+        }
+    }
+
+    // SAFETY: all indices 0..18 are written above, so the array is fully
+    // initialized before we call `assume_init`.
+    unsafe { f_mu.assume_init() }
+}
+
+#[inline]
+fn expand10_to_u19<F: JoltField>(base10: &[F; 10], inf: F) -> [F; 19] {
+    // Build [1..18, inf] for a degree-10 product using ex10 sliding without
+    // zero-initialization.
+    let mut f_mu: MaybeUninit<[F; 19]> = MaybeUninit::uninit();
+    let f_ptr = f_mu.as_mut_ptr();
+    let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+
+    // Initialize first 10 with base10.
+    unsafe {
+        ptr::copy_nonoverlapping(base10.as_ptr(), f_slice_ptr, 10);
+    }
+
+    // Write inf at position 18 upfront (needed as the final output).
+    unsafe {
+        ptr::write(f_slice_ptr.add(18), inf);
+    }
+
+    let f_inf10_fact = inf.mul_u64(3628800u64); // 10!
+
+    // Compute entries 11..18 (indices 10..17) by sliding a 10-wide window
+    // and applying `ex10` with the pre-scaled ∞ value.
+    for i in 0..8 {
+        unsafe {
+            let win_ptr = f_slice_ptr.add(i) as *const [F; 10];
+            let win_ref: &[F; 10] = &*win_ptr;
+            let val = ex10::<F>(win_ref, f_inf10_fact);
+            ptr::write(f_slice_ptr.add(10 + i), val);
+        }
+    }
+
+    // SAFETY: all indices 0..18 are written above, so the array is fully
+    // initialized before we call `assume_init`.
+    unsafe { f_mu.assume_init() }
+}
+
+#[inline]
+fn expand13_to_u26<F: JoltField>(base13: &[F; 13], inf: F) -> [F; 26] {
+    // Build [1..25, inf] for a degree-13 product using ex13 sliding without
+    // zero-initialization.
+    let mut f_mu: MaybeUninit<[F; 26]> = MaybeUninit::uninit();
+    let f_ptr = f_mu.as_mut_ptr();
+    let f_slice_ptr = unsafe { (*f_ptr).as_mut_ptr() };
+
+    // Initialize first 13 with base13.
+    unsafe {
+        ptr::copy_nonoverlapping(base13.as_ptr(), f_slice_ptr, 13);
+    }
+
+    // Write inf at position 25 upfront (needed by the last window).
+    unsafe {
+        ptr::write(f_slice_ptr.add(25), inf);
+    }
+
+    let f_inf13_fact = inf.mul_u64(6227020800u64); // 13!
+
+    // Compute entries 14..25 (indices 13..24) by sliding a 13-wide window
+    // and applying `ex13` with the pre-scaled ∞ value.
+    for i in 0..12 {
+        unsafe {
+            let win_ptr = f_slice_ptr.add(i) as *const [F; 13];
+            let win_ref: &[F; 13] = &*win_ptr;
+            let val = ex13::<F>(win_ref, f_inf13_fact);
+            ptr::write(f_slice_ptr.add(13 + i), val);
+        }
+    }
+
+    // SAFETY: all indices 0..25 are written above, so the array is fully
+    // initialized before we call `assume_init`.
+    unsafe { f_mu.assume_init() }
 }
 
 #[inline]
@@ -1369,6 +2097,7 @@ mod tests {
         assert_eq!(lhs, eval);
     }
 
+    // Keep tests ordered by increasing `N_MLE` for readability.
     #[test]
     fn optimized_product_sum_matches_naive_2_mles() {
         check_optimized_product_sum_matches_naive::<2>();
@@ -1385,6 +2114,11 @@ mod tests {
     }
 
     #[test]
+    fn optimized_product_sum_matches_naive_8_mles() {
+        check_optimized_product_sum_matches_naive::<8>();
+    }
+
+    #[test]
     fn optimized_product_sum_matches_naive_13_mles() {
         check_optimized_product_sum_matches_naive::<13>();
     }
@@ -1392,6 +2126,11 @@ mod tests {
     #[test]
     fn optimized_product_sum_matches_naive_15_mles() {
         check_optimized_product_sum_matches_naive::<15>();
+    }
+
+    #[test]
+    fn optimized_product_sum_matches_naive_16_mles() {
+        check_optimized_product_sum_matches_naive::<16>();
     }
 
     #[test]
@@ -1410,38 +2149,8 @@ mod tests {
     }
 
     #[test]
-    fn optimized_product_sum_matches_naive_8_mles() {
-        check_optimized_product_sum_matches_naive::<8>();
-    }
-
-    #[test]
-    fn optimized_product_sum_matches_naive_16_mles() {
-        check_optimized_product_sum_matches_naive::<16>();
-    }
-
-    #[test]
     fn optimized_product_sum_matches_naive_32_mles() {
         check_optimized_product_sum_matches_naive::<32>();
-    }
-
-    #[test]
-    fn test_compute_mles_product_sum_with_32_mles() {
-        const N_MLE: usize = 32;
-        let mut rng = &mut test_rng();
-        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
-        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let claim = gen_product_mle(&mles).evaluate(r);
-        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
-        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
-        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = mles.map(RaPolynomial::RoundN);
-
-        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
-        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
-
-        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {
