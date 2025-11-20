@@ -144,22 +144,22 @@ dependencies = [
 
 [[package]]
 name = "anstyle-query"
-version = "1.1.5"
+version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
+checksum = "9e231f6134f61b71076a3eab506c379d4f36122f2af15a9ff04415ea4c3339e2"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "anstyle-wincon"
-version = "3.0.11"
+version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
+checksum = "3e0633414522a32ffaac8ac6cc8f748e090c5717661fddeea04219e2344f5f2a"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "ark-grumpkin"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -509,9 +509,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.11.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
+checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "cast"
@@ -520,10 +520,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
-name = "cc"
-version = "1.2.46"
+name = "cbindgen"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97463e1064cb1b1c1384ad0a0b9c8abd0988e2a91f52606c80ef14aadb63e36"
+checksum = "3fce8dd7fcfcbf3a0a87d8f515194b49d6135acab73e18bd380d1d93bb1a15eb"
+dependencies = [
+ "clap",
+ "heck 0.4.1",
+ "indexmap",
+ "log",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.110",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "cc"
+version = "1.2.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35900b6c8d709fb1d854671ae27aeaa9eec2f8b01b364e1619a40da3e6fe2afe"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -597,9 +616,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.52"
+version = "4.5.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa8120877db0e5c011242f96806ce3c94e0737ab8108532a76a3300a01db2ab8"
+checksum = "4c26d721170e0295f191a69bd9a1f93efcdb0aff38684b61ab5750468972e5f5"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -607,9 +626,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.52"
+version = "4.5.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02576b399397b659c26064fbc92a75fede9d18ffd5f80ca1cd74ddab167016e1"
+checksum = "75835f0c7bf681bfd05abe44e965760fea999a5286c6eb2d59883634fd02011a"
 dependencies = [
  "anstream",
  "anstyle",
@@ -992,6 +1011,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecdsa-sign"
+version = "0.1.0"
+dependencies = [
+ "ecdsa-sign-guest",
+ "hex",
+ "jolt-sdk",
+ "sha2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ecdsa-sign-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "jolt-sdk",
+ "sha2",
+]
+
+[[package]]
 name = "educe"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1152,9 +1194,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.5"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
+checksum = "52051878f80a721bb68ebfbc930e07b65ba72f2da88968ea5c06fd6ca3d3a127"
 
 [[package]]
 name = "findshlibs"
@@ -1519,9 +1561,9 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hyper"
-version = "1.8.1"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ab2d4f250c3d7b1c9fcdff1cece94ea4e2dfbec68614f7b87cb205f24ca9d11"
+checksum = "1744436df46f0bde35af3eda22aeaba453aada65d8f1c171cd8a5f59030bd69f"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1573,9 +1615,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.18"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52e9a2a24dc5c6821e71a7030e1e14b7b632acac55c40e9d2e082c621261bb56"
+checksum = "3c6995591a8f1380fcb4ba966a252a4b29188d51d2b89e3a252f5305be65aea8"
 dependencies = [
  "base64",
  "bytes",
@@ -1807,9 +1849,9 @@ dependencies = [
 
 [[package]]
 name = "inferno"
-version = "0.12.4"
+version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d35223c50fdd26419a4ccea2c73be68bd2b29a3d7d6123ffe101c17f4c20a52a"
+checksum = "e96d2465363ed2d81857759fc864cf6bb7997f79327aec028d65bd7989393685"
 dependencies = [
  "ahash",
  "clap",
@@ -1822,7 +1864,7 @@ dependencies = [
  "log",
  "num-format",
  "once_cell",
- "quick-xml 0.38.4",
+ "quick-xml 0.37.5",
  "rgb",
  "str_stack",
 ]
@@ -1949,7 +1991,7 @@ dependencies = [
  "fixedbitset 0.5.7",
  "iai-callgrind",
  "indicatif",
- "inferno 0.12.4",
+ "inferno 0.12.3",
  "itertools 0.10.5",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
@@ -1984,6 +2026,31 @@ dependencies = [
  "tracer",
  "tracing",
  "tracing-chrome",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-ffi"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-serialize",
+ "cbindgen",
+ "clap",
+ "common",
+ "ecdsa-sign-guest",
+ "eyre",
+ "fibonacci-guest",
+ "hex",
+ "jolt-core",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "postcard",
+ "sha3-chain-guest",
+ "tracer",
+ "tracing",
+ "tracing-oslog",
  "tracing-subscriber",
 ]
 
@@ -2045,7 +2112,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#045a1a4c18d64230ff292bb6f00830df8f126b23"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2977,9 +3044,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.38.4"
+version = "0.37.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
 dependencies = [
  "memchr",
 ]
@@ -3521,6 +3588,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3818,9 +3894,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "symbolic-common"
-version = "12.17.0"
+version = "12.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3d8046c5674ab857104bc4559d505f4809b8060d57806e45d49737c97afeb60"
+checksum = "d03f433c9befeea460a01d750e698aa86caf86dcfbd77d552885cd6c89d52f50"
 dependencies = [
  "debugid",
  "memmap2",
@@ -3830,9 +3906,9 @@ dependencies = [
 
 [[package]]
 name = "symbolic-demangle"
-version = "12.17.0"
+version = "12.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1accb6e5c4b0f682de907623912e616b44be1c9e725775155546669dbff720ec"
+checksum = "13d359ef6192db1760a34321ec4f089245ede4342c27e59be99642f12a859de8"
 dependencies = [
  "cpp_demangle",
  "rustc-demangle",
@@ -4073,10 +4149,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "toml_edit"
@@ -4085,6 +4176,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
  "indexmap",
+ "serde",
+ "serde_spanned",
  "toml_datetime",
  "toml_write",
  "winnow",
@@ -4218,6 +4311,18 @@ dependencies = [
  "log",
  "once_cell",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-oslog"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d76902d2a8d5f9f55a81155c08971734071968c90f2d9bfe645fe700579b2950"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "tracing-core",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4638,13 +4743,13 @@ dependencies = [
 
 [[package]]
 name = "windows-registry"
-version = "0.6.1"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+checksum = "5b8a9ed28765efc97bbc954883f4e6796c33a06546ebafacbabee9696967499e"
 dependencies = [
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
+ "windows-strings 0.4.2",
 ]
 
 [[package]]

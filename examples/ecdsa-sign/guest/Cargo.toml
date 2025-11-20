@@ -1,0 +1,14 @@
+[package]
+name = "ecdsa-sign-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-std"] }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = ["curve", "scalar_field"] }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+sha2 = { version = "0.10", default-features = false }

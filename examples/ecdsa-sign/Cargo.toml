@@ -1,0 +1,12 @@
+[package]
+name = "ecdsa-sign"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+tracing-subscriber = "0.3"
+tracing = "0.1"
+guest = { package = "ecdsa-sign-guest", path = "./guest" }
+sha2 = "0.10"
+hex = "0.4"
