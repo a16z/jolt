@@ -1,5 +1,5 @@
 [package]
-name = "z3-extractor"
+name = "z3-verifier"
 edition = "2021"
 
 [build-dependencies]
