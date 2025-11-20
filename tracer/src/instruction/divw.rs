@@ -118,7 +118,7 @@ impl RISCVTrace for DIVW {
         let t0 = allocator.allocate(); // adjusted divisor
         let t1 = allocator.allocate(); // temporary
         let t2 = allocator.allocate(); // temporary
-        let t3 = allocator.allocate(); // temporary
+        let t3 = allocator.allocate(); // signed remainder
         let t4 = allocator.allocate(); // sign-extended dividend
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
@@ -139,32 +139,27 @@ impl RISCVTrace for DIVW {
         asm.emit_i::<VirtualSignExtendWord>(*t1, *a2, 0); // Sign-extend quotient to 64-bit
         asm.emit_b::<VirtualAssertEQ>(*t1, *a2, 0); // Assert quotient was valid 32-bit
 
-        // verify remainder fits in 32 bits signe-extended value
-        asm.emit_i::<VirtualSignExtendWord>(*t2, *a3, 0); // Sign-extend remainder to 64-bit
-        asm.emit_b::<VirtualAssertEQ>(*t2, *a3, 0); // Assert remainder was valid 32-bit
+        asm.emit_i::<SRAI>(*t2, *a3, 31); // Sign bit of remainder
+        asm.emit_b::<VirtualAssertEQ>(*t2, 0, 0); // sign bit of remainder advice should be 0
+
+        asm.emit_i::<SRAI>(*t2, *t4, 31); // Sign bit of dividend
+        asm.emit_r::<XOR>(*t3, *a3, *t2); // XOR with |remainder|
+        asm.emit_r::<SUB>(*t3, *t3, *t2); // t3 = sign corrected remainder
+
 
         // Compute quotient × divisor for verification
         asm.emit_r::<MUL>(*t1, *a2, *t0); // multiply, sign-extended
-        asm.emit_r::<ADD>(*t1, *t1, *a3); // 32-bit add
+        asm.emit_r::<ADD>(*t1, *t1, *t3); // 32-bit add
         // Verify: dividend = quotient × divisor + remainder 
         asm.emit_b::<VirtualAssertEQ>(*t1, *t4, 0);
 
-        asm.emit_i::<SRAI>(*t2, *t3, 31); // Sign bits of divisor
-        asm.emit_r::<XOR>(*t1, *t3, *t2); // 
+        asm.emit_i::<SRAI>(*t2, *t0, 31); // Sign bit of divisor
+        asm.emit_r::<XOR>(*t1, *t0, *t2); // 
         asm.emit_r::<SUB>(*t1, *t1, *t2); // t1 = abs(divisor)
 
-        asm.emit_i::<SRAI>(*t2, *a3, 31); // Sign bit of remainder
-        asm.emit_r::<XOR>(*t3, *a3, *t2); 
-        asm.emit_r::<SUB>(*t3 , *t3, *t2); // abs(remainder)
-
-
         // Verify: |remainder| < |divisor|
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*t3, *t1, 0); 
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0); // Verify remainder is valid
 
-        asm.emit_r::<XOR>(*t1, *a3, *t4); // remainder ^ dividend
-        asm.emit_i::<SRAI>(*t1, *t1, 31); // Should have same sign
-        asm.emit_r::<XOR>(*t2, *t2, *t2); 
-        asm.emit_b::<VirtualAssertEQ>(*t1, *t2, 0);
 
         // Sign-extend result to 64 bits
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a2, 0);
