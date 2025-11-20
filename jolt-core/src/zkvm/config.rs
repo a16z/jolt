@@ -12,6 +12,7 @@ pub const fn get_log_k_chunk(log_T: usize) -> usize {
     } else {
         8
     }
+    // NOTE: extrapolated benchmarking shows that LOG_K_CHUNK=9 might be better for traces starting from 2^31
 }
 
 /// Compute the number of phases for instruction lookups based on trace length.
