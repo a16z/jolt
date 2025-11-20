@@ -25,6 +25,9 @@ pub fn compute_mles_product_sum<F: JoltField>(
         // Fully stack-allocated paths based on optimized interpolation kernels.
         13 => compute_mles_product_sum_evals_d13(mles, eq_poly),
         16 => compute_mles_product_sum_evals_d16(mles, eq_poly),
+        19 => compute_mles_product_sum_evals_d19(mles, eq_poly),
+        22 => compute_mles_product_sum_evals_d22(mles, eq_poly),
+        26 => compute_mles_product_sum_evals_d26(mles, eq_poly),
         32 => compute_mles_product_sum_evals_d32(mles, eq_poly),
         // Generic split-eq fold for all other arities.
         _ => compute_mles_product_sum_evals_generic(mles, eq_poly),
@@ -107,110 +110,49 @@ fn compute_mles_product_sum_evals_generic<F: JoltField>(
         .collect()
 }
 
-/// Specialized implementation of the split-eq fold for `d = 13`.
-///
-/// This uses `par_fold_out_in_unreduced` with a 13-lane accumulator and the
-/// optimized degree-13 product kernel wired through `eval_linear_prod_assign`.
-#[inline]
-fn compute_mles_product_sum_evals_d13<F: JoltField>(
-    mles: &[RaPolynomial<u16, F>],
-    eq_poly: &GruenSplitEqPolynomial<F>,
-) -> Vec<F> {
-    debug_assert_eq!(mles.len(), 13);
+macro_rules! impl_mles_product_sum_evals_d {
+    ($fn_name:ident, $d:expr, $eval_prod:ident) => {
+        #[inline]
+        fn $fn_name<F: JoltField>(
+            mles: &[RaPolynomial<u16, F>],
+            eq_poly: &GruenSplitEqPolynomial<F>,
+        ) -> Vec<F> {
+            debug_assert_eq!(mles.len(), $d);
 
-    let current_scalar = eq_poly.get_current_scalar();
+            let current_scalar = eq_poly.get_current_scalar();
 
-    let sum_evals_arr: [F; 13] = eq_poly.par_fold_out_in_unreduced::<9, 13>(&|g| {
-        // Build pairs[(p0, p1); 13] on the stack.
-        let pairs: [(F, F); 13] = core::array::from_fn(|i| {
-            let p0 = mles[i].get_bound_coeff(2 * g);
-            let p1 = mles[i].get_bound_coeff(2 * g + 1);
-            (p0, p1)
-        });
+            let sum_evals_arr: [F; $d] =
+                eq_poly.par_fold_out_in_unreduced::<9, $d>(&|g| {
+                    // Build pairs[(p0, p1); D] on the stack.
+                    let pairs: [(F, F); $d] =
+                        core::array::from_fn(|i| {
+                            let p0 = mles[i].get_bound_coeff(2 * g);
+                            let p1 = mles[i].get_bound_coeff(2 * g + 1);
+                            (p0, p1)
+                        });
 
-        // Evaluate the product of the 13 linear polynomials on the 13-point grid
-        // [1, 2, ..., 12, ∞] using the specialized kernel under
-        // `eval_linear_prod_assign`.
-        let mut endpoints = [F::zero(); 13];
-        eval_linear_prod_assign(&pairs, &mut endpoints);
-        endpoints
-    });
+                    // Evaluate the product of the D linear polynomials on the
+                    // D-point grid [1, 2, ..., D - 1, ∞] using the specialized
+                    // kernel.
+                    let mut endpoints = [F::zero(); $d];
+                    $eval_prod::<F>(&pairs, &mut endpoints);
+                    endpoints
+                });
 
-    sum_evals_arr
-        .into_iter()
-        .map(|x| x * current_scalar)
-        .collect()
+            sum_evals_arr
+                .into_iter()
+                .map(|x| x * current_scalar)
+                .collect()
+        }
+    };
 }
 
-/// Specialized implementation of the split-eq fold for `d = 16`.
-///
-/// This is the main zkVM setting (see `instruction_lookups::D`) and benefits from
-/// a fully stack-allocated path that uses the optimized 16-way interpolation
-/// kernels via `par_fold_out_in_unreduced`.
-#[inline]
-fn compute_mles_product_sum_evals_d16<F: JoltField>(
-    mles: &[RaPolynomial<u16, F>],
-    eq_poly: &GruenSplitEqPolynomial<F>,
-) -> Vec<F> {
-    debug_assert_eq!(mles.len(), 16);
-
-    let current_scalar = eq_poly.get_current_scalar();
-
-    // For each group index `g`, build the 16 pairs (p_j(0), p_j(1)) and evaluate
-    // the product over j on U_16 = [1..15, ∞] using the optimized kernel.
-    //
-    // `par_fold_out_in_unreduced` handles the split-eq structure and returns the
-    // combined sum over (x_out, x_in) after Montgomery reduction.
-    let sum_evals_arr: [F; 16] = eq_poly.par_fold_out_in_unreduced::<9, 16>(&|g| {
-        // Build pairs[(p0, p1); 16] on the stack.
-        let pairs: [(F, F); 16] = core::array::from_fn(|i| {
-            let p0 = mles[i].get_bound_coeff(2 * g);
-            let p1 = mles[i].get_bound_coeff(2 * g + 1);
-            (p0, p1)
-        });
-
-        // Evaluate the product of the 16 linear polynomials on the 16-point grid.
-        let mut endpoints = [F::zero(); 16];
-        eval_prod_16_assign(&pairs, &mut endpoints);
-        endpoints
-    });
-
-    sum_evals_arr
-        .into_iter()
-        .map(|x| x * current_scalar)
-        .collect()
-}
-
-/// Specialized implementation of the split-eq fold for `d = 32`.
-///
-/// This mirrors the `d = 16` specialization but uses a 32-lane accumulator and
-/// the optimized 32-way product kernel reachable via `eval_linear_prod_assign`.
-#[inline]
-fn compute_mles_product_sum_evals_d32<F: JoltField>(
-    mles: &[RaPolynomial<u16, F>],
-    eq_poly: &GruenSplitEqPolynomial<F>,
-) -> Vec<F> {
-    debug_assert_eq!(mles.len(), 32);
-
-    let current_scalar = eq_poly.get_current_scalar();
-
-    let sum_evals_arr: [F; 32] = eq_poly.par_fold_out_in_unreduced::<9, 32>(&|g| {
-        let pairs: [(F, F); 32] = core::array::from_fn(|i| {
-            let p0 = mles[i].get_bound_coeff(2 * g);
-            let p1 = mles[i].get_bound_coeff(2 * g + 1);
-            (p0, p1)
-        });
-
-        let mut endpoints = [F::zero(); 32];
-        eval_prod_32_assign(&pairs, &mut endpoints);
-        endpoints
-    });
-
-    sum_evals_arr
-        .into_iter()
-        .map(|x| x * current_scalar)
-        .collect()
-}
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d13, 13, eval_prod_13_assign);
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d16, 16, eval_prod_16_assign);
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d19, 19, eval_prod_19_assign);
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d22, 22, eval_prod_22_assign);
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d26, 26, eval_prod_26_assign);
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d32, 32, eval_prod_32_assign);
 
 /// Given the evaluations of `g(X) / eq(X, r[round])` on the grid
 /// `[1, 2, ..., d - 1, ∞]`, recover the full univariate polynomial
