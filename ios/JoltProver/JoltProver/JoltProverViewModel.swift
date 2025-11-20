@@ -87,7 +87,7 @@ class JoltProverViewModel: ObservableObject {
         ),
         DemoProof(
             id: "sha3-chain",
-            name: "SHA-3-chain",
+            name: "SHA3-chain",
             preprocessingFile: "sha3-chain-preprocessing",
             elfFile: "sha3-chain",
             input: .data(try! PostcardSerializer.concatenate(
