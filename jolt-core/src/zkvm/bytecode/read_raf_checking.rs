@@ -272,7 +272,10 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let mut r_address = self.r_address_prime.clone();
         r_address.reverse();
 
-        let r_address_chunks = self.params.compute_r_address_chunks(&r_address);
+        let r_address_chunks = self
+            .params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(&r_address);
 
         // Use the computed chunks to build RA polynomials
         self.ra = r_address_chunks
@@ -484,7 +487,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
 
         // Compute r_address_chunks with proper padding
-        let r_address_chunks = self.params.compute_r_address_chunks(&r_address.r);
+        let r_address_chunks = self
+            .params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(&r_address.r);
 
         for i in 0..self.params.d {
             accumulator.append_sparse(
@@ -604,7 +610,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
 
         // Compute r_address_chunks with proper padding
-        let r_address_chunks = self.params.compute_r_address_chunks(&r_address.r);
+        let r_address_chunks = self
+            .params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(&r_address.r);
 
         (0..self.params.d).for_each(|i| {
             let opening_point = [&r_address_chunks[i][..], &r_cycle.r].concat();
@@ -1204,33 +1213,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         r[0..self.log_K].reverse();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
-    }
-
-    fn compute_r_address_chunks(&self, r_address: &[F::Challenge]) -> Vec<Vec<F::Challenge>> {
-        let r_address = if r_address
-            .len()
-            .is_multiple_of(self.one_hot_params.log_k_chunk)
-        {
-            r_address.to_vec()
-        } else {
-            [
-                &vec![
-                    F::Challenge::from(0_u128);
-                    self.one_hot_params.log_k_chunk
-                        - (r_address.len() % self.one_hot_params.log_k_chunk)
-                ],
-                r_address,
-            ]
-            .concat()
-        };
-
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(self.one_hot_params.log_k_chunk)
-            .map(|chunk| chunk.to_vec())
-            .collect();
-
-        debug_assert_eq!(r_address_chunks.len(), self.d);
-        r_address_chunks
     }
 }
 

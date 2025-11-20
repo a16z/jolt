@@ -321,7 +321,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let r_address_chunks = Self::compute_r_address_chunks(r_address, one_hot_params);
+        let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(r_address);
 
         let r_cycle = [
             r_cycle_val.to_vec(),
@@ -364,35 +364,6 @@ impl<F: JoltField> RaSumcheckParams<F> {
         self.gamma_powers[0] * ra_claim_val
             + self.gamma_powers[1] * ra_claim_rw
             + self.gamma_powers[2] * ra_claim_raf
-    }
-
-    /// Compute r_address_chunks from r_address with proper padding
-    fn compute_r_address_chunks(
-        r_address: &[F::Challenge],
-        one_hot_params: &OneHotParams,
-    ) -> Vec<Vec<F::Challenge>> {
-        // Pad r_address if necessary to make it divisible by log_chunk
-        let r_address = if r_address.len().is_multiple_of(one_hot_params.log_k_chunk) {
-            r_address.to_vec()
-        } else {
-            // Pad with zeros on the HIGH end (MSB side)
-            [
-                &vec![
-                    F::Challenge::from(0_u128);
-                    one_hot_params.log_k_chunk - (r_address.len() % one_hot_params.log_k_chunk)
-                ],
-                r_address,
-            ]
-            .concat()
-        };
-
-        // Split r_address into d chunks
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(one_hot_params.log_k_chunk)
-            .map(|chunk| chunk.to_vec())
-            .collect();
-
-        r_address_chunks
     }
 }
 

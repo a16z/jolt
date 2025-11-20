@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::LOG_K;
 
@@ -93,5 +94,30 @@ impl OneHotParams {
 
     pub fn lookup_index_chunk(&self, index: u128, idx: usize) -> u16 {
         ((index >> self.instruction_shifts[idx]) % self.k_chunk as u128) as u16
+    }
+
+    pub fn compute_r_address_chunks<F: JoltField>(
+        &self,
+        r_address: &[F::Challenge],
+    ) -> Vec<Vec<F::Challenge>> {
+        let r_address = if r_address.len().is_multiple_of(self.log_k_chunk) {
+            r_address.to_vec()
+        } else {
+            [
+                &vec![
+                    F::Challenge::from(0_u128);
+                    self.log_k_chunk - (r_address.len() % self.log_k_chunk)
+                ],
+                r_address,
+            ]
+            .concat()
+        };
+
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
+            .chunks(self.log_k_chunk)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        r_address_chunks
     }
 }

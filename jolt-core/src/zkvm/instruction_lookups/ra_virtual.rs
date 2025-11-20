@@ -64,7 +64,7 @@ impl<F: JoltField> RaSumcheckProver<F> {
         let (r_address, _) = r.split_at_r(LOG_K);
 
         // Compute r_address_chunks with proper padding
-        let r_address_chunks = params.compute_r_address_chunks(r_address);
+        let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(r_address);
 
         let H_indices: Vec<Vec<Option<u16>>> = (0..one_hot_params.instruction_d)
             .map(|i| {
@@ -138,7 +138,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
         let (r_address, _) = r.split_at_r(LOG_K);
 
         // Compute r_address_chunks with proper padding
-        let r_address_chunks = self.params.compute_r_address_chunks(r_address);
+        let r_address_chunks = self
+            .params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(r_address);
 
         for (i, r_address) in r_address_chunks.into_iter().enumerate() {
             let claim = self.ra_i_polys[i].final_sumcheck_claim();
@@ -175,7 +178,7 @@ impl<F: JoltField> RaSumcheckVerifier<F> {
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckVerifier<F> {
     fn degree(&self) -> usize {
-        self.params.d + 1
+        self.params.one_hot_params.instruction_d + 1
     }
 
     fn num_rounds(&self) -> usize {
@@ -193,7 +196,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
     ) -> F {
         let r = get_opening_point::<F>(sumcheck_challenges);
         let eq_eval = EqPolynomial::mle_endian(&self.params.r_cycle, &r);
-        let ra_claim_prod: F = (0..self.params.d)
+        let ra_claim_prod: F = (0..self.params.one_hot_params.instruction_d)
             .map(|i| {
                 let (_, ra_i_claim) = accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::InstructionRa(i),
@@ -221,7 +224,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
         let (r_address, _) = r.split_at_r(LOG_K);
 
         // Compute r_address_chunks with proper padding
-        let r_address_chunks = self.params.compute_r_address_chunks(r_address);
+        let r_address_chunks = self
+            .params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(r_address);
 
         for (i, r_address) in r_address_chunks.iter().enumerate() {
             let opening_point = [r_address.as_slice(), r_cycle.r.as_slice()].concat();
@@ -238,8 +244,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
 
 struct RaSumcheckParams<F: JoltField> {
     r_cycle: OpeningPoint<BIG_ENDIAN, F>,
-    log_k_chunk: usize,
-    d: usize,
+    one_hot_params: OneHotParams,
 }
 
 impl<F: JoltField> RaSumcheckParams<F> {
@@ -251,8 +256,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (_, r_cycle) = r.split_at(LOG_K);
         Self {
             r_cycle,
-            log_k_chunk: one_hot_params.log_k_chunk,
-            d: one_hot_params.instruction_d,
+            one_hot_params: one_hot_params.clone(),
         }
     }
 
@@ -266,31 +270,6 @@ impl<F: JoltField> RaSumcheckParams<F> {
             SumcheckId::InstructionReadRaf,
         );
         ra_claim
-    }
-
-    /// Compute r_address_chunks from r_address with proper padding
-    fn compute_r_address_chunks(&self, r_address: &[F::Challenge]) -> Vec<Vec<F::Challenge>> {
-        let log_k_chunk = self.log_k_chunk;
-
-        // Pad r_address if necessary to make it divisible by log_k_chunk
-        let r_address = if r_address.len() % log_k_chunk == 0 {
-            r_address.to_vec()
-        } else {
-            [
-                vec![F::Challenge::from(0_u128); log_k_chunk - (r_address.len() % log_k_chunk)],
-                r_address.to_vec(),
-            ]
-            .concat()
-        };
-
-        // Split r_address into d chunks
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(log_k_chunk)
-            .map(|chunk| chunk.to_vec())
-            .collect();
-
-        debug_assert_eq!(r_address_chunks.len(), self.d);
-        r_address_chunks
     }
 }
 
