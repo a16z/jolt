@@ -71,4 +71,24 @@ jolt-ffi/**/*.elf
 jolt-ffi/**/*.bin
 jolt-ffi/**/*-preprocessing.bin
 jolt-ffi/examples/c/jolt_example
+ios/JoltProver/demos/*
+ios/JoltProver/libs/*
 
+### Xcode ###
+## User settings
+xcuserdata/
+
+### Xcode Patch ###
+# Ignore everything in .xcodeproj
+*.xcodeproj/*
+
+# But keep these essential files
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+
+# Always ignore user-specific data
+*.xcodeproj/project.xcworkspace/xcuserdata/
+**/xcshareddata/WorkspaceSettings.xcsettings
+/*.gcno
