@@ -961,15 +961,13 @@ fn eval_prod_26_assign<F: JoltField>(p: &[(F, F); 26], outputs: &mut [F]) {
     //
     // SAFETY: `p[0..13]` and `p[13..26]` are non-overlapping slices of length
     // 13, so the casts to `[(F, F); 13]` are valid.
-    let (a13_base, a_inf) = eval_half_13_base::<F>(unsafe {
-        *(p[0..13].as_ptr() as *const [(F, F); 13])
-    });
+    let (a13_base, a_inf) =
+        eval_half_13_base::<F>(unsafe { *(p[0..13].as_ptr() as *const [(F, F); 13]) });
     let a_full = expand13_to_u26::<F>(&a13_base, a_inf);
 
     // Second 13 polynomials → half B.
-    let (b13_base, b_inf) = eval_half_13_base::<F>(unsafe {
-        *(p[13..26].as_ptr() as *const [(F, F); 13])
-    });
+    let (b13_base, b_inf) =
+        eval_half_13_base::<F>(unsafe { *(p[13..26].as_ptr() as *const [(F, F); 13]) });
     let b_full = expand13_to_u26::<F>(&b13_base, b_inf);
 
     // Combine half A and half B pointwise to get the full product evaluated on
