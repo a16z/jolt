@@ -24,6 +24,7 @@ pub fn compute_mles_product_sum<F: JoltField>(
     let sum_evals: Vec<F> = match d {
         // Fully stack-allocated paths based on optimized interpolation kernels.
         13 => compute_mles_product_sum_evals_d13(mles, eq_poly),
+        15 => compute_mles_product_sum_evals_d15(mles, eq_poly),
         16 => compute_mles_product_sum_evals_d16(mles, eq_poly),
         19 => compute_mles_product_sum_evals_d19(mles, eq_poly),
         22 => compute_mles_product_sum_evals_d22(mles, eq_poly),
@@ -146,6 +147,7 @@ macro_rules! impl_mles_product_sum_evals_d {
 }
 
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d13, 13, eval_prod_13_assign);
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d15, 15, eval_prod_15_assign);
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d16, 16, eval_prod_16_assign);
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d19, 19, eval_prod_19_assign);
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d22, 22, eval_prod_22_assign);
