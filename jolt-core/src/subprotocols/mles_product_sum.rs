@@ -14,16 +14,34 @@ pub fn compute_mles_product_sum<F: JoltField>(
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
-    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, ∞] using split-eq fold.
     let d = mles.len();
 
-    // Fast path for when d = 16.
+    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, ∞] using split-eq fold.
     //
-    // This uses a fully stack-allocated implementation based on the optimized
-    // 16-way interpolation kernel, and avoids any heap allocations in the inner loop.
-    if d == 16 {
-        return compute_mles_product_sum_d16(mles, claim, eq_poly);
-    }
+    // We dispatch on `d` to allow specialized fast paths (e.g., the fully
+    // stack-allocated `d = 16` implementation) while keeping the final
+    // interpolation logic centralized.
+    let sum_evals: Vec<F> = match d {
+        // Fully stack-allocated paths based on optimized interpolation kernels.
+        13 => compute_mles_product_sum_evals_d13(mles, eq_poly),
+        16 => compute_mles_product_sum_evals_d16(mles, eq_poly),
+        32 => compute_mles_product_sum_evals_d32(mles, eq_poly),
+        // Generic split-eq fold for all other arities.
+        _ => compute_mles_product_sum_evals_generic(mles, eq_poly),
+    };
+
+    finish_mles_product_sum_from_evals(&sum_evals, claim, eq_poly)
+}
+
+/// Generic implementation of the split-eq fold that computes the evaluations
+/// of `g(X) / eq(X, r[round])` on the grid `[1, 2, ..., d - 1, ∞]` for
+/// arbitrary `d`.
+#[inline]
+fn compute_mles_product_sum_evals_generic<F: JoltField>(
+    mles: &[RaPolynomial<u16, F>],
+    eq_poly: &GruenSplitEqPolynomial<F>,
+) -> Vec<F> {
+    let d = mles.len();
 
     /// Per-`x_out` accumulator used inside `par_fold_out_in`.
     ///
@@ -36,10 +54,8 @@ pub fn compute_mles_product_sum<F: JoltField>(
         endpoints: Vec<F>,
     }
 
-    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, ∞] using split-eq fold
-    // for the generic (non-16) case.
     let current_scalar = eq_poly.get_current_scalar();
-    let sum_evals: Vec<F> = eq_poly
+    eq_poly
         .par_fold_out_in(
             // Allocate one InnerAcc per `x_out` lane; its scratch buffers are
             // reused across all inner `g` contributions for that lane.
@@ -88,22 +104,54 @@ pub fn compute_mles_product_sum<F: JoltField>(
         )
         .into_iter()
         .map(|x| F::from_montgomery_reduce::<9>(x) * current_scalar)
-        .collect();
-
-    finish_mles_product_sum_from_evals(&sum_evals, claim, eq_poly)
+        .collect()
 }
 
-/// Specialized implementation of `compute_mles_product_sum` for `d = 16`.
+/// Specialized implementation of the split-eq fold for `d = 13`.
+///
+/// This uses `par_fold_out_in_unreduced` with a 13-lane accumulator and the
+/// optimized degree-13 product kernel wired through `eval_linear_prod_assign`.
+#[inline]
+fn compute_mles_product_sum_evals_d13<F: JoltField>(
+    mles: &[RaPolynomial<u16, F>],
+    eq_poly: &GruenSplitEqPolynomial<F>,
+) -> Vec<F> {
+    debug_assert_eq!(mles.len(), 13);
+
+    let current_scalar = eq_poly.get_current_scalar();
+
+    let sum_evals_arr: [F; 13] = eq_poly.par_fold_out_in_unreduced::<9, 13>(&|g| {
+        // Build pairs[(p0, p1); 13] on the stack.
+        let pairs: [(F, F); 13] = core::array::from_fn(|i| {
+            let p0 = mles[i].get_bound_coeff(2 * g);
+            let p1 = mles[i].get_bound_coeff(2 * g + 1);
+            (p0, p1)
+        });
+
+        // Evaluate the product of the 13 linear polynomials on the 13-point grid
+        // [1, 2, ..., 12, ∞] using the specialized kernel under
+        // `eval_linear_prod_assign`.
+        let mut endpoints = [F::zero(); 13];
+        eval_linear_prod_assign(&pairs, &mut endpoints);
+        endpoints
+    });
+
+    sum_evals_arr
+        .into_iter()
+        .map(|x| x * current_scalar)
+        .collect()
+}
+
+/// Specialized implementation of the split-eq fold for `d = 16`.
 ///
 /// This is the main zkVM setting (see `instruction_lookups::D`) and benefits from
 /// a fully stack-allocated path that uses the optimized 16-way interpolation
 /// kernels via `par_fold_out_in_unreduced`.
 #[inline]
-fn compute_mles_product_sum_d16<F: JoltField>(
+fn compute_mles_product_sum_evals_d16<F: JoltField>(
     mles: &[RaPolynomial<u16, F>],
-    claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
-) -> UniPoly<F> {
+) -> Vec<F> {
     debug_assert_eq!(mles.len(), 16);
 
     let current_scalar = eq_poly.get_current_scalar();
@@ -127,12 +175,41 @@ fn compute_mles_product_sum_d16<F: JoltField>(
         endpoints
     });
 
-    let sum_evals: Vec<F> = sum_evals_arr
+    sum_evals_arr
         .into_iter()
         .map(|x| x * current_scalar)
-        .collect();
+        .collect()
+}
 
-    finish_mles_product_sum_from_evals(&sum_evals, claim, eq_poly)
+/// Specialized implementation of the split-eq fold for `d = 32`.
+///
+/// This mirrors the `d = 16` specialization but uses a 32-lane accumulator and
+/// the optimized 32-way product kernel reachable via `eval_linear_prod_assign`.
+#[inline]
+fn compute_mles_product_sum_evals_d32<F: JoltField>(
+    mles: &[RaPolynomial<u16, F>],
+    eq_poly: &GruenSplitEqPolynomial<F>,
+) -> Vec<F> {
+    debug_assert_eq!(mles.len(), 32);
+
+    let current_scalar = eq_poly.get_current_scalar();
+
+    let sum_evals_arr: [F; 32] = eq_poly.par_fold_out_in_unreduced::<9, 32>(&|g| {
+        let pairs: [(F, F); 32] = core::array::from_fn(|i| {
+            let p0 = mles[i].get_bound_coeff(2 * g);
+            let p1 = mles[i].get_bound_coeff(2 * g + 1);
+            (p0, p1)
+        });
+
+        let mut endpoints = [F::zero(); 32];
+        eval_linear_prod_assign(&pairs, &mut endpoints);
+        endpoints
+    });
+
+    sum_evals_arr
+        .into_iter()
+        .map(|x| x * current_scalar)
+        .collect()
 }
 
 /// Given the evaluations of `g(X) / eq(X, r[round])` on the grid
@@ -202,15 +279,55 @@ pub fn eval_linear_prod_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) 
             let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 4]) };
             eval_prod_4_assign(p, evals)
         }
+        5 => {
+            debug_assert!(evals.len() >= 5);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 5]) };
+            eval_prod_5_assign(p, evals)
+        }
+        6 => {
+            debug_assert!(evals.len() >= 6);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 6]) };
+            eval_prod_6_assign(p, evals)
+        }
+        7 => {
+            debug_assert!(evals.len() >= 7);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 7]) };
+            eval_prod_7_assign(p, evals)
+        }
         8 => {
             debug_assert!(evals.len() >= 8);
             let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 8]) };
             eval_prod_8_assign(p, evals)
         }
+        13 => {
+            debug_assert!(evals.len() >= 13);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 13]) };
+            eval_prod_13_assign(p, evals)
+        }
+        15 => {
+            debug_assert!(evals.len() >= 15);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 15]) };
+            eval_prod_15_assign(p, evals)
+        }
         16 => {
             debug_assert!(evals.len() >= 16);
             let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 16]) };
             eval_prod_16_assign(p, evals)
+        }
+        19 => {
+            debug_assert!(evals.len() >= 19);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 19]) };
+            eval_prod_19_assign(p, evals)
+        }
+        22 => {
+            debug_assert!(evals.len() >= 22);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 22]) };
+            eval_prod_22_assign(p, evals)
+        }
+        26 => {
+            debug_assert!(evals.len() >= 26);
+            let p = unsafe { &*(pairs.as_ptr() as *const [(F, F); 26]) };
+            eval_prod_26_assign(p, evals)
         }
         32 => {
             debug_assert!(evals.len() >= 32);
@@ -226,6 +343,7 @@ pub fn eval_linear_prod_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) 
 ///
 /// This helper is only used inside higher-degree kernels and is not exposed
 /// directly through `eval_linear_prod_assign`.
+#[inline]
 fn eval_linear_prod_2_internal<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
     let p_inf = p1 - p0;
     let p2 = p_inf + p1;
@@ -242,6 +360,7 @@ fn eval_linear_prod_2_internal<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F))
 /// Given `p[j] = (p_j(0), p_j(1))` and `P(x) = ∏_j p_j(x)`, this writes:
 /// - `outputs[0] = P(1)`
 /// - `outputs[1] = P(∞) = ∏_j (p_j(1) - p_j(0))`
+#[inline]
 fn eval_prod_2_assign<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F]) {
     outputs[0] = p[0].1 * p[1].1; // 1
     outputs[1] = (p[0].1 - p[0].0) * (p[1].1 - p[1].0); // ∞
@@ -253,6 +372,7 @@ fn eval_prod_2_assign<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F]) {
 /// - `outputs[0] = P(1)`
 /// - `outputs[1] = P(2)`
 /// - `outputs[2] = P(∞)`
+#[inline]
 fn eval_prod_3_assign<F: JoltField>(pairs: &[(F, F); 3], outputs: &mut [F]) {
     let (a1, a2, a_inf) = eval_linear_prod_2_internal(pairs[0], pairs[1]);
     let (b0, b1) = pairs[2];
@@ -269,6 +389,7 @@ fn eval_prod_3_assign<F: JoltField>(pairs: &[(F, F); 3], outputs: &mut [F]) {
 /// Returns 5 values corresponding to evaluations at points `[1, 2, 3, 4, ∞]`.
 /// Only a subset of these points are exposed in `eval_prod_4_assign`, which
 /// adheres to the public `U_4 = [1, 2, 3, ∞]` grid.
+#[inline]
 fn eval_linear_prod_4_internal<F: JoltField>(p: [(F, F); 4]) -> (F, F, F, F, F) {
     let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
     let a3 = ex2(&[a1, a2], &a_inf);
@@ -295,6 +416,281 @@ fn eval_prod_4_assign<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F]) {
     outputs[1] = a2 * b2; // 2
     outputs[2] = a3 * b3; // 3
     outputs[3] = a_inf * b_inf; // ∞
+}
+
+/// Evaluate the product of 5 linear polynomials on `U_5 = [1, 2, 3, 4, ∞]`.
+///
+/// The product is split into a size-2 prefix and size-3 suffix. The suffix uses
+/// a single polynomial times a pair, so it reuses the existing `d = 2`
+/// quadratic extrapolator.
+fn eval_prod_5_assign<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 5);
+
+    // Prefix: two polynomials → degree-2 product evaluated on 1..4 via `ex2`.
+    let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
+    let a3 = ex2(&[a1, a2], &a_inf);
+    let a4 = ex2(&[a2, a3], &a_inf);
+
+    // Suffix: single polynomial times a pair.
+    let (tail1, tail2) = (p[3], p[4]);
+    let (r1, r2, r_inf) = eval_linear_prod_2_internal(tail1, tail2);
+    let r3 = ex2(&[r1, r2], &r_inf);
+    let r4 = ex2(&[r2, r3], &r_inf);
+
+    let (lin0, lin1) = p[2];
+    let delta = lin1 - lin0;
+    let l1 = lin1;
+    let l2 = l1 + delta;
+    let l3 = l2 + delta;
+    let l4 = l3 + delta;
+    let l_inf = delta;
+
+    let b1 = l1 * r1;
+    let b2 = l2 * r2;
+    let b3 = l3 * r3;
+    let b4 = l4 * r4;
+    let b_inf = l_inf * r_inf;
+
+    outputs[0] = a1 * b1; // 1
+    outputs[1] = a2 * b2; // 2
+    outputs[2] = a3 * b3; // 3
+    outputs[3] = a4 * b4; // 4
+    outputs[4] = a_inf * b_inf; // ∞
+}
+
+/// Internal evaluator for the product of 6 linear polynomials on the grid
+/// `[1, 2, ..., 6, ∞]`.
+///
+/// Returns `[P(1), P(2), ..., P(6), P(∞)]` where
+/// `P(x) = ∏_j (p_j(0) + (p_j(1) - p_j(0)) x)`.
+#[inline]
+fn eval_linear_prod_6_internal<F: JoltField>(pairs: [(F, F); 6]) -> [F; 7] {
+    let mut cur_vals_pinfs: [(F, F); 6] = [(F::zero(), F::zero()); 6];
+    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
+        let pinf = p1 - p0;
+        cur_vals_pinfs[i] = (p1, pinf);
+    }
+
+    let mut out = [F::zero(); 7];
+
+    // Evaluate at x = 1..6 by sliding x ↦ x + 1 as in the naive kernel,
+    // but for one extra step so we obtain P(6).
+    for idx in 0..6 {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
+            acc *= *cur_val;
+        }
+        out[idx] = acc;
+
+        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+            *cur_val += *pinf;
+        }
+    }
+
+    // Evaluate at infinity (product of leading coefficients).
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter.next().expect("d > 0");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
+        acc_inf *= *pinf;
+    }
+    out[6] = acc_inf;
+
+    out
+}
+
+/// Internal evaluator for the product of 7 linear polynomials on the grid
+/// `[1, 2, ..., 7, ∞]`.
+///
+/// Returns `[P(1), P(2), ..., P(7), P(∞)]`.
+#[inline]
+fn eval_linear_prod_7_internal<F: JoltField>(pairs: [(F, F); 7]) -> [F; 8] {
+    let mut cur_vals_pinfs: [(F, F); 7] = [(F::zero(), F::zero()); 7];
+    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
+        let pinf = p1 - p0;
+        cur_vals_pinfs[i] = (p1, pinf);
+    }
+
+    let mut out = [F::zero(); 8];
+
+    // Evaluate at x = 1..7.
+    for idx in 0..7 {
+        let mut iter = cur_vals_pinfs.iter();
+        let (first_val, _) = iter.next().expect("d > 0");
+        let mut acc = *first_val;
+        for (cur_val, _) in iter {
+            acc *= *cur_val;
+        }
+        out[idx] = acc;
+
+        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+            *cur_val += *pinf;
+        }
+    }
+
+    // Evaluate at infinity (product of leading coefficients).
+    let mut iter = cur_vals_pinfs.iter();
+    let (_, first_pinf) = iter.next().expect("d > 0");
+    let mut acc_inf = *first_pinf;
+    for (_, pinf) in iter {
+        acc_inf *= *pinf;
+    }
+    out[7] = acc_inf;
+
+    out
+}
+
+/// Evaluate the product of 6 linear polynomials on `U_6 = [1, 2, 3, 4, 5, ∞]`.
+///
+/// This will eventually be implemented via a recursive split (e.g. 3 + 3 or
+/// 2 + 4) in the same spirit as the 8/16/32 kernels. For now, it forwards to
+/// the generic naive evaluator so that higher-level recursive kernels (like
+/// the planned 6 + 7 decomposition for `d = 13`) can be prototyped.
+#[inline]
+fn eval_prod_6_assign<F: JoltField>(p: &[(F, F); 6], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 6);
+
+    // Internally evaluate the 6-way product on [1..6, ∞].
+    let vals = eval_linear_prod_6_internal::<F>(*p);
+
+    // Public grid U_6 = [1, 2, 3, 4, 5, ∞]: drop P(6) and keep ∞.
+    outputs[0..5].copy_from_slice(&vals[0..5]);
+    outputs[5] = vals[6];
+}
+
+/// Evaluate the product of 7 linear polynomials on `U_7 = [1, 2, 3, 4, 5, 6, ∞]`.
+///
+/// As with `eval_prod_6_assign`, this is currently a thin wrapper around the
+/// naive evaluator, serving as a hook for a future recursive specialization
+/// and as a building block for the recursive `d = 13` kernel (6 + 7 split).
+#[inline]
+fn eval_prod_7_assign<F: JoltField>(p: &[(F, F); 7], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 7);
+
+    // Internally evaluate the 7-way product on [1..7, ∞].
+    let vals = eval_linear_prod_7_internal::<F>(*p);
+
+    // Public grid U_7 = [1, 2, 3, 4, 5, 6, ∞]: drop P(7) and keep ∞.
+    outputs[0..6].copy_from_slice(&vals[0..6]);
+    outputs[6] = vals[7];
+}
+
+#[inline]
+fn eval_prod_13_assign<F: JoltField>(p: &[(F, F); 13], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 13);
+
+    // Recursive structure: split 13 = 6 + 7 and treat each half as a separate
+    // product polynomial A(x), B(x). We:
+    //   1) Evaluate A and B on their internal grids [1..6, ∞] and [1..7, ∞].
+    //   2) Use degree-specific extrapolators `ex6` and `ex7` to slide each half
+    //      forward so that we obtain A(x), B(x) for x = 1..12.
+    //   3) Multiply pointwise to recover P(x) = A(x) * B(x) on U_13's finite
+    //      grid [1..12].
+    //   4) Compute P(∞) as the product of the halves' leading coefficients.
+
+    // Step 1: internal half-evaluations.
+    //
+    // SAFETY: `p[0..6]` and `p[6..13]` are disjoint slices of lengths 6 and 7.
+    let a_vals =
+        eval_linear_prod_6_internal::<F>(unsafe { *(p[0..6].as_ptr() as *const [(F, F); 6]) });
+    let b_vals =
+        eval_linear_prod_7_internal::<F>(unsafe { *(p[6..13].as_ptr() as *const [(F, F); 7]) });
+
+    let a_inf = a_vals[6];
+    let b_inf = b_vals[7];
+
+    // Step 2: expand A and B from their base grids to 1..12 using sliding
+    // extrapolators ex6/ex7.
+    let mut a_mu: MaybeUninit<[F; 12]> = MaybeUninit::uninit();
+    let mut b_mu: MaybeUninit<[F; 12]> = MaybeUninit::uninit();
+
+    let a_ptr = a_mu.as_mut_ptr();
+    let b_ptr = b_mu.as_mut_ptr();
+
+    let a_slice_ptr = unsafe { (*a_ptr).as_mut_ptr() };
+    let b_slice_ptr = unsafe { (*b_ptr).as_mut_ptr() };
+
+    unsafe {
+        // Seed A with A(1..6).
+        ptr::copy_nonoverlapping(a_vals.as_ptr(), a_slice_ptr, 6);
+        // Seed B with B(1..7).
+        ptr::copy_nonoverlapping(b_vals.as_ptr(), b_slice_ptr, 7);
+    }
+
+    let a_inf6_fact = a_inf.mul_u64(720u64); // 6!
+    let b_inf7_fact = b_inf.mul_u64(5040u64); // 7!
+
+    // A: compute A(7..12) using ex6 on sliding windows of length 6.
+    for i in 0..6 {
+        unsafe {
+            let win_ptr = a_slice_ptr.add(i) as *const [F; 6];
+            let next = ex6::<F>(&*win_ptr, a_inf6_fact);
+            ptr::write(a_slice_ptr.add(6 + i), next);
+        }
+    }
+
+    // B: compute B(8..12) using ex7 on sliding windows of length 7.
+    for i in 0..5 {
+        unsafe {
+            let win_ptr = b_slice_ptr.add(i) as *const [F; 7];
+            let next = ex7::<F>(&*win_ptr, b_inf7_fact);
+            ptr::write(b_slice_ptr.add(7 + i), next);
+        }
+    }
+
+    // SAFETY: all indices 0..12 for both halves have been written above.
+    let a_full = unsafe { a_mu.assume_init() }; // A(1..12)
+    let b_full = unsafe { b_mu.assume_init() }; // B(1..12)
+
+    // Step 3: pointwise multiply to obtain P(x) on [1..12].
+    for i in 0..12 {
+        outputs[i] = a_full[i] * b_full[i];
+    }
+
+    // Step 4: ∞ evaluation is just the product of the halves' leading coeffs.
+    outputs[12] = a_inf * b_inf;
+}
+
+/// Evaluate the product of 15 linear polynomials on `U_15 = [1, 2, ..., 14, ∞]`.
+///
+/// This degree corresponds to `d = ceil(128 / 9)` (K = 9). Currently this
+/// delegates to the naive kernel and serves as a placeholder for an optimized
+/// split kernel built from the smaller building blocks.
+fn eval_prod_15_assign<F: JoltField>(p: &[(F, F); 15], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 15);
+    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..15]);
+}
+
+/// Evaluate the product of 19 linear polynomials on `U_19 = [1, 2, ..., 18, ∞]`.
+///
+/// This degree corresponds to `d = ceil(128 / 7)` (K = 7). It is currently a
+/// direct wrapper around the generic `eval_linear_prod_naive_assign` and will
+/// be specialized in follow-up work.
+fn eval_prod_19_assign<F: JoltField>(p: &[(F, F); 19], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 19);
+    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..19]);
+}
+
+/// Evaluate the product of 22 linear polynomials on `U_22 = [1, 2, ..., 21, ∞]`.
+///
+/// This degree corresponds to `d = ceil(128 / 6)` (K = 6). Like the other
+/// non-power-of-two kernels, this is initially a naive wrapper providing a
+/// dedicated entry point for later optimization.
+fn eval_prod_22_assign<F: JoltField>(p: &[(F, F); 22], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 22);
+    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..22]);
+}
+
+/// Evaluate the product of 26 linear polynomials on `U_26 = [1, 2, ..., 25, ∞]`.
+///
+/// This degree corresponds to `d = ceil(128 / 5)` (K = 5). The implementation
+/// will eventually mirror the recursive structure of the 16- and 32-way kernels;
+/// for now we just forward to the generic naive evaluator.
+fn eval_prod_26_assign<F: JoltField>(p: &[(F, F); 26], outputs: &mut [F]) {
+    debug_assert!(outputs.len() >= 26);
+    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..26]);
 }
 
 /// Evaluate the product of 8 linear polynomials on the internal interpolation
@@ -532,6 +928,78 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
     f5 -= f[1];
 
     (f4, f5)
+}
+
+#[inline]
+fn ex6<F: JoltField>(f: &[F; 6], f_inf6_fact: F) -> F {
+    // Extrapolate the next value of a degree-6 polynomial on the natural grid.
+    //
+    // Inputs:
+    //   f[i]        = P(x + i) for i = 0..5
+    //   f_inf6_fact = 6! * P(∞) = 720 * a6 where a6 is the leading coefficient
+    //
+    // Coefficients derived from the 7th-row binomial weights with alternating
+    // signs give:
+    //
+    //   P(x + 6) = -P(x + 0)
+    //            +  6 P(x + 1)
+    //            - 15 P(x + 2)
+    //            + 20 P(x + 3)
+    //            - 15 P(x + 4)
+    //            +  6 P(x + 5)
+    //            +  6! * P(∞).
+    //
+    // We use a signed accumulator to defer Montgomery reduction.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+
+    let s6 = f[1] + f[5];
+    acc.fmadd(&s6, &6u64);
+    let s15 = f[2] + f[4];
+    acc.fmadd(&s15, &(-15i64));
+    acc.fmadd(&f[3], &20u64);
+
+    // Coefficient -1 on f[0].
+    acc.neg += *f[0].as_unreduced_ref();
+    // Coefficient +1 on 6! * P(∞).
+    acc.pos += *f_inf6_fact.as_unreduced_ref();
+
+    acc.barrett_reduce()
+}
+
+#[inline]
+fn ex7<F: JoltField>(f: &[F; 7], f_inf7_fact: F) -> F {
+    // Extrapolate the next value of a degree-7 polynomial on the natural grid.
+    //
+    // Inputs:
+    //   f[i]        = P(x + i) for i = 0..6
+    //   f_inf7_fact = 7! * P(∞) = 5040 * a7 where a7 is the leading coefficient
+    //
+    // Coefficients obtained from binomial weights yield:
+    //
+    //   P(x + 7) =  1 P(x + 0)
+    //            -  7 P(x + 1)
+    //            + 21 P(x + 2)
+    //            - 35 P(x + 3)
+    //            + 35 P(x + 4)
+    //            - 21 P(x + 5)
+    //            +  7 P(x + 6)
+    //            +  7! * P(∞).
+    //
+    // Again we employ a signed accumulator for fewer reductions.
+    let mut acc: Acc5S<F> = Acc5S::zero();
+
+    acc.fmadd(&f[0], &1u64);
+    acc.fmadd(&f[1], &(-7i64));
+    acc.fmadd(&f[2], &21u64);
+    acc.fmadd(&f[3], &(-35i64));
+    acc.fmadd(&f[4], &35u64);
+    acc.fmadd(&f[5], &(-21i64));
+    acc.fmadd(&f[6], &7u64);
+
+    // Coefficient +1 on 7! * P(∞).
+    acc.pos += *f_inf7_fact.as_unreduced_ref();
+
+    acc.barrett_reduce()
 }
 
 #[inline(always)]
@@ -909,6 +1377,36 @@ mod tests {
     #[test]
     fn optimized_product_sum_matches_naive_4_mles() {
         check_optimized_product_sum_matches_naive::<4>();
+    }
+
+    #[test]
+    fn optimized_product_sum_matches_naive_5_mles() {
+        check_optimized_product_sum_matches_naive::<5>();
+    }
+
+    #[test]
+    fn optimized_product_sum_matches_naive_13_mles() {
+        check_optimized_product_sum_matches_naive::<13>();
+    }
+
+    #[test]
+    fn optimized_product_sum_matches_naive_15_mles() {
+        check_optimized_product_sum_matches_naive::<15>();
+    }
+
+    #[test]
+    fn optimized_product_sum_matches_naive_19_mles() {
+        check_optimized_product_sum_matches_naive::<19>();
+    }
+
+    #[test]
+    fn optimized_product_sum_matches_naive_22_mles() {
+        check_optimized_product_sum_matches_naive::<22>();
+    }
+
+    #[test]
+    fn optimized_product_sum_matches_naive_26_mles() {
+        check_optimized_product_sum_matches_naive::<26>();
     }
 
     #[test]
