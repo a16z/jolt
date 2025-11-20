@@ -121,23 +121,21 @@ macro_rules! impl_mles_product_sum_evals_d {
 
             let current_scalar = eq_poly.get_current_scalar();
 
-            let sum_evals_arr: [F; $d] =
-                eq_poly.par_fold_out_in_unreduced::<9, $d>(&|g| {
-                    // Build pairs[(p0, p1); D] on the stack.
-                    let pairs: [(F, F); $d] =
-                        core::array::from_fn(|i| {
-                            let p0 = mles[i].get_bound_coeff(2 * g);
-                            let p1 = mles[i].get_bound_coeff(2 * g + 1);
-                            (p0, p1)
-                        });
-
-                    // Evaluate the product of the D linear polynomials on the
-                    // D-point grid [1, 2, ..., D - 1, ∞] using the specialized
-                    // kernel.
-                    let mut endpoints = [F::zero(); $d];
-                    $eval_prod::<F>(&pairs, &mut endpoints);
-                    endpoints
+            let sum_evals_arr: [F; $d] = eq_poly.par_fold_out_in_unreduced::<9, $d>(&|g| {
+                // Build pairs[(p0, p1); D] on the stack.
+                let pairs: [(F, F); $d] = core::array::from_fn(|i| {
+                    let p0 = mles[i].get_bound_coeff(2 * g);
+                    let p1 = mles[i].get_bound_coeff(2 * g + 1);
+                    (p0, p1)
                 });
+
+                // Evaluate the product of the D linear polynomials on the
+                // D-point grid [1, 2, ..., D - 1, ∞] using the specialized
+                // kernel.
+                let mut endpoints = [F::zero(); $d];
+                $eval_prod::<F>(&pairs, &mut endpoints);
+                endpoints
+            });
 
             sum_evals_arr
                 .into_iter()
@@ -1857,6 +1855,21 @@ mod tests {
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
 
+    fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {
+        let values: Vec<Fr> = (0..(1 << n_vars)).map(|_| Fr::random(rng)).collect();
+        MultilinearPolynomial::LargeScalars(DensePolynomial::new(values))
+    }
+
+    /// Generates MLE `p(x) = sum_j eq(j, x) * prod_i mle_i(j)`.
+    fn gen_product_mle(mles: &[MultilinearPolynomial<Fr>]) -> MultilinearPolynomial<Fr> {
+        let n_vars = mles[0].get_num_vars();
+        assert!(mles.iter().all(|mle| mle.get_num_vars() == n_vars));
+        let res = (0..1 << n_vars)
+            .map(|i| mles.iter().map(|mle| mle.get_bound_coeff(i)).product())
+            .collect::<Vec<Fr>>();
+        res.into()
+    }
+
     /// Checks that the optimized `compute_mles_product_sum` matches the naive
     /// polynomial
     /// `p(x) = ∑_j eq(j, x) * ∏_i mle_i(j)` constructed in `gen_product_mle`,
@@ -1935,20 +1948,5 @@ mod tests {
     #[test]
     fn optimized_product_sum_matches_naive_32_mles() {
         check_optimized_product_sum_matches_naive::<32>();
-    }
-
-    fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {
-        let values: Vec<Fr> = (0..(1 << n_vars)).map(|_| Fr::random(rng)).collect();
-        MultilinearPolynomial::LargeScalars(DensePolynomial::new(values))
-    }
-
-    /// Generates MLE `p(x) = sum_j eq(j, x) * prod_i mle_i(j)`.
-    fn gen_product_mle(mles: &[MultilinearPolynomial<Fr>]) -> MultilinearPolynomial<Fr> {
-        let n_vars = mles[0].get_num_vars();
-        assert!(mles.iter().all(|mle| mle.get_num_vars() == n_vars));
-        let res = (0..1 << n_vars)
-            .map(|i| mles.iter().map(|mle| mle.get_bound_coeff(i)).product())
-            .collect::<Vec<Fr>>();
-        res.into()
     }
 }
