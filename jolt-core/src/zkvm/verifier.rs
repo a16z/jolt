@@ -148,8 +148,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        let one_hot_params = OneHotParams::new(
-            self.proof.trace_length.log_2(),
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(
+            self.proof.log_k_chunk,
             self.proof.bytecode_K,
             self.proof.ram_K,
         );
