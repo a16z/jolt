@@ -94,40 +94,79 @@ impl<F: JoltField> RLCPolynomial<F> {
 
     #[tracing::instrument(skip_all)]
     pub fn linear_combination(
-        poly_ids: Vec<CommittedPolynomial>,
+        _poly_ids: Vec<CommittedPolynomial>,
         polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
         coefficients: &[F],
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+        _streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> Self {
+        use crate::utils::small_scalar::SmallScalar;
         debug_assert_eq!(polynomials.len(), coefficients.len());
-        debug_assert_eq!(poly_ids.len(), coefficients.len());
+        // debug_assert_eq!(poly_ids.len(), coefficients.len());
 
-        let (lazy_trace, preprocessing, one_hot_params) =
-            streaming_context.expect("Streaming context must be provided");
+        let mut result = RLCPolynomial::<F>::new();
+        let dense_indices: Vec<usize> = polynomials
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
+            .map(|(i, _)| i)
+            .collect();
 
-        let mut dense_polys = Vec::new();
-        let mut onehot_polys = Vec::new();
+        if !dense_indices.is_empty() {
+            let dense_len = result.dense_rlc.len();
 
-        for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
-            match poly_id {
-                CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
-                    dense_polys.push((*poly_id, *coeff));
-                }
-                CommittedPolynomial::InstructionRa(_)
-                | CommittedPolynomial::BytecodeRa(_)
-                | CommittedPolynomial::RamRa(_) => {
-                    onehot_polys.push((*poly_id, *coeff));
-                }
+            result.dense_rlc = (0..dense_len)
+                .into_par_iter()
+                .map(|i| {
+                    let mut acc = F::zero();
+                    for &poly_idx in &dense_indices {
+                        let poly = polynomials[poly_idx].as_ref();
+                        let coeff = coefficients[poly_idx];
+
+                        if i < poly.original_len() {
+                            match poly {
+                                MultilinearPolynomial::U8Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U16Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U32Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U64Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::I64Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U128Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::I128Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::S128Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::LargeScalars(p) => {
+                                    acc += p.Z[i] * coeff;
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    acc
+                })
+                .collect();
+        }
+
+        for (i, poly) in polynomials.iter().enumerate() {
+            if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
+                result.one_hot_rlc.push((coefficients[i], poly.clone()));
             }
         }
 
-        Self::new_streaming(
-            dense_polys,
-            onehot_polys,
-            lazy_trace,
-            preprocessing,
-            &one_hot_params,
-        )
+        result
     }
 
     /// Materializes a streaming RLC polynomial for testing purposes.
