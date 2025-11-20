@@ -4,7 +4,8 @@ import OSLog
 
 struct ProofStats {
     let inputDescription: String
-    let cycles: String?
+    let rv64imacCycles: String?
+    let totalCycles: String?
     let virtualCycles: String?
     let provingTime: String?
     let throughput: String?
@@ -277,7 +278,8 @@ class JoltProverViewModel: ObservableObject {
                 let logs = captureLogs()
                 proofStats = ProofStats(
                     inputDescription: inputDesc,
-                    cycles: logs.cycles,
+                    rv64imacCycles: logs.rv64imacCycles,
+                    totalCycles: logs.totalCycles,
                     virtualCycles: logs.virtualCycles,
                     provingTime: String(format: "%.1fs", duration),
                     throughput: logs.throughput
@@ -302,16 +304,17 @@ class JoltProverViewModel: ObservableObject {
 
     /// Capture logs from Rust tracing output
     /// Parses OSLog for cycle counts and throughput statistics
-    private func captureLogs() -> (cycles: String?, virtualCycles: String?, throughput: String?) {
+    private func captureLogs() -> (rv64imacCycles: String?, totalCycles: String?, virtualCycles: String?, throughput: String?) {
         guard #available(iOS 15.0, *) else {
-            return (nil, nil, nil)
+            return (nil, nil, nil, nil)
         }
 
         do {
             let logStore = try OSLogStore(scope: .currentProcessIdentifier)
             let position = logStore.position(timeIntervalSinceEnd: -60) // Last 60 seconds
 
-            var cycles: String?
+            var rv64imacCycles: String?
+            var totalCycles: String?
             var virtualCycles: String?
             var throughput: String?
 
@@ -321,17 +324,20 @@ class JoltProverViewModel: ObservableObject {
                 guard let logEntry = entry as? OSLogEntryLog else { continue }
                 let message = logEntry.composedMessage
 
-                // Parse: "880005 RV64IMAC cycles, 960007 virtual cycles"
-                if message.contains("RV64IMAC cycles") && message.contains("virtual cycles") {
-                    let components = message.components(separatedBy: ",")
-                    if components.count >= 2 {
-                        // Extract cycle count
-                        if let cycleMatch = components[0].components(separatedBy: " ").first(where: { Int($0) != nil }) {
-                            cycles = cycleMatch
+                // Parse: "23163 raw RISC-V instructions + 105392 virtual instructions = 128555 total cycles"
+                if message.contains("raw RISC-V instructions") && message.contains("virtual instructions") && message.contains("total cycles") {
+                    // Use regex to extract the three numbers
+                    let pattern = #"(\d+) raw RISC-V instructions \+ (\d+) virtual instructions = (\d+) total cycles"#
+                    if let regex = try? NSRegularExpression(pattern: pattern),
+                       let match = regex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)) {
+                        if let rawRange = Range(match.range(at: 1), in: message) {
+                            rv64imacCycles = String(message[rawRange])
                         }
-                        // Extract virtual cycle count
-                        if let virtualMatch = components[1].components(separatedBy: " ").first(where: { Int($0) != nil }) {
-                            virtualCycles = virtualMatch
+                        if let virtualRange = Range(match.range(at: 2), in: message) {
+                            virtualCycles = String(message[virtualRange])
+                        }
+                        if let totalRange = Range(match.range(at: 3), in: message) {
+                            totalCycles = String(message[totalRange])
                         }
                     }
                 }
@@ -347,10 +353,10 @@ class JoltProverViewModel: ObservableObject {
                 }
             }
 
-            return (cycles: cycles, virtualCycles: virtualCycles, throughput: throughput)
+            return (rv64imacCycles: rv64imacCycles, totalCycles: totalCycles, virtualCycles: virtualCycles, throughput: throughput)
         } catch {
             print("Failed to capture logs: \(error)")
-            return (nil, nil, nil)
+            return (nil, nil, nil, nil)
         }
     }
 
@@ -358,8 +364,12 @@ class JoltProverViewModel: ObservableObject {
     private func formatSuccessMessage(stats: ProofStats) -> String {
         var message = "Proof generated successfully!"
 
-        if let cycles = stats.cycles, let virtualCycles = stats.virtualCycles {
-            message += "\n\n\(cycles) RV64IMAC cycles\n\(virtualCycles) virtual cycles"
+        if let rv64imacCycles = stats.rv64imacCycles {
+            message += "\n\n\(rv64imacCycles) RV64IMAC cycles"
+        }
+
+        if let totalCycles = stats.totalCycles, let virtualCycles = stats.virtualCycles {
+            message += "\n\(totalCycles) total cycles (\(virtualCycles) virtual)"
         }
 
         if let provingTime = stats.provingTime {
