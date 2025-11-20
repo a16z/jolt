@@ -400,213 +400,57 @@ fn eval_prod_5_assign<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F]) {
     outputs[4] = a_inf * b_inf; // ∞
 }
 
-/// Internal evaluator for the product of 5 linear polynomials on the grid
-/// `[1, 2, ..., 5, ∞]`.
+/// Internal evaluator for the product of `d` linear polynomials on the grid
+/// `[1, 2, ..., d, ∞]`.
 ///
-/// Returns `[P(1), P(2), ..., P(5), P(∞)]` where
+/// Returns `[P(1), P(2), ..., P(d), P(∞)]` where
 /// `P(x) = ∏_j (p_j(0) + (p_j(1) - p_j(0)) x)`.
-#[inline]
-fn eval_linear_prod_5_internal<F: JoltField>(pairs: [(F, F); 5]) -> [F; 6] {
-    let mut cur_vals_pinfs: [(F, F); 5] = [(F::zero(), F::zero()); 5];
-    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
-        let pinf = p1 - p0;
-        cur_vals_pinfs[i] = (p1, pinf);
-    }
+macro_rules! impl_eval_linear_prod_internal {
+    ($fn_name:ident, $d:expr) => {
+        #[inline]
+        fn $fn_name<F: JoltField>(pairs: [(F, F); $d]) -> [F; $d + 1] {
+            let mut cur_vals_pinfs: [(F, F); $d] = [(F::zero(), F::zero()); $d];
+            for (i, (p0, p1)) in pairs.into_iter().enumerate() {
+                let pinf = p1 - p0;
+                cur_vals_pinfs[i] = (p1, pinf);
+            }
 
-    let mut out = [F::zero(); 6];
+            let mut out = [F::zero(); $d + 1];
 
-    // Evaluate at x = 1..5 by sliding x ↦ x + 1 using the precomputed pinfs.
-    for idx in 0..5 {
-        let mut iter = cur_vals_pinfs.iter();
-        let (first_val, _) = iter.next().expect("d > 0");
-        let mut acc = *first_val;
-        for (cur_val, _) in iter {
-            acc *= *cur_val;
+            // Evaluate at x = 1..D by sliding x ↦ x + 1 using the precomputed pinfs.
+            for idx in 0..$d {
+                let mut iter = cur_vals_pinfs.iter();
+                let (first_val, _) = iter.next().expect("d > 0");
+                let mut acc = *first_val;
+                for (cur_val, _) in iter {
+                    acc *= *cur_val;
+                }
+                out[idx] = acc;
+
+                for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
+                    *cur_val += *pinf;
+                }
+            }
+
+            // Evaluate at infinity (product of leading coefficients).
+            let mut iter = cur_vals_pinfs.iter();
+            let (_, first_pinf) = iter.next().expect("d > 0");
+            let mut acc_inf = *first_pinf;
+            for (_, pinf) in iter {
+                acc_inf *= *pinf;
+            }
+            out[$d] = acc_inf;
+
+            out
         }
-        out[idx] = acc;
-
-        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
-            *cur_val += *pinf;
-        }
-    }
-
-    // Evaluate at infinity (product of leading coefficients).
-    let mut iter = cur_vals_pinfs.iter();
-    let (_, first_pinf) = iter.next().expect("d > 0");
-    let mut acc_inf = *first_pinf;
-    for (_, pinf) in iter {
-        acc_inf *= *pinf;
-    }
-    out[5] = acc_inf;
-
-    out
+    };
 }
 
-/// Internal evaluator for the product of 6 linear polynomials on the grid
-/// `[1, 2, ..., 6, ∞]`.
-///
-/// Returns `[P(1), P(2), ..., P(6), P(∞)]` where
-/// `P(x) = ∏_j (p_j(0) + (p_j(1) - p_j(0)) x)`.
-#[inline]
-fn eval_linear_prod_6_internal<F: JoltField>(pairs: [(F, F); 6]) -> [F; 7] {
-    let mut cur_vals_pinfs: [(F, F); 6] = [(F::zero(), F::zero()); 6];
-    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
-        let pinf = p1 - p0;
-        cur_vals_pinfs[i] = (p1, pinf);
-    }
-
-    let mut out = [F::zero(); 7];
-
-    // Evaluate at x = 1..6 by sliding x ↦ x + 1 as in the naive kernel,
-    // but for one extra step so we obtain P(6).
-    for idx in 0..6 {
-        let mut iter = cur_vals_pinfs.iter();
-        let (first_val, _) = iter.next().expect("d > 0");
-        let mut acc = *first_val;
-        for (cur_val, _) in iter {
-            acc *= *cur_val;
-        }
-        out[idx] = acc;
-
-        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
-            *cur_val += *pinf;
-        }
-    }
-
-    // Evaluate at infinity (product of leading coefficients).
-    let mut iter = cur_vals_pinfs.iter();
-    let (_, first_pinf) = iter.next().expect("d > 0");
-    let mut acc_inf = *first_pinf;
-    for (_, pinf) in iter {
-        acc_inf *= *pinf;
-    }
-    out[6] = acc_inf;
-
-    out
-}
-
-/// Internal evaluator for the product of 7 linear polynomials on the grid
-/// `[1, 2, ..., 7, ∞]`.
-///
-/// Returns `[P(1), P(2), ..., P(7), P(∞)]`.
-#[inline]
-fn eval_linear_prod_7_internal<F: JoltField>(pairs: [(F, F); 7]) -> [F; 8] {
-    let mut cur_vals_pinfs: [(F, F); 7] = [(F::zero(), F::zero()); 7];
-    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
-        let pinf = p1 - p0;
-        cur_vals_pinfs[i] = (p1, pinf);
-    }
-
-    let mut out = [F::zero(); 8];
-
-    // Evaluate at x = 1..7.
-    for idx in 0..7 {
-        let mut iter = cur_vals_pinfs.iter();
-        let (first_val, _) = iter.next().expect("d > 0");
-        let mut acc = *first_val;
-        for (cur_val, _) in iter {
-            acc *= *cur_val;
-        }
-        out[idx] = acc;
-
-        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
-            *cur_val += *pinf;
-        }
-    }
-
-    // Evaluate at infinity (product of leading coefficients).
-    let mut iter = cur_vals_pinfs.iter();
-    let (_, first_pinf) = iter.next().expect("d > 0");
-    let mut acc_inf = *first_pinf;
-    for (_, pinf) in iter {
-        acc_inf *= *pinf;
-    }
-    out[7] = acc_inf;
-
-    out
-}
-
-/// Internal evaluator for the product of 9 linear polynomials on the grid
-/// `[1, 2, ..., 9, ∞]`.
-///
-/// Returns `[P(1), P(2), ..., P(9), P(∞)]`.
-#[inline]
-fn eval_linear_prod_9_internal<F: JoltField>(pairs: [(F, F); 9]) -> [F; 10] {
-    let mut cur_vals_pinfs: [(F, F); 9] = [(F::zero(), F::zero()); 9];
-    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
-        let pinf = p1 - p0;
-        cur_vals_pinfs[i] = (p1, pinf);
-    }
-
-    let mut out = [F::zero(); 10];
-
-    // Evaluate at x = 1..9 by sliding x ↦ x + 1 using the precomputed pinfs.
-    for idx in 0..9 {
-        let mut iter = cur_vals_pinfs.iter();
-        let (first_val, _) = iter.next().expect("d > 0");
-        let mut acc = *first_val;
-        for (cur_val, _) in iter {
-            acc *= *cur_val;
-        }
-        out[idx] = acc;
-
-        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
-            *cur_val += *pinf;
-        }
-    }
-
-    // Evaluate at infinity (product of leading coefficients).
-    let mut iter = cur_vals_pinfs.iter();
-    let (_, first_pinf) = iter.next().expect("d > 0");
-    let mut acc_inf = *first_pinf;
-    for (_, pinf) in iter {
-        acc_inf *= *pinf;
-    }
-    out[9] = acc_inf;
-
-    out
-}
-
-/// Internal evaluator for the product of 10 linear polynomials on the grid
-/// `[1, 2, ..., 10, ∞]`.
-///
-/// Returns `[P(1), P(2), ..., P(10), P(∞)]`.
-#[inline]
-fn eval_linear_prod_10_internal<F: JoltField>(pairs: [(F, F); 10]) -> [F; 11] {
-    let mut cur_vals_pinfs: [(F, F); 10] = [(F::zero(), F::zero()); 10];
-    for (i, (p0, p1)) in pairs.into_iter().enumerate() {
-        let pinf = p1 - p0;
-        cur_vals_pinfs[i] = (p1, pinf);
-    }
-
-    let mut out = [F::zero(); 11];
-
-    // Evaluate at x = 1..10 by sliding x ↦ x + 1 using the precomputed pinfs.
-    for idx in 0..10 {
-        let mut iter = cur_vals_pinfs.iter();
-        let (first_val, _) = iter.next().expect("d > 0");
-        let mut acc = *first_val;
-        for (cur_val, _) in iter {
-            acc *= *cur_val;
-        }
-        out[idx] = acc;
-
-        for (cur_val, pinf) in cur_vals_pinfs.iter_mut() {
-            *cur_val += *pinf;
-        }
-    }
-
-    // Evaluate at infinity (product of leading coefficients).
-    let mut iter = cur_vals_pinfs.iter();
-    let (_, first_pinf) = iter.next().expect("d > 0");
-    let mut acc_inf = *first_pinf;
-    for (_, pinf) in iter {
-        acc_inf *= *pinf;
-    }
-    out[10] = acc_inf;
-
-    out
-}
+impl_eval_linear_prod_internal!(eval_linear_prod_5_internal, 5);
+impl_eval_linear_prod_internal!(eval_linear_prod_6_internal, 6);
+impl_eval_linear_prod_internal!(eval_linear_prod_7_internal, 7);
+impl_eval_linear_prod_internal!(eval_linear_prod_9_internal, 9);
+impl_eval_linear_prod_internal!(eval_linear_prod_10_internal, 10);
 
 /// Evaluate the product of 11 linear polynomials on `U_11 = [1, 2, ..., 10, ∞]`.
 ///
