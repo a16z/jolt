@@ -283,7 +283,7 @@ pub fn eval_linear_prod_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) 
 ///
 /// This helper is only used inside higher-degree kernels and is not exposed
 /// directly through `eval_linear_prod_assign`.
-#[inline]
+#[inline(always)]
 fn eval_linear_prod_2_internal<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
     let p_inf = p1 - p0;
     let p2 = p_inf + p1;
@@ -300,7 +300,7 @@ fn eval_linear_prod_2_internal<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F))
 /// Given `p[j] = (p_j(0), p_j(1))` and `P(x) = ∏_j p_j(x)`, this writes:
 /// - `outputs[0] = P(1)`
 /// - `outputs[1] = P(∞) = ∏_j (p_j(1) - p_j(0))`
-#[inline]
+#[inline(always)]
 fn eval_prod_2_assign<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F]) {
     outputs[0] = p[0].1 * p[1].1; // 1
     outputs[1] = (p[0].1 - p[0].0) * (p[1].1 - p[1].0); // ∞
@@ -312,7 +312,7 @@ fn eval_prod_2_assign<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F]) {
 /// - `outputs[0] = P(1)`
 /// - `outputs[1] = P(2)`
 /// - `outputs[2] = P(∞)`
-#[inline]
+#[inline(always)]
 fn eval_prod_3_assign<F: JoltField>(pairs: &[(F, F); 3], outputs: &mut [F]) {
     let (a1, a2, a_inf) = eval_linear_prod_2_internal(pairs[0], pairs[1]);
     let (b0, b1) = pairs[2];
@@ -638,12 +638,78 @@ fn eval_prod_13_assign<F: JoltField>(p: &[(F, F); 13], outputs: &mut [F]) {
 
 /// Evaluate the product of 15 linear polynomials on `U_15 = [1, 2, ..., 14, ∞]`.
 ///
-/// This degree corresponds to `d = ceil(128 / 9)` (K = 9). Currently this
-/// delegates to the naive kernel and serves as a placeholder for an optimized
-/// split kernel built from the smaller building blocks.
+/// This degree corresponds to `d = ceil(128 / 9)` (K = 9) and is implemented via
+/// a 7 + 8 split:
+///   - A(x): product of the first 7 polynomials (degree ≤ 7)
+///   - B(x): product of the last 8 polynomials (degree ≤ 8)
+///
+/// The evaluation proceeds as:
+///   1) Evaluate A on `[1..7, ∞]` with `eval_linear_prod_7_internal`.
+///   2) Evaluate B on `[1..8, ∞]` with `eval_linear_prod_8_internal`.
+///   3) Expand A to `[1..14]` using the degree-7 sliding kernel `ex7`.
+///   4) Expand B to `[1..14]` using the degree-8 sliding kernel `ex8`.
+///   5) Multiply pointwise and set `P(∞) = A(∞) * B(∞)`.
 fn eval_prod_15_assign<F: JoltField>(p: &[(F, F); 15], outputs: &mut [F]) {
     debug_assert!(outputs.len() >= 15);
-    eval_linear_prod_naive_assign::<F>(p, &mut outputs[..15]);
+
+    // SAFETY: `p[0..7]` and `p[7..15]` are disjoint slices of length 7 and 8.
+    let a_vals =
+        eval_linear_prod_7_internal::<F>(unsafe { *(p[0..7].as_ptr() as *const [(F, F); 7]) });
+    let b_vals =
+        eval_linear_prod_8_internal::<F>(unsafe { *(p[7..15].as_ptr() as *const [(F, F); 8]) });
+
+    let a_inf = a_vals[7];
+    let b_inf = b_vals[8];
+
+    // Expand A from [1..7, ∞] to [1..14] using ex7 sliding.
+    let mut a_mu: MaybeUninit<[F; 14]> = MaybeUninit::uninit();
+    let a_ptr = a_mu.as_mut_ptr();
+    let a_slice_ptr = unsafe { (*a_ptr).as_mut_ptr() };
+
+    // Seed A(1..7).
+    unsafe {
+        ptr::copy_nonoverlapping(a_vals.as_ptr(), a_slice_ptr, 7);
+    }
+
+    let a_inf7_fact = a_inf.mul_u64(5040u64); // 7!
+    for i in 0..7 {
+        unsafe {
+            let win_ptr = a_slice_ptr.add(i) as *const [F; 7];
+            let next = ex7::<F>(&*win_ptr, a_inf7_fact);
+            ptr::write(a_slice_ptr.add(7 + i), next);
+        }
+    }
+
+    // Expand B from [1..8, ∞] to [1..14] using ex8 sliding.
+    let mut b_mu: MaybeUninit<[F; 14]> = MaybeUninit::uninit();
+    let b_ptr = b_mu.as_mut_ptr();
+    let b_slice_ptr = unsafe { (*b_ptr).as_mut_ptr() };
+
+    // Seed B(1..8).
+    unsafe {
+        ptr::copy_nonoverlapping(b_vals.as_ptr(), b_slice_ptr, 8);
+    }
+
+    let b_inf40320 = b_inf.mul_u64(40320u64); // 8!
+    for i in 0..6 {
+        unsafe {
+            let win_ptr = b_slice_ptr.add(i) as *const [F; 8];
+            let next = ex8::<F>(&*win_ptr, b_inf40320);
+            ptr::write(b_slice_ptr.add(8 + i), next);
+        }
+    }
+
+    // SAFETY: all indices 0..13 for both halves have been written above.
+    let a_full = unsafe { a_mu.assume_init() }; // A(1..14)
+    let b_full = unsafe { b_mu.assume_init() }; // B(1..14)
+
+    // Pointwise product P(x) = A(x) * B(x) on [1..14].
+    for i in 0..14 {
+        outputs[i] = a_full[i] * b_full[i];
+    }
+
+    // ∞ evaluation is the product of leading coefficients.
+    outputs[14] = a_inf * b_inf;
 }
 
 /// Evaluate the product of 19 linear polynomials on `U_19 = [1, 2, ..., 18, ∞]`.
