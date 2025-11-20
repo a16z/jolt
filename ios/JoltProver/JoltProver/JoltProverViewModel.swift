@@ -9,6 +9,7 @@ struct ProofStats {
     let virtualCycles: String?
     let provingTime: String?
     let throughput: String?
+    let peakMemory: String?
 }
 
 enum ProofInput: Hashable {
@@ -282,7 +283,8 @@ class JoltProverViewModel: ObservableObject {
                     totalCycles: logs.totalCycles,
                     virtualCycles: logs.virtualCycles,
                     provingTime: String(format: "%.1fs", duration),
-                    throughput: logs.throughput
+                    throughput: logs.throughput,
+                    peakMemory: logs.peakMemory
                 )
                 statusMessage = formatSuccessMessage(stats: proofStats!)
                 hasError = false
@@ -303,10 +305,10 @@ class JoltProverViewModel: ObservableObject {
     // MARK: - Helper Functions
 
     /// Capture logs from Rust tracing output
-    /// Parses OSLog for cycle counts and throughput statistics
-    private func captureLogs() -> (rv64imacCycles: String?, totalCycles: String?, virtualCycles: String?, throughput: String?) {
+    /// Parses OSLog for cycle counts, throughput statistics, and memory usage
+    private func captureLogs() -> (rv64imacCycles: String?, totalCycles: String?, virtualCycles: String?, throughput: String?, peakMemory: String?) {
         guard #available(iOS 15.0, *) else {
-            return (nil, nil, nil, nil)
+            return (nil, nil, nil, nil, nil)
         }
 
         do {
@@ -317,6 +319,7 @@ class JoltProverViewModel: ObservableObject {
             var totalCycles: String?
             var virtualCycles: String?
             var throughput: String?
+            var peakMemoryMB: Double = 0.0
 
             let entries = try logStore.getEntries(at: position)
 
@@ -351,33 +354,62 @@ class JoltProverViewModel: ObservableObject {
                         throughput = throughputStr
                     }
                 }
+
+                // Parse: "current memory usage: 123.45 MB" or "current memory usage: 1.23 GB" or "current memory usage: 1234567 bytes"
+                if message.contains("current memory usage:") {
+                    // Extract memory value and unit
+                    let pattern = #"current memory usage:\s+([0-9.]+)\s*(GB|MB|bytes)"#
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                       let match = regex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)) {
+                        if let valueRange = Range(match.range(at: 1), in: message),
+                           let unitRange = Range(match.range(at: 2), in: message) {
+                            let valueStr = String(message[valueRange])
+                            let unit = String(message[unitRange]).lowercased()
+
+                            if let value = Double(valueStr) {
+                                let memoryMB: Double
+                                switch unit {
+                                case "gb":
+                                    memoryMB = value * 1024.0
+                                case "mb":
+                                    memoryMB = value
+                                default: // bytes
+                                    memoryMB = value / (1024.0 * 1024.0)
+                                }
+                                peakMemoryMB = max(peakMemoryMB, memoryMB)
+                            }
+                        }
+                    }
+                }
             }
 
-            return (rv64imacCycles: rv64imacCycles, totalCycles: totalCycles, virtualCycles: virtualCycles, throughput: throughput)
+            let peakMemory = peakMemoryMB > 0 ? String(format: "%.1f MB", peakMemoryMB) : nil
+            return (rv64imacCycles: rv64imacCycles, totalCycles: totalCycles, virtualCycles: virtualCycles, throughput: throughput, peakMemory: peakMemory)
         } catch {
             print("Failed to capture logs: \(error)")
-            return (nil, nil, nil, nil)
+            return (nil, nil, nil, nil, nil)
         }
     }
 
     /// Format success message with proof statistics
     private func formatSuccessMessage(stats: ProofStats) -> String {
-        var message = "Proof generated successfully!"
-
-        if let rv64imacCycles = stats.rv64imacCycles {
-            message += "\n\n\(rv64imacCycles) RV64IMAC cycles"
+        
+        var message = if let provingTime = stats.provingTime {
+          "Proof generated in: \(provingTime)"
+        } else {
+          "Proof generated successfully!"
         }
 
-        if let totalCycles = stats.totalCycles, let virtualCycles = stats.virtualCycles {
-            message += "\n\(totalCycles) total cycles (\(virtualCycles) virtual)"
+        if let rv64imacCycles = stats.rv64imacCycles, let virtualCycles = stats.virtualCycles {
+            message += "\n\n\(rv64imacCycles) RV64IMAC cycles\n\(virtualCycles) virtual cycles"
         }
 
-        if let provingTime = stats.provingTime {
-            message += "\n\nProving time: \(provingTime)"
+        if let peakMemory = stats.peakMemory {
+            message += "\nPeak memory usage: \(peakMemory)"
         }
 
         if let throughput = stats.throughput {
-            message += "\n\(throughput)"
+            message += "\nProver Speed: \(throughput)"
         }
 
         return message
