@@ -9,7 +9,7 @@
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
     poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
-    zkvm::config::RaPolynomialParams,
+    zkvm::config::OneHotParams,
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -790,7 +790,7 @@ where
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, RaPolynomialParams)>,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",

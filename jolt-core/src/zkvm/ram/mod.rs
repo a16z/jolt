@@ -5,7 +5,7 @@ use crate::subprotocols::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
     HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
 };
-use crate::zkvm::config::RaPolynomialParams;
+use crate::zkvm::config::OneHotParams;
 use crate::{
     field::{self, JoltField},
     poly::{
@@ -130,7 +130,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
     untrusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     trusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     memory_layout: &MemoryLayout,
-    ra_params: &RaPolynomialParams,
+    one_hot_params: &OneHotParams,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) {
@@ -141,9 +141,9 @@ pub fn prover_accumulate_advice<F: JoltField>(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, _) = r.split_at(ra_params.ram_k.log_2());
+        let (r_address, _) = r.split_at(one_hot_params.ram_k.log_2());
 
-        let total_variables = ra_params.ram_k.log_2();
+        let total_variables = one_hot_params.ram_k.log_2();
         let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
 
         // Use the last number_of_vals elements for evaluation
@@ -442,28 +442,29 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
 pub fn gen_ra_booleanity_prover<F: JoltField>(
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
-    ra_params: &RaPolynomialParams,
+    one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckProver<F> {
     let log_t = trace.len().log_2();
 
     let r_cycle = transcript.challenge_vector_optimized::<F>(log_t);
-    let r_address = transcript.challenge_vector_optimized::<F>(ra_params.log_k_chunk);
+    let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
 
     // Compute G and H for RAM
     let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
-    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, ra_params);
-    let H_indices = compute_ram_h_indices(trace, memory_layout, ra_params);
+    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
+    let H_indices = compute_ram_h_indices(trace, memory_layout, one_hot_params);
 
-    let polynomial_types: Vec<CommittedPolynomial> = (0..ra_params.ram_d)
+    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
         .map(CommittedPolynomial::RamRa)
         .collect();
 
-    let gammas: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(ra_params.ram_d);
+    let gammas: Vec<F::Challenge> =
+        transcript.challenge_vector_optimized::<F>(one_hot_params.ram_d);
 
     let params = BooleanitySumcheckParams {
-        d: ra_params.ram_d,
-        log_k_chunk: ra_params.log_k_chunk,
+        d: one_hot_params.ram_d,
+        log_k_chunk: one_hot_params.log_k_chunk,
         log_t,
         gammas,
         r_address,
@@ -479,7 +480,7 @@ pub fn gen_ra_booleanity_prover<F: JoltField>(
 pub fn gen_ra_hamming_weight_prover<F: JoltField>(
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
-    ra_params: &RaPolynomialParams,
+    one_hot_params: &OneHotParams,
     opening_accumulator: &ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) -> HammingWeightSumcheckProver<F> {
@@ -489,17 +490,17 @@ pub fn gen_ra_hamming_weight_prover<F: JoltField>(
     );
     let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
 
-    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, ra_params);
+    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
 
-    let gamma_powers = transcript.challenge_scalar_powers(ra_params.ram_d);
+    let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.ram_d);
 
-    let polynomial_types: Vec<CommittedPolynomial> = (0..ra_params.ram_d)
+    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
         .map(CommittedPolynomial::RamRa)
         .collect();
 
     let params = HammingWeightSumcheckParams {
-        d: ra_params.ram_d,
-        num_rounds: ra_params.log_k_chunk,
+        d: one_hot_params.ram_d,
+        num_rounds: one_hot_params.log_k_chunk,
         gamma_powers,
         polynomial_types,
         sumcheck_id: SumcheckId::RamHammingWeight,
@@ -512,21 +513,21 @@ pub fn gen_ra_hamming_weight_prover<F: JoltField>(
 
 pub fn new_ra_booleanity_verifier<F: JoltField>(
     n_cycle_vars: usize,
-    ra_params: &RaPolynomialParams,
+    one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckVerifier<F> {
     let r_cycle = transcript.challenge_vector_optimized::<F>(n_cycle_vars);
-    let r_address = transcript.challenge_vector_optimized::<F>(ra_params.log_k_chunk);
+    let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
 
-    let gammas = transcript.challenge_vector_optimized::<F>(ra_params.ram_d);
+    let gammas = transcript.challenge_vector_optimized::<F>(one_hot_params.ram_d);
 
-    let polynomial_types: Vec<CommittedPolynomial> = (0..ra_params.ram_d)
+    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
         .map(CommittedPolynomial::RamRa)
         .collect();
 
     let params = BooleanitySumcheckParams {
-        d: ra_params.ram_d,
-        log_k_chunk: ra_params.log_k_chunk,
+        d: one_hot_params.ram_d,
+        log_k_chunk: one_hot_params.log_k_chunk,
         log_t: n_cycle_vars,
         gammas,
         r_address,
@@ -540,18 +541,18 @@ pub fn new_ra_booleanity_verifier<F: JoltField>(
 }
 
 pub fn new_ra_hamming_weight_verifier<F: JoltField>(
-    ra_params: &RaPolynomialParams,
+    one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
 ) -> HammingWeightSumcheckVerifier<F> {
-    let gamma_powers = transcript.challenge_scalar_powers(ra_params.ram_d);
+    let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.ram_d);
 
-    let polynomial_types: Vec<CommittedPolynomial> = (0..ra_params.ram_d)
+    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
         .map(CommittedPolynomial::RamRa)
         .collect();
 
     let params = HammingWeightSumcheckParams {
-        d: ra_params.ram_d,
-        num_rounds: ra_params.log_k_chunk,
+        d: one_hot_params.ram_d,
+        num_rounds: one_hot_params.log_k_chunk,
         gamma_powers,
         polynomial_types,
         sumcheck_id: SumcheckId::RamHammingWeight,
@@ -567,25 +568,25 @@ fn compute_ram_ra_evals<F: JoltField>(
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
     eq_r_cycle: &[F],
-    ra_params: &RaPolynomialParams,
+    one_hot_params: &OneHotParams,
 ) -> Vec<Vec<F>> {
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let par_chunk_size = (T / num_chunks).max(1);
 
-    let mut G_arrays = Vec::with_capacity(ra_params.ram_d);
-    for i in 0..ra_params.ram_d {
+    let mut G_arrays = Vec::with_capacity(one_hot_params.ram_d);
+    for i in 0..one_hot_params.ram_d {
         let G: Vec<F> = trace
             .par_chunks(par_chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
-                let mut local_array = unsafe_allocate_zero_vec(ra_params.k_chunk);
+                let mut local_array = unsafe_allocate_zero_vec(one_hot_params.k_chunk);
                 let mut j = chunk_index * par_chunk_size;
                 for cycle in trace_chunk {
                     if let Some(address) =
                         remap_address(cycle.ram_access().address() as u64, memory_layout)
                     {
-                        let address_i = ra_params.ram_address_chunk(address, i);
+                        let address_i = one_hot_params.ram_address_chunk(address, i);
                         local_array[address_i as usize] += eq_r_cycle[j];
                     }
                     j += 1;
@@ -593,7 +594,7 @@ fn compute_ram_ra_evals<F: JoltField>(
                 local_array
             })
             .reduce(
-                || unsafe_allocate_zero_vec(ra_params.k_chunk),
+                || unsafe_allocate_zero_vec(one_hot_params.k_chunk),
                 |mut running, new| {
                     running
                         .par_iter_mut()
@@ -611,18 +612,18 @@ fn compute_ram_ra_evals<F: JoltField>(
 fn compute_ram_h_indices(
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
-    ra_params: &RaPolynomialParams,
+    one_hot_params: &OneHotParams,
 ) -> Vec<Vec<Option<u16>>> {
     let addresses: Vec<Option<u64>> = trace
         .par_iter()
         .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))
         .collect();
 
-    (0..ra_params.ram_d)
+    (0..one_hot_params.ram_d)
         .map(|i| {
             addresses
                 .par_iter()
-                .map(|address| address.map(|address| ra_params.ram_address_chunk(address, i)))
+                .map(|address| address.map(|address| one_hot_params.ram_address_chunk(address, i)))
                 .collect()
         })
         .collect()

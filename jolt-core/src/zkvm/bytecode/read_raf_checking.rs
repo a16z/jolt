@@ -26,7 +26,7 @@ use crate::{
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        config::RaPolynomialParams,
+        config::OneHotParams,
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
@@ -125,14 +125,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     pub fn gen(
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params = ReadRafSumcheckParams::gen(
             bytecode_preprocessing,
             trace.len().log_2(),
-            ra_params,
+            one_hot_params,
             opening_accumulator,
             transcript,
         );
@@ -282,7 +282,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 let ra_i: Vec<Option<u16>> = self
                     .pc
                     .par_iter()
-                    .map(|pc| Some(self.params.ra_params.bytecode_pc_chunk(*pc, i)))
+                    .map(|pc| Some(self.params.one_hot_params.bytecode_pc_chunk(*pc, i)))
                     .collect();
                 RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_chunk))
             })
@@ -512,7 +512,7 @@ impl<F: JoltField> ReadRafSumcheckVerifier<F> {
     pub fn gen(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
@@ -520,7 +520,7 @@ impl<F: JoltField> ReadRafSumcheckVerifier<F> {
             params: ReadRafSumcheckParams::gen(
                 bytecode_preprocessing,
                 n_cycle_vars,
-                ra_params,
+                one_hot_params,
                 opening_accumulator,
                 transcript,
             ),
@@ -624,7 +624,7 @@ struct ReadRafSumcheckParams<F: JoltField> {
     /// RLC of stage rv_claims and RAF claims (per Stage1/Stage3) used as the sumcheck LHS.
     rv_claim: F,
     /// RaParams
-    ra_params: RaPolynomialParams,
+    one_hot_params: OneHotParams,
     /// Bytecode length.
     K: usize,
     /// log2(K) and log2(T) used to determine round counts.
@@ -647,7 +647,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     fn gen(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
@@ -685,7 +685,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             transcript,
         );
         let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
-        let int_poly = IdentityPolynomial::new(ra_params.bytecode_k.log_2());
+        let int_poly = IdentityPolynomial::new(one_hot_params.bytecode_k.log_2());
 
         let val_polys = [
             MultilinearPolynomial::from(val_1),
@@ -746,10 +746,10 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         Self {
             gamma_powers,
             rv_claim,
-            ra_params: ra_params.clone(),
-            K: ra_params.bytecode_k,
-            log_K: ra_params.bytecode_k.log_2(),
-            d: ra_params.bytecode_d,
+            one_hot_params: one_hot_params.clone(),
+            K: one_hot_params.bytecode_k,
+            log_K: one_hot_params.bytecode_k.log_2(),
+            d: one_hot_params.bytecode_d,
             log_T: n_cycle_vars,
             val_polys,
             rv_claims,
@@ -1207,13 +1207,17 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     }
 
     fn compute_r_address_chunks(&self, r_address: &[F::Challenge]) -> Vec<Vec<F::Challenge>> {
-        let r_address = if r_address.len().is_multiple_of(self.ra_params.log_k_chunk) {
+        let r_address = if r_address
+            .len()
+            .is_multiple_of(self.one_hot_params.log_k_chunk)
+        {
             r_address.to_vec()
         } else {
             [
                 &vec![
                     F::Challenge::from(0_u128);
-                    self.ra_params.log_k_chunk - (r_address.len() % self.ra_params.log_k_chunk)
+                    self.one_hot_params.log_k_chunk
+                        - (r_address.len() % self.one_hot_params.log_k_chunk)
                 ],
                 r_address,
             ]
@@ -1221,7 +1225,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         };
 
         let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(self.ra_params.log_k_chunk)
+            .chunks(self.one_hot_params.log_k_chunk)
             .map(|chunk| chunk.to_vec())
             .collect();
 

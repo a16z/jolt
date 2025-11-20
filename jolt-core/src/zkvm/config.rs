@@ -34,7 +34,7 @@ fn compute_d(log_k: usize, log_chunk: usize) -> usize {
 }
 
 #[derive(Clone, Debug)]
-pub struct RaPolynomialParams {
+pub struct OneHotParams {
     pub log_k_chunk: usize,
     pub k_chunk: usize,
 
@@ -50,7 +50,7 @@ pub struct RaPolynomialParams {
     bytecode_shifts: Vec<usize>,
 }
 
-impl RaPolynomialParams {
+impl OneHotParams {
     pub fn new(log_T: usize, bytecode_k: usize, ram_k: usize) -> Self {
         let log_k_chunk = get_log_k_chunk(log_T);
         Self::new_with_log_k_chunk(log_k_chunk, bytecode_k, ram_k)

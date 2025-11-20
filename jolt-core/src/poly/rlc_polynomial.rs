@@ -3,7 +3,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
-use crate::zkvm::config::RaPolynomialParams;
+use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
@@ -32,7 +32,7 @@ pub struct StreamingRLCContext<F: JoltField> {
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
     pub lazy_trace: LazyTraceIterator,
     pub preprocessing: Arc<RLCStreamingData>,
-    pub ra_params: RaPolynomialParams,
+    pub one_hot_params: OneHotParams,
 }
 
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
@@ -77,7 +77,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         onehot_polys: Vec<(CommittedPolynomial, F)>,
         lazy_trace: LazyTraceIterator,
         preprocessing: Arc<RLCStreamingData>,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
     ) -> Self {
         Self {
             dense_rlc: vec![],   // Not materialized in streaming mode
@@ -87,7 +87,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 onehot_polys,
                 lazy_trace,
                 preprocessing,
-                ra_params: ra_params.clone(),
+                one_hot_params: one_hot_params.clone(),
             })),
         }
     }
@@ -97,12 +97,12 @@ impl<F: JoltField> RLCPolynomial<F> {
         poly_ids: Vec<CommittedPolynomial>,
         polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
         coefficients: &[F],
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, RaPolynomialParams)>,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
-        let (lazy_trace, preprocessing, ra_params) =
+        let (lazy_trace, preprocessing, one_hot_params) =
             streaming_context.expect("Streaming context must be provided");
 
         let mut dense_polys = Vec::new();
@@ -126,7 +126,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             onehot_polys,
             lazy_trace,
             preprocessing,
-            &ra_params,
+            &one_hot_params,
         )
     }
 
@@ -352,22 +352,22 @@ impl<F: JoltField> RLCPolynomial<F> {
         poly_id: &CommittedPolynomial,
         cycle: &Cycle,
         preprocessing: &RLCStreamingData,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
     ) -> Option<usize> {
         match poly_id {
             CommittedPolynomial::InstructionRa(idx) => {
                 let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                Some(ra_params.lookup_index_chunk(lookup_index, *idx) as usize)
+                Some(one_hot_params.lookup_index_chunk(lookup_index, *idx) as usize)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let pc = preprocessing.bytecode.get_pc(cycle);
-                Some(ra_params.bytecode_pc_chunk(pc, *idx) as usize)
+                Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
             }
             CommittedPolynomial::RamRa(idx) => remap_address(
                 cycle.ram_access().address() as u64,
                 &preprocessing.memory_layout,
             )
-            .map(|address| ra_params.ram_address_chunk(address, *idx) as usize),
+            .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize),
             CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
                 panic!("Dense polynomials should not be passed to extract_onehot_k")
             }
@@ -411,7 +411,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                                 poly_id,
                                 cycle,
                                 &ctx.preprocessing,
-                                &ctx.ra_params,
+                                &ctx.one_hot_params,
                             ) {
                                 let rows_per_k = T / num_columns;
                                 let onehot_row = k * rows_per_k + row_idx;

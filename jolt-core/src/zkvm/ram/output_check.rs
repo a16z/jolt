@@ -23,7 +23,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
-        config::RaPolynomialParams,
+        config::OneHotParams,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -87,10 +87,10 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
         program_io: &JoltDevice,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = OutputSumcheckParams::new(ra_params.ram_k, program_io, transcript);
+        let params = OutputSumcheckParams::new(one_hot_params.ram_k, program_io, transcript);
 
         let K = final_ram_state.len();
         debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());

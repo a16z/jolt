@@ -13,7 +13,7 @@ use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::zkvm::config::RaPolynomialParams;
+use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::{
@@ -58,11 +58,12 @@ impl<F: JoltField> RaSumcheckProver<F> {
     pub fn gen(
         trace: &[Cycle],
         memory_layout: &MemoryLayout,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaSumcheckParams::new(trace.len(), ra_params, opening_accumulator, transcript);
+        let params =
+            RaSumcheckParams::new(trace.len(), one_hot_params, opening_accumulator, transcript);
 
         // Precompute EQ tables for each chunk
         let eq_tables: Vec<Vec<F>> = params
@@ -88,7 +89,7 @@ impl<F: JoltField> RaSumcheckProver<F> {
                     .par_iter()
                     .map(|cycle| {
                         remap_address(cycle.ram_access().address() as u64, memory_layout)
-                            .map(|address| ra_params.ram_address_chunk(address, i))
+                            .map(|address| one_hot_params.ram_address_chunk(address, i))
                     })
                     .collect();
                 RaPolynomial::new(Arc::new(ra_i_indices), eq_table)
@@ -204,11 +205,12 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> RaSumcheckVerifier<F> {
     pub fn new(
         trace_len: usize,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaSumcheckParams::new(trace_len, ra_params, opening_accumulator, transcript);
+        let params =
+            RaSumcheckParams::new(trace_len, one_hot_params, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -283,11 +285,11 @@ struct RaSumcheckParams<F: JoltField> {
 impl<F: JoltField> RaSumcheckParams<F> {
     fn new(
         trace_len: usize,
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let log_K = ra_params.ram_k.log_2();
+        let log_K = one_hot_params.ram_k.log_2();
         // These two sumchecks have the same binding order and number of rounds,
         // and they're run in parallel, so the openings are the same.
         assert_eq!(
@@ -319,7 +321,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let r_address_chunks = Self::compute_r_address_chunks(r_address, ra_params);
+        let r_address_chunks = Self::compute_r_address_chunks(r_address, one_hot_params);
 
         let r_cycle = [
             r_cycle_val.to_vec(),
@@ -332,7 +334,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         Self {
             gamma_powers,
             T: trace_len,
-            d: ra_params.ram_d,
+            d: one_hot_params.ram_d,
             r_cycle,
             r_address_chunks,
         }
@@ -367,17 +369,17 @@ impl<F: JoltField> RaSumcheckParams<F> {
     /// Compute r_address_chunks from r_address with proper padding
     fn compute_r_address_chunks(
         r_address: &[F::Challenge],
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
     ) -> Vec<Vec<F::Challenge>> {
         // Pad r_address if necessary to make it divisible by log_chunk
-        let r_address = if r_address.len().is_multiple_of(ra_params.log_k_chunk) {
+        let r_address = if r_address.len().is_multiple_of(one_hot_params.log_k_chunk) {
             r_address.to_vec()
         } else {
             // Pad with zeros on the HIGH end (MSB side)
             [
                 &vec![
                     F::Challenge::from(0_u128);
-                    ra_params.log_k_chunk - (r_address.len() % ra_params.log_k_chunk)
+                    one_hot_params.log_k_chunk - (r_address.len() % one_hot_params.log_k_chunk)
                 ],
                 r_address,
             ]
@@ -386,7 +388,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
 
         // Split r_address into d chunks
         let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(ra_params.log_k_chunk)
+            .chunks(one_hot_params.log_k_chunk)
             .map(|chunk| chunk.to_vec())
             .collect();
 

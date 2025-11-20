@@ -8,7 +8,7 @@ use ark_serialize::{
 };
 use num::FromPrimitive;
 
-use crate::zkvm::{config::RaPolynomialParams, witness::AllCommittedPolynomials};
+use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
     field::JoltField,
     poly::{
@@ -55,10 +55,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.bytecode_K.serialize_with_mode(&mut writer, compress)?;
         self.log_k_chunk
             .serialize_with_mode(&mut writer, compress)?;
-        let ra_params =
-            RaPolynomialParams::new_with_log_k_chunk(self.log_k_chunk, self.bytecode_K, self.ram_K);
+        let one_hot_params =
+            OneHotParams::new_with_log_k_chunk(self.log_k_chunk, self.bytecode_K, self.ram_K);
         // ensure that all committed polys are set up before serializing proofs
-        let _guard = AllCommittedPolynomials::initialize(&ra_params);
+        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
         self.opening_claims
             .serialize_with_mode(&mut writer, compress)?;
         self.commitments
@@ -158,9 +158,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let ram_K = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let bytecode_K = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let log_chunk = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let ra_params = RaPolynomialParams::new_with_log_k_chunk(log_chunk, bytecode_K, ram_K);
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(log_chunk, bytecode_K, ram_K);
         // ensure that all committed polys are set up before deserializing proofs
-        let _guard = AllCommittedPolynomials::initialize(&ra_params);
+        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
         let opening_claims = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let untrusted_advice_commitment =

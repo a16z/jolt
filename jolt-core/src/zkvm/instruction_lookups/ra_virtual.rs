@@ -19,7 +19,7 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        config::RaPolynomialParams,
+        config::OneHotParams,
         instruction::LookupQuery,
         instruction_lookups::LOG_K,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -51,10 +51,10 @@ impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::gen")]
     pub fn gen(
         trace: &[Cycle],
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let params = RaSumcheckParams::new(ra_params, opening_accumulator);
+        let params = RaSumcheckParams::new(one_hot_params, opening_accumulator);
 
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
@@ -66,13 +66,13 @@ impl<F: JoltField> RaSumcheckProver<F> {
         // Compute r_address_chunks with proper padding
         let r_address_chunks = params.compute_r_address_chunks(r_address);
 
-        let H_indices: Vec<Vec<Option<u16>>> = (0..ra_params.instruction_d)
+        let H_indices: Vec<Vec<Option<u16>>> = (0..one_hot_params.instruction_d)
             .map(|i| {
                 trace
                     .par_iter()
                     .map(|cycle| {
                         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                        Some(ra_params.lookup_index_chunk(lookup_index, i))
+                        Some(one_hot_params.lookup_index_chunk(lookup_index, i))
                     })
                     .collect()
             })
@@ -165,10 +165,10 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
     pub fn new(
-        ra_params: &RaPolynomialParams,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = RaSumcheckParams::new(ra_params, opening_accumulator);
+        let params = RaSumcheckParams::new(one_hot_params, opening_accumulator);
         Self { params }
     }
 }
@@ -243,10 +243,7 @@ struct RaSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckParams<F> {
-    fn new(
-        ra_params: &RaPolynomialParams,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Self {
+    fn new(one_hot_params: &OneHotParams, opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
@@ -254,8 +251,8 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (_, r_cycle) = r.split_at(LOG_K);
         Self {
             r_cycle,
-            log_k_chunk: ra_params.log_k_chunk,
-            d: ra_params.instruction_d,
+            log_k_chunk: one_hot_params.log_k_chunk,
+            d: one_hot_params.instruction_d,
         }
     }
 
