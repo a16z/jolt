@@ -10,7 +10,7 @@ use num_traits::Zero;
 ///
 /// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[RaPolynomial<u8, F>],
+    mles: &[RaPolynomial<u16, F>],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
@@ -100,7 +100,7 @@ pub fn compute_mles_product_sum<F: JoltField>(
 /// kernels via `par_fold_out_in_unreduced`.
 #[inline]
 fn compute_mles_product_sum_d16<F: JoltField>(
-    mles: &[RaPolynomial<u8, F>],
+    mles: &[RaPolynomial<u16, F>],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
@@ -817,6 +817,48 @@ pub fn eval_linear_prod_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut
     evals[d - 1] = acc_inf;
 }
 
+/// Naive evaluator for the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
+///
+/// The evaluations on `U_D` are accumulated into `sums`.
+///
+/// Inputs:
+/// - `pairs[j] = (p_j(0), p_j(1))`
+/// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
+#[allow(dead_code)]
+fn product_eval_univariate_naive_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
+    let d = pairs.len();
+    debug_assert_eq!(sums.len(), d);
+    if d == 0 {
+        return;
+    }
+    // Memoize p(1)=p1, then p(2)=p(1)+pinf, p(3)=p(2)+pinf, ...
+    let mut cur_vals = Vec::with_capacity(d);
+    let mut pinfs = Vec::with_capacity(d);
+    for &(p0, p1) in pairs.iter() {
+        let pinf = p1 - p0;
+        cur_vals.push(p1);
+        pinfs.push(pinf);
+    }
+    // Evaluate at x = 1..(d-1)
+    for idx in 0..(d - 1) {
+        let mut acc = F::one();
+        for v in cur_vals.iter() {
+            acc *= *v;
+        }
+        sums[idx] += acc;
+        // advance all to next x
+        for i in 0..d {
+            cur_vals[i] += pinfs[i];
+        }
+    }
+    // Evaluate at infinity (product of leading coefficients)
+    let mut acc_inf = F::one();
+    for pinf in pinfs.iter() {
+        acc_inf *= *pinf;
+    }
+    sums[d - 1] += acc_inf;
+}
+
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
@@ -882,6 +924,26 @@ mod tests {
     #[test]
     fn optimized_product_sum_matches_naive_32_mles() {
         check_optimized_product_sum_matches_naive::<32>();
+    }
+
+    #[test]
+    fn test_compute_mles_product_sum_with_32_mles() {
+        const N_MLE: usize = 32;
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
+
+        let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
+        let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);
+
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {

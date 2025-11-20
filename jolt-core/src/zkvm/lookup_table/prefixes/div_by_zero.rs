@@ -44,6 +44,7 @@ impl<F: JoltField> SparseDensePrefix<F> for DivByZeroPrefix {
         r_x: C,
         r_y: C,
         _: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

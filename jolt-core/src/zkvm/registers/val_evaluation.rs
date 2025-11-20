@@ -22,7 +22,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
-        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial},
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
@@ -65,7 +65,6 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         // The opening point is r_address || r_cycle
@@ -76,12 +75,11 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         let (r_address, r_cycle) = registers_val_input_sample.0.split_at(LOG_K);
 
         let params = ValEvaluationSumcheckParams::new(trace.len().log_2());
-        let ram_d = compute_d_parameter(ram_K);
         let inc = CommittedPolynomial::RdInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
             trace,
-            ram_d,
+            None,
         );
 
         let eq_r_address = EqPolynomial::evals(&r_address.r);

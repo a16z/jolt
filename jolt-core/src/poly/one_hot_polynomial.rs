@@ -40,14 +40,14 @@ pub struct OneHotPolynomial<F: JoltField> {
     /// In other words, the raf/waf corresponding to this
     /// ra/wa polynomial.
     /// If empty, this polynomial is 0 for all j.
-    pub nonzero_indices: Arc<Vec<Option<u8>>>,
+    pub nonzero_indices: Arc<Vec<Option<u16>>>,
     /// The number of variables that have been bound over the
     /// course of sumcheck so far.
     num_variables_bound: usize,
     /// The array described in Section 6.3 of the Twist/Shout paper.
     G: Vec<F>,
     /// The array described in Section 6.3 of the Twist/Shout paper.
-    H: Arc<RwLock<RaPolynomial<u8, F>>>,
+    H: Arc<RwLock<RaPolynomial<u16, F>>>,
 }
 
 impl<F: JoltField> PartialEq for OneHotPolynomial<F> {
@@ -408,9 +408,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .sum()
     }
 
-    pub fn from_indices(nonzero_indices: Vec<Option<u8>>, K: usize) -> Self {
+    pub fn from_indices(nonzero_indices: Vec<Option<u16>>, K: usize) -> Self {
         debug_assert_eq!(DoryGlobals::get_T(), nonzero_indices.len());
-        assert!(K <= 1 << 8, "K must be <= 256 for index to fit into u8");
+        assert!(K <= 1usize << u16::BITS, "K must be <= 65536 for indices");
 
         Self {
             K,
@@ -706,10 +706,9 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> =
-            std::iter::repeat_with(|| Some(rng.next_u64() as u8 % K as u8))
-                .take(T)
-                .collect();
+        let nonzero_indices: Vec<_> = (0..T)
+            .map(|_| Some((rng.next_u64() % K as u64) as u16))
+            .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
@@ -822,10 +821,9 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> =
-            std::iter::repeat_with(|| Some(rng.next_u64() as u8 % K as u8))
-                .take(T)
-                .collect();
+        let nonzero_indices: Vec<_> = (0..T)
+            .map(|_| Some((rng.next_u64() % K as u64) as u16))
+            .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let dense_poly = one_hot_poly.to_dense_poly();
 
