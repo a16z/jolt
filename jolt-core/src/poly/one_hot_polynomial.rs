@@ -89,7 +89,7 @@ impl<F: JoltField> EqAddressState<F> {
         let K = 1 << r_address.len();
         // F will maintain an array that, at the end of sumcheck round m, has size 2^m
         // and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
-        let mut F = ExpandingTable::new(K, BindingOrder::HighToLow);
+        let mut F = ExpandingTable::new(K, BindingOrder::LowToHigh);
         F.reset(F::one());
 
         Self {
@@ -235,7 +235,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let polynomial = &self.polynomial;
 
         if round < polynomial.K.log_2() {
-            let num_unbound_address_variables = polynomial.K.log_2() - round;
+            let m = round + 1;
             let B = &shared_eq_address.B;
             let F = &shared_eq_address.F;
             let G = &polynomial.G;
@@ -243,15 +243,13 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let unreduced_univariate_poly_evals = (0..B.len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
-                    let B_evals = B.sumcheck_evals_array::<2>(k_prime, BindingOrder::HighToLow);
-                    let inner_sum = G
+                    let B_evals = B.sumcheck_evals_array::<2>(k_prime, BindingOrder::LowToHigh);
+                    let inner_sum = G[k_prime << m..(k_prime + 1) << m]
                         .par_iter()
                         .enumerate()
-                        .skip(k_prime)
-                        .step_by(B.len() / 2)
                         .map(|(k, &G_k)| {
-                            let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
-                            let F_k = F[k >> num_unbound_address_variables];
+                            let k_m = k >> (m - 1);
+                            let F_k = F[k % (1 << (m - 1))];
                             let G_times_F = G_k * F_k;
 
                             let eval_c0 = if k_m == 0 { G_times_F } else { F::zero() };
@@ -317,7 +315,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             if round < polynomial.K.log_2() {
                 shared_eq_address
                     .B
-                    .bind_parallel(r, BindingOrder::HighToLow);
+                    .bind_parallel(r, BindingOrder::LowToHigh);
 
                 shared_eq_address.F.update(r);
                 shared_eq_address.num_variables_bound += 1;
@@ -384,7 +382,11 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
         for (t, k) in self.nonzero_indices.iter().enumerate() {
             if let Some(k) = k {
-                dense_coeffs[*k as usize * T + t] = F::one();
+                let log_K = self.K.log_2();
+                // NOTE: log_K variables are reversed for testing purposes of low to high
+                let k = (k & !((1 << log_K) - 1))
+                    | ((k & ((1 << log_K) - 1)).reverse_bits() >> (u16::BITS as usize - log_K));
+                dense_coeffs[k as usize * T + t] = F::one();
             }
         }
         DensePolynomial::new(dense_coeffs)
@@ -728,7 +730,16 @@ mod tests {
         );
         one_hot_opening.initialize(one_hot_poly.clone());
 
-        let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
+        let r_concat = [
+            r_address
+                .iter()
+                .copied()
+                .rev()
+                .collect::<Vec<_>>()
+                .as_slice(),
+            r_cycle.as_slice(),
+        ]
+        .concat();
         let mut eq = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_concat));
 
         // Compute the initial input claim
@@ -742,6 +753,7 @@ mod tests {
             let mle_half = dense_poly.len() / 2;
 
             // We bind first log_K vars HighToLow and then log_T vars LowToHigh
+            // because the dense polynomial has address variables reversed
             if round < LOG_K {
                 expected_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
                 expected_message[1] = (0..mle_half)
@@ -827,12 +839,15 @@ mod tests {
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let dense_poly = one_hot_poly.to_dense_poly();
 
-        let r: Vec<<Fr as JoltField>::Challenge> =
+        let mut r: Vec<<Fr as JoltField>::Challenge> =
             std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
                 .take(LOG_K + LOG_T)
                 .collect();
+        let r_one_hot = r.clone();
+        // We reverse because `one_hot_poly.to_dense_poly()` has K variables reversed
+        r[..LOG_K].reverse();
 
-        assert_eq!(one_hot_poly.evaluate(&r), dense_poly.evaluate(&r));
+        assert_eq!(one_hot_poly.evaluate(&r_one_hot), dense_poly.evaluate(&r));
     }
 
     #[test]
