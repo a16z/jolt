@@ -2,6 +2,8 @@
 pub use jolt_core::host;
 #[cfg(feature = "host")]
 pub use jolt_core::zkvm::proof_serialization::serialize_and_print_size;
+#[cfg(feature = "host")]
+pub use jolt_core::zkvm::RV64IMACProver;
 
 pub use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 pub use jolt_core::ark_bn254::Fr as F;
@@ -10,7 +12,7 @@ pub use jolt_core::guest;
 pub use jolt_core::poly::commitment::dory::DoryCommitmentScheme as PCS;
 pub use jolt_core::zkvm::{
     proof_serialization::JoltProof, preprocessing::{JoltProverPreprocessing, JoltVerifierPreprocessing},
-    RV64IMACProof, RV64IMACProver, RV64IMACVerifier,
+    RV64IMACProof, RV64IMACVerifier,
     Serializable,
 };
 
