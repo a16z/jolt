@@ -151,12 +151,17 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             .par_iter()
             .map(|x| F::from_u64(*x))
             .collect();
-        let sparse_matrix_phase1 =
-            SparseMatrixPolynomial::new(trace, val_init.clone(), memory_layout);
+        let sparse_matrix = SparseMatrixPolynomial::new(trace, val_init.clone(), memory_layout);
+        let (sparse_matrix_phase1, sparse_matrix_phase2) =
+            if phase1_num_rounds(params.K, params.T) > 0 {
+                (sparse_matrix, Default::default())
+            } else {
+                (Default::default(), sparse_matrix.into())
+            };
 
         Self {
             sparse_matrix_phase1,
-            sparse_matrix_phase2: Default::default(),
+            sparse_matrix_phase2,
             val_init,
             gruen_eq,
             merged_eq,
@@ -313,10 +318,13 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     let inner = (0..K_prime)
                         .into_par_iter()
                         .map(|k| {
-                            let ra_evals =
-                                ra.sumcheck_evals(k * T_prime + j, DEGREE, BindingOrder::LowToHigh);
+                            let ra_evals = ra.sumcheck_evals(
+                                k * T_prime / 2 + j,
+                                DEGREE,
+                                BindingOrder::LowToHigh,
+                            );
                             let val_evals = val.sumcheck_evals(
-                                k * T_prime + j,
+                                k * T_prime / 2 + j,
                                 DEGREE,
                                 BindingOrder::LowToHigh,
                             );
@@ -697,18 +705,33 @@ impl<F: JoltField> ReadWriteCheckingParams<F> {
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        // Cycle variables are bound low-to-high
-        let r_cycle = sumcheck_challenges[..self.T.log_2()]
+        let phase1_num_rounds = phase1_num_rounds(self.K, self.T);
+        let phase2_num_rounds = phase2_num_rounds(self.K, self.T);
+
+        // Cycle variables are bound low-to-high in phase 1
+        let (phase1_challenges, sumcheck_challenges) =
+            sumcheck_challenges.split_at(phase1_num_rounds);
+        // Address variables are bound low-to-high in phase 2
+        let (phase2_challenges, sumcheck_challenges) =
+            sumcheck_challenges.split_at(phase2_num_rounds);
+        // Remaining cycle variables, then address variables are
+        // bound low-to-high in phase 3
+        let (phase3_cycle_challenges, phase3_address_challenges) =
+            sumcheck_challenges.split_at(self.T.log_2() - phase1_num_rounds);
+
+        let r_cycle: Vec<_> = phase3_cycle_challenges
             .iter()
             .rev()
-            .cloned()
-            .collect::<Vec<_>>();
-        // Address variables are bound low-to-high
-        let r_address = sumcheck_challenges[self.T.log_2()..]
+            .copied()
+            .chain(phase1_challenges.iter().rev().copied())
+            .collect();
+        let r_address: Vec<_> = phase3_address_challenges
             .iter()
             .rev()
-            .cloned()
-            .collect::<Vec<_>>();
+            .copied()
+            .chain(phase2_challenges.iter().rev().copied())
+            .collect();
+
         [r_address, r_cycle].concat().into()
     }
 }

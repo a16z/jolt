@@ -1284,13 +1284,11 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                 let mut column_iter = column.iter().peekable();
                 for j in 0..T_prime {
                     let idx = k * T_prime + j;
-                    if let Some(entry) = column_iter.peek() {
-                        if entry.row == j {
-                            *ra[idx].lock().unwrap() = entry.ra_coeff;
-                            *val[idx].lock().unwrap() = entry.val_coeff;
-                            current_val_coeff = entry.next_val;
-                            continue;
-                        }
+                    if let Some(entry) = column_iter.next_if(|&entry| entry.row == j) {
+                        *ra[idx].lock().unwrap() = entry.ra_coeff;
+                        *val[idx].lock().unwrap() = entry.val_coeff;
+                        current_val_coeff = entry.next_val;
+                        continue;
                     }
                     // *ra[idx].lock().unwrap() = F::zero(); // Already zero
                     *val[idx].lock().unwrap() = current_val_coeff;
