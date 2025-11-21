@@ -240,8 +240,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
             + self.params.gamma_powers[1] * EqPolynomial::<F>::mle(&self.params.r_cycle[1], &r_rev)
             + self.params.gamma_powers[2] * EqPolynomial::<F>::mle(&self.params.r_cycle[2], &r_rev);
 
-        // Compute the product of all ra_i evaluations
-        let mut product = F::one();
+        // Compute the product eq_eval * ∏_{i=0}^{D-1} ra_i_claim. Starting with eq_eval
+        let mut product = eq_eval;
         for i in 0..self.params.d {
             let (_, ra_i_claim) = accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamRa(i),
@@ -249,7 +249,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
             );
             product *= ra_i_claim;
         }
-        eq_eval * product
+        product
     }
 
     fn cache_openings(
@@ -317,12 +317,12 @@ impl<F: JoltField> RaSumcheckParams<F> {
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address_rw, r_cycle_rw) = r.split_at_r(log_K);
+        let (_r_address_rw, r_cycle_rw) = r.split_at_r(log_K);
         // assert_eq!(r_address, r_address_rw);
 
         let (r, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
-        let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
+        let (_r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         // assert_eq!(r_address, r_address_raf);
 
         let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(r_address);
