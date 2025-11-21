@@ -690,37 +690,3 @@ impl<F: JoltField> Phase2Prover<F> {
         eq_plus_one_r_product.bind(r_j, BindingOrder::LowToHigh);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use ark_bn254::Fr;
-
-    use crate::poly::{
-        eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffixPoly},
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{OpeningPoint, BIG_ENDIAN},
-    };
-
-    #[test]
-    fn test_eq_prefix_suffix() {
-        let r = OpeningPoint::<BIG_ENDIAN, Fr>::new([9, 2, 3, 7].map(<_>::into).to_vec());
-        let eq_plus_one_gt = EqPlusOnePolynomial::new(r.r.clone());
-        let r_prime = OpeningPoint::<BIG_ENDIAN, Fr>::new([4, 3, 2, 8].map(<_>::into).to_vec());
-        let (r_prime_hi, r_prime_lo) = r_prime.split_at(2);
-
-        let EqPlusOnePrefixSuffixPoly {
-            prefix_0,
-            suffix_0,
-            prefix_1,
-            suffix_1,
-        } = EqPlusOnePrefixSuffixPoly::new(&r);
-
-        assert_eq!(
-            MultilinearPolynomial::from(prefix_0).evaluate(&r_prime_lo.r)
-                * MultilinearPolynomial::from(suffix_0).evaluate(&r_prime_hi.r)
-                + MultilinearPolynomial::from(prefix_1).evaluate(&r_prime_lo.r)
-                    * MultilinearPolynomial::from(suffix_1).evaluate(&r_prime_hi.r),
-            eq_plus_one_gt.evaluate(&r_prime.r)
-        );
-    }
-}

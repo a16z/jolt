@@ -146,7 +146,6 @@ impl<F: JoltField> EqPlusOnePrefixSuffixPoly<F> {
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
-    use ark_ff::PrimeField;
 
     use crate::poly::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
@@ -159,6 +158,8 @@ mod tests {
     fn test_eq_prefix_suffix() {
         let r = OpeningPoint::<BIG_ENDIAN, Fr>::new([9, 2, 3, 7].map(<_>::into).to_vec());
         let eq_plus_one_gt = EqPlusOnePolynomial::new(r.r.clone());
+        let r_prime = OpeningPoint::<BIG_ENDIAN, Fr>::new([4, 3, 2, 8].map(<_>::into).to_vec());
+        let (r_prime_hi, r_prime_lo) = r_prime.split_at(2);
 
         let EqPlusOnePrefixSuffixPoly {
             prefix_0,
@@ -167,30 +168,12 @@ mod tests {
             suffix_1,
         } = EqPlusOnePrefixSuffixPoly::new(&r);
 
-        for i in 0..1 << r.len() {
-            let i_bits = (0..r.len())
-                .rev()
-                .map(|j| {
-                    if i >> j & 1 == 1 {
-                        Fr::from(1u64)
-                    } else {
-                        Fr::from(0u64)
-                    }
-                })
-                .collect::<Vec<Fr>>();
-
-            let actual_eval = MultilinearPolynomial::from(prefix_0.clone()).evaluate(&i_bits[2..])
-                * MultilinearPolynomial::from(suffix_0.clone()).evaluate(&i_bits[..2])
-                + MultilinearPolynomial::from(prefix_1.clone()).evaluate(&i_bits[2..])
-                    * MultilinearPolynomial::from(suffix_1.clone()).evaluate(&i_bits[..2]);
-            let i_bits_challenge = i_bits
-                .iter()
-                .map(|&x| {
-                    <Fr as crate::field::JoltField>::Challenge::from(x.into_bigint().0[0] as u128)
-                })
-                .collect::<Vec<_>>();
-            let expected_eval = eq_plus_one_gt.evaluate(&i_bits_challenge);
-            assert_eq!(actual_eval, expected_eval);
-        }
+        assert_eq!(
+            MultilinearPolynomial::from(prefix_0).evaluate(&r_prime_lo.r)
+                * MultilinearPolynomial::from(suffix_0).evaluate(&r_prime_hi.r)
+                + MultilinearPolynomial::from(prefix_1).evaluate(&r_prime_lo.r)
+                    * MultilinearPolynomial::from(suffix_1).evaluate(&r_prime_hi.r),
+            eq_plus_one_gt.evaluate(&r_prime.r)
+        );
     }
 }
