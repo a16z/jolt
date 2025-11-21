@@ -1,7 +1,6 @@
 #![cfg(test)]
 #![allow(non_upper_case_globals)]
 
-use crate::template_format;
 use jolt_core::zkvm::{
     instruction::{
         CircuitFlags, Flags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
@@ -202,7 +201,7 @@ impl JoltState {
     fn add_r1cs_constraints(&self, solver: &mut Solver) {
         R1CS_CONSTRAINTS.iter().for_each(|c| {
             let lhs = self.lc_to_int(&c.cons.a) * self.lc_to_int(&c.cons.b);
-            *solver += lhs.eq(&0.into());
+            *solver += lhs.eq(Int::from(0));
         });
     }
 
@@ -267,31 +266,22 @@ impl JoltState {
     }
 
     fn assert_output_differs(&self, solver: &mut Solver, other: &Self) {
-        let mut or_terms = Vec::new();
-
-        // we are currently missing constraints on next_pc
-        //or_terms.push((&self.next_pc).ne(&other.next_pc));
-        or_terms.push((&self.next_unexpanded_pc).ne(&other.next_unexpanded_pc));
-
-        // write to rd differs
-        or_terms.push(
-            (&self.instruction_flags[InstructionFlags::IsRdNotZero as usize])
+        let or_terms = vec![
+            // we are currently missing constraints on next_pc
+            //(&self.next_pc).ne(&other.next_pc),
+            self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
+            // write to rd differs
+            self.instruction_flags[InstructionFlags::IsRdNotZero as usize]
                 .ne(&other.instruction_flags[InstructionFlags::IsRdNotZero as usize]),
-        );
-        or_terms.push(
             &self.instruction_flags[InstructionFlags::IsRdNotZero as usize].eq(Int::from(1))
-                & ((&self.rd_write_value).ne(&other.rd_write_value)),
-        );
-
-        // lookup inputs differ
-        or_terms.push((&self.left_lookup).ne(&other.left_lookup));
-        or_terms.push((&self.right_lookup).ne(&other.right_lookup));
-
-        // write to ram differs
-        or_terms.push((&self.ram_addr).ne(&other.ram_addr));
-        or_terms.push(
-            (&self.ram_addr.ne(Int::from(0))) & (&self.ram_write_value).ne(&other.ram_write_value),
-        );
+                & (self.rd_write_value.ne(&other.rd_write_value)),
+            // lookup inputs differ
+            self.left_lookup.ne(&other.left_lookup),
+            self.right_lookup.ne(&other.right_lookup),
+            // write to ram differs
+            self.ram_addr.ne(&other.ram_addr),
+            (&self.ram_addr.ne(Int::from(0))) & self.ram_write_value.ne(&other.ram_write_value),
+        ];
 
         *solver += or_terms.into_iter().reduce(|acc, t| acc | t).unwrap();
     }
@@ -320,31 +310,35 @@ impl JoltState {
                 *solver += other_flag.eq(&flag_value);
             });
 
-        *solver += (&self.imm).eq(&other.imm);
+        *solver += self.imm.eq(&other.imm);
 
-        *solver += (&self.rs1_value).eq(&other.rs1_value);
-        *solver += (&self.rs2_value).eq(&other.rs2_value);
+        *solver += self.rs1_value.eq(&other.rs1_value);
+        *solver += self.rs2_value.eq(&other.rs2_value);
 
-        *solver += (&self.left_input).eq(&other.left_input);
-        *solver += (&self.right_input).eq(&other.right_input);
+        *solver += self.left_input.eq(&other.left_input);
+        *solver += self.right_input.eq(&other.right_input);
 
-        *solver += (&self.pc).eq(&other.pc);
-        *solver += (&self.unexpanded_pc).eq(&other.unexpanded_pc);
-        *solver += (&self.next_is_noop).eq(&other.next_is_noop);
+        *solver += self.pc.eq(&other.pc);
+        *solver += self.unexpanded_pc.eq(&other.unexpanded_pc);
+        *solver += self.next_is_noop.eq(&other.next_is_noop);
 
         // for now we don't emulate the lookup table, just use addition arbitrarily for everything
-        *solver += (&self.lookup_output).eq(&self.left_lookup + &self.right_lookup);
-        *solver += (&other.lookup_output).eq(&other.left_lookup + &other.right_lookup);
+        *solver += self
+            .lookup_output
+            .eq(&self.left_lookup + &self.right_lookup);
+        *solver += other
+            .lookup_output
+            .eq(&other.left_lookup + &other.right_lookup);
 
         // Make an artificially memory, placing rv1 at address 8 and rv2 at address 16, rest is 0
         let rv1 = Int::new_const("rv1");
         let rv2 = Int::new_const("rv2");
         let ram_expr = |addr: &Int| {
-            addr.eq(&Int::from(8))
-                .ite(&rv1, &addr.eq(&Int::from(16)).ite(&rv2, &Int::from(0)))
+            addr.eq(Int::from(8))
+                .ite(&rv1, &addr.eq(Int::from(16)).ite(&rv2, &Int::from(0)))
         };
-        *solver += (&self.ram_read_value).eq(&ram_expr(&self.ram_addr));
-        *solver += (&other.ram_read_value).eq(&ram_expr(&other.ram_addr));
+        *solver += self.ram_read_value.eq(ram_expr(&self.ram_addr));
+        *solver += other.ram_read_value.eq(ram_expr(&other.ram_addr));
     }
 
     fn eval(self, model: &z3::Model) -> Option<JoltState<i64>> {
@@ -431,7 +425,7 @@ fn do_test(name: &str, instr: &Instruction) {
     let r2 = JoltState::new("r2".to_string());
     r2.add_constraints(&mut solver);
 
-    r1.assert_input_matches(&mut solver, &instr, &r2);
+    r1.assert_input_matches(&mut solver, instr, &r2);
 
     assert!(matches!(solver.check(), SatResult::Sat));
 

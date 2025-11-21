@@ -89,11 +89,11 @@ struct SymbolicCpu {
 impl SymbolicCpu {
     fn new(var_prefix: &str, xlen: Xlen) -> Self {
         let regs: [BV; REGISTER_COUNT as usize] = (0..REGISTER_COUNT)
-            .map(|i| BV::new_const(format!("{}_x{}", var_prefix, i), 64))
+            .map(|i| BV::new_const(format!("{var_prefix}_x{i}"), 64))
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
-        let asserts = vec![(&regs[0]).eq(&BV::from_u64(0, 64))];
+        let asserts = vec![regs[0].eq(BV::from_u64(0, 64))];
         SymbolicCpu {
             var_prefix: var_prefix.to_string(),
             x: regs,
@@ -122,7 +122,7 @@ fn trailing_zeros(bv: &BV, bitsz: u32) -> BV {
     fn tz_recursive(bv: &BV, curr_sz: u32, bitsz: u32) -> BV {
         if curr_sz == 1 {
             return bv
-                .eq(&BV::from_u64(0, 1))
+                .eq(BV::from_u64(0, 1))
                 .ite(&BV::from_u64(1, bitsz), &BV::from_u64(0, bitsz));
         }
         let half = curr_sz / 2;
@@ -130,7 +130,7 @@ fn trailing_zeros(bv: &BV, bitsz: u32) -> BV {
         let upper = bv.extract(curr_sz - 1, half);
         let upper_tz = tz_recursive(&upper, half, bitsz);
         let lower_tz = tz_recursive(&lower, half, bitsz);
-        (lower.eq(&BV::from_u64(0, half)))
+        (lower.eq(BV::from_u64(0, half)))
             .ite(&(upper_tz + BV::from_u64(half as u64, bitsz)), &lower_tz)
     }
     tz_recursive(bv, bitsz, bitsz)
@@ -349,8 +349,8 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 Xlen::Bit64 => {
                     let shift = cpu.x[operands.rs1 as usize].clone() & (64 - 1);
                     let inv_shift: BV = 64 - &shift;
-                    let ones = (BV::from_u64(1, 128).bvshl(&inv_shift.zero_ext(64))) - 1;
-                    ones.bvshl(&shift.zero_ext(64)).extract(63, 0)
+                    let ones = (BV::from_u64(1, 128).bvshl(inv_shift.zero_ext(64))) - 1;
+                    ones.bvshl(shift.zero_ext(64)).extract(63, 0)
                 }
             }
         }
@@ -396,10 +396,10 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu
                 .unsigned_data(&rs1)
-                .bvult(&cpu.unsigned_data(&rs2))
+                .bvult(cpu.unsigned_data(&rs2))
                 .ite(&BV::from_u64(1, 64), &BV::from_u64(0, 64));
         }
-        _ => panic!("Unsupported instruction {:?} in symbolic_exec", instr),
+        _ => panic!("Unsupported instruction {instr:?} in symbolic_exec"),
     }
 }
 
@@ -442,7 +442,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     match solver.check() {
         SatResult::Unsat => {}
         SatResult::Sat => {
-            let mut msg = format!("Found incorrect outputs:\n");
+            let mut msg = "Found incorrect outputs:\n".to_string();
             let model = solver.get_model().unwrap();
             let eval = |bv: &BV| model.eval(bv, true).unwrap().as_u64().unwrap();
 
@@ -452,11 +452,11 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
             let rd_val = eval(&cpu.x[1]);
             let rd_expected = eval(&cpu_expected.x[1]);
 
-            let _ = writeln!(msg, "rs1: {:#x}", rs1);
-            let _ = writeln!(msg, "rs2: {:#x}", rs2);
+            let _ = writeln!(msg, "rs1: {rs1:#x}");
+            let _ = writeln!(msg, "rs2: {rs2:#x}");
 
-            let _ = writeln!(msg, "rd: {:#x}", rd_val);
-            let _ = writeln!(msg, "rd expected: {:#x}", rd_expected);
+            let _ = writeln!(msg, "rd: {rd_val:#x}");
+            let _ = writeln!(msg, "rd expected: {rd_expected:#x}");
 
             if !cpu.advice_vars.is_empty() {
                 let _ = writeln!(msg, "Using advice:");
@@ -510,7 +510,7 @@ fn test_consistency(instr: &Instruction) {
     match solver.check() {
         SatResult::Unsat => {}
         SatResult::Sat => {
-            let mut msg = format!("Found differing outputs:\n");
+            let mut msg = "Found differing outputs:\n".to_string();
             let operands = instr.normalize().operands;
             let model = solver.get_model().unwrap();
             let eval = |bv: &BV| model.eval(bv, true).unwrap().as_u64().unwrap();
@@ -521,9 +521,9 @@ fn test_consistency(instr: &Instruction) {
                     let reg = if i == operands.rd as usize {
                         format!("rd (x{})", operands.rd)
                     } else {
-                        format!("x{}", i)
+                        format!("x{i}")
                     };
-                    let _ = writeln!(msg, "  {}: {:#x} != {:#x}\n", reg, val1, val2);
+                    let _ = writeln!(msg, "  {reg}: {val1:#x} != {val2:#x}\n");
                 }
             }
             let _ = writeln!(msg, "Using inputs:");
@@ -551,7 +551,7 @@ fn test_consistency(instr: &Instruction) {
                 {
                     let val1 = eval(advice_var1);
                     let val2 = eval(advice_var2);
-                    let _ = writeln!(msg, "  {}: {:#x}, {:#x}", i, val1, val2);
+                    let _ = writeln!(msg, "  {i}: {val1:#x}, {val2:#x}");
                 }
             }
 
@@ -815,7 +815,7 @@ test_sequence!(SLL, FormatR, |instr: &SLL, cpu| {
 test_sequence!(SLLI, FormatI, |instr: &SLLI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let shift = BV::from_u64(
-        (instr.operands.imm as u64)
+        instr.operands.imm
             & match cpu.xlen {
                 Xlen::Bit32 => 32 - 1,
                 Xlen::Bit64 => 64 - 1,
@@ -826,7 +826,7 @@ test_sequence!(SLLI, FormatI, |instr: &SLLI, cpu| {
 });
 test_sequence!(SLLIW, FormatI, |instr: &SLLIW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let shift = BV::from_u64((instr.operands.imm as u64) & (32 - 1), 32);
+    let shift = BV::from_u64(instr.operands.imm & (32 - 1), 32);
     cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0).bvshl(&shift)).sign_ext(32);
 });
 test_sequence!(SLLW, FormatR, |instr: &SLLW, cpu| {
@@ -848,7 +848,7 @@ test_sequence!(SRA, FormatR, |instr: &SRA, cpu| {
 test_sequence!(SRAI, FormatI, |instr: &SRAI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let shift = BV::from_u64(
-        (instr.operands.imm as u64)
+        instr.operands.imm
             & match cpu.xlen {
                 Xlen::Bit32 => 32 - 1,
                 Xlen::Bit64 => 64 - 1,
@@ -859,7 +859,7 @@ test_sequence!(SRAI, FormatI, |instr: &SRAI, cpu| {
 });
 test_sequence!(SRAIW, FormatI, |instr: &SRAIW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let shift = BV::from_u64((instr.operands.imm as u64) & (32 - 1), 32);
+    let shift = BV::from_u64(instr.operands.imm & (32 - 1), 32);
     cpu.x[instr.operands.rd as usize] = (rs1.extract(31, 0).bvashr(&shift)).sign_ext(32);
 });
 test_sequence!(SRAW, FormatR, |instr: &SRAW, cpu| {
@@ -881,7 +881,7 @@ test_sequence!(SRL, FormatR, |instr: &SRL, cpu| {
 test_sequence!(SRLI, FormatI, |instr: &SRLI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let shift = BV::from_u64(
-        (instr.operands.imm as u64)
+        instr.operands.imm
             & match cpu.xlen {
                 Xlen::Bit32 => 32 - 1,
                 Xlen::Bit64 => 64 - 1,
@@ -892,7 +892,7 @@ test_sequence!(SRLI, FormatI, |instr: &SRLI, cpu| {
 });
 test_sequence!(SRLIW, FormatI, |instr: &SRLIW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let shift = BV::from_u64((instr.operands.imm as u64) & (32 - 1), 32);
+    let shift = BV::from_u64(instr.operands.imm & (32 - 1), 32);
     cpu.x[instr.operands.rd as usize] =
         (cpu.unsigned_data(&rs1.extract(31, 0)).bvlshr(&shift)).sign_ext(32);
 });
