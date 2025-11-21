@@ -445,6 +445,23 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
     pub params: RamReadWriteCheckingParams<F>,
 }
 
+impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
+    pub fn new(
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+        one_hot_params: &OneHotParams,
+        trace_length: usize,
+    ) -> Self {
+        let params = RamReadWriteCheckingParams::new(
+            opening_accumulator,
+            transcript,
+            one_hot_params,
+            trace_length,
+        );
+        RamReadWriteCheckingVerifier { params }
+    }
+}
+
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RamReadWriteCheckingVerifier<F>
 {

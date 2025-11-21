@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::ram::read_write_checking::RamReadWriteCheckingParams;
+use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
 use crate::zkvm::{
     bytecode::{
         self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
@@ -21,7 +21,7 @@ use crate::zkvm::{
     r1cs::key::UniformSpartanKey,
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
-        output_check::OutputSumcheckVerifier, output_check::ValFinalSumcheckVerifier,
+        output_check::OutputSumcheckVerifier,
         ra_virtual::RaSumcheckVerifier as RamRaSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
@@ -229,15 +229,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.one_hot_params,
             &self.opening_accumulator,
         );
-        let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
+        let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             &self.opening_accumulator,
             &mut self.transcript,
             &self.one_hot_params,
             self.proof.trace_length,
         );
-        let ram_read_write_checking = RamReadWriteCheckingVerifier {
-            params: ram_read_write_checking_params,
-        };
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
 

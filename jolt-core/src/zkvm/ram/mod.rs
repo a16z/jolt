@@ -36,6 +36,7 @@ pub mod raf_evaluation;
 pub mod read_write_checking;
 pub mod sparse_matrix_poly;
 pub mod val_evaluation;
+pub mod val_final;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {

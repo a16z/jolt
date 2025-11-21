@@ -13,9 +13,8 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
 {
     fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
         unimplemented!(
-            "If get_params is unimplemented, degree, \
-            num_rounds, input_claim, and normalize_opening_point \
-            should be implemented directly"
+            "If get_params is unimplemented, degree, num_rounds, and \
+            input_claim should be implemented directly"
         )
     }
 
@@ -32,10 +31,6 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     /// Returns the initial claim of this sumcheck instance.
     fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
         self.get_params().input_claim(accumulator)
-    }
-
-    fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        self.get_params().normalize_opening_point(challenges)
     }
 
     /// Computes the prover's message for a specific round of the sumcheck protocol.

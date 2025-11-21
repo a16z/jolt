@@ -32,7 +32,11 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
-        ram::{populate_memory_states, read_write_checking::RamReadWriteCheckingParams},
+        ram::{
+            output_check::OutputSumcheckParams, populate_memory_states,
+            raf_evaluation::RafEvaluationSumcheckParams,
+            read_write_checking::RamReadWriteCheckingParams, val_final::ValFinalSumcheckProver,
+        },
         verifier::JoltVerifierPreprocessing,
     },
 };
@@ -51,10 +55,8 @@ use crate::{
         proof_serialization::{Claims, JoltProof},
         r1cs::key::UniformSpartanKey,
         ram::{
-            self, gen_ram_memory_states,
-            hamming_booleanity::HammingBooleanitySumcheckProver,
-            output_check::{OutputSumcheckProver, ValFinalSumcheckProver},
-            prover_accumulate_advice,
+            self, gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
+            output_check::OutputSumcheckProver, prover_accumulate_advice,
             ra_virtual::RaSumcheckProver as RamRaSumcheckProver,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
             read_write_checking::RamReadWriteCheckingProver,
@@ -532,13 +534,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.spartan_key,
             &mut self.transcript,
         );
-
         let spartan_product_virtual_remainder =
             ProductVirtualRemainderProver::gen(Arc::clone(&self.trace), &uni_skip_state);
-        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::gen(
-            &self.trace,
-            &self.one_hot_params,
+
+        // Initialization params
+        let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
+            &self.one_hot_params,
             &self.opening_accumulator,
         );
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
@@ -547,6 +549,19 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             self.trace.len(),
         );
+        let ram_output_check_params = OutputSumcheckParams::new(
+            self.one_hot_params.ram_k,
+            &self.program_io,
+            &mut self.transcript,
+        );
+
+        // Initialization
+        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::initialize(
+            ram_raf_evaluation_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+            &self.opening_accumulator,
+        );
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
             &self.trace,
@@ -554,12 +569,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io,
             &self.initial_ram_state,
         );
-        let ram_output_check = OutputSumcheckProver::gen(
+        let ram_output_check = OutputSumcheckProver::initialize(
+            ram_output_check_params,
             &self.initial_ram_state,
             &self.final_ram_state,
             &self.program_io,
-            &self.one_hot_params,
-            &mut self.transcript,
         );
 
         #[cfg(feature = "allocative")]
