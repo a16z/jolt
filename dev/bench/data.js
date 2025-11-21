@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1763674749930,
+  "lastUpdate": 1763762007859,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -35758,6 +35758,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 346724,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "deuterium@osec.io",
+            "name": "Himanshu Sheoran",
+            "username": "deuterium-osec"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "12c2777f4da9399e102f5f038824e9c1c324f96c",
+          "message": "feat: SMT test harness for testing CPU constraints and virtual sequences (#1118)\n\n* fix: add overflow checks to REM instructions to prevent modular inverse forgery\n\nPreviously, REM/REMU/REMW/REMUW instructions were vulnerable to forgery attacks\nwhere a malicious prover could set quotient = (dividend - remainder) × divisor^(-1)\nmodulo the word size to forge any remainder less than the divisor.\n\nThis fix adds overflow checks similar to DIV instructions:\n- REM: Uses MULH to verify quotient × divisor doesn't overflow 64 bits\n- REMU: Uses VirtualAssertMulUNoOverflow for unsigned overflow check\n- REMW: Uses MULW vs MUL comparison to verify no 32-bit overflow\n- REMUW: Uses MULHU to verify high bits are zero for 32-bit unsigned\n\nThese checks ensure that only mathematically correct remainders can pass\nverification, preventing the modular inverse forgery attack.\n\n* fix: correct overflow checks in DIVW/REMW and optimize REM register allocation\n\nTwo critical fixes:\n\n1. Fixed incorrect overflow check in DIVW/REMW\n   - Previous check (MULW == MUL) didn't prevent forgery for sign-extended values\n   - Now verifies quotient actually fits in 32 bits via sign-extension check\n   - This prevents modular inverse forgery attacks in 32-bit operations\n\n2. Optimized register allocation in REM to prevent exhaustion\n   - Used lazy allocation pattern (allocate t2/t3 after MULH)\n   - Fixes test_rem_inline_sequence failure due to register exhaustion\n   - Matches the pattern used in DIV instruction\n\nAll tracer tests (82) pass successfully.\n\n* fix: prevent modular inverse forgery in REMUW and DIVUW instructions\n\n- Add proper 32-bit overflow checks for unsigned word operations\n- Verify quotient fits in 32 bits before use (zero-extend check)\n- Verify multiplication result fits in 32 bits using VirtualZeroExtendWord\n- Fix division by zero to return u32::MAX instead of u64::MAX\n- Remove incorrect VirtualAssertValidDiv0 usage\n\nThese changes prevent malicious provers from forging remainders using\nmodular inverse attacks in 32-bit unsigned division and remainder operations.\n\n* Add Z3 instruction verification\n\n* Sequence verifier\n\n* explain commented out line\n\n* add SLL, SLLI, SLLIW, SLLW\n\n* Test both consistency and correctness\n\n* add z3 readme\n\n* Adding corrected sequences for REMU, DIVU, DIVUW, DIVW, REMW\n\n* fix x0 to 0\n\n* Update REMW and DIVW sequences to assume |remainder| advice\n\nNow the sequences constrain the advice to its absolute value\nAnd check on the sign corrected values\n\n* Update z3-verifier/Cargo.toml\n\nCo-authored-by: graphite-app[bot] <96075541+graphite-app[bot]@users.noreply.github.com>\n\n* cargo fmt\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* update readme to add pkg-config for macos\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* cargo clippy\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix test of virtual sequence for DIVUW\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: clubby789 <jamie@hill-daniel.co.uk>\nCo-authored-by: Valter Wik <vw@osec.io>\nCo-authored-by: deut-erium <himanshuthesheoran@gmail.com>",
+          "timestamp": "2025-11-21T16:11:22-05:00",
+          "tree_id": "5922920bd15d4aa5f81bec933a22ca3df40a313d",
+          "url": "https://github.com/a16z/jolt/commit/12c2777f4da9399e102f5f038824e9c1c324f96c"
+        },
+        "date": 1763762006815,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 348712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 1465544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 336324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 342912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 344228,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 352840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 346252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 337552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 350824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2386184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 347632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 348412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 334564,
             "unit": "KB",
             "extra": ""
           }
