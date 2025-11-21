@@ -1,8 +1,6 @@
+use crate::field::{ChallengeFieldOps, FieldChallengeOps};
+use crate::zkvm::instruction_lookups::LOG_K;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
-};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
@@ -20,6 +18,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OrPrefix<XLEN> {
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        let suffix_len = LOG_K - j - b.len() - 1;
         let mut result = checkpoints[Prefixes::Or].unwrap_or(F::zero());
 
         // OR high-order variables of x and y
@@ -34,7 +33,6 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OrPrefix<XLEN> {
         }
         // OR remaining x and y bits
         let (x, y) = b.uninterleave();
-        let suffix_len = current_suffix_len(j);
         result += F::from_u64((u64::from(x) | u64::from(y)) << (suffix_len / 2));
 
         result
@@ -45,6 +43,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OrPrefix<XLEN> {
         r_x: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

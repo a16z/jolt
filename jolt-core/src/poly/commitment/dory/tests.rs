@@ -388,10 +388,10 @@ mod tests {
         let _guard = DoryGlobals::initialize(K, T);
 
         let mut rng = thread_rng();
-        let nonzero_indices: Vec<Option<u8>> = (0..T)
+        let nonzero_indices: Vec<Option<u16>> = (0..T)
             .map(|_| {
                 if rng.gen::<bool>() {
-                    Some(rng.gen::<u8>() % K as u8)
+                    Some(rng.gen::<u16>() % K as u16)
                 } else {
                     None
                 }

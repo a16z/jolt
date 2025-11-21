@@ -1,8 +1,6 @@
+use crate::field::{ChallengeFieldOps, FieldChallengeOps};
+use crate::zkvm::instruction_lookups::LOG_K;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
-};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
@@ -21,6 +19,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPrefix<X
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        let suffix_len = LOG_K - j - b.len() - 1;
         let mut result = checkpoints[Prefixes::UpperWord].unwrap_or(F::zero());
         // Ignore low-order variables
         if j >= XLEN {
@@ -43,7 +42,6 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPrefix<X
         }
 
         // Add in bits of `b` that fall in upper word
-        let suffix_len = current_suffix_len(j);
         if suffix_len > XLEN {
             result += F::from_u64(u64::from(b) << (suffix_len - XLEN));
         } else {
@@ -59,6 +57,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPrefix<X
         r_x: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

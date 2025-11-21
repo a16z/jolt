@@ -34,6 +34,7 @@ impl<F: JoltField> SparseDensePrefix<F> for RightMsbPrefix {
         _: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

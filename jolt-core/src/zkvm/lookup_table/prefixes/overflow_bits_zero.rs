@@ -1,7 +1,7 @@
+use crate::zkvm::instruction_lookups::LOG_K;
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::lookup_bits::LookupBits,
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
@@ -21,6 +21,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroP
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        let suffix_len = LOG_K - j - b.len() - 1;
         if j >= 128 - XLEN {
             return checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one());
         }
@@ -37,7 +38,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroP
         }
 
         let rest = u128::from(b);
-        let temp = F::from_u64((((rest << current_suffix_len(j)) >> XLEN) == 0) as u64);
+        let temp = F::from_u64((((rest << suffix_len) >> XLEN) == 0) as u64);
         result *= temp;
 
         result
@@ -48,6 +49,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroP
         r_x: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

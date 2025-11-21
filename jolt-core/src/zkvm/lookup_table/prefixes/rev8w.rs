@@ -1,10 +1,10 @@
+use crate::zkvm::instruction_lookups::LOG_K;
 use common::constants::XLEN;
 use tracer::instruction::virtual_rev8w::rev8w;
 
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::lookup_bits::LookupBits,
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
@@ -23,8 +23,9 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        let suffix_len = LOG_K - j - b.len() - 1;
         // The prefix-suffix MLE is only defined on the 64 LSBs.
-        let suffix_n_bits = current_suffix_len(j);
+        let suffix_n_bits = suffix_len;
         if suffix_n_bits >= 64 {
             return F::zero();
         }
@@ -59,6 +60,7 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
         r_x: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

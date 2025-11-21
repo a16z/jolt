@@ -1,8 +1,6 @@
+use crate::field::{ChallengeFieldOps, FieldChallengeOps};
+use crate::zkvm::instruction_lookups::LOG_K;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
-};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
@@ -13,15 +11,15 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionUppe
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<C>,
         c: u32,
-        _b: LookupBits,
+        b: LookupBits,
         j: usize,
     ) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        let suffix_len = LOG_K - j - b.len() - 1;
         let half_word_size = XLEN / 2;
-        let suffix_len = current_suffix_len(j);
 
         // If suffix handles sign extension, return 1
         if suffix_len >= half_word_size {
@@ -47,6 +45,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionUppe
         r_x: C,
         _r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

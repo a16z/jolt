@@ -58,6 +58,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorPref
         r_x: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
