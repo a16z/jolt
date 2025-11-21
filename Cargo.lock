@@ -5033,7 +5033,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "z3-extractor"
+name = "z3-sys"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5cf46e09874bd7db314139c7319ab506d1db771111dc3bc66f05496207540d0"
+dependencies = [
+ "bindgen 0.72.1",
+ "pkg-config",
+]
+
+[[package]]
+name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
  "allocative",
@@ -5052,16 +5062,6 @@ dependencies = [
  "strum 0.26.3",
  "tracer",
  "z3",
-]
-
-[[package]]
-name = "z3-sys"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5cf46e09874bd7db314139c7319ab506d1db771111dc3bc66f05496207540d0"
-dependencies = [
- "bindgen 0.72.1",
- "pkg-config",
 ]
 
 [[package]]

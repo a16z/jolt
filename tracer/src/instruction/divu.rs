@@ -12,9 +12,10 @@ use crate::{
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
+    virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, Cycle,
-    Instruction, RISCVInstruction, RISCVTrace, virtual_assert_lte::VirtualAssertLTE,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(

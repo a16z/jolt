@@ -1,4 +1,5 @@
 #![cfg(test)]
+use crate::template_format;
 use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 use std::fmt::Write;
 use tracer::{
@@ -44,8 +45,8 @@ use tracer::{
         subw::SUBW,
         virtual_advice::VirtualAdvice,
         virtual_assert_eq::VirtualAssertEQ,
-        virtual_assert_lte::VirtualAssertLTE,
         virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
+        virtual_assert_lte::VirtualAssertLTE,
         virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
@@ -72,7 +73,6 @@ use z3::{
     ast::{Bool, BV},
     Params, SatResult, Solver,
 };
-use crate::template_format;
 
 const _Z3_TIMEOUT_MS: u32 = 30_000;
 const Z3_RANDOM_SEED: u32 = 42;
@@ -89,16 +89,16 @@ struct SymbolicCpu {
 impl SymbolicCpu {
     fn new(var_prefix: &str, xlen: Xlen) -> Self {
         let regs: [BV; REGISTER_COUNT as usize] = (0..REGISTER_COUNT)
-                .map(|i| BV::new_const(format!("{}_x{}", var_prefix, i), 64))
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
+            .map(|i| BV::new_const(format!("{}_x{}", var_prefix, i), 64))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
         let asserts = vec![(&regs[0]).eq(&BV::from_u64(0, 64))];
         SymbolicCpu {
             var_prefix: var_prefix.to_string(),
             x: regs,
             advice_vars: Vec::new(),
-            asserts: asserts, // x0 is always 0
+            asserts, // x0 is always 0
             xlen,
         }
     }
@@ -597,7 +597,6 @@ macro_rules! test_sequence {
     };
 }
 
-
 test_sequence!(ADDIW, FormatI, |instr: &ADDIW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let imm = normalize_imm(instr.operands.imm, &cpu.xlen);
@@ -759,8 +758,7 @@ test_sequence!(REMU, FormatR, |instr: &REMU, cpu| {
         Xlen::Bit64 => {
             let dividend = rs1;
             let divisor = rs2;
-            divisor.eq(0)
-                .ite(dividend, &(dividend.bvurem(divisor)))
+            divisor.eq(0).ite(dividend, &(dividend.bvurem(divisor)))
         }
     };
 });
@@ -807,18 +805,23 @@ test_sequence!(REMW, FormatR, |instr: &REMW, cpu| {
 test_sequence!(SLL, FormatR, |instr: &SLL, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let shift = rs2 & match cpu.xlen {
-        Xlen::Bit32 => BV::from_u64(32 - 1, 64),
-        Xlen::Bit64 => BV::from_u64(64 - 1, 64),
-    };
+    let shift = rs2
+        & match cpu.xlen {
+            Xlen::Bit32 => BV::from_u64(32 - 1, 64),
+            Xlen::Bit64 => BV::from_u64(64 - 1, 64),
+        };
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvshl(&shift));
 });
 test_sequence!(SLLI, FormatI, |instr: &SLLI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let shift = BV::from_u64((instr.operands.imm as u64) & match cpu.xlen {
-        Xlen::Bit32 => 32 - 1,
-        Xlen::Bit64 => 64 - 1,
-    }, 64);
+    let shift = BV::from_u64(
+        (instr.operands.imm as u64)
+            & match cpu.xlen {
+                Xlen::Bit32 => 32 - 1,
+                Xlen::Bit64 => 64 - 1,
+            },
+        64,
+    );
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvshl(&shift));
 });
 test_sequence!(SLLIW, FormatI, |instr: &SLLIW, cpu| {
@@ -835,18 +838,23 @@ test_sequence!(SLLW, FormatR, |instr: &SLLW, cpu| {
 test_sequence!(SRA, FormatR, |instr: &SRA, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let shift = rs2 & match cpu.xlen {
-        Xlen::Bit32 => BV::from_u64(32 - 1, 64),
-        Xlen::Bit64 => BV::from_u64(64 - 1, 64),
-    };
+    let shift = rs2
+        & match cpu.xlen {
+            Xlen::Bit32 => BV::from_u64(32 - 1, 64),
+            Xlen::Bit64 => BV::from_u64(64 - 1, 64),
+        };
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(&shift));
 });
 test_sequence!(SRAI, FormatI, |instr: &SRAI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let shift = BV::from_u64((instr.operands.imm as u64) & match cpu.xlen {
-        Xlen::Bit32 => 32 - 1,
-        Xlen::Bit64 => 64 - 1,
-    }, 64);
+    let shift = BV::from_u64(
+        (instr.operands.imm as u64)
+            & match cpu.xlen {
+                Xlen::Bit32 => 32 - 1,
+                Xlen::Bit64 => 64 - 1,
+            },
+        64,
+    );
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(&shift));
 });
 test_sequence!(SRAIW, FormatI, |instr: &SRAIW, cpu| {
@@ -863,18 +871,23 @@ test_sequence!(SRAW, FormatR, |instr: &SRAW, cpu| {
 test_sequence!(SRL, FormatR, |instr: &SRL, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let shift = rs2 & match cpu.xlen {
-        Xlen::Bit32 => BV::from_u64(32 - 1, 64),
-        Xlen::Bit64 => BV::from_u64(64 - 1, 64),
-    };
+    let shift = rs2
+        & match cpu.xlen {
+            Xlen::Bit32 => BV::from_u64(32 - 1, 64),
+            Xlen::Bit64 => BV::from_u64(64 - 1, 64),
+        };
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(rs1).bvlshr(&shift));
 });
 test_sequence!(SRLI, FormatI, |instr: &SRLI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let shift = BV::from_u64((instr.operands.imm as u64) & match cpu.xlen {
-        Xlen::Bit32 => 32 - 1,
-        Xlen::Bit64 => 64 - 1,
-    }, 64);
+    let shift = BV::from_u64(
+        (instr.operands.imm as u64)
+            & match cpu.xlen {
+                Xlen::Bit32 => 32 - 1,
+                Xlen::Bit64 => 64 - 1,
+            },
+        64,
+    );
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(rs1).bvlshr(&shift));
 });
 test_sequence!(SRLIW, FormatI, |instr: &SRLIW, cpu| {

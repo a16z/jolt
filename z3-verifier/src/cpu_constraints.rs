@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![allow(non_upper_case_globals)]
 
+use crate::template_format;
 use jolt_core::zkvm::{
     instruction::{
         CircuitFlags, Flags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
@@ -75,7 +76,6 @@ use tracer::instruction::{
     Instruction,
 };
 use z3::{ast::Int, SatResult, Solver};
-use crate::template_format;
 
 #[derive(Clone, Debug)]
 struct JoltState<T = Int> {
@@ -452,7 +452,11 @@ fn do_test(name: &str, instr: &Instruction) {
             if !outputs.is_empty() {
                 let _ = writeln!(msg, "Outputs:");
                 for output in outputs {
-                    let _ = writeln!(msg, "    {}: {} != {}", output.field, output.lhs, output.rhs);
+                    let _ = writeln!(
+                        msg,
+                        "    {}: {} != {}",
+                        output.field, output.lhs, output.rhs
+                    );
                 }
             }
             panic!("{}", msg.trim());

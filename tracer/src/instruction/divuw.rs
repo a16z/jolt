@@ -9,9 +9,8 @@ use crate::{
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_sign_extend_word::VirtualSignExtendWord,
     virtual_zero_extend_word::VirtualZeroExtendWord, Cycle, Instruction, RISCVInstruction,
     RISCVTrace,
@@ -120,7 +119,7 @@ impl RISCVTrace for DIVUW {
         // Verify quotient fits in 32 bits and zero-extend for arithmetic
         asm.emit_i::<VirtualZeroExtendWord>(*t2, *a2, 0);
         asm.emit_b::<VirtualAssertEQ>(*t2, *a2, 0); // Assert quotient was already 32-bit
-        
+
         asm.emit_b::<VirtualAssertValidDiv0>(*t4, *a2, 0); // Handle division by zero case
 
         // Verify no 32-bit overflow: result must fit in 32 bits
