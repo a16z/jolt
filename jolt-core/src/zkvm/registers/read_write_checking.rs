@@ -129,7 +129,6 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -234,26 +233,6 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             None,
         );
 
-        let (_, rs1_rv_claim_stage_1) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (_, rd_wv_claim) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWriteValue,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, rs2_rv_claim_stage_1) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        let (_, rs1_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, rs2_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let claim_stage_1 = rd_wv_claim
-            + params.gamma * (rs1_rv_claim_stage_1 + params.gamma * rs2_rv_claim_stage_1);
-        let claim_stage_3 = rs1_rv_claim_stage_3 + params.gamma * rs2_rv_claim_stage_3;
-
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
             .map(|_| DataBuffers {
@@ -281,8 +260,8 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             gruen_eq_r_cycle_stage_1,
             gruen_eq_r_cycle_stage_3,
             inc_cycle,
-            prev_claim_stage_1: claim_stage_1,
-            prev_claim_stage_3: claim_stage_3,
+            prev_claim_stage_1: params.claim_stage_1,
+            prev_claim_stage_3: params.claim_stage_3,
             eq_r_cycle_stage_1: None,
             eq_r_cycle_stage_3: None,
             rs1_ra: None,
@@ -1511,6 +1490,8 @@ pub struct RegistersReadWriteCheckingParams<F: JoltField> {
     pub n_cycle_vars: usize, // = log(T)
     pub r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
     pub r_cycle_stage_3: OpeningPoint<BIG_ENDIAN, F>,
+    claim_stage_1: F,
+    claim_stage_3: F,
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
@@ -1522,12 +1503,29 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_cub = gamma.square() * gamma;
-        let (r_cycle_stage_1, _) = opening_accumulator
+
+        let (r_cycle_stage_1, rs1_rv_claim_stage_1) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (r_cycle_stage_3, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Value,
+        let (_, rs2_rv_claim_stage_1) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+        let (_, rd_wv_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+
+        let (r_cycle_stage_3, rs1_rv_claim_stage_3) = opening_accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::Rs1Value,
+                SumcheckId::InstructionInputVirtualization,
+            );
+        let (_, rs2_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Value,
             SumcheckId::InstructionInputVirtualization,
         );
+        let claim_stage_1 =
+            rd_wv_claim + gamma * (rs1_rv_claim_stage_1 + gamma * rs2_rv_claim_stage_1);
+        let claim_stage_3 = rs1_rv_claim_stage_3 + gamma * rs2_rv_claim_stage_3;
+
         Self {
             gamma,
             gamma_cub,
@@ -1535,6 +1533,8 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
             n_cycle_vars,
             r_cycle_stage_1,
             r_cycle_stage_3,
+            claim_stage_1,
+            claim_stage_3,
         }
     }
 }

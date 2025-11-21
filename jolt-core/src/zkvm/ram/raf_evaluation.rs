@@ -112,20 +112,14 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
         params: RafEvaluationSumcheckParams<F>,
         trace: &[Cycle],
         memory_layout: &MemoryLayout,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let T = trace.len();
         let K = 1 << params.log_K;
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamAddress,
-            SumcheckId::SpartanOuter,
-        );
-
         // TODO(moodlezoup): reuse
-        let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle.r);
+        let eq_r_cycle: Vec<F> = EqPolynomial::evals(&params.r_cycle.r);
 
         let ra_evals: Vec<F> = trace
             .par_chunks(chunk_size)

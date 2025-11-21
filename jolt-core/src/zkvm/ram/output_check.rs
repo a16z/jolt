@@ -23,7 +23,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::constants::RAM_START_ADDRESS;
+use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 use rayon::prelude::*;
 use tracer::JoltDevice;
 
@@ -114,7 +114,7 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         params: OutputSumcheckParams<F>,
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
-        program_io: &JoltDevice,
+        memory_layout: &MemoryLayout,
     ) -> Self {
         let K = final_ram_state.len();
         debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
@@ -122,12 +122,8 @@ impl<F: JoltField> OutputSumcheckProver<F> {
 
         // Compute the witness indices corresponding to the start and end of the IO
         // region of memory
-        let io_start = remap_address(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        let io_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
+        let io_start = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
+        let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
 
         // Compute Val_io by copying the relevant slice of Val_final
         let mut val_io = vec![0; K];

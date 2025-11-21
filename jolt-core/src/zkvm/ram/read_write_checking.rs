@@ -1,3 +1,4 @@
+use common::jolt_device::MemoryLayout;
 use num::Integer;
 use num_traits::Zero;
 
@@ -161,18 +162,18 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         params: RamReadWriteCheckingParams<F>,
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
-        program_io: &tracer::JoltDevice,
+        memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],
     ) -> Self {
         let r_prime = &params.r_cycle_stage_1;
         let eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
         let inc = CommittedPolynomial::RamInc.generate_witness(
             bytecode_preprocessing,
-            &program_io.memory_layout,
+            memory_layout,
             trace,
             None,
         );
-        let sparse_matrix = SparseMatrixPolynomial::new(trace, &program_io.memory_layout);
+        let sparse_matrix = SparseMatrixPolynomial::new(trace, memory_layout);
         let val_init = initial_ram_state
             .par_iter()
             .map(|x| F::from_u64(*x))

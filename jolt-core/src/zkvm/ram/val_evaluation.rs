@@ -61,6 +61,8 @@ pub struct ValEvaluationSumcheckParams<F: JoltField> {
     pub T: usize,
     /// Ram K parameter.
     pub K: usize,
+    r_address: OpeningPoint<BIG_ENDIAN, F>,
+    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheckParams<F> {
@@ -75,7 +77,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, _) = r.split_at(K.log_2());
+        let (r_address, r_cycle) = r.split_at(K.log_2());
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
@@ -84,6 +86,8 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             init_eval,
             T: trace_len,
             K,
+            r_address,
+            r_cycle,
         }
     }
 
@@ -98,7 +102,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, _) = r.split_at(ram_K.log_2());
+        let (r_address, r_cycle) = r.split_at(ram_K.log_2());
 
         let n_memory_vars = ram_K.log_2();
 
@@ -138,6 +142,8 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             init_eval,
             T: trace_len,
             K: ram_K,
+            r_address,
+            r_cycle,
         }
     }
 }
@@ -184,17 +190,10 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (r_address, r_cycle) = r.split_at(params.K.log_2());
-
         // Compute the size-K table storing all eq(r_address, k) evaluations for
         // k \in {0, 1}^log(K)
-        let eq_r_address = EqPolynomial::evals(&r_address.r);
+        let eq_r_address = EqPolynomial::evals(&params.r_address.r);
 
         let span = tracing::span!(tracing::Level::INFO, "compute wa(r_address, j)");
         let _guard = span.enter();
@@ -218,7 +217,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
             trace,
             None,
         );
-        let lt = LtPolynomial::new(&r_cycle);
+        let lt = LtPolynomial::new(&params.r_cycle);
 
         Self {
             inc,

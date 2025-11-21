@@ -568,20 +568,19 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             ram_raf_evaluation_params,
             &self.trace,
             &self.program_io.memory_layout,
-            &self.opening_accumulator,
         );
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
             &self.trace,
             &self.preprocessing.bytecode,
-            &self.program_io,
+            &self.program_io.memory_layout,
             &self.initial_ram_state,
         );
         let ram_output_check = OutputSumcheckProver::initialize(
             ram_output_check_params,
             &self.initial_ram_state,
             &self.final_ram_state,
-            &self.program_io,
+            &self.program_io.memory_layout,
         );
 
         #[cfg(feature = "allocative")]
@@ -709,14 +708,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
-            &self.opening_accumulator,
         );
         let ram_val_evaluation = RamValEvaluationSumcheckProver::initialize(
             ram_val_evaluation_params,
             &self.trace,
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
-            &self.opening_accumulator,
         );
         let ram_val_final = ValFinalSumcheckProver::initialize(
             ram_val_final_params,
