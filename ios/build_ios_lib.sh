@@ -87,16 +87,8 @@ for DEMO in "${DEMOS[@]}"; do
     ELF_OUTPUT="$DEMOS_DIR/${DEMO}.elf"
     PREPROCESSING_OUTPUT="$DEMOS_DIR/${DEMO}-preprocessing.bin"
 
-    STD_FLAG=""
-    case "$DEMO" in
-        sha3-chain-guest)
-            STD_FLAG="--std"
-            ;;
-    esac
-
     cargo run --release -q -p jolt-ffi --bin prepare-guest -- \
         --guest "$DEMO" \
-        $STD_FLAG \
         --elf-output "$ELF_OUTPUT" \
         --preprocessing-output "$PREPROCESSING_OUTPUT" \
         --quiet
