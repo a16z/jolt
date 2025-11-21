@@ -17,5 +17,5 @@ sudo dnf install z3-devel clang
 # arch linux
 sudo pacman -S z3 clang
 # macos
-brew install z3
+brew install z3 pkg-config
 ```
