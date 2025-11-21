@@ -44,6 +44,10 @@ cargo build --release --target aarch64-apple-ios-sim --message-format=short -q
 echo "Copying device library..."
 cp "$PROJECT_ROOT/target/aarch64-apple-ios/release/libjolt_ffi.a" "$OUTPUT_DIR/libjolt_ffi_device.a"
 
+echo "Copying sim library..."
+cp "$PROJECT_ROOT/target/aarch64-apple-ios-sim/release/libjolt_ffi.a" "$OUTPUT_DIR/libjolt_ffi_sim.a"
+
+
 # Copy header file
 echo "Copying C header file..."
 cp "$PROJECT_ROOT/target/aarch64-apple-ios/release/jolt-ffi.h" "$OUTPUT_DIR/jolt-ffi.h"
