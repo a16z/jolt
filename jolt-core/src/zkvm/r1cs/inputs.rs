@@ -500,7 +500,28 @@ impl ProductCycleInputs {
     }
 }
 
-// TODO(Quang): move the shift sumcheck inputs to here as well
+/// State extracted from a cycle for use in shift sumcheck
+pub struct ShiftSumcheckCycleState {
+    pub unexpanded_pc: u64,
+    pub pc: u64,
+    pub is_virtual: bool,
+    pub is_first_in_sequence: bool,
+    pub is_noop: bool,
+}
+
+impl ShiftSumcheckCycleState {
+    pub fn new(cycle: &Cycle, bytecode_preprocessing: &BytecodePreprocessing) -> Self {
+        let instruction = cycle.instruction();
+        let circuit_flags = instruction.circuit_flags();
+        Self {
+            unexpanded_pc: instruction.normalize().address as u64,
+            pc: bytecode_preprocessing.get_pc(cycle) as u64,
+            is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
+            is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
+            is_noop: instruction.instruction_flags()[InstructionFlags::IsNoop],
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
