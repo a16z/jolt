@@ -1,6 +1,5 @@
-use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::transcripts::Transcript;
 
 use crate::{

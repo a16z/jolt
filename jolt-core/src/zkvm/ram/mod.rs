@@ -426,7 +426,7 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
     )
     .unwrap() as usize;
     // Convert input bytes into words and populate
-    // `initial_memory_state` and `final_memory_state`
+    // `initial_memory_state`
     for chunk in program_io.inputs.chunks(8) {
         let mut word = [0u8; 8];
         for (i, byte) in chunk.iter().enumerate() {

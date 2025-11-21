@@ -19,8 +19,10 @@ use crate::{
             commitment_scheme::StreamingCommitmentScheme,
             dory::{DoryContext, DoryGlobals},
         },
-        multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{ProverOpeningAccumulator, ReducedOpeningProof},
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        opening_proof::{
+            OpeningAccumulator, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
+        },
         rlc_polynomial::RLCStreamingData,
     },
     pprof_scope,
@@ -33,10 +35,17 @@ use crate::{
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
         ram::{
-            output_check::OutputSumcheckParams, populate_memory_states,
+            output_check::OutputSumcheckParams,
+            populate_memory_states,
             raf_evaluation::RafEvaluationSumcheckParams,
-            read_write_checking::RamReadWriteCheckingParams, val_final::ValFinalSumcheckProver,
+            read_write_checking::RamReadWriteCheckingParams,
+            val_evaluation::{
+                ValEvaluationSumcheckParams,
+                ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
+            },
+            val_final::{ValFinalSumcheckParams, ValFinalSumcheckProver},
         },
+        registers::read_write_checking::RegistersReadWriteCheckingParams,
         spartan::{instruction_input::InstructionInputParams, shift::ShiftSumcheckParams},
         verifier::JoltVerifierPreprocessing,
     },
@@ -60,9 +69,7 @@ use crate::{
             output_check::OutputSumcheckProver, prover_accumulate_advice,
             ra_virtual::RaSumcheckProver as RamRaSumcheckProver,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
-            read_write_checking::RamReadWriteCheckingProver,
-            val_evaluation::ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
-            RAMPreprocessing,
+            read_write_checking::RamReadWriteCheckingProver, RAMPreprocessing,
         },
         registers::{
             read_write_checking::RegistersReadWriteCheckingProver,
@@ -73,7 +80,7 @@ use crate::{
             product::ProductVirtualRemainderProver, prove_stage1_uni_skip, prove_stage2_uni_skip,
             shift::ShiftSumcheckProver,
         },
-        witness::{AllCommittedPolynomials, CommittedPolynomial},
+        witness::{AllCommittedPolynomials, CommittedPolynomial, VirtualPolynomial},
         ProverDebugInfo, Serializable,
     },
 };
@@ -668,11 +675,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        let registers_read_write_checking = RegistersReadWriteCheckingProver::gen(
-            &self.trace,
-            &self.preprocessing.bytecode,
-            &self.program_io.memory_layout,
+        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
             self.twist_sumcheck_switch_index,
+            self.trace.len().log_2(),
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -690,19 +695,34 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.transcript,
         );
-        let ram_val_evaluation = RamValEvaluationSumcheckProver::gen(
-            &self.trace,
-            &self.preprocessing.bytecode,
-            &self.program_io.memory_layout,
-            &self.initial_ram_state,
+        let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
+            &self.initial_ram_state,
+            self.trace.len(),
         );
-        let ram_val_final = ValFinalSumcheckProver::gen(
+        let ram_val_final_params =
+            ValFinalSumcheckParams::new_from_prover(self.trace.len(), &self.opening_accumulator);
+
+        let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
+            registers_read_write_checking_params,
             &self.trace,
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
             &self.opening_accumulator,
+        );
+        let ram_val_evaluation = RamValEvaluationSumcheckProver::initialize(
+            ram_val_evaluation_params,
+            &self.trace,
+            &self.preprocessing.bytecode,
+            &self.program_io.memory_layout,
+            &self.opening_accumulator,
+        );
+        let ram_val_final = ValFinalSumcheckProver::initialize(
+            ram_val_final_params,
+            &self.trace,
+            &self.preprocessing.bytecode,
+            &self.program_io.memory_layout,
         );
 
         #[cfg(feature = "allocative")]

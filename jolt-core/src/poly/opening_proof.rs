@@ -9,7 +9,6 @@
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
     poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
-    subprotocols::sumcheck_verifier::SumcheckInstanceParams,
     zkvm::config::OneHotParams,
 };
 use allocative::Allocative;
@@ -405,7 +404,7 @@ where
     }
 
     /// Returns the initial claim of this sumcheck instance.
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _: &ProverOpeningAccumulator<F>) -> F {
         self.input_claim
     }
 
@@ -481,7 +480,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 
     /// Returns the initial claim of this sumcheck instance.
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _: &VerifierOpeningAccumulator<F>) -> F {
         self.input_claim
     }
 

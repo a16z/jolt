@@ -1,8 +1,3 @@
-use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN};
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
@@ -10,7 +5,16 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        opening_proof::{
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
+        },
+        split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
+    },
+    subprotocols::{
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
@@ -119,22 +123,14 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
-    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::gen")]
-    pub fn gen(
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::initialize")]
+    pub fn initialize(
+        params: RegistersReadWriteCheckingParams<F>,
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        twist_sumcheck_switch_index: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new(
-            twist_sumcheck_switch_index,
-            trace.len().log_2(),
-            opening_accumulator,
-            transcript,
-        );
-
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
@@ -1292,16 +1288,8 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for RegistersReadWriteCheckingProver<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
+        Box::new(&self.params)
     }
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::compute_message")]
@@ -1338,7 +1326,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let rd_wa_claim = self.rd_wa.as_ref().unwrap().final_sumcheck_claim();
         let inc_claim = self.inc_cycle.final_sumcheck_claim();
 
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RegistersVal,
@@ -1426,16 +1414,8 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RegistersReadWriteCheckingVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
+        Box::new(&self.params)
     }
 
     fn expected_output_claim(
@@ -1443,7 +1423,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r = self.params.get_opening_point(sumcheck_challenges);
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(LOG_K);
         let eq_eval_stage_1 = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle_stage_1);
         let eq_eval_stage_3 = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle_stage_3);
@@ -1487,7 +1467,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RegistersVal,
@@ -1523,14 +1503,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
-struct RegistersReadWriteCheckingParams<F: JoltField> {
-    gamma: F,
+pub struct RegistersReadWriteCheckingParams<F: JoltField> {
+    pub gamma: F,
     /// Equals `gamma^3`.
-    gamma_cub: F,
-    twist_sumcheck_switch_index: usize,
-    n_cycle_vars: usize, // = log(T)
-    r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
-    r_cycle_stage_3: OpeningPoint<BIG_ENDIAN, F>,
+    pub gamma_cub: F,
+    pub twist_sumcheck_switch_index: usize,
+    pub n_cycle_vars: usize, // = log(T)
+    pub r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_cycle_stage_3: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
@@ -1556,6 +1536,12 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
             r_cycle_stage_1,
             r_cycle_stage_3,
         }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
     }
 
     fn num_rounds(&self) -> usize {
@@ -1587,7 +1573,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         claim_stage_1 + self.gamma_cub * claim_stage_3
     }
 
-    fn get_opening_point(
+    fn normalize_opening_point(
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
