@@ -1,7 +1,8 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
+use jolt_core::zkvm::preprocessing::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use jolt_core::zkvm::{
-    prover::JoltProverPreprocessing, verifier::JoltVerifierPreprocessing, RV64IMACProver,
+    RV64IMACProver,
     RV64IMACVerifier,
 };
 use std::fs;

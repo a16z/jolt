@@ -6,10 +6,10 @@ use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::preprocessing::JoltProverPreprocessing;
+use crate::zkvm::preprocessing::JoltVerifierPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
-use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
-use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
 

@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
+use crate::zkvm::preprocessing::JoltVerifierPreprocessing;
 use crate::zkvm::{
     bytecode::{
         self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
@@ -48,7 +49,6 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
 };
 use anyhow::Context;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
 use tracer::JoltDevice;
@@ -474,47 +474,5 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .context("Stage 7")?;
 
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltVerifierPreprocessing<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    pub generators: PCS::VerifierSetup,
-    pub bytecode: BytecodePreprocessing,
-    pub ram: RAMPreprocessing,
-    pub memory_layout: MemoryLayout,
-}
-
-impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-}
-
-impl<F, PCS> JoltVerifierPreprocessing<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
-        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
-        let mut file = File::create(filename.as_path())?;
-        let mut data = Vec::new();
-        self.serialize_compressed(&mut data).unwrap();
-        file.write_all(&data)?;
-        Ok(())
-    }
-
-    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
-        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
-        let mut file = File::open(filename.as_path())?;
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
-        Ok(Self::deserialize_compressed(&*data).unwrap())
     }
 }

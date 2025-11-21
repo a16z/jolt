@@ -25,6 +25,7 @@ pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
 pub mod proof_serialization;
+pub mod preprocessing;
 #[cfg(feature = "prover")]
 pub mod prover;
 pub mod r1cs;
