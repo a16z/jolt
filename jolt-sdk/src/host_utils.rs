@@ -9,8 +9,8 @@ pub use jolt_core::field::JoltField;
 pub use jolt_core::guest;
 pub use jolt_core::poly::commitment::dory::DoryCommitmentScheme as PCS;
 pub use jolt_core::zkvm::{
-    proof_serialization::JoltProof, prover::JoltProverPreprocessing,
-    verifier::JoltVerifierPreprocessing, RV64IMACProof, RV64IMACProver, RV64IMACVerifier,
+    proof_serialization::JoltProof, preprocessing::{JoltProverPreprocessing, JoltVerifierPreprocessing},
+    RV64IMACProof, RV64IMACProver, RV64IMACVerifier,
     Serializable,
 };
 
