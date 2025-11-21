@@ -753,7 +753,7 @@ mod tests {
             let mle_half = dense_poly.len() / 2;
 
             // We bind first log_K vars HighToLow and then log_T vars LowToHigh
-            // because the denes polyonmial has address variables reversed
+            // because the dense polynomial has address variables reversed
             if round < LOG_K {
                 expected_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
                 expected_message[1] = (0..mle_half)
