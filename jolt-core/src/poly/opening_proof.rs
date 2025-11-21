@@ -9,6 +9,7 @@
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
     poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
+    subprotocols::sumcheck_verifier::SumcheckInstanceParams,
     zkvm::config::OneHotParams,
 };
 use allocative::Allocative;
@@ -184,7 +185,9 @@ pub enum OpeningId {
     TrustedAdvice,
 }
 
-pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
+/// (point, claim)
+pub type Opening<F> = (OpeningPoint<BIG_ENDIAN, F>, F);
+pub type Openings<F> = BTreeMap<OpeningId, Opening<F>>;
 
 #[derive(Clone, Debug, Allocative)]
 pub struct SharedDensePolynomial<F: JoltField> {
@@ -391,15 +394,18 @@ impl<F, T: Transcript> SumcheckInstanceProver<F, T> for OpeningProofReductionSum
 where
     F: JoltField,
 {
+    /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {
         OPENING_SUMCHECK_DEGREE
     }
 
+    /// Returns the number of rounds/variables in this sumcheck instance.
     fn num_rounds(&self) -> usize {
         self.opening_point.len()
     }
 
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
+    /// Returns the initial claim of this sumcheck instance.
+    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
         self.input_claim
     }
 
@@ -464,15 +470,18 @@ impl<F: JoltField> OpeningProofReductionSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for OpeningProofReductionSumcheckVerifier<F>
 {
+    /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {
         OPENING_SUMCHECK_DEGREE
     }
 
+    /// Returns the number of rounds/variables in this sumcheck instance.
     fn num_rounds(&self) -> usize {
         self.opening_point.len()
     }
 
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    /// Returns the initial claim of this sumcheck instance.
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
         self.input_claim
     }
 

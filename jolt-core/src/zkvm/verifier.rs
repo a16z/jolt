@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
+use crate::zkvm::ram::read_write_checking::RamReadWriteCheckingParams;
 use crate::zkvm::{
     bytecode::{
         self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
@@ -228,12 +229,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.one_hot_params,
             &self.opening_accumulator,
         );
-        let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
-            self.proof.trace_length,
-            &self.one_hot_params,
+        let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.one_hot_params,
+            self.proof.trace_length,
         );
+        let ram_read_write_checking = RamReadWriteCheckingVerifier {
+            params: ram_read_write_checking_params,
+        };
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
 

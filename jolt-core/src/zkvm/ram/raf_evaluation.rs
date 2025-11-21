@@ -247,6 +247,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
     }
 }
+
 pub struct RafEvaluationSumcheckParams<F: JoltField> {
     /// log K (number of rounds)
     log_K: usize,
@@ -292,56 +293,3 @@ fn get_opening_point<F: JoltField>(
 ) -> OpeningPoint<BIG_ENDIAN, F> {
     OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::transcripts::Blake2bTranscript;
-//     use ark_bn254::Fr;
-
-//     #[test]
-//     fn test_raf_evaluation_no_ops() {
-//         const K: usize = 1 << 16;
-//         const T: usize = 1 << 8;
-
-//         let memory_layout = MemoryLayout {
-//             max_input_size: 256,
-//             max_output_size: 256,
-//             input_start: 0x80000000,
-//             input_end: 0x80000100,
-//             output_start: 0x80001000,
-//             output_end: 0x80001100,
-//             stack_size: 1024,
-//             stack_end: 0x7FFFFF00,
-//             memory_size: 0x10000,
-//             memory_end: 0x80010000,
-//             panic: 0x80002000,
-//             termination: 0x80002001,
-//             io_end: 0x80002002,
-//         };
-
-//         // Create trace with only no-ops (address = 0)
-//         let mut trace = Vec::new();
-//         for i in 0..T {
-//             trace.push(Cycle::NoOp(i));
-//         }
-
-//         let mut prover_transcript = Blake2bTranscript::new(b"test_no_ops");
-//         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-//         // Prove
-//         let proof =
-//             RafEvaluationProof::prove(&trace, &memory_layout, r_cycle, K, &mut prover_transcript);
-
-//         // Verify
-//         let mut verifier_transcript = Blake2bTranscript::new(b"test_no_ops");
-//         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-
-//         let r_address_result = proof.verify(K, &mut verifier_transcript, &memory_layout);
-
-//         assert!(
-//             r_address_result.is_ok(),
-//             "No-op RAF evaluation verification failed"
-//         );
-//     }
-// }

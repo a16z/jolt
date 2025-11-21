@@ -1,4 +1,6 @@
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 
 use crate::{
@@ -9,14 +11,32 @@ use crate::{
 pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     Send + Sync + MaybeAllocative
 {
+    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
+        unimplemented!(
+            "If get_params is unimplemented, degree, \
+            num_rounds, input_claim, and normalize_opening_point \
+            should be implemented directly"
+        )
+    }
+
     /// Returns the maximum degree of the sumcheck polynomial.
-    fn degree(&self) -> usize;
+    fn degree(&self) -> usize {
+        self.get_params().degree()
+    }
 
     /// Returns the number of rounds/variables in this sumcheck instance.
-    fn num_rounds(&self) -> usize;
+    fn num_rounds(&self) -> usize {
+        self.get_params().num_rounds()
+    }
 
     /// Returns the initial claim of this sumcheck instance.
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F;
+    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.get_params().input_claim(accumulator)
+    }
+
+    fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+        self.get_params().normalize_opening_point(challenges)
+    }
 
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F>;

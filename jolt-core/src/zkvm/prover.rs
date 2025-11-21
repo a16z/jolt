@@ -32,7 +32,7 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
-        ram::populate_memory_states,
+        ram::{populate_memory_states, read_write_checking::RamReadWriteCheckingParams},
         verifier::JoltVerifierPreprocessing,
     },
 };
@@ -541,14 +541,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.opening_accumulator,
         );
-        let ram_read_write_checking = RamReadWriteCheckingProver::gen(
-            &self.initial_ram_state,
-            &self.preprocessing.bytecode,
-            &self.program_io.memory_layout,
-            &self.trace,
-            &self.one_hot_params,
+        let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.one_hot_params,
+            self.trace.len(),
+        );
+        let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
+            ram_read_write_checking_params,
+            &self.trace,
+            &self.preprocessing.bytecode,
+            &self.program_io,
+            &self.initial_ram_state,
         );
         let ram_output_check = OutputSumcheckProver::gen(
             &self.initial_ram_state,

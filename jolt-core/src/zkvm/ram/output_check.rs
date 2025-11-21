@@ -272,17 +272,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
         let r_address_prime = get_output_sumcheck_opening_point::<F>(sumcheck_challenges).r;
         let program_io = &self.params.program_io;
 
-        // let io_mask = RangeMaskPolynomial::new(
-        //     remap_address(
-        //         program_io.memory_layout.input_start,
-        //         &program_io.memory_layout,
-        //     )
-        //     .unwrap()
-        //     .into(),
-        //     remap_address(RAM_START_ADDRESS, &program_io.memory_layout)
-        //         .unwrap()
-        //         .into(),
-        // );
         let io_mask = RangeMaskPolynomial::<F>::new(
             remap_address(
                 program_io.memory_layout.input_start,
