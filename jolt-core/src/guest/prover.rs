@@ -4,7 +4,6 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
-#[cfg(feature = "prover")]
 use crate::zkvm::preprocessing::JoltProverPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::{ProverDebugInfo};

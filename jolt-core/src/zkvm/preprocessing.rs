@@ -7,8 +7,6 @@ use tracer::instruction::Instruction;
 use crate::{field::JoltField, poly::commitment::commitment_scheme::CommitmentScheme, utils::math::Math, zkvm::{Serializable, bytecode::BytecodePreprocessing, config::get_log_k_chunk, ram::RAMPreprocessing}};
 
 
-
-
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub generators: PCS::ProverSetup,

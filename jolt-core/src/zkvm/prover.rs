@@ -1,16 +1,11 @@
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{Read, Write},
-    path::Path,
     sync::Arc,
     time::Instant,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
 use crate::{
     field::JoltField,
     guest,
@@ -31,15 +26,14 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
-        config::{OneHotParams, get_log_k_chunk}, preprocessing::{JoltProverPreprocessing, JoltVerifierPreprocessing}, ram::populate_memory_states
+        config::OneHotParams, preprocessing::{JoltProverPreprocessing}, ram::populate_memory_states
     },
 };
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     zkvm::{
         bytecode::{
-            self, read_raf_checking::ReadRafSumcheckProver as BytecodeReadRafSumcheckProver,
-            BytecodePreprocessing,
+            self, read_raf_checking::ReadRafSumcheckProver as BytecodeReadRafSumcheckProver
         },
         fiat_shamir_preamble,
         instruction_lookups::{
@@ -57,7 +51,6 @@ use crate::{
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
             read_write_checking::RamReadWriteCheckingProver,
             val_evaluation::ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
-            RAMPreprocessing,
         },
         registers::{
             read_write_checking::RegistersReadWriteCheckingProver,
@@ -69,18 +62,15 @@ use crate::{
             shift::ShiftSumcheckProver,
         },
         witness::{AllCommittedPolynomials, CommittedPolynomial},
-        ProverDebugInfo, Serializable,
+        ProverDebugInfo
     },
 };
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::{MemoryConfig, MemoryLayout};
+use common::jolt_device::{MemoryConfig};
 use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::{
     emulator::memory::Memory,
-    instruction::{Cycle, Instruction},
+    instruction::{Cycle},
     ChunksIterator, JoltDevice, LazyTraceIterator,
 };
 

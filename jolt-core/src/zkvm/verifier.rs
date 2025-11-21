@@ -1,7 +1,4 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -9,8 +6,7 @@ use crate::zkvm::config::OneHotParams;
 use crate::zkvm::preprocessing::JoltVerifierPreprocessing;
 use crate::zkvm::{
     bytecode::{
-        self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
-        BytecodePreprocessing,
+        self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier
     },
     fiat_shamir_preamble,
     instruction_lookups::{
@@ -26,7 +22,7 @@ use crate::zkvm::{
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
-        verifier_accumulate_advice, RAMPreprocessing,
+        verifier_accumulate_advice,
     },
     registers::{
         read_write_checking::RegistersReadWriteCheckingVerifier,
@@ -38,7 +34,7 @@ use crate::zkvm::{
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
     witness::AllCommittedPolynomials,
-    ProverDebugInfo, Serializable,
+    ProverDebugInfo,
 };
 use crate::{
     field::JoltField,
@@ -49,7 +45,6 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
 };
 use anyhow::Context;
-use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
 use tracer::JoltDevice;
 
