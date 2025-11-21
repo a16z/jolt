@@ -966,9 +966,9 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
 
     pub fn compute_prover_message(
         &self,
-        inc_evals: &[F],
+        inc: &MultilinearPolynomial<F>,
+        eq: &MultilinearPolynomial<F>,
         gamma: F,
-        eq_r_prime_eval: F,
         previous_claim: F,
     ) -> UniPoly<F> {
         let evals = self
@@ -984,7 +984,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     odd_col,
                     self.val_init.get_bound_coeff(even_col_idx),
                     self.val_init.get_bound_coeff(odd_col_idx),
-                    inc_evals,
+                    inc,
+                    eq,
                     gamma,
                 )
             })
@@ -1002,8 +1003,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
         UniPoly::from_evals_and_hint(
             previous_claim,
             &[
-                eq_r_prime_eval * F::from_barrett_reduce(evals[0]),
-                eq_r_prime_eval * F::from_barrett_reduce(evals[1]),
+                F::from_barrett_reduce(evals[0]),
+                F::from_barrett_reduce(evals[1]),
             ],
         )
     }
@@ -1015,7 +1016,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
         odd_col: &[MatrixEntry<F>],
         even_checkpoint: F,
         odd_checkpoint: F,
-        inc_evals: &[F],
+        inc: &MultilinearPolynomial<F>,
+        eq: &MultilinearPolynomial<F>,
         gamma: F,
     ) -> [F; 2] {
         /// Threshold where we stop parallelizing and do a plain linear merge.
@@ -1028,7 +1030,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                 odd_col,
                 even_checkpoint,
                 odd_checkpoint,
-                inc_evals,
+                inc,
+                eq,
                 gamma,
             );
         }
@@ -1056,7 +1059,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     &odd_col[..odd_pivot_idx],
                     even_checkpoint,
                     odd_checkpoint,
-                    inc_evals,
+                    inc,
+                    eq,
                     gamma,
                 )
             },
@@ -1080,7 +1084,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     &odd_col[odd_pivot_idx..],
                     even_checkpoint,
                     odd_checkpoint,
-                    inc_evals,
+                    inc,
+                    eq,
                     gamma,
                 )
             },
@@ -1099,7 +1104,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
         odd: &[MatrixEntry<F>],
         mut even_checkpoint: F,
         mut odd_checkpoint: F,
-        inc_evals: &[F],
+        inc: &MultilinearPolynomial<F>,
+        eq: &MultilinearPolynomial<F>,
         gamma: F,
     ) -> [F; 2] {
         let mut i = 0;
@@ -1113,7 +1119,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     Some(&odd[j]),
                     even_checkpoint,
                     odd_checkpoint,
-                    inc_evals[even[i].row],
+                    inc.get_bound_coeff(even[i].row),
+                    eq.get_bound_coeff(even[i].row),
                     gamma,
                 );
                 evals_accumulator[0] += evals[0];
@@ -1128,7 +1135,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     None,
                     even_checkpoint,
                     odd_checkpoint,
-                    inc_evals[even[i].row],
+                    inc.get_bound_coeff(even[i].row),
+                    eq.get_bound_coeff(even[i].row),
                     gamma,
                 );
                 even_checkpoint = even[i].next_val;
@@ -1141,7 +1149,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     Some(&odd[j]),
                     even_checkpoint,
                     odd_checkpoint,
-                    inc_evals[odd[j].row],
+                    inc.get_bound_coeff(odd[j].row),
+                    eq.get_bound_coeff(odd[j].row),
                     gamma,
                 );
                 odd_checkpoint = odd[j].next_val;
@@ -1156,7 +1165,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                 None,
                 even_checkpoint,
                 odd_checkpoint,
-                inc_evals[remaining_even_entry.row],
+                inc.get_bound_coeff(remaining_even_entry.row),
+                eq.get_bound_coeff(remaining_even_entry.row),
                 gamma,
             );
             evals_accumulator[0] += evals[0];
@@ -1168,7 +1178,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                 Some(remaining_odd_entry),
                 even_checkpoint,
                 odd_checkpoint,
-                inc_evals[remaining_odd_entry.row],
+                inc.get_bound_coeff(remaining_odd_entry.row),
+                eq.get_bound_coeff(remaining_odd_entry.row),
                 gamma,
             );
             evals_accumulator[0] += evals[0];
@@ -1190,6 +1201,7 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
         even_checkpoint: F,
         odd_checkpoint: F,
         inc_eval: F,
+        eq_eval: F,
         gamma: F,
     ) -> [F; 2] {
         match (even, odd) {
@@ -1203,8 +1215,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     odd.val_coeff + odd.val_coeff - even.val_coeff,
                 ];
                 [
-                    ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
-                    ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
+                    eq_eval * ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
+                    eq_eval * ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
                 ]
             }
             (Some(even), None) => {
@@ -1219,8 +1231,8 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                     odd_checkpoint + odd_checkpoint - even.val_coeff,
                 ];
                 [
-                    ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
-                    ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
+                    eq_eval * ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
+                    eq_eval * ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
                 ]
             }
             (None, Some(odd)) => {
@@ -1236,10 +1248,65 @@ impl<F: JoltField> SparseMatrixPolynomial<COL_MAJOR, F> {
                 ];
                 [
                     F::zero(), // ra_evals[0] is zero
-                    ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
+                    eq_eval * ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
                 ]
             }
             (None, None) => panic!("Both entries are None"),
         }
+    }
+
+    /// Materializes the ra and Val polynomials represented by this `SparseMatrixPolynomial`.
+    /// Some number of cycle and address variables have already been bound, so at this point
+    /// there are `K_prime` columns and `T_prime` rows left in the matrix.
+    #[tracing::instrument(skip_all, name = "SparseMatrixPolynomial::materialize")]
+    pub fn materialize(
+        self,
+        K_prime: usize,
+        T_prime: usize,
+    ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
+        // Initialize ra and Val to initial values
+        let ra: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
+            .into_par_iter()
+            .map(|_| Arc::new(Mutex::new(F::zero())))
+            .collect();
+        let val: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
+            .into_par_iter()
+            .map(|_| Arc::new(Mutex::new(F::zero())))
+            .collect();
+
+        // Update some of the ra and Val coefficients based on
+        // matrix entries.
+        self.entries
+            .par_chunk_by(|a, b| a.col == b.col)
+            .for_each(|column| {
+                let k = column[0].col;
+                let mut current_val_coeff = self.val_init.get_bound_coeff(k);
+                let mut column_iter = column.iter().peekable();
+                for j in 0..T_prime {
+                    let idx = k * T_prime + j;
+                    if let Some(entry) = column_iter.peek() {
+                        if entry.row == j {
+                            *ra[idx].lock().unwrap() = entry.ra_coeff;
+                            *val[idx].lock().unwrap() = entry.val_coeff;
+                            current_val_coeff = entry.next_val;
+                            continue;
+                        }
+                    }
+                    // *ra[idx].lock().unwrap() = F::zero(); // Already zero
+                    *val[idx].lock().unwrap() = current_val_coeff;
+                    continue;
+                }
+            });
+        // Unwrap Arc<Mutex<F>> back into F
+        let ra: Vec<F> = ra
+            .into_par_iter()
+            .map(|arc_mutex| *arc_mutex.lock().unwrap())
+            .collect();
+        let val: Vec<F> = val
+            .into_par_iter()
+            .map(|arc_mutex| *arc_mutex.lock().unwrap())
+            .collect();
+        // Convert Vec<F> to MultilinearPolynomial<F>
+        (ra.into(), val.into())
     }
 }

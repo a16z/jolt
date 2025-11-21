@@ -2,6 +2,7 @@ use common::jolt_device::MemoryLayout;
 use num::Integer;
 use num_traits::Zero;
 
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
@@ -86,14 +87,23 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     val_init: Vec<F>,
     sparse_matrix_phase1: SparseMatrixPolynomial<ROW_MAJOR, F>,
     sparse_matrix_phase2: SparseMatrixPolynomial<COL_MAJOR, F>,
-    eq_r_prime: GruenSplitEqPolynomial<F>,
+    gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
     // The following polynomials are instantiated after
     // the first phase
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
+    merged_eq: Option<MultilinearPolynomial<F>>,
     #[allocative(skip)]
     params: ReadWriteCheckingParams<F>,
+}
+
+fn phase1_num_rounds(_K: usize, T: usize) -> usize {
+    T.log_2()
+}
+
+fn phase2_num_rounds(K: usize, _T: usize) -> usize {
+    K.log_2()
 }
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
@@ -117,7 +127,20 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             )
             .0;
 
-        let eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
+        let (gruen_eq, merged_eq) = if phase1_num_rounds(params.K, params.T) > 0 {
+            (
+                Some(GruenSplitEqPolynomial::new(
+                    &r_prime.r,
+                    BindingOrder::LowToHigh,
+                )),
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r))),
+            )
+        };
         let inc = CommittedPolynomial::RamInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
@@ -135,7 +158,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             sparse_matrix_phase1,
             sparse_matrix_phase2: Default::default(),
             val_init,
-            eq_r_prime,
+            gruen_eq,
+            merged_eq,
             inc,
             ra: None,
             val: None,
@@ -146,14 +170,15 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     fn phase1_compute_message(&mut self, previous_claim: F) -> UniPoly<F> {
         let Self {
             inc,
-            eq_r_prime,
+            gruen_eq,
             params,
             sparse_matrix_phase1: sparse_matrix,
             ..
         } = self;
+        let gruen_eq = gruen_eq.as_ref().unwrap();
 
         // Compute quadratic coefficients using Gruen's optimization
-        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = if eq_r_prime.E_in_current_len() == 1 {
+        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = if gruen_eq.E_in_current_len() == 1 {
             // E_in is fully bound, use E_out evaluations
             sparse_matrix
                 .entries
@@ -162,7 +187,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
                     let (even_row, odd_row) = entries.split_at(odd_row_start_index);
                     let j_prime = 2 * (entries[0].row / 2);
-                    let eq_eval = eq_r_prime.E_out_current()[j_prime / 2];
+                    let eq_eval = gruen_eq.E_out_current()[j_prime / 2];
                     let inc_evals = {
                         let inc_0 = inc.get_bound_coeff(j_prime);
                         let inc_1 = inc.get_bound_coeff(j_prime + 1);
@@ -190,7 +215,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 .map(F::from_montgomery_reduce)
         } else {
             // E_in is not fully bound, handle both E_in and E_out
-            let num_x_in_bits = eq_r_prime.E_in_current_len().log_2();
+            let num_x_in_bits = gruen_eq.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
             sparse_matrix
@@ -199,14 +224,14 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 .par_chunk_by(|a, b| ((a.row / 2) >> num_x_in_bits) == ((b.row / 2) >> num_x_in_bits))
                 .map(|entries| {
                     let x_out = (entries[0].row / 2) >> num_x_in_bits;
-                    let E_out_eval = eq_r_prime.E_out_current()[x_out];
+                    let E_out_eval = gruen_eq.E_out_current()[x_out];
 
                     let outer_sum_evals = entries.par_chunk_by(|a, b| a.row / 2 == b.row / 2).map(|entries| {
                         let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
                         let (even_row, odd_row) = entries.split_at(odd_row_start_index);
                         let j_prime = 2 * (entries[0].row / 2);
                         let x_in = (j_prime / 2) & x_bitmask;
-                        let E_in_eval = eq_r_prime.E_in_current()[x_in];
+                        let E_in_eval = gruen_eq.E_in_current()[x_in];
 
                         let inc_evals = {
                             let inc_0 = inc.get_bound_coeff(j_prime);
@@ -245,68 +270,220 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         };
 
         // Convert quadratic coefficients to cubic evaluations
-        eq_r_prime.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
+        gruen_eq.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
     }
 
     fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let Self {
             inc,
-            eq_r_prime,
+            merged_eq,
             sparse_matrix_phase2,
             params,
             ..
         } = self;
+        let merged_eq = merged_eq.as_ref().unwrap();
+        sparse_matrix_phase2.compute_prover_message(inc, merged_eq, params.gamma, previous_claim)
+    }
 
-        // Cycle variables are fully bound, so eq(r', r_cycle) is a constant
-        let eq_r_prime_eval = eq_r_prime.current_scalar;
-        // and Inc(r_cycle) is a constant
-        let inc_eval = inc.final_sumcheck_claim();
-        sparse_matrix_phase2.compute_prover_message(
-            &[inc_eval],
-            params.gamma,
-            eq_r_prime_eval,
-            previous_claim,
-        )
+    fn phase3_compute_message(&self, previous_claim: F) -> UniPoly<F> {
+        let Self {
+            inc,
+            merged_eq,
+            ra,
+            val,
+            params,
+            ..
+        } = self;
+        let merged_eq = merged_eq.as_ref().unwrap();
+        let ra = ra.as_ref().unwrap();
+        let val = val.as_ref().unwrap();
+
+        if inc.len() > 1 {
+            // Cycle variables remaining
+            const DEGREE: usize = 3;
+            let K_prime = params.K >> phase2_num_rounds(params.K, params.T);
+            let T_prime = inc.len();
+            debug_assert_eq!(ra.len(), K_prime * inc.len());
+
+            let evals = (0..inc.len() / 2)
+                .into_par_iter()
+                .map(|j| {
+                    let inc_evals = inc.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let eq_evals = merged_eq.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let inner = (0..K_prime)
+                        .into_par_iter()
+                        .map(|k| {
+                            let ra_evals =
+                                ra.sumcheck_evals(k * T_prime + j, DEGREE, BindingOrder::LowToHigh);
+                            let val_evals = val.sumcheck_evals(
+                                k * T_prime + j,
+                                DEGREE,
+                                BindingOrder::LowToHigh,
+                            );
+                            [
+                                ra_evals[0]
+                                    * (val_evals[0] + params.gamma * (val_evals[0] + inc_evals[0])),
+                                ra_evals[1]
+                                    * (val_evals[1] + params.gamma * (val_evals[1] + inc_evals[1])),
+                                ra_evals[2]
+                                    * (val_evals[2] + params.gamma * (val_evals[2] + inc_evals[2])),
+                            ]
+                        })
+                        .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                            [
+                                running[0] + new[0].as_unreduced_ref(),
+                                running[1] + new[1].as_unreduced_ref(),
+                                running[2] + new[2].as_unreduced_ref(),
+                            ]
+                        })
+                        .reduce(
+                            || [F::Unreduced::<5>::zero(); DEGREE],
+                            |running, new| {
+                                [
+                                    running[0] + new[0],
+                                    running[1] + new[1],
+                                    running[2] + new[2],
+                                ]
+                            },
+                        );
+                    [
+                        eq_evals[0] * F::from_barrett_reduce(inner[0]),
+                        eq_evals[1] * F::from_barrett_reduce(inner[1]),
+                        eq_evals[2] * F::from_barrett_reduce(inner[2]),
+                    ]
+                })
+                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                    [
+                        running[0] + new[0].as_unreduced_ref(),
+                        running[1] + new[1].as_unreduced_ref(),
+                        running[2] + new[2].as_unreduced_ref(),
+                    ]
+                })
+                .reduce(
+                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+
+            UniPoly::from_evals_and_hint(
+                previous_claim,
+                &[
+                    F::from_barrett_reduce(evals[0]),
+                    F::from_barrett_reduce(evals[1]),
+                    F::from_barrett_reduce(evals[2]),
+                ],
+            )
+        } else {
+            const DEGREE: usize = 2;
+            // Cycle variables are fully bound
+            let inc_eval = inc.final_sumcheck_claim();
+            let eq_eval = merged_eq.final_sumcheck_claim();
+            let evals = (0..ra.len() / 2)
+                .into_par_iter()
+                .map(|k| {
+                    let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                    let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+
+                    [
+                        ra_evals[0] * (val_evals[0] + params.gamma * (val_evals[0] + inc_eval)),
+                        ra_evals[1] * (val_evals[1] + params.gamma * (val_evals[1] + inc_eval)),
+                    ]
+                })
+                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                    [
+                        running[0] + new[0].as_unreduced_ref(),
+                        running[1] + new[1].as_unreduced_ref(),
+                    ]
+                })
+                .reduce(
+                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
+
+            UniPoly::from_evals_and_hint(
+                previous_claim,
+                &[
+                    eq_eval * F::from_barrett_reduce(evals[0]),
+                    eq_eval * F::from_barrett_reduce(evals[1]),
+                ],
+            )
+        }
     }
 
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
         let Self {
             sparse_matrix_phase1: sparse_matrix,
             inc,
-            eq_r_prime,
+            gruen_eq,
             val_init,
             params,
+            ..
+        } = self;
+        let gruen_eq = gruen_eq.as_mut().unwrap();
+
+        sparse_matrix.bind(r_j);
+        gruen_eq.bind(r_j);
+        inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+        if round == phase1_num_rounds(params.K, params.T) - 1 {
+            self.merged_eq = Some(MultilinearPolynomial::LargeScalars(gruen_eq.merge()));
+            let sparse_matrix = std::mem::take(sparse_matrix);
+            if phase2_num_rounds(params.K, params.T) > 0 {
+                self.sparse_matrix_phase2 = sparse_matrix.into();
+            } else {
+                // Skip to phase 3
+                let (ra, val) = sparse_matrix.materialize(params.K, val_init);
+                self.ra = Some(ra);
+                self.val = Some(val);
+            }
+        }
+    }
+
+    fn phase2_bind(&mut self, r_j: F::Challenge, round: usize) {
+        let Self {
+            params,
+            sparse_matrix_phase2: sparse_matrix,
             ..
         } = self;
 
         sparse_matrix.bind(r_j);
 
-        eq_r_prime.bind(r_j);
-        inc.bind_parallel(r_j, BindingOrder::LowToHigh);
-
-        if round == params.T.log_2() - 1 {
-            // At this point I has been bound to a point where each chunk contains a single row,
-            // so we might as well materialize the full `ra` and `Val` polynomials and perform
-            // standard sumcheck directly using those polynomials.
-
+        let phase1_num_rounds = phase1_num_rounds(params.K, params.T);
+        let phase2_num_rounds = phase2_num_rounds(params.K, params.T);
+        if round == phase1_num_rounds + phase2_num_rounds - 1 {
             let sparse_matrix = std::mem::take(sparse_matrix);
-            self.sparse_matrix_phase2 = sparse_matrix.clone().into();
-            let (ra, val) = sparse_matrix.materialize(params.K, val_init);
+            let (ra, val) = sparse_matrix
+                .materialize(params.K >> phase2_num_rounds, params.T >> phase1_num_rounds);
             self.ra = Some(ra);
             self.val = Some(val);
         }
     }
 
-    fn phase2_bind(&mut self, r_j: F::Challenge) {
-        let Self { ra, val, .. } = self;
+    fn phase3_bind(&mut self, r_j: F::Challenge) {
+        let Self {
+            ra,
+            val,
+            inc,
+            merged_eq,
+            ..
+        } = self;
+
+        let merged_eq = merged_eq.as_mut().unwrap();
         let ra = ra.as_mut().unwrap();
         let val = val.as_mut().unwrap();
 
-        // Note that `eq_r_prime` and `inc` are polynomials over only the cycle
-        // variables, so they are not bound here
+        if inc.len() > 1 {
+            // Cycle variables remaining
+            inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+            merged_eq.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
         ra.bind_parallel(r_j, BindingOrder::LowToHigh);
         val.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.sparse_matrix_phase2.bind(r_j);
     }
 }
 
@@ -325,19 +502,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
 
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        if round < self.params.T.log_2() {
+        let phase1_num_rounds = phase1_num_rounds(self.params.K, self.params.T);
+        let phase2_num_rounds = phase2_num_rounds(self.params.K, self.params.T);
+        if round < phase1_num_rounds {
             self.phase1_compute_message(previous_claim)
-        } else {
+        } else if round < phase1_num_rounds + phase2_num_rounds {
             self.phase2_compute_message(previous_claim)
+        } else {
+            self.phase3_compute_message(previous_claim)
         }
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        if round < self.params.T.log_2() {
+        let phase1_num_rounds = phase1_num_rounds(self.params.K, self.params.T);
+        let phase2_num_rounds = phase2_num_rounds(self.params.K, self.params.T);
+        if round < phase1_num_rounds {
             self.phase1_bind(r_j, round);
+        } else if round < phase1_num_rounds + phase2_num_rounds {
+            self.phase2_bind(r_j, round);
         } else {
-            self.phase2_bind(r_j);
+            self.phase3_bind(r_j);
         }
     }
 
