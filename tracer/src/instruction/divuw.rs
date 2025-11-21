@@ -1,5 +1,5 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{instruction::mulhu::MULHU, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -51,7 +51,7 @@ impl RISCVTrace for DIVUW {
             }
             Xlen::Bit64 => {
                 if y == 0 {
-                    (u64::MAX, x as u64)
+                    (u32::MAX as u64, x as u64) // 32-bit operation: quotient is u32::MAX
                 } else {
                     let quotient = x / y;
                     let remainder = x % y;
@@ -91,7 +91,7 @@ impl RISCVTrace for DIVUW {
     /// 4. Verify: dividend = quotient × divisor + remainder
     /// 5. Verify: remainder < divisor
     ///
-    /// Special case: Division by zero returns u32::MAX (0xFFFFFFFF), checked by VirtualAssertValidDiv0
+    /// Special case: Division by zero returns sign extended u32::MAX (0xFFFFFFFF), checked by VirtualAssertValidDiv0
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -106,7 +106,6 @@ impl RISCVTrace for DIVUW {
         let t2 = allocator.allocate(); // zero-extended quotient
         let t3 = allocator.allocate(); // zero-extended dividend
         let t4 = allocator.allocate(); // zero-extended divisor
-        let zero = 0; // x0 register
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // Get untrusted advice from oracle
@@ -117,16 +116,14 @@ impl RISCVTrace for DIVUW {
         asm.emit_i::<VirtualZeroExtendWord>(*t3, a0, 0); // dividend
         asm.emit_i::<VirtualZeroExtendWord>(*t4, a1, 0); // divisor
 
-        // Check for division by zero (quotient must be u64::MAX if divisor is 0)
-        asm.emit_b::<VirtualAssertValidDiv0>(*t4, *a2, 0);
-
-        // Zero-extend quotient for arithmetic operations
+        // Verify quotient fits in 32 bits and zero-extend for arithmetic
         asm.emit_i::<VirtualZeroExtendWord>(*t2, *a2, 0);
+        asm.emit_b::<VirtualAssertEQ>(*t2, *a2, 0); // Assert quotient was already 32-bit
 
-        // Verify no 32-bit overflow: high bits of (quotient × divisor) must be 0
-        asm.emit_r::<MUL>(*t0, *t2, *t4); // Lower 64 bits
-        asm.emit_r::<MULHU>(*t1, *t2, *t4); // Upper 64 bits
-        asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0); // Assert no overflow
+        // Verify no 32-bit overflow: result must fit in 32 bits
+        asm.emit_r::<MUL>(*t0, *t2, *t4); // Full 64-bit multiplication
+        asm.emit_i::<VirtualZeroExtendWord>(*t1, *t0, 0); // Mask to 32 bits
+        asm.emit_b::<VirtualAssertEQ>(*t1, *t0, 0); // Assert multiplication result fits in 32 bits
 
         // Verify division property: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t0, *t0, *a3);
@@ -137,6 +134,9 @@ impl RISCVTrace for DIVUW {
 
         // Sign-extend 32-bit result to 64 bits
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a2, 0);
+
+        // Check that if we're dividing by 0, the result is u64::MAX (sign extended to 64 bits)
+        asm.emit_b::<VirtualAssertValidDiv0>(*t4, self.operands.rd, 0);
         asm.finalize()
     }
 }
