@@ -19,7 +19,6 @@ use crate::zkvm::witness::VirtualPolynomial;
 
 use tracer::instruction::Cycle;
 
-pub mod inner;
 pub mod instruction_input;
 pub mod outer;
 pub mod product;

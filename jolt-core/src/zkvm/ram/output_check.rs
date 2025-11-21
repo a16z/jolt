@@ -14,6 +14,7 @@ use crate::{
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
     },
     subprotocols::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
@@ -22,8 +23,9 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
+        config::OneHotParams,
         ram::remap_address,
-        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial},
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
@@ -85,10 +87,10 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         initial_ram_state: &[u64],
         final_ram_state: &[u64],
         program_io: &JoltDevice,
-        ram_K: usize,
+        one_hot_params: &OneHotParams,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = OutputSumcheckParams::new(ram_K, program_io, transcript);
+        let params = OutputSumcheckParams::new(one_hot_params.ram_k, program_io, transcript);
 
         let K = final_ram_state.len();
         debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
@@ -142,8 +144,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         F::zero()
     }
 
-    #[tracing::instrument(skip_all, name = "OutputSumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "OutputSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _: usize, previous_claim: F) -> UniPoly<F> {
         let Self {
             eq_r_address,
             io_mask,
@@ -171,13 +173,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             [c0, e]
         });
 
-        eq_r_address
-            .gruen_evals_deg_3(q_constant, q_quadratic, previous_claim)
-            .to_vec()
+        eq_r_address.gruen_poly_deg_3(q_constant, q_quadratic, previous_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "OutputSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _: usize) {
+    #[tracing::instrument(skip_all, name = "OutputSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _: usize) {
         // Bind address variable
         let Self {
             val_init,
@@ -188,7 +188,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             ..
         } = self;
 
-        // We bind Val_init here despite the fact that it is not used in `compute_prover_message`
+        // We bind Val_init here despite the fact that it is not used in `compute_message`
         // because we'll need Val_init(r) in `ValFinalSumcheck`
         val_init.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_final.bind_parallel(r_j, BindingOrder::LowToHigh);
@@ -365,7 +365,6 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        ram_K: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let T = trace.len();
@@ -399,12 +398,11 @@ impl<F: JoltField> ValFinalSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let ram_d = compute_d_parameter(ram_K);
         let inc = CommittedPolynomial::RamInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
             trace,
-            ram_d,
+            None,
         );
 
         // #[cfg(test)]
@@ -455,9 +453,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
-        (0..self.inc.len() / 2)
+    #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        let evals = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
                 let inc_evals = self
@@ -481,13 +479,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
                 || [F::Unreduced::zero(); VAL_FINAL_SUMCHECK_DEGREE_BOUND],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             )
-            .into_iter()
-            .map(F::from_montgomery_reduce)
-            .collect()
+            .map(F::from_montgomery_reduce);
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
-    #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _: usize) {
+    #[tracing::instrument(skip_all, name = "ValFinalSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _: usize) {
         self.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
     }

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
+use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
     bytecode::{
         self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
@@ -31,11 +32,8 @@ use crate::zkvm::{
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
-        inner::InnerSumcheckVerifier,
-        instruction_input::InstructionInputSumcheckVerifier,
-        outer::OuterRemainingSumcheckVerifier,
-        product::{ProductVirtualInnerVerifier, ProductVirtualRemainderVerifier},
-        shift::ShiftSumcheckVerifier,
+        instruction_input::InstructionInputSumcheckVerifier, outer::OuterRemainingSumcheckVerifier,
+        product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
     witness::AllCommittedPolynomials,
@@ -68,6 +66,7 @@ pub struct JoltVerifier<
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     pub spartan_key: UniformSpartanKey<F>,
+    pub one_hot_params: OneHotParams,
 }
 
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
@@ -122,6 +121,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
+        let one_hot_params =
+            OneHotParams::new_with_log_k_chunk(proof.log_k_chunk, proof.bytecode_K, proof.ram_K);
 
         Ok(Self {
             trusted_advice_commitment,
@@ -131,12 +132,14 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             transcript,
             opening_accumulator,
             spartan_key,
+            one_hot_params,
         })
     }
 
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
         let _pprof_verify = pprof_scope!("verify");
+        // Parameters are computed from trace length as needed
 
         fiat_shamir_preamble(
             &self.program_io,
@@ -145,9 +148,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        let ram_K = self.proof.ram_K;
-        let bytecode_d = self.preprocessing.bytecode.d;
-        let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(
+            self.proof.log_k_chunk,
+            self.proof.bytecode_K,
+            self.proof.ram_K,
+        );
+
+        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
 
         // Append commitments to transcript
         for commitment in &self.proof.commitments {
@@ -186,8 +193,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         .context("Stage 1 univariate skip first round")?;
 
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let spartan_outer_remaining =
-            OuterRemainingSumcheckVerifier::new(n_cycle_vars, &spartan_outer_uni_skip_state);
+        let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
+            n_cycle_vars,
+            &spartan_outer_uni_skip_state,
+            self.spartan_key,
+        );
 
         let _r_stage1 = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
@@ -209,20 +219,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 2 univariate skip first round")?;
 
-        let spartan_inner = InnerSumcheckVerifier::new(&self.spartan_key, &mut self.transcript);
         let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
             self.proof.trace_length.log_2(),
             &product_virtual_uni_skip_state,
         );
         let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
             &self.program_io.memory_layout,
-            self.proof.ram_K,
+            &self.one_hot_params,
             &self.opening_accumulator,
         );
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
-            self.proof.ram_K,
             self.proof.trace_length,
-            self.proof.twist_sumcheck_switch_index,
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -232,7 +240,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             vec![
-                &spartan_inner as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &spartan_product_virtual_remainder,
                 &ram_raf_evaluation,
                 &ram_read_write_checking,
@@ -254,15 +261,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let spartan_instruction_input =
             InstructionInputSumcheckVerifier::new(&self.opening_accumulator, &mut self.transcript);
-        let spartan_product_virtual_claim_check =
-            ProductVirtualInnerVerifier::new(&self.opening_accumulator, &mut self.transcript);
 
         let _r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
                 &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &spartan_instruction_input,
-                &spartan_product_virtual_claim_check,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -288,8 +292,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
         let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
-            self.proof.ram_K,
             self.proof.trace_length.log_2(),
+            &self.one_hot_params,
             &mut self.transcript,
         );
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
@@ -334,7 +338,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let ram_hamming_booleanity = HammingBooleanitySumcheckVerifier::new(n_cycle_vars);
         let ram_ra_virtual = RamRaSumcheckVerifier::new(
             self.proof.trace_length,
-            self.proof.ram_K,
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -362,19 +366,25 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
             &self.preprocessing.bytecode,
             n_cycle_vars,
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
         let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::new_ra_one_hot_verifiers(
-            &self.preprocessing.bytecode,
             n_cycle_vars,
+            &self.one_hot_params,
             &mut self.transcript,
         );
         let ram_hamming_weight =
-            ram::new_ra_hamming_weight_verifier(self.proof.ram_K, &mut self.transcript);
-        let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(&self.opening_accumulator);
+            ram::new_ra_hamming_weight_verifier(&self.one_hot_params, &mut self.transcript);
+        let lookups_ra_virtual =
+            LookupsRaSumcheckVerifier::new(&self.one_hot_params, &self.opening_accumulator);
         let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
-            instruction_lookups::new_ra_one_hot_verifiers(n_cycle_vars, &mut self.transcript);
+            instruction_lookups::new_ra_one_hot_verifiers(
+                n_cycle_vars,
+                &self.one_hot_params,
+                &mut self.transcript,
+            );
 
         let _r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,

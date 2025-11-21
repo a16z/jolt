@@ -1,8 +1,6 @@
+use crate::field::{ChallengeFieldOps, FieldChallengeOps};
+use crate::zkvm::instruction_lookups::LOG_K;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
-};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
@@ -20,7 +18,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<XLEN>
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        if current_suffix_len(j) != 0 {
+        let suffix_len = LOG_K - j - b.len() - 1;
+        if suffix_len != 0 {
             // Handled by suffix
             return F::one();
         }
@@ -57,12 +56,13 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<XLEN>
         r_x: C,
         r_y: C,
         j: usize,
+        suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        if current_suffix_len(j) != 0 {
+        if suffix_len != 0 {
             return Some(F::one()).into();
         }
 

@@ -114,6 +114,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                         r[r.len() - 2],
                         r[r.len() - 1],
                         j,
+                        suffix_len,
                     );
                 }
 

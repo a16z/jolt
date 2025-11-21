@@ -83,6 +83,114 @@ impl<F: JoltField> FMAdd<F, u64> for Acc5U<F> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Acc5S<F: JoltField> {
+    pub pos: <F as JoltField>::Unreduced<5>,
+    pub neg: <F as JoltField>::Unreduced<5>,
+}
+
+impl<F: JoltField> Default for Acc5S<F> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: JoltField> Acc5S<F> {}
+
+impl<F: JoltField> Zero for Acc5S<F> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            pos: <F as JoltField>::Unreduced::<5>::from([0u64; 5]),
+            neg: <F as JoltField>::Unreduced::<5>::from([0u64; 5]),
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.pos == <F as JoltField>::Unreduced::<5>::from([0u64; 5])
+            && self.neg == <F as JoltField>::Unreduced::<5>::from([0u64; 5])
+    }
+}
+
+impl<F: JoltField> Add for Acc5S<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.pos += rhs.pos;
+        out.neg += rhs.neg;
+        out
+    }
+}
+
+impl<F: JoltField> FMAdd<F, bool> for Acc5S<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &bool) {
+        if *other {
+            self.pos += *field.as_unreduced_ref();
+        }
+    }
+}
+
+impl<F: JoltField> FMAdd<F, u8> for Acc5S<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &u8) {
+        let v = *other as u64;
+        if v == 0 {
+            return;
+        }
+        self.pos += (*field).mul_u64_unreduced(v);
+    }
+}
+
+impl<F: JoltField> FMAdd<F, u64> for Acc5S<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &u64) {
+        if *other == 0 {
+            return;
+        }
+        self.pos += (*field).mul_u64_unreduced(*other);
+    }
+}
+
+impl<F: JoltField> FMAdd<F, i64> for Acc5S<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &i64) {
+        let v = *other;
+        if v == 0 {
+            return;
+        }
+        let abs: u64 = v.unsigned_abs();
+        let term = (*field).mul_u64_unreduced(abs);
+        if v > 0 {
+            self.pos += term;
+        } else {
+            self.neg += term;
+        }
+    }
+}
+
+impl<F: JoltField> BarrettReduce<F> for Acc5S<F> {
+    #[inline(always)]
+    fn barrett_reduce(&self) -> F {
+        let result = if self.pos >= self.neg {
+            F::from_barrett_reduce::<5>(self.pos - self.neg)
+        } else {
+            -F::from_barrett_reduce::<5>(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_barrett_reduce(self.pos);
+            let neg = F::from_barrett_reduce(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc6U<F: JoltField> {
     pub word: <F as JoltField>::Unreduced<6>,
 }

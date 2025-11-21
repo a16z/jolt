@@ -16,6 +16,7 @@ use crate::{
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
     },
     subprotocols::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
@@ -38,13 +39,13 @@ pub struct BooleanitySumcheckProver<F: JoltField> {
     /// G as in the Twist and Shout paper
     G: Vec<Vec<F>>,
     /// H as in the Twist and Shout paper
-    H: Vec<RaPolynomial<u8, F>>,
+    H: Vec<RaPolynomial<u16, F>>,
     /// F: Expanding table
     F: ExpandingTable<F>,
     /// eq_r_r
     eq_r_r: F,
     /// Indices for H polynomials
-    H_indices: Vec<Vec<Option<u8>>>,
+    H_indices: Vec<Vec<Option<u16>>>,
     #[allocative(skip)]
     params: BooleanitySumcheckParams<F>,
 }
@@ -53,7 +54,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
     pub fn gen(
         params: BooleanitySumcheckParams<F>,
         G: Vec<Vec<F>>,
-        H_indices: Vec<Vec<Option<u8>>>,
+        H_indices: Vec<Vec<Option<u16>>>,
     ) -> Self {
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         let D_poly = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
@@ -74,7 +75,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         }
     }
 
-    fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_phase1_message(&self, round: usize, previous_claim: F) -> UniPoly<F> {
         let m = round + 1;
         let B = &self.B;
 
@@ -130,37 +131,46 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             });
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
-        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
-            .to_vec()
+        B.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
     }
 
-    fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let D_poly = &self.D;
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
         let quadratic_coeffs_f: [F; DEGREE_BOUND - 1] = D_poly
             .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
-                zip(&self.H, &self.params.gammas)
-                    .map(|(h, gamma)| {
-                        let h_0 = h.get_bound_coeff(2 * j_prime);
-                        let h_1 = h.get_bound_coeff(2 * j_prime + 1);
-                        let b = h_1 - h_0;
-                        [(h_0.square() - h_0) * *gamma, b.square() * *gamma]
-                    })
-                    .fold([F::zero(); 2], |running, new| {
-                        [running[0] + new[0], running[1] + new[1]]
-                    })
+                // Accumulate in unreduced form to minimize per-term reductions
+                let mut acc_c = F::Unreduced::<9>::zero();
+                let mut acc_e = F::Unreduced::<9>::zero();
+                for (h, gamma) in zip(&self.H, &self.params.gammas) {
+                    let h_0 = h.get_bound_coeff(2 * j_prime);
+                    let h_1 = h.get_bound_coeff(2 * j_prime + 1);
+                    let b = h_1 - h_0;
+
+                    // Compute gamma * h0, then a single unreduced multiply by (h0 - 1)
+                    let g_h0 = *gamma * h_0;
+                    let h0_minus_one = h_0 - F::one();
+                    let c_unr = g_h0.mul_unreduced::<9>(h0_minus_one);
+                    acc_c += c_unr;
+
+                    // Compute gamma * b, then a single unreduced multiply by b
+                    let g_b = *gamma * b;
+                    let e_unr = g_b.mul_unreduced::<9>(b);
+                    acc_e += e_unr;
+                }
+                [
+                    F::from_montgomery_reduce::<9>(acc_c),
+                    F::from_montgomery_reduce::<9>(acc_e),
+                ]
             });
 
         // previous_claim is s(0)+s(1) of the scaled polynomial; divide out eq_r_r to get inner claim
         let adjusted_claim = previous_claim * self.eq_r_r.inverse().unwrap();
-        let gruen_evals =
-            D_poly.gruen_evals_deg_3(quadratic_coeffs_f[0], quadratic_coeffs_f[1], adjusted_claim);
-        vec![
-            self.eq_r_r * gruen_evals[0],
-            self.eq_r_r * gruen_evals[1],
-            self.eq_r_r * gruen_evals[2],
-        ]
+        let gruen_poly =
+            D_poly.gruen_poly_deg_3(quadratic_coeffs_f[0], quadratic_coeffs_f[1], adjusted_claim);
+
+        gruen_poly * self.eq_r_r
     }
 }
 
@@ -177,8 +187,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         F::zero()
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message")]
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_k_chunk {
             // Phase 1: First log(K_chunk) rounds
             self.compute_phase1_message(round, previous_claim)
@@ -188,8 +198,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.params.log_k_chunk {
             // Phase 1: Bind B and update F
             self.B.bind(r_j);
