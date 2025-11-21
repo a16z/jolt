@@ -1,21 +1,21 @@
+use common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 use std::iter::zip;
 use std::sync::Arc;
+use tracer::instruction::Cycle;
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::zkvm::dag::state_manager::StateManager;
+use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::remap_address;
-use crate::zkvm::witness::{
-    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
-};
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::{
     field::JoltField,
     poly::{
@@ -46,7 +46,7 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct RaSumcheckProver<F: JoltField> {
     /// `ra` polys to be constructed based addresses
-    ra_i_polys: Vec<RaPolynomial<u8, F>>,
+    ra_i_polys: Vec<RaPolynomial<u16, F>>,
     /// eq poly
     eq_poly: MultilinearPolynomial<F>,
     #[allocative(skip)]
@@ -55,19 +55,15 @@ pub struct RaSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> RaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::gen")]
-    pub fn gen<PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, PCS>,
+    pub fn gen(
+        trace: &[Cycle],
+        memory_layout: &MemoryLayout,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-
-        let params = RaSumcheckParams::new(
-            trace.len(),
-            state_manager.ram_K,
-            opening_accumulator,
-            transcript,
-        );
+        let params =
+            RaSumcheckParams::new(trace.len(), one_hot_params, opening_accumulator, transcript);
 
         // Precompute EQ tables for each chunk
         let eq_tables: Vec<Vec<F>> = params
@@ -85,26 +81,15 @@ impl<F: JoltField> RaSumcheckProver<F> {
             DensePolynomial::linear_combination(&eq_polys.each_ref(), &params.gamma_powers).Z,
         );
 
-        let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..params.d)
+        let ra_i_polys: Vec<RaPolynomial<u16, F>> = (0..params.d)
             .into_par_iter()
             .zip(eq_tables.into_par_iter())
             .map(|(i, eq_table)| {
-                let ra_i_indices: Vec<Option<u8>> = trace
+                let ra_i_indices: Vec<Option<u16>> = trace
                     .par_iter()
                     .map(|cycle| {
-                        remap_address(
-                            cycle.ram_access().address() as u64,
-                            &preprocessing.memory_layout,
-                        )
-                        .map(|address| {
-                            // For each address, add eq_r_cycle[j] to each corresponding chunk
-                            // This maintains the property that sum of all ra values for an address equals 1
-                            let address_i = (address
-                                >> (DTH_ROOT_OF_K.log_2() * (params.d - 1 - i)))
-                                % DTH_ROOT_OF_K as u64;
-
-                            address_i as u8
-                        })
+                        remap_address(cycle.ram_access().address() as u64, memory_layout)
+                            .map(|address| one_hot_params.ram_address_chunk(address, i))
                     })
                     .collect();
                 RaPolynomial::new(Arc::new(ra_i_indices), eq_table)
@@ -128,8 +113,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
         self.params.num_rounds()
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaVirtualization::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _: usize) {
+    #[tracing::instrument(skip_all, name = "RamRaVirtualization::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _: usize) {
         for ra_i in self.ra_i_polys.iter_mut() {
             ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
@@ -140,15 +125,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
         self.params.input_claim(accumulator)
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let degree = self.params.degree();
         let ra_i_polys = &self.ra_i_polys;
         let eq_poly = &self.eq_poly;
 
         // We need to compute evaluations at 0, 2, 3, ..., degree
         // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
-        (0..ra_i_polys[0].len() / 2)
+        let evals = (0..ra_i_polys[0].len() / 2)
             .into_par_iter()
             .map(|i| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
@@ -182,7 +167,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
             )
             .into_iter()
             .map(F::from_barrett_reduce)
-            .collect()
+            .collect::<Vec<_>>();
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
     fn cache_openings(
@@ -218,11 +205,12 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> RaSumcheckVerifier<F> {
     pub fn new(
         trace_len: usize,
-        ram_K: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaSumcheckParams::new(trace_len, ram_K, opening_accumulator, transcript);
+        let params =
+            RaSumcheckParams::new(trace_len, one_hot_params, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -297,14 +285,11 @@ struct RaSumcheckParams<F: JoltField> {
 impl<F: JoltField> RaSumcheckParams<F> {
     fn new(
         trace_len: usize,
-        ram_K: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        // Calculate d dynamically such that 2^8 = K^(1/D)
-        let d = compute_d_parameter(ram_K);
-        let log_K = ram_K.log_2();
-
+        let log_K = one_hot_params.ram_k.log_2();
         // These two sumchecks have the same binding order and number of rounds,
         // and they're run in parallel, so the openings are the same.
         assert_eq!(
@@ -336,25 +321,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
-            r_address.to_vec()
-        } else {
-            // Pad with zeros
-            [
-                &vec![
-                    F::Challenge::from(0_u128);
-                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
-                ],
-                r_address,
-            ]
-            .concat()
-        };
-        // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(DTH_ROOT_OF_K.log_2())
-            .map(|chunk| chunk.to_vec())
-            .collect();
-        debug_assert_eq!(r_address_chunks.len(), d);
+        let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(r_address);
 
         let r_cycle = [
             r_cycle_val.to_vec(),
@@ -367,7 +334,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         Self {
             gamma_powers,
             T: trace_len,
-            d,
+            d: one_hot_params.ram_d,
             r_cycle,
             r_address_chunks,
         }

@@ -77,6 +77,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPref
         _: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,

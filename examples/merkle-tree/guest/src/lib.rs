@@ -12,7 +12,7 @@ use core::ops::Deref;
 ///   h0  h1 h2  h3
 ///   |   |  |   |
 ///  l1  l2  l3  l4
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(memory_size = 32768, max_trace_length = 65536)]
 fn merkle_tree(
     leaf1: &[u8],
     leaf2: jolt::TrustedAdvice<[u8; 32]>,

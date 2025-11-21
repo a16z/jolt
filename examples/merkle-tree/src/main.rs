@@ -32,7 +32,7 @@ pub fn main() {
         TrustedAdvice::new(leaf2),
         TrustedAdvice::new(leaf3),
         UntrustedAdvice::new(leaf4),
-        trusted_advice_commitment.clone(),
+        trusted_advice_commitment,
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
@@ -41,7 +41,7 @@ pub fn main() {
         leaf1,
         output,
         program_io.panic,
-        trusted_advice_commitment.clone(),
+        trusted_advice_commitment,
         proof,
     );
 

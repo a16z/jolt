@@ -1,6 +1,6 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(memory_size = 32768, max_trace_length = 1048576)]
 fn collatz_convergence_range(start: u128, end: u128) -> u128 {
     let mut max_num_steps = 0;
     for n in start..end {
@@ -12,7 +12,7 @@ fn collatz_convergence_range(start: u128, end: u128) -> u128 {
     max_num_steps
 }
 
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(memory_size = 32768, max_trace_length = 1048576)]
 fn collatz_convergence(n: u128) -> u128 {
     let mut n = n;
     let mut num_steps = 0;

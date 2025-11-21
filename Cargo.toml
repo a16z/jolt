@@ -73,6 +73,8 @@ members = [
     "examples/merkle-tree/guest",
     "examples/hash-bench",
     "examples/hash-bench/guest",
+    "zklean-extractor",
+    "z3-verifier",
 ]
 
 [features]
@@ -88,6 +90,7 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
+mimalloc.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 syn.workspace = true
@@ -119,6 +122,7 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
@@ -131,9 +135,9 @@ ignored = ["jolt-sdk"]
 # Cryptography and Math
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-ec = { version = "0.5.0", default-features = false }
-ark-ff = { version = "0.5.0", default-features = false }
-ark-serialize = { version = "0.5.0", default-features = false, features = [
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
     "derive",
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
@@ -142,14 +146,16 @@ sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
+dory = { package = "dory-pcs", version = "0.1.0", features = ["backends", "cache", "disk-persistence"] }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
 thiserror = "1.0.58"
-derive_more = { version = "2.0.1", features = ["from"], default-features = false }
+derive_more = { version = "2.0.1", features = [
+    "from",
+], default-features = false }
 strum = { version = "0.26.3", default-features = false }
 strum_macros = "0.26.4"
 itertools = "0.10.0"
@@ -184,6 +190,7 @@ sysinfo = "0.30.8"
 target-lexicon = { version = "0.12.14" }
 dirs = { version = "5.0.1" }
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
+mimalloc = "0.1"
 
 # Async and Networking
 tokio = { version = "1.38.0" }

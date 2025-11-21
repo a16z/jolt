@@ -1,0 +1,27 @@
+[package]
+name = "z3-verifier"
+edition = "2021"
+
+[build-dependencies]
+build-fs-tree = "0.7.1"
+
+[dependencies]
+ark-std.workspace = true
+ark-bn254.workspace = true
+ark-serialize.workspace = true
+ark-ff.workspace = true
+clap.workspace = true
+rand_core = { version = "0.6.4", default-features = false }
+regex = "1.11.1"
+strum.workspace = true
+build-fs-tree = "0.7.1"
+allocative.workspace = true
+paste.workspace = true
+
+jolt-core = { path = "../jolt-core" }
+common = { path = "../common" }
+tracer = { path = "../tracer" }
+z3 = "0.19.2"
+
+[dev-dependencies]
+proptest = "1.6.0"

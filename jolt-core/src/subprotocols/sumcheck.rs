@@ -89,19 +89,16 @@ impl BatchedSumcheck {
                         UniPoly::from_coeff(vec![scaled_input_claim])
                     } else {
                         let offset = max_num_rounds - sumcheck.num_rounds();
-                        let mut univariate_poly_evals =
-                            sumcheck.compute_prover_message(round - offset, *previous_claim);
-                        univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
-                        UniPoly::from_evals(&univariate_poly_evals)
+                        sumcheck.compute_message(round - offset, *previous_claim)
                     }
                 })
                 .collect();
 
             // Linear combination of individual univariate polynomials
             let batched_univariate_poly: UniPoly<F> =
-                univariate_polys.iter().zip(batching_coeffs.iter()).fold(
+                univariate_polys.iter().zip(&batching_coeffs).fold(
                     UniPoly::from_coeff(vec![]),
-                    |mut batched_poly, (poly, coeff)| {
+                    |mut batched_poly, (poly, &coeff)| {
                         batched_poly += &(poly * coeff);
                         batched_poly
                     },
@@ -139,7 +136,7 @@ impl BatchedSumcheck {
                 // before binding its variables.
                 if remaining_rounds <= sumcheck.num_rounds() {
                     let offset = max_num_rounds - sumcheck.num_rounds();
-                    sumcheck.bind(r_j, round - offset);
+                    sumcheck.ingest_challenge(r_j, round - offset);
                 }
             }
 

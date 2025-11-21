@@ -1,17 +1,15 @@
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
-use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACJoltProof, Serializable};
+use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACProof, Serializable};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{error, info};
 
 fn get_guest_src_dir() -> PathBuf {
-    let current_file = file!();
-    let current_dir = std::path::Path::new(current_file).parent().unwrap();
-
-    let guest_src_dir = current_dir.join("..").join("guest").join("src");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let guest_src_dir = manifest_dir.join("guest").join("src");
 
     guest_src_dir.canonicalize().unwrap_or(guest_src_dir)
 }
@@ -99,10 +97,14 @@ impl GuestProgram {
         }
     }
 
-    fn inputs(&self) -> Vec<u32> {
+    fn inputs(&self) -> Vec<Vec<u8>> {
         match self {
-            GuestProgram::Fibonacci => vec![2],
-            GuestProgram::Muldiv => vec![10, 5],
+            GuestProgram::Fibonacci => {
+                vec![postcard::to_stdvec(&2u32).unwrap()]
+            }
+            GuestProgram::Muldiv => {
+                vec![postcard::to_stdvec(&(10u32, 5u32, 2u32)).unwrap()]
+            }
         }
     }
 
@@ -115,18 +117,18 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 33554432,
-                        stack_size: 1048576,
+                        memory_size: 134217728,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 200000,
+                        max_input_size: 2000000,
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 200000,
-                        stack_size: 131072,
+                        memory_size: 33554432,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 }
@@ -138,18 +140,18 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 8192,
-                        stack_size: 65536,
+                        memory_size: 134217728,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 200000,
+                        max_input_size: 2000000,
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 200000,
-                        stack_size: 131072,
+                        memory_size: 33554432,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 }
@@ -187,6 +189,8 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
         #[jolt::provable(
             max_input_size = {},
             max_output_size = {},
+            max_untrusted_advice_size = {},
+            max_trusted_advice_size = {},
             memory_size = {},
             stack_size = {},
             max_trace_length = {}
@@ -196,6 +200,8 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
 }}"#,
         memory_config.max_input_size,
         memory_config.max_output_size,
+        memory_config.max_untrusted_advice_size,
+        memory_config.max_trusted_advice_size,
         memory_config.memory_size,
         memory_config.stack_size,
         max_trace_length
@@ -237,7 +243,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        match RV64IMACJoltProof::deserialize_compressed(&mut cursor) {
+        match RV64IMACProof::deserialize_compressed(&mut cursor) {
             Ok(_) => info!("✓ Proof {i} deserialized"),
             Err(e) => error!("✗ Failed to deserialize proof {i}: {e:?}"),
         }
@@ -265,14 +271,10 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     info!("Starting collect_guest_proofs for {}", guest.name());
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
+    // This should match the example being run, it can cause layout issues if the guest's macro and our assumption here differ
     let memory_config = MemoryConfig {
-        max_input_size: 4096u64,
-        max_output_size: 4096u64,
-        max_untrusted_advice_size: 0u64,
-        max_trusted_advice_size: 0u64,
-        stack_size: 4096u64,
-        memory_size: 10240u64,
-        program_size: None,
+        memory_size: 32768u64,
+        ..Default::default()
     };
 
     info!("Creating program...");
@@ -311,16 +313,22 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
 
     info!("Starting {} recursion with {}", guest.name(), n);
 
-    for (i, &input) in inputs.iter().enumerate() {
-        info!("Processing input {i}: {input}");
+    for (i, input_bytes) in inputs.into_iter().enumerate() {
+        info!("Processing input {i}: {:#?}", &input_bytes);
 
         let now = Instant::now();
 
-        let input_bytes = postcard::to_stdvec(&input).unwrap();
         let mut output_bytes = vec![0; 4096];
 
+        // Running tracing allows things like JOLT_BACKTRACE=1 to work properly
+        info!("  Tracing...");
+        guest_prog.memory_config.program_size =
+            Some(guest_verifier_preprocessing.memory_layout.program_size);
+        let (_, _, _, device_io) = guest_prog.trace(&input_bytes, &[], &[]);
+        assert!(!device_io.panic, "Guest program panicked during tracing");
+
         info!("  Proving...");
-        let (proof, io_device, _debug) = jolt_sdk::guest::prover::prove(
+        let (proof, io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
             &guest_prog,
             &input_bytes,
             &[],
@@ -488,7 +496,7 @@ fn run_recursion_proof(
     ];
     match run_config {
         RunConfig::Prove => {
-            let (proof, _io_device, _debug) = jolt_sdk::guest::prover::prove(
+            let (proof, _io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
                 &recursion,
                 &input_bytes,
                 &[],
@@ -577,17 +585,12 @@ fn verify_proofs(
         input_bytes.append(&mut postcard::to_stdvec(&all_groups_data.as_slice()).unwrap());
 
         info!("Serialized input size: {} bytes", input_bytes.len());
-
-        let actual_input_size = (input_bytes.len() + 7) & !7; // Align to 8
         let memory_config = guest.get_memory_config(use_embed);
 
         assert!(
             input_bytes.len() < memory_config.max_input_size as usize,
             "Input size is too large"
         );
-        assert!(memory_config.memory_size >= memory_config.max_input_size);
-
-        info!("Using max_input_size: {actual_input_size} bytes");
 
         run_recursion_proof(
             guest,

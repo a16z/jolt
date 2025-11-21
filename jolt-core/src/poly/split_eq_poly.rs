@@ -2,11 +2,17 @@
 //! https://eprint.iacr.org/2024/1210.pdf
 
 use allocative::Allocative;
+use ark_ff::Zero;
 use rayon::prelude::*;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
-use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math};
+use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::{
+    field::JoltField,
+    poly::{eq_poly::EqPolynomial, unipoly::UniPoly},
+    utils::math::Math,
+};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -85,6 +91,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
     pub fn new(w: &[F::Challenge], binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(w, binding_order, None)
     }
@@ -160,18 +167,40 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    /// Compute the cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
-    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
-    /// q(X) = c + dX + eX^2, given the following:
+    /// Returns an interleaved vector merging the current bit `w` with `E_in_current()`.
+    ///
+    /// For each entry `low = E_in_current()[x_in]`, produces the pair:
+    ///   [ low * (1 - w), low * w ]
+    ///
+    /// The returned vector has length `2 * E_in_current_len()`, laid out as
+    ///   [low0_0, low0_1, low1_0, low1_1, ...] matching index pairs (j, j+1).
+    pub fn merged_in_with_current_w(&self) -> Vec<F> {
+        let e_in = self.E_in_current();
+        let w = self.get_current_w();
+        let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
+        merged
+            .par_chunks_exact_mut(2)
+            .zip(e_in.par_iter())
+            .for_each(|(chunk, &low)| {
+                let eval1 = low * w;
+                let eval0 = low - eval1;
+                chunk[0] = eval0;
+                chunk[1] = eval1;
+            });
+        merged
+    }
+
+    /// Compute the cubic polynomial s(X) = l(X) * q(X), where l(X) is the
+    /// current (linear) eq polynomial and q(X) = c + dX + eX^2, given the following:
     /// - c, the constant term of q
     /// - e, the quadratic term of q
     /// - the previous round claim, s(0) + s(1)
-    pub fn gruen_evals_deg_3(
+    pub fn gruen_poly_deg_3(
         &self,
         q_constant: F,
         q_quadratic_coeff: F,
         s_0_plus_s_1: F,
-    ) -> [F; 3] {
+    ) -> UniPoly<F> {
         // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is quadratic, at the points {0, 2, 3}.
         //
@@ -207,19 +236,19 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let quadratic_eval_3 =
             quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
 
-        [
+        UniPoly::from_evals(&[
             cubic_eval_0,
+            cubic_eval_1,
             eq_eval_2 * quadratic_eval_2,
             eq_eval_3 * quadratic_eval_3,
-        ]
+        ])
     }
 
-    /// Compute the quadratic sumcheck evaluations (i.e., the evaluations at {0, 2}) of a
-    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) Dao-Thaler eq polynomial and
-    /// q(X) = c + dx
+    /// Compute the quadratic polynomial s(X) = l(X) * q(X), where l(X) is the
+    /// current (linear) Dao-Thaler eq polynomial and q(X) = c + dx
     /// - c, the constant term of q
     /// - the previous round claim, s(0) + s(1)
-    pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
+    pub fn gruen_poly_deg_2(&self, q_0: F, previous_claim: F) -> UniPoly<F> {
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is linear, at the points {0, 2}.
         //
@@ -253,7 +282,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // q(2) = c + 2d = 2*q(1) - q(0)
         let linear_eval_2 = linear_eval_1 + linear_eval_1 - linear_eval_0;
 
-        [quadratic_eval_0, eq_eval_2 * linear_eval_2]
+        UniPoly::from_evals(&[
+            quadratic_eval_0,
+            quadratic_eval_1,
+            eq_eval_2 * linear_eval_2,
+        ])
     }
 
     pub fn merge(&self) -> DensePolynomial<F> {
@@ -289,59 +322,100 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    /// Emulates the behavior of EqPolynomial::evals(&self.w).par_iter().enumerate()
-    /// Only works if `self.binding_order` is `BindingOrder::LowToHigh`.
-    /// For the high-to-low version, see `par_iter_high_to_low`.
-    pub fn par_iter_low_to_high(&self) -> impl ParallelIterator<Item = (usize, F)> + use<'_, F> {
-        assert_eq!(self.binding_order, BindingOrder::LowToHigh);
-        assert_eq!(
-            self.current_index,
-            self.w.len(),
-            "par_iter_low_to_high only supports unbound polynomials"
-        );
-
-        let E_in = self.E_in_current();
-        let x_in_bits = E_in.len().log_2();
-        let E_out = self.E_out_current();
-        let w_current = self.get_current_w();
-        E_out.par_iter().enumerate().flat_map(move |(x_out, high)| {
-            E_in.par_iter().enumerate().flat_map(move |(x_in, low)| {
-                let high_low = *high * low;
-                let eval_1 = high_low * w_current;
-                let eval_0 = high_low - eval_1;
-                let index = (x_out << (x_in_bits + 1)) + (x_in << 1);
-                [(index, eval_0), (index + 1, eval_1)]
-            })
-        })
+    #[inline(always)]
+    pub fn group_index(&self, x_out: usize, x_in: usize) -> usize {
+        let num_x_in_bits = self.E_in_current_len().log_2();
+        (x_out << num_x_in_bits) | x_in
     }
 
-    /// Emulates the behavior of EqPolynomial::evals(&self.w).par_iter().enumerate()
-    /// Only works if `self.binding_order` is `BindingOrder::HighToLow`.
-    /// For the low-to-high version, see `par_iter_low_to_high`.
-    pub fn par_iter_high_to_low(&self) -> impl ParallelIterator<Item = (usize, F)> + use<'_, F> {
-        assert_eq!(self.binding_order, BindingOrder::HighToLow);
-        assert_eq!(
-            self.current_index, 0,
-            "par_iter_high_to_low only supports unbound polynomials"
-        );
+    /// Parallel fold over current split-eq weights:
+    ///   Σ_{x_out} E_out[x_out] · fold_{x_in}(E_in[x_in] · custom(x_out, x_in))
+    ///
+    /// The caller supplies how to:
+    /// - create an inner accumulator,
+    /// - step the inner accumulator with (g, x_in, e_in),
+    /// - turn the finished inner accumulator into an outer accumulator item given (x_out, e_out),
+    /// - and merge outer accumulator items across x_out in parallel.
+    ///
+    /// When E_in is fully bound (len == 0 or 1), we invoke `inner_step` exactly once with e_in = 1 at x_in = 0.
+    ///
+    /// Parallelizes over `x_out` (outer loop); inner loop over `x_in` is sequential.
+    #[inline]
+    pub fn par_fold_out_in<
+        OuterAcc: Send,
+        InnerAcc: Send,
+        MakeInner: Fn() -> InnerAcc + Sync + Send,
+        InnerStep: Fn(&mut InnerAcc, usize, usize, F) + Sync + Send,
+        OuterStep: Fn(usize, F, InnerAcc) -> OuterAcc + Sync + Send,
+        Merge: Fn(OuterAcc, OuterAcc) -> OuterAcc + Sync + Send,
+    >(
+        &self,
+        make_inner: MakeInner,
+        inner_step: InnerStep,
+        outer_step: OuterStep,
+        merge: Merge,
+    ) -> OuterAcc {
+        let e_out = self.E_out_current();
+        let e_in = self.E_in_current();
+        let out_len = e_out.len();
+        let in_len = e_in.len();
 
-        let E_in = self.E_in_current();
-        let x_in_bits = E_in.len().log_2();
-        let E_out = self.E_out_current();
-        let x_out_bits = E_out.len().log_2();
-        let w_current = self.get_current_w();
-        [F::one() - w_current, w_current.into()]
+        (0..out_len)
             .into_par_iter()
-            .enumerate()
-            .flat_map(move |(msb, eq_msb)| {
-                E_in.par_iter().enumerate().flat_map(move |(x_in, high)| {
-                    E_out.par_iter().enumerate().map(move |(x_out, low)| {
-                        let index =
-                            (msb << (x_in_bits + x_out_bits)) + (x_in << x_out_bits) + x_out;
-                        (index, eq_msb * high * low)
-                    })
-                })
+            .map(|x_out| {
+                let mut inner_acc = make_inner();
+
+                if in_len <= 1 {
+                    // Fully bound inner (including zero): single logical contribution with e_in = 1
+                    let g = self.group_index(x_out, 0);
+                    inner_step(&mut inner_acc, g, 0, F::one());
+                } else {
+                    for x_in in 0..in_len {
+                        let g = self.group_index(x_out, x_in);
+                        inner_step(&mut inner_acc, g, x_in, e_in[x_in]);
+                    }
+                }
+
+                outer_step(x_out, e_out[x_out], inner_acc)
             })
+            .reduce_with(merge)
+            .expect("par_fold_out_in: empty E_out; invariant violation")
+    }
+
+    /// Common delayed reduction with Montgomery reduction pattern:
+    /// - inner accumulates with e_in.mul_unreduced over NUM_OUT outputs,
+    /// - reduce once with Montgomery reduction,
+    /// - outer scales by e_out.mul_unreduced,
+    /// - reduce at end and return [F; NUM_OUT] with Montgomery reduction.
+    #[inline]
+    pub fn par_fold_out_in_unreduced<const LIMBS: usize, const NUM_OUT: usize>(
+        &self,
+        per_g_values: &(impl Fn(usize) -> [F; NUM_OUT] + Sync + Send),
+    ) -> [F; NUM_OUT] {
+        self.par_fold_out_in(
+            || [F::Unreduced::<LIMBS>::zero(); NUM_OUT],
+            |inner, g, _x_in, e_in| {
+                let vals = per_g_values(g);
+                for k in 0..NUM_OUT {
+                    inner[k] += e_in.mul_unreduced::<LIMBS>(vals[k]);
+                }
+            },
+            |_x_out, e_out, inner| {
+                let mut outer = [F::Unreduced::<LIMBS>::zero(); NUM_OUT];
+                for k in 0..NUM_OUT {
+                    let inner_red = F::from_montgomery_reduce::<LIMBS>(inner[k]);
+                    outer[k] = e_out.mul_unreduced::<LIMBS>(inner_red);
+                }
+                outer
+            },
+            |mut a, b| {
+                for k in 0..NUM_OUT {
+                    a[k] += b[k];
+                }
+                a
+            },
+        )
+        .map(F::from_montgomery_reduce::<LIMBS>)
     }
 }
 
@@ -398,50 +472,5 @@ mod tests {
 
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
-    }
-
-    #[test]
-    fn par_iter_low_to_high() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
-
-        let split_eq: GruenSplitEqPolynomial<Fr> =
-            GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
-        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
-        let indices: Vec<_> = split_eq.par_iter_low_to_high().map(|(i, _)| i).collect();
-        let coeffs: Vec<_> = split_eq
-            .par_iter_low_to_high()
-            .map(|(_, coeff)| coeff)
-            .collect();
-
-        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
-        assert_eq!(regular_eq.Z, coeffs);
-    }
-
-    #[test]
-    fn par_iter_high_to_low() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
-
-        let split_eq: GruenSplitEqPolynomial<Fr> =
-            GruenSplitEqPolynomial::new(&w, BindingOrder::HighToLow);
-        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
-
-        let indices: Vec<_> = split_eq.par_iter_high_to_low().map(|(i, _)| i).collect();
-        let coeffs: Vec<_> = split_eq
-            .par_iter_high_to_low()
-            .map(|(_, coeff)| coeff)
-            .collect();
-
-        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
-        assert_eq!(regular_eq.Z, coeffs);
     }
 }

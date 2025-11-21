@@ -13,6 +13,9 @@ use sysinfo::System;
 use build_wasm::{build_wasm, modify_cargo_toml};
 use jolt_core::host::toolchain;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(version = version(), about, long_about = None)]
 struct Cli {
@@ -249,7 +252,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
 
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(memory_size = 32768, max_trace_length = 65536)]
 fn fib(n: u32) -> u128 {
     let mut a: u128 = 0;
     let mut b: u128 = 1;

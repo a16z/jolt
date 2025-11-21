@@ -5,10 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
     field::JoltField,
-    poly::{
-        commitment::commitment_scheme::StreamingCommitmentScheme,
-        multilinear_polynomial::MultilinearPolynomial,
-    },
+    poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::{AppendToTranscript, Transcript},
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
@@ -89,7 +86,7 @@ where
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
-        _: Self::OpeningProofHint,
+        _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         MockProof {
@@ -113,38 +110,27 @@ where
         b"mock_commit"
     }
 }
-impl<F> StreamingCommitmentScheme for MockCommitScheme<F>
+
+impl<F> super::commitment_scheme::StreamingCommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
 {
     type ChunkState = ();
-    type CachedData = ();
 
-    fn prepare_cached_data(_setup: &Self::ProverSetup) -> Self::CachedData {}
-
-    fn process_chunk<T: SmallScalar>(
-        _cached_data: &Self::CachedData,
-        _chunk: &[T],
-    ) -> Self::ChunkState {
-    }
-
-    fn process_chunk_field(
-        _cached_data: &Self::CachedData,
-        _chunk: &[Self::Field],
-    ) -> Self::ChunkState {
+    fn process_chunk<T: SmallScalar>(_setup: &Self::ProverSetup, _chunk: &[T]) -> Self::ChunkState {
     }
 
     fn process_chunk_onehot(
-        _cached_data: &Self::CachedData,
+        _setup: &Self::ProverSetup,
         _onehot_k: usize,
         _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
     }
 
-    fn finalize(
-        _cached_data: &Self::CachedData,
+    fn aggregate_chunks(
+        _setup: &Self::ProverSetup,
         _onehot_k: Option<usize>,
-        _chunks: &[Self::ChunkState],
+        _tier1_commitments: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         (MockCommitment::default(), ())
     }

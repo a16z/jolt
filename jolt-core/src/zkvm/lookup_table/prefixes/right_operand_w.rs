@@ -1,8 +1,6 @@
+use crate::field::{ChallengeFieldOps, FieldChallengeOps};
+use crate::zkvm::instruction_lookups::LOG_K;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
-};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
@@ -20,6 +18,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightOperandWPref
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        let suffix_len = LOG_K - j - b.len() - 1;
         let mut result = checkpoints[Prefixes::RightOperandW].unwrap_or(F::zero());
 
         if j % 2 == 1 && j > XLEN {
@@ -28,7 +27,6 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightOperandWPref
             result += F::from_u128((c as u128) << shift);
         }
 
-        let suffix_len = current_suffix_len(j);
         if suffix_len < XLEN {
             let (_x, y) = b.uninterleave();
             result += F::from_u128(u128::from(y) << (suffix_len / 2));
@@ -42,6 +40,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightOperandWPref
         _r_x: C,
         r_y: C,
         j: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
