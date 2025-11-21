@@ -37,6 +37,7 @@ use crate::{
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams, val_final::ValFinalSumcheckProver,
         },
+        spartan::{instruction_input::InstructionInputParams, shift::ShiftSumcheckParams},
         verifier::JoltVerifierPreprocessing,
     },
 };
@@ -614,16 +615,25 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
 
-        let spartan_shift = ShiftSumcheckProver::gen(
-            Arc::clone(&self.trace),
-            &self.preprocessing.bytecode,
+        // Initialization params
+        let spartan_shift_params = ShiftSumcheckParams::new(
+            self.trace.len().log_2(),
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let spartan_instruction_input = InstructionInputSumcheckProver::gen(
+        let spartan_instruction_input_params =
+            InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript);
+
+        // Initialize
+        let spartan_shift = ShiftSumcheckProver::initialize(
+            spartan_shift_params,
+            Arc::clone(&self.trace),
+            &self.preprocessing.bytecode,
+        );
+        let spartan_instruction_input = InstructionInputSumcheckProver::initialize(
+            spartan_instruction_input_params,
             &self.trace,
             &self.opening_accumulator,
-            &mut self.transcript,
         );
 
         #[cfg(feature = "allocative")]
