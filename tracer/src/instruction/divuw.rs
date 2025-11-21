@@ -91,7 +91,7 @@ impl RISCVTrace for DIVUW {
     /// 4. Verify: dividend = quotient × divisor + remainder
     /// 5. Verify: remainder < divisor
     ///
-    /// Special case: Division by zero returns u32::MAX (0xFFFFFFFF), checked by VirtualAssertValidDiv0
+    /// Special case: Division by zero returns sign extended u32::MAX (0xFFFFFFFF), checked by VirtualAssertValidDiv0
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -120,8 +120,6 @@ impl RISCVTrace for DIVUW {
         asm.emit_i::<VirtualZeroExtendWord>(*t2, *a2, 0);
         asm.emit_b::<VirtualAssertEQ>(*t2, *a2, 0); // Assert quotient was already 32-bit
 
-        asm.emit_b::<VirtualAssertValidDiv0>(*t4, *a2, 0); // Handle division by zero case
-
         // Verify no 32-bit overflow: result must fit in 32 bits
         asm.emit_r::<MUL>(*t0, *t2, *t4); // Full 64-bit multiplication
         asm.emit_i::<VirtualZeroExtendWord>(*t1, *t0, 0); // Mask to 32 bits
@@ -136,6 +134,9 @@ impl RISCVTrace for DIVUW {
 
         // Sign-extend 32-bit result to 64 bits
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a2, 0);
+
+        // Check that if we're dividing by 0, the result is u64::MAX (sign extended to 64 bits)
+        asm.emit_b::<VirtualAssertValidDiv0>(*t4, self.operands.rd, 0);
         asm.finalize()
     }
 }
