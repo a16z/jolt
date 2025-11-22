@@ -488,8 +488,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             | CommittedPolynomial::BytecodeRa(_)
             | CommittedPolynomial::RamRa(_) => {
                 let log_K = r.len() - self.log_T;
-                // reverse log_T rounds since they are bounded LowToHigh
                 r[log_K..].reverse();
+                r[..log_K].reverse();
             }
         }
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);
@@ -828,7 +828,7 @@ where
         let (sumcheck_proof, mut r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(transcript);
         let log_K = r_sumcheck.len() - self.log_T;
-        // reverse log_T rounds since they are bounded LowToHigh
+        r_sumcheck[..log_K].reverse();
         r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&sumcheck_claims);
@@ -1211,6 +1211,7 @@ where
         let mut r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
         let log_K = r_sumcheck.len() - self.log_T;
+        r_sumcheck[..log_K].reverse();
         r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
