@@ -6,7 +6,7 @@ use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::prover::JoltProverPreprocessing;
-use crate::zkvm::{ProverDebugInfo};
+use crate::zkvm::ProverDebugInfo;
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
 
@@ -23,11 +23,7 @@ pub fn preprocess(
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        bytecode,
-        memory_layout,
-        memory_init,
-    );
+    let shared_preprocessing = JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init);
     JoltProverPreprocessing::new(shared_preprocessing, max_trace_length)
 }
 

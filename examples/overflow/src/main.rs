@@ -10,7 +10,8 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_overflow_stack(target_dir);
     let shared_preprocessing = guest::preprocess_shared_overflow_stack(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_overflow_stack(shared_preprocessing.clone());
+    let prover_preprocessing =
+        guest::preprocess_prover_overflow_stack(shared_preprocessing.clone());
     let prove_overflow_stack = guest::build_prover_overflow_stack(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
@@ -35,13 +36,14 @@ pub fn main() {
     // but with stack_size=8192
     let mut program = guest::compile_allocate_stack_with_increased_size(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_allocate_stack_with_increased_size(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_allocate_stack_with_increased_size(shared_preprocessing.clone());
-    let verifier_preprocessing =
-        guest::preprocess_verifier_allocate_stack_with_increased_size(
-            shared_preprocessing,
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+    let shared_preprocessing =
+        guest::preprocess_shared_allocate_stack_with_increased_size(&mut program);
+    let prover_preprocessing =
+        guest::preprocess_prover_allocate_stack_with_increased_size(shared_preprocessing.clone());
+    let verifier_preprocessing = guest::preprocess_verifier_allocate_stack_with_increased_size(
+        shared_preprocessing,
+        prover_preprocessing.generators.to_verifier_setup(),
+    );
 
     let prove_allocate_stack_with_increased_size =
         guest::build_prover_allocate_stack_with_increased_size(program, prover_preprocessing);

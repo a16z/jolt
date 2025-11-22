@@ -8,8 +8,10 @@ pub fn main() {
     let mut program = guest::compile_sha3_chain(target_dir);
     let shared_preprocessing = guest::preprocess_shared_sha3_chain(&mut program);
     let prover_preprocessing = guest::preprocess_prover_sha3_chain(shared_preprocessing.clone());
-    let verifier_preprocessing =
-        guest::preprocess_verifier_sha3_chain(shared_preprocessing, prover_preprocessing.generators.to_verifier_setup());
+    let verifier_preprocessing = guest::preprocess_verifier_sha3_chain(
+        shared_preprocessing,
+        prover_preprocessing.generators.to_verifier_setup(),
+    );
 
     let prove_sha3_chain = guest::build_prover_sha3_chain(program, prover_preprocessing);
     let verify_sha3_chain = guest::build_verifier_sha3_chain(verifier_preprocessing);

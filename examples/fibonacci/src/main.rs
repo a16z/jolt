@@ -12,9 +12,10 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_fib(&mut program);
 
-    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());  
+    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let verifier_preprocessing = guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup);
+    let verifier_preprocessing =
+        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup);
 
     if save_to_disk {
         serialize_and_print_size(

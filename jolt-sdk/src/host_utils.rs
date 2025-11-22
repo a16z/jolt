@@ -3,7 +3,7 @@ pub use jolt_core::host;
 #[cfg(feature = "host")]
 pub use jolt_core::zkvm::proof_serialization::serialize_and_print_size;
 #[cfg(feature = "host")]
-pub use jolt_core::zkvm::{RV64IMACProver, prover::JoltProverPreprocessing};
+pub use jolt_core::zkvm::{prover::JoltProverPreprocessing, RV64IMACProver};
 
 pub use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 pub use jolt_core::ark_bn254::Fr as F;
@@ -11,9 +11,8 @@ pub use jolt_core::field::JoltField;
 pub use jolt_core::guest;
 pub use jolt_core::poly::commitment::dory::DoryCommitmentScheme as PCS;
 pub use jolt_core::zkvm::{
-    proof_serialization::JoltProof, verifier::JoltVerifierPreprocessing, verifier::JoltSharedPreprocessing,
-    RV64IMACProof, RV64IMACVerifier,
-    Serializable,
+    proof_serialization::JoltProof, verifier::JoltSharedPreprocessing,
+    verifier::JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
 };
 
 // Re-exports needed by the provable macro

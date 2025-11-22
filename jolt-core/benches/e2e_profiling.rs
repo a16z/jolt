@@ -2,10 +2,7 @@ use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
 use jolt_core::zkvm::prover::JoltProverPreprocessing;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
-use jolt_core::zkvm::{
-    RV64IMACProver,
-    RV64IMACVerifier,
-};
+use jolt_core::zkvm::{RV64IMACProver, RV64IMACVerifier};
 use std::fs;
 use std::io::Write;
 use std::time::Instant;
@@ -215,10 +212,8 @@ fn prove_example(
             program_io.memory_layout.clone(),
             init_memory_state,
         );
-        let preprocessing = JoltProverPreprocessing::new(
-            shared_preprocessing.clone(),
-            padded_trace_len,
-        );
+        let preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), padded_trace_len);
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -234,8 +229,9 @@ fn prove_example(
         let (jolt_proof, _) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            shared_preprocessing, 
-            preprocessing.generators.to_verifier_setup());
+            shared_preprocessing,
+            preprocessing.generators.to_verifier_setup(),
+        );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
                 .expect("Failed to create verifier");
@@ -271,10 +267,8 @@ fn prove_example_with_trace(
         program_io.memory_layout.clone(),
         init_memory_state,
     );
-    let preprocessing = JoltProverPreprocessing::new(
-        shared_preprocessing,
-        trace.len().next_power_of_two(),
-    );
+    let preprocessing =
+        JoltProverPreprocessing::new(shared_preprocessing, trace.len().next_power_of_two());
 
     let elf_contents_opt = program.get_elf_contents();
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");

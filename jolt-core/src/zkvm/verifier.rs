@@ -5,17 +5,15 @@ use std::path::Path;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
-use crate::zkvm::Serializable;
+use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::config::OneHotParams;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use tracer::instruction::Instruction;
-use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::config::{OneHotParams, get_log_k_chunk};
 use crate::zkvm::ram::RAMPreprocessing;
+use crate::zkvm::Serializable;
 use crate::zkvm::{
     bytecode::{
-        self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier
+        self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
@@ -54,8 +52,10 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
 };
 use anyhow::Context;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
+use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -482,26 +482,20 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 }
 
-
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltSharedPreprocessing
-where
-{
+pub struct JoltSharedPreprocessing {
     pub bytecode: BytecodePreprocessing,
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
 }
 
-impl JoltSharedPreprocessing
-{
+impl JoltSharedPreprocessing {
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
         bytecode: Vec<Instruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
     ) -> JoltSharedPreprocessing {
-
-
         let bytecode = BytecodePreprocessing::preprocess(bytecode);
         let ram = RAMPreprocessing::preprocess(memory_init);
         Self {
@@ -552,16 +546,12 @@ where
     }
 }
 
-
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS>
-{
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS> {
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
     pub fn new(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
     ) -> JoltVerifierPreprocessing<F, PCS> {
-
         Self {
             generators,
             shared: shared.clone(),
