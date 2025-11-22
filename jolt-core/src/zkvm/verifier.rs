@@ -335,16 +335,21 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     fn verify_stage5(&mut self) -> Result<(), anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let registers_val_evaluation = RegistersValEvaluationSumcheckVerifier::new(n_cycle_vars);
-        let ram_hamming_booleanity = HammingBooleanitySumcheckVerifier::new(n_cycle_vars);
+        let registers_val_evaluation =
+            RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
         let ram_ra_virtual = RamRaSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_read_raf =
-            LookupsReadRafSumcheckVerifier::new(n_cycle_vars, &mut self.transcript);
+        let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(
+            n_cycle_vars,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let _r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
