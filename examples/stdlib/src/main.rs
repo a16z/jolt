@@ -7,9 +7,10 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_int_to_string(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_int_to_string(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_int_to_string(&mut program);
+    let prover_preprocessing = guest::preprocess_prover_int_to_string(shared_preprocessing.clone());
     let verifier_preprocessing =
-        guest::verifier_preprocessing_from_prover_int_to_string(&prover_preprocessing);
+        guest::preprocess_verifier_int_to_string(shared_preprocessing, prover_preprocessing.generators.to_verifier_setup());
 
     let prove = guest::build_prover_int_to_string(program, prover_preprocessing);
     let verify = guest::build_verifier_int_to_string(verifier_preprocessing);
@@ -21,9 +22,10 @@ pub fn main() {
 
     let mut program = guest::compile_string_concat(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_string_concat(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_string_concat(&mut program);
+    let prover_preprocessing = guest::preprocess_prover_string_concat(shared_preprocessing.clone());
     let verifier_preprocessing =
-        guest::verifier_preprocessing_from_prover_string_concat(&prover_preprocessing);
+        guest::preprocess_verifier_string_concat(shared_preprocessing, prover_preprocessing.generators.to_verifier_setup());
 
     let prove = guest::build_prover_string_concat(program, prover_preprocessing);
     let verify = guest::build_verifier_string_concat(verifier_preprocessing);

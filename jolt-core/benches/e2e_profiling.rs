@@ -1,6 +1,7 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
-use jolt_core::zkvm::preprocessing::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use jolt_core::zkvm::prover::JoltProverPreprocessing;
+use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use jolt_core::zkvm::{
     RV64IMACProver,
     RV64IMACVerifier,
@@ -209,10 +210,13 @@ fn prove_example(
     drop(trace);
 
     let task = move || {
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode,
             program_io.memory_layout.clone(),
             init_memory_state,
+        );
+        let preprocessing = JoltProverPreprocessing::new(
+            shared_preprocessing.clone(),
             padded_trace_len,
         );
 
@@ -229,7 +233,9 @@ fn prove_example(
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            shared_preprocessing, 
+            preprocessing.generators.to_verifier_setup());
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
                 .expect("Failed to create verifier");
@@ -260,10 +266,13 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
-    let preprocessing = JoltProverPreprocessing::gen(
+    let shared_preprocessing = JoltSharedPreprocessing::new(
         bytecode.clone(),
         program_io.memory_layout.clone(),
         init_memory_state,
+    );
+    let preprocessing = JoltProverPreprocessing::new(
+        shared_preprocessing,
         trace.len().next_power_of_two(),
     );
 
