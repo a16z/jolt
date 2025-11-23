@@ -6,7 +6,8 @@ use itertools::chain;
 use tracer::instruction::Cycle;
 
 use crate::field::JoltField;
-use crate::poly::eq_poly::{EqPlusOnePolynomial, EqPolynomial};
+use crate::poly::eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffixPoly};
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
@@ -19,22 +20,23 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::instruction::{CircuitFlags, Flags, InstructionFlags};
+use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use crate::zkvm::r1cs::inputs::ShiftSumcheckCycleState;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
 // Spartan PC sumcheck
 //
 // Proves the batched identity over cycles j:
-//   Σ_j EqPlusOne(r_cycle, j) ⋅ (UnexpandedPC_shift(j) + γ·PC_shift(j) + γ²·IsNoop_shift(j))
-//   = NextUnexpandedPC(r_cycle) + γ·NextPC(r_cycle) + γ²·NextIsNoop(r_cycle),
+//   Σ_j EqPlusOne(r_outer, j) ⋅ (UnexpandedPC_shift(j) + γ·PC_shift(j) + γ²·IsNoop_shift(j))
+//   = NextUnexpandedPC(r_outer) + γ·NextPC(r_outer) + γ²·NextIsNoop(r_outer),
 //
 // where:
-// - EqPlusOne(r_cycle, j): MLE of the function that,
+// - EqPlusOne(r_outer, j): MLE of the function that,
 //     on (i,j) returns 1 iff i = j + 1; no wrap-around at j = 2^{log T} − 1
 // - UnexpandedPC_shift(j), PC_shift(j), IsNoop_shift(j):
 //     SpartanShift MLEs encoding f(j+1) aligned at cycle j
-// - NextUnexpandedPC(r_cycle), NextPC(r_cycle), NextIsNoop(r_cycle)
+// - NextUnexpandedPC(r_outer), NextPC(r_outer), NextIsNoop(r_outer)
 //     are claims from Spartan outer sumcheck
 // - γ: batching scalar drawn from the transcript
 
@@ -227,8 +229,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
         );
 
         let r = get_opening_point::<F>(sumcheck_challenges);
-        let eq_plus_one_r_cycle_at_shift =
-            EqPlusOnePolynomial::<F>::new(self.params.r_cycle.r.to_vec()).evaluate(&r.r);
+        let eq_plus_one_r_outer_at_shift =
+            EqPlusOnePolynomial::<F>::new(self.params.r_outer.r.to_vec()).evaluate(&r.r);
         let eq_plus_one_r_product_at_shift =
             EqPlusOnePolynomial::<F>::new(self.params.r_product.r.to_vec()).evaluate(&r.r);
 
@@ -242,7 +244,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
         .zip(&self.params.gamma_powers)
         .map(|(eval, gamma)| *gamma * eval)
         .sum::<F>()
-            * eq_plus_one_r_cycle_at_shift
+            * eq_plus_one_r_outer_at_shift
             + self.params.gamma_powers[4]
                 * (F::one() - is_noop_claim)
                 * eq_plus_one_r_product_at_shift
@@ -292,7 +294,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
 struct ShiftSumcheckParams<F: JoltField> {
     gamma_powers: [F; 5],
     n_cycle_vars: usize, // = log(T)
-    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+    r_outer: OpeningPoint<BIG_ENDIAN, F>,
     r_product: OpeningPoint<BIG_ENDIAN, F>,
 }
 
@@ -306,7 +308,7 @@ impl<F: JoltField> ShiftSumcheckParams<F> {
 
         let (outer_sumcheck_r, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
-        let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
+        let (r_outer, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
         let (product_sumcheck_r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsNoop,
             SumcheckId::ProductVirtualization,
@@ -316,7 +318,7 @@ impl<F: JoltField> ShiftSumcheckParams<F> {
         Self {
             gamma_powers,
             n_cycle_vars,
-            r_cycle,
+            r_outer,
             r_product,
         }
     }
@@ -384,11 +386,11 @@ impl<F: JoltField> Phase1Prover<F> {
         params: ShiftSumcheckParams<F>,
     ) -> Self {
         let EqPlusOnePrefixSuffixPoly {
-            prefix_0: prefix_0_for_r_cycle,
-            suffix_0: suffix_0_for_r_cycle,
-            prefix_1: prefix_1_for_r_cycle,
-            suffix_1: suffix_1_for_r_cycle,
-        } = EqPlusOnePrefixSuffixPoly::new(&params.r_cycle);
+            prefix_0: prefix_0_for_r_outer,
+            suffix_0: suffix_0_for_r_outer,
+            prefix_1: prefix_1_for_r_outer,
+            suffix_1: suffix_1_for_r_outer,
+        } = EqPlusOnePrefixSuffixPoly::new(&params.r_outer);
         let EqPlusOnePrefixSuffixPoly {
             prefix_0: prefix_0_for_r_prod,
             suffix_0: suffix_0_for_r_prod,
@@ -396,24 +398,24 @@ impl<F: JoltField> Phase1Prover<F> {
             suffix_1: suffix_1_for_r_prod,
         } = EqPlusOnePrefixSuffixPoly::new(&params.r_product);
 
-        let prefix_n_vars = prefix_0_for_r_cycle.len().ilog2();
-        let suffix_n_vars = suffix_0_for_r_cycle.len().ilog2();
+        let prefix_n_vars = prefix_0_for_r_outer.len().ilog2();
+        let suffix_n_vars = suffix_0_for_r_outer.len().ilog2();
 
         // Prefix-suffix P and Q buffers.
         // See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
-        let P_0_for_r_cycle = prefix_0_for_r_cycle;
-        let P_1_for_r_cycle = prefix_1_for_r_cycle;
+        let P_0_for_r_outer = prefix_0_for_r_outer;
+        let P_1_for_r_outer = prefix_1_for_r_outer;
         let P_0_for_r_prod = prefix_0_for_r_prod;
         let P_1_for_r_prod = prefix_1_for_r_prod;
-        let mut Q_0_for_r_cycle = vec![F::zero(); 1 << prefix_n_vars];
-        let mut Q_1_for_r_cycle = vec![F::zero(); 1 << prefix_n_vars];
+        let mut Q_0_for_r_outer = vec![F::zero(); 1 << prefix_n_vars];
+        let mut Q_1_for_r_outer = vec![F::zero(); 1 << prefix_n_vars];
         let mut Q_0_for_r_prod = vec![F::zero(); 1 << prefix_n_vars];
         let mut Q_1_for_r_prod = vec![F::zero(); 1 << prefix_n_vars];
 
         // TODO: Improve if necessary. Currently not great memory access pattern.
         (
-            &mut Q_0_for_r_cycle,
-            &mut Q_1_for_r_cycle,
+            &mut Q_0_for_r_outer,
+            &mut Q_1_for_r_outer,
             &mut Q_0_for_r_prod,
             &mut Q_1_for_r_prod,
         )
@@ -423,21 +425,21 @@ impl<F: JoltField> Phase1Prover<F> {
                 |(
                     x0,
                     (
-                        Q_0_for_r_cycle_sum,
-                        Q_1_for_r_cycle_sum,
+                        Q_0_for_r_outer_sum,
+                        Q_1_for_r_outer_sum,
                         Q_0_for_r_prod_sum,
                         Q_1_for_r_prod_sum,
                     ),
                 )| {
                     for x1 in 0..1 << suffix_n_vars {
                         let x = x0 + (x1 << prefix_n_vars);
-                        let CycleState {
+                        let ShiftSumcheckCycleState {
                             unexpanded_pc,
                             pc,
                             is_virtual,
                             is_first_in_sequence,
                             is_noop,
-                        } = CycleState::new(&trace[x], bytecode_preprocessing);
+                        } = ShiftSumcheckCycleState::new(&trace[x], bytecode_preprocessing);
 
                         let mut v = F::from_u64(unexpanded_pc) + params.gamma_powers[1].mul_u64(pc);
                         if is_virtual {
@@ -446,8 +448,8 @@ impl<F: JoltField> Phase1Prover<F> {
                         if is_first_in_sequence {
                             v += params.gamma_powers[3];
                         }
-                        *Q_0_for_r_cycle_sum += v * suffix_0_for_r_cycle[x1];
-                        *Q_1_for_r_cycle_sum += v * suffix_1_for_r_cycle[x1];
+                        *Q_0_for_r_outer_sum += v * suffix_0_for_r_outer[x1];
+                        *Q_1_for_r_outer_sum += v * suffix_1_for_r_outer[x1];
 
                         // Q += suffix * (1 - is_noop)
                         if !is_noop {
@@ -461,8 +463,8 @@ impl<F: JoltField> Phase1Prover<F> {
         chain!(&mut Q_0_for_r_prod, &mut Q_1_for_r_prod).for_each(|v| *v *= params.gamma_powers[4]);
 
         let prefix_suffix_pairs = vec![
-            (P_0_for_r_cycle.into(), Q_0_for_r_cycle.into()),
-            (P_1_for_r_cycle.into(), Q_1_for_r_cycle.into()),
+            (P_0_for_r_outer.into(), Q_0_for_r_outer.into()),
+            (P_1_for_r_outer.into(), Q_1_for_r_outer.into()),
             (P_0_for_r_prod.into(), Q_0_for_r_prod.into()),
             (P_1_for_r_prod.into(), Q_1_for_r_prod.into()),
         ];
@@ -521,7 +523,7 @@ struct Phase2Prover<F: JoltField> {
     is_virtual_poly: MultilinearPolynomial<F>,
     is_first_in_sequence_poly: MultilinearPolynomial<F>,
     is_noop_poly: MultilinearPolynomial<F>,
-    eq_plus_one_r_cycle: MultilinearPolynomial<F>,
+    eq_plus_one_r_outer: MultilinearPolynomial<F>,
     eq_plus_one_r_product: MultilinearPolynomial<F>,
     #[allocative(skip)]
     params: ShiftSumcheckParams<F>,
@@ -534,20 +536,20 @@ impl<F: JoltField> Phase2Prover<F> {
         sumcheck_challenges: &[F::Challenge],
         params: ShiftSumcheckParams<F>,
     ) -> Self {
-        let n_remaining_rounds = params.r_cycle.len() - sumcheck_challenges.len();
+        let n_remaining_rounds = params.r_outer.len() - sumcheck_challenges.len();
         let r_prefix: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness();
 
-        // Gen eq+1(r_cycle, (r_prefix, j)) for all j.
+        // Gen eq+1(r_outer, (r_prefix, j)) for all j.
         let EqPlusOnePrefixSuffixPoly {
             prefix_0,
             suffix_0,
             prefix_1,
             suffix_1,
-        } = EqPlusOnePrefixSuffixPoly::new(&params.r_cycle);
+        } = EqPlusOnePrefixSuffixPoly::new(&params.r_outer);
         let prefix_0_eval = MultilinearPolynomial::from(prefix_0).evaluate(&r_prefix.r);
         let prefix_1_eval = MultilinearPolynomial::from(prefix_1).evaluate(&r_prefix.r);
-        let eq_plus_one_r_cycle: MultilinearPolynomial<F> = (0..suffix_0.len())
+        let eq_plus_one_r_outer: MultilinearPolynomial<F> = (0..suffix_0.len())
             .map(|i| prefix_0_eval * suffix_0[i] + prefix_1_eval * suffix_1[i])
             .collect::<Vec<F>>()
             .into();
@@ -592,13 +594,13 @@ impl<F: JoltField> Phase2Prover<F> {
                     trace_chunk,
                 )| {
                     for (i, cycle) in trace_chunk.iter().enumerate() {
-                        let CycleState {
+                        let ShiftSumcheckCycleState {
                             unexpanded_pc,
                             pc,
                             is_virtual,
                             is_first_in_sequence,
                             is_noop,
-                        } = CycleState::new(cycle, bytecode_preprocessing);
+                        } = ShiftSumcheckCycleState::new(cycle, bytecode_preprocessing);
                         let eq_eval = eq_evals[i];
                         *unexpanded_pc_eval += eq_eval.mul_u64(unexpanded_pc);
                         *pc_eval += eq_eval.mul_u64(pc);
@@ -621,7 +623,7 @@ impl<F: JoltField> Phase2Prover<F> {
             is_virtual_poly: is_virtual_poly.into(),
             is_first_in_sequence_poly: is_first_in_sequence_poly.into(),
             is_noop_poly: is_noop_poly.into(),
-            eq_plus_one_r_cycle,
+            eq_plus_one_r_outer,
             eq_plus_one_r_product,
             params,
         }
@@ -646,15 +648,15 @@ impl<F: JoltField> Phase2Prover<F> {
             let is_noop_evals = self
                 .is_noop_poly
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let eq_plus_one_r_cycle_evals = self
-                .eq_plus_one_r_cycle
+            let eq_plus_one_r_outer_evals = self
+                .eq_plus_one_r_outer
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             let eq_plus_one_r_product_evals = self
                 .eq_plus_one_r_product
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             evals = array::from_fn(|i| {
                 evals[i]
-                    + eq_plus_one_r_cycle_evals[i]
+                    + eq_plus_one_r_outer_evals[i]
                         * (unexpanded_pc_evals[i]
                             + self.params.gamma_powers[1] * pc_evals[i]
                             + self.params.gamma_powers[2] * is_virtual_evals[i]
@@ -675,7 +677,7 @@ impl<F: JoltField> Phase2Prover<F> {
             is_virtual_poly,
             is_first_in_sequence_poly,
             is_noop_poly,
-            eq_plus_one_r_cycle,
+            eq_plus_one_r_outer,
             eq_plus_one_r_product,
             params: _,
         } = self;
@@ -684,97 +686,7 @@ impl<F: JoltField> Phase2Prover<F> {
         is_virtual_poly.bind(r_j, BindingOrder::LowToHigh);
         is_first_in_sequence_poly.bind(r_j, BindingOrder::LowToHigh);
         is_noop_poly.bind(r_j, BindingOrder::LowToHigh);
-        eq_plus_one_r_cycle.bind(r_j, BindingOrder::LowToHigh);
+        eq_plus_one_r_outer.bind(r_j, BindingOrder::LowToHigh);
         eq_plus_one_r_product.bind(r_j, BindingOrder::LowToHigh);
-    }
-}
-
-// eq+1((r_hi, r_lo), (y_hi, y_lo)) =
-//   prefix_0(r_lo, y_lo) * suffix_0(r_hi, y_hi) +
-//   prefix_1(r_lo, y_lo) * suffix_1(r_hi, y_hi)
-#[derive(Allocative)]
-struct EqPlusOnePrefixSuffixPoly<F: JoltField> {
-    // Evals of `eq+1(r_lo, j)` for all j in the hypercube.
-    prefix_0: Vec<F>,
-    // Evals of `eq(r_hi, j)` for all j in the hypercube.
-    suffix_0: Vec<F>,
-    // Evals of `is_max(r_lo) * is_min(j)` for all j in the hypercube.
-    // Where `is_max(x) = eq((1)^n, x)`, `is_min(x) = eq((0)^n, x)`.
-    // Note: This is non-zero in 1 position but doesn't matter for perf.
-    prefix_1: Vec<F>,
-    // Evals of `eq+1(r_hi, j)` for all j in the hypercube.
-    suffix_1: Vec<F>,
-}
-
-impl<F: JoltField> EqPlusOnePrefixSuffixPoly<F> {
-    fn new(r: &OpeningPoint<BIG_ENDIAN, F>) -> Self {
-        let (r_hi, r_lo) = r.split_at(r.len() / 2);
-        let is_max_eval = EqPolynomial::mle(&vec![F::one(); r_lo.len()], &r_lo.r);
-        let mut prefix_1_evals = vec![F::zero(); 1 << r_lo.len()];
-        prefix_1_evals[0] = is_max_eval;
-        Self {
-            prefix_0: EqPlusOnePolynomial::<F>::evals(&r_lo.r, None).1,
-            suffix_0: EqPolynomial::evals(&r_hi.r),
-            prefix_1: prefix_1_evals,
-            suffix_1: EqPlusOnePolynomial::<F>::evals(&r_hi.r, None).1,
-        }
-    }
-}
-
-struct CycleState {
-    unexpanded_pc: u64,
-    pc: u64,
-    is_virtual: bool,
-    is_first_in_sequence: bool,
-    is_noop: bool,
-}
-
-impl CycleState {
-    fn new(cycle: &Cycle, bytecode_preprocessing: &BytecodePreprocessing) -> Self {
-        let instruction = cycle.instruction();
-        let circuit_flags = instruction.circuit_flags();
-        Self {
-            unexpanded_pc: instruction.normalize().address as u64,
-            pc: bytecode_preprocessing.get_pc(cycle) as u64,
-            is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
-            is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
-            is_noop: instruction.instruction_flags()[InstructionFlags::IsNoop],
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ark_bn254::Fr;
-
-    use crate::poly::{
-        eq_poly::EqPlusOnePolynomial,
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{OpeningPoint, BIG_ENDIAN},
-    };
-
-    use super::EqPlusOnePrefixSuffixPoly;
-
-    #[test]
-    fn test_eq_prefix_suffix() {
-        let r = OpeningPoint::<BIG_ENDIAN, Fr>::new([9, 2, 3, 7].map(<_>::into).to_vec());
-        let eq_plus_one_gt = EqPlusOnePolynomial::new(r.r.clone());
-        let r_prime = OpeningPoint::<BIG_ENDIAN, Fr>::new([4, 3, 2, 8].map(<_>::into).to_vec());
-        let (r_prime_hi, r_prime_lo) = r_prime.split_at(2);
-
-        let EqPlusOnePrefixSuffixPoly {
-            prefix_0,
-            suffix_0,
-            prefix_1,
-            suffix_1,
-        } = EqPlusOnePrefixSuffixPoly::new(&r);
-
-        assert_eq!(
-            MultilinearPolynomial::from(prefix_0).evaluate(&r_prime_lo.r)
-                * MultilinearPolynomial::from(suffix_0).evaluate(&r_prime_hi.r)
-                + MultilinearPolynomial::from(prefix_1).evaluate(&r_prime_lo.r)
-                    * MultilinearPolynomial::from(suffix_1).evaluate(&r_prime_hi.r),
-            eq_plus_one_gt.evaluate(&r_prime.r)
-        );
     }
 }

@@ -8,7 +8,7 @@ use ark_serialize::{
 };
 use num::FromPrimitive;
 
-use crate::zkvm::witness::AllCommittedPolynomials;
+use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
     field::JoltField,
     poly::{
@@ -37,7 +37,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
-    pub bytecode_d: usize,
+    pub bytecode_K: usize,
+    pub log_k_chunk: usize,
     pub twist_sumcheck_switch_index: usize,
 }
 
@@ -49,11 +50,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        // serialize ram_K and bytecode_d first
+        // serialize ram_K, bytecode_K, log_chunk first
         self.ram_K.serialize_with_mode(&mut writer, compress)?;
-        self.bytecode_d.serialize_with_mode(&mut writer, compress)?;
+        self.bytecode_K.serialize_with_mode(&mut writer, compress)?;
+        self.log_k_chunk
+            .serialize_with_mode(&mut writer, compress)?;
+        let one_hot_params =
+            OneHotParams::new_with_log_k_chunk(self.log_k_chunk, self.bytecode_K, self.ram_K);
         // ensure that all committed polys are set up before serializing proofs
-        let _guard = AllCommittedPolynomials::initialize(self.ram_K, self.bytecode_d);
+        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
         self.opening_claims
             .serialize_with_mode(&mut writer, compress)?;
         self.commitments
@@ -109,7 +114,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.reduced_opening_proof.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
-            + self.bytecode_d.serialized_size(compress)
+            + self.bytecode_K.serialized_size(compress)
+            + self.log_k_chunk.serialized_size(compress)
             + self.twist_sumcheck_switch_index.serialized_size(compress)
     }
 }
@@ -134,7 +140,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
         self.reduced_opening_proof.check()?;
         self.trace_length.check()?;
         self.ram_K.check()?;
-        self.bytecode_d.check()?;
+        self.bytecode_K.check()?;
+        self.log_k_chunk.check()?;
         self.twist_sumcheck_switch_index.check()?;
         Ok(())
     }
@@ -149,10 +156,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let ram_K = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let bytecode_d = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-
+        let bytecode_K = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let log_chunk = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(log_chunk, bytecode_K, ram_K);
         // ensure that all committed polys are set up before deserializing proofs
-        let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
+        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
         let opening_claims = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let untrusted_advice_commitment =
@@ -192,7 +200,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             reduced_opening_proof,
             trace_length,
             ram_K,
-            bytecode_d,
+            bytecode_K,
+            log_k_chunk: log_chunk,
             twist_sumcheck_switch_index,
         })
     }

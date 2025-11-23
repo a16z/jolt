@@ -13,10 +13,9 @@ use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::remap_address;
-use crate::zkvm::witness::{
-    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
-};
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::{
     field::JoltField,
     poly::{
@@ -47,7 +46,7 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct RaSumcheckProver<F: JoltField> {
     /// `ra` polys to be constructed based addresses
-    ra_i_polys: Vec<RaPolynomial<u8, F>>,
+    ra_i_polys: Vec<RaPolynomial<u16, F>>,
     /// eq poly
     eq_poly: MultilinearPolynomial<F>,
     #[allocative(skip)]
@@ -59,11 +58,12 @@ impl<F: JoltField> RaSumcheckProver<F> {
     pub fn gen(
         trace: &[Cycle],
         memory_layout: &MemoryLayout,
-        ram_K: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaSumcheckParams::new(trace.len(), ram_K, opening_accumulator, transcript);
+        let params =
+            RaSumcheckParams::new(trace.len(), one_hot_params, opening_accumulator, transcript);
 
         // Precompute EQ tables for each chunk
         let eq_tables: Vec<Vec<F>> = params
@@ -81,24 +81,15 @@ impl<F: JoltField> RaSumcheckProver<F> {
             DensePolynomial::linear_combination(&eq_polys.each_ref(), &params.gamma_powers).Z,
         );
 
-        let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..params.d)
+        let ra_i_polys: Vec<RaPolynomial<u16, F>> = (0..params.d)
             .into_par_iter()
             .zip(eq_tables.into_par_iter())
             .map(|(i, eq_table)| {
-                let ra_i_indices: Vec<Option<u8>> = trace
+                let ra_i_indices: Vec<Option<u16>> = trace
                     .par_iter()
                     .map(|cycle| {
-                        remap_address(cycle.ram_access().address() as u64, memory_layout).map(
-                            |address| {
-                                // For each address, add eq_r_cycle[j] to each corresponding chunk
-                                // This maintains the property that sum of all ra values for an address equals 1
-                                let address_i = (address
-                                    >> (DTH_ROOT_OF_K.log_2() * (params.d - 1 - i)))
-                                    % DTH_ROOT_OF_K as u64;
-
-                                address_i as u8
-                            },
-                        )
+                        remap_address(cycle.ram_access().address() as u64, memory_layout)
+                            .map(|address| one_hot_params.ram_address_chunk(address, i))
                     })
                     .collect();
                 RaPolynomial::new(Arc::new(ra_i_indices), eq_table)
@@ -214,11 +205,12 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> RaSumcheckVerifier<F> {
     pub fn new(
         trace_len: usize,
-        ram_K: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaSumcheckParams::new(trace_len, ram_K, opening_accumulator, transcript);
+        let params =
+            RaSumcheckParams::new(trace_len, one_hot_params, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -293,14 +285,11 @@ struct RaSumcheckParams<F: JoltField> {
 impl<F: JoltField> RaSumcheckParams<F> {
     fn new(
         trace_len: usize,
-        ram_K: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        // Calculate d dynamically such that 2^8 = K^(1/D)
-        let d = compute_d_parameter(ram_K);
-        let log_K = ram_K.log_2();
-
+        let log_K = one_hot_params.ram_k.log_2();
         // These two sumchecks have the same binding order and number of rounds,
         // and they're run in parallel, so the openings are the same.
         assert_eq!(
@@ -332,25 +321,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
-            r_address.to_vec()
-        } else {
-            // Pad with zeros
-            [
-                &vec![
-                    F::Challenge::from(0_u128);
-                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
-                ],
-                r_address,
-            ]
-            .concat()
-        };
-        // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(DTH_ROOT_OF_K.log_2())
-            .map(|chunk| chunk.to_vec())
-            .collect();
-        debug_assert_eq!(r_address_chunks.len(), d);
+        let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(r_address);
 
         let r_cycle = [
             r_cycle_val.to_vec(),
@@ -363,7 +334,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
         Self {
             gamma_powers,
             T: trace_len,
-            d,
+            d: one_hot_params.ram_d,
             r_cycle,
             r_address_chunks,
         }

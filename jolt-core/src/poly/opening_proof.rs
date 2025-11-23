@@ -5,9 +5,12 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
-use crate::poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
+use crate::{
+    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
+    zkvm::config::OneHotParams,
+};
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -485,8 +488,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             | CommittedPolynomial::BytecodeRa(_)
             | CommittedPolynomial::RamRa(_) => {
                 let log_K = r.len() - self.log_T;
-                // reverse log_T rounds since they are bounded LowToHigh
                 r[log_K..].reverse();
+                r[..log_K].reverse();
             }
         }
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);
@@ -787,7 +790,7 @@ where
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>)>,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
@@ -825,7 +828,7 @@ where
         let (sumcheck_proof, mut r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(transcript);
         let log_K = r_sumcheck.len() - self.log_T;
-        // reverse log_T rounds since they are bounded LowToHigh
+        r_sumcheck[..log_K].reverse();
         r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&sumcheck_claims);
@@ -1208,6 +1211,7 @@ where
         let mut r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
         let log_K = r_sumcheck.len() - self.log_T;
+        r_sumcheck[..log_K].reverse();
         r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);

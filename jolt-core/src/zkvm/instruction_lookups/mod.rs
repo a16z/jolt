@@ -11,6 +11,7 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
+        config::OneHotParams,
         instruction::LookupQuery,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -21,31 +22,32 @@ use tracer::instruction::Cycle;
 pub mod ra_virtual;
 pub mod read_raf_checking;
 
-const LOG_K: usize = XLEN * 2;
-const PHASES: usize = 8;
-pub const LOG_M: usize = LOG_K / PHASES;
-const M: usize = 1 << LOG_M;
-pub const D: usize = 16;
-pub const LOG_K_CHUNK: usize = LOG_K / D;
-pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
+pub const LOG_K: usize = XLEN * 2;
+
+// TODO: transition read_raf_checking to use dynamic phase configuration from `config`.
+// pub const PHASES: usize = 8;
+// pub const LOG_M: usize = LOG_K / PHASES;
+// const M: usize = 1 << LOG_M;
 
 pub fn gen_ra_one_hot_provers<F: JoltField>(
     trace: &[Cycle],
+    one_hot_params: &OneHotParams,
     opening_accumulator: &ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) -> (HammingWeightSumcheckProver<F>, BooleanitySumcheckProver<F>) {
-    let ra_evals = compute_ra_evals(trace, opening_accumulator);
+    let ra_evals = compute_ra_evals(trace, one_hot_params, opening_accumulator);
 
-    let gamma_powers = transcript.challenge_scalar_powers(D);
+    let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.instruction_d);
 
-    let polynomial_types: Vec<CommittedPolynomial> =
-        (0..D).map(CommittedPolynomial::InstructionRa).collect();
+    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.instruction_d)
+        .map(CommittedPolynomial::InstructionRa)
+        .collect();
 
     let hamming_weight_params = HammingWeightSumcheckParams {
-        d: D,
-        num_rounds: LOG_K_CHUNK,
+        d: one_hot_params.instruction_d,
+        num_rounds: one_hot_params.log_k_chunk,
         gamma_powers,
-        polynomial_types,
+        polynomial_types: polynomial_types.clone(),
         sumcheck_id: SumcheckId::InstructionHammingWeight,
         virtual_poly: Some(VirtualPolynomial::LookupOutput),
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
@@ -53,19 +55,17 @@ pub fn gen_ra_one_hot_provers<F: JoltField>(
 
     let (r_cycle, _) = opening_accumulator
         .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter);
-    let H_indices = compute_instruction_h_indices(trace);
+    let H_indices = compute_instruction_h_indices(trace, one_hot_params);
 
     let log_t = trace.len().log_2();
 
-    let gammas = transcript.challenge_vector_optimized::<F>(D);
+    let gammas = transcript.challenge_vector_optimized::<F>(one_hot_params.instruction_d);
 
-    let r_address = transcript.challenge_vector_optimized::<F>(LOG_K_CHUNK);
-    let polynomial_types: Vec<CommittedPolynomial> =
-        (0..D).map(CommittedPolynomial::InstructionRa).collect();
+    let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
 
     let booleanity_params = BooleanitySumcheckParams {
-        d: D,
-        log_k_chunk: LOG_K_CHUNK,
+        d: one_hot_params.instruction_d,
+        log_k_chunk: one_hot_params.log_k_chunk,
         log_t,
         r_cycle: r_cycle.r.clone(),
         r_address,
@@ -83,34 +83,34 @@ pub fn gen_ra_one_hot_provers<F: JoltField>(
 
 pub fn new_ra_one_hot_verifiers<F: JoltField>(
     n_cycle_vars: usize,
+    one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
 ) -> (
     HammingWeightSumcheckVerifier<F>,
     BooleanitySumcheckVerifier<F>,
 ) {
-    let gamma_powers = transcript.challenge_scalar_powers(D);
+    let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.instruction_d);
 
-    let polynomial_types: Vec<CommittedPolynomial> =
-        (0..D).map(CommittedPolynomial::InstructionRa).collect();
+    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.instruction_d)
+        .map(CommittedPolynomial::InstructionRa)
+        .collect();
 
     let hamming_weight_params = HammingWeightSumcheckParams {
-        d: D,
-        num_rounds: LOG_K_CHUNK,
+        d: one_hot_params.instruction_d,
+        num_rounds: one_hot_params.log_k_chunk,
         gamma_powers,
-        polynomial_types,
+        polynomial_types: polynomial_types.clone(),
         sumcheck_id: SumcheckId::InstructionHammingWeight,
         virtual_poly: Some(VirtualPolynomial::LookupOutput),
         r_cycle_sumcheck_id: SumcheckId::SpartanOuter,
     };
 
-    let gammas = transcript.challenge_vector_optimized::<F>(D);
-    let r_address = transcript.challenge_vector_optimized::<F>(LOG_K_CHUNK);
+    let gammas = transcript.challenge_vector_optimized::<F>(one_hot_params.instruction_d);
+    let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
     let r_cycle = Vec::new();
-    let polynomial_types: Vec<CommittedPolynomial> =
-        (0..D).map(CommittedPolynomial::InstructionRa).collect();
     let booleanity_params = BooleanitySumcheckParams {
-        d: D,
-        log_k_chunk: LOG_K_CHUNK,
+        d: one_hot_params.instruction_d,
+        log_k_chunk: one_hot_params.log_k_chunk,
         log_t: n_cycle_vars,
         gammas,
         r_address,
@@ -127,14 +127,17 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
 }
 
 #[tracing::instrument(skip_all, name = "instruction_lookups::compute_instruction_h_indices")]
-fn compute_instruction_h_indices(trace: &[Cycle]) -> Vec<Vec<Option<u8>>> {
-    (0..D)
+fn compute_instruction_h_indices(
+    trace: &[Cycle],
+    one_hot_params: &OneHotParams,
+) -> Vec<Vec<Option<u16>>> {
+    (0..one_hot_params.instruction_d)
         .map(|i| {
             trace
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as u8)
+                    Some(one_hot_params.lookup_index_chunk(lookup_index, i))
                 })
                 .collect()
         })
@@ -144,8 +147,9 @@ fn compute_instruction_h_indices(trace: &[Cycle]) -> Vec<Vec<Option<u8>>> {
 #[tracing::instrument(skip_all, name = "instruction_lookups::compute_ra_evals")]
 fn compute_ra_evals<F: JoltField>(
     trace: &[Cycle],
+    one_hot_params: &OneHotParams,
     opening_accumulator: &ProverOpeningAccumulator<F>,
-) -> [Vec<F>; D] {
+) -> Vec<Vec<F>> {
     let (r_cycle, _) = opening_accumulator
         .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter);
     let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
@@ -158,31 +162,32 @@ fn compute_ra_evals<F: JoltField>(
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
-            let mut result: [Vec<F>; D] =
-                std::array::from_fn(|_| unsafe_allocate_zero_vec(K_CHUNK));
+            let mut result: Vec<Vec<F>> = (0..one_hot_params.instruction_d)
+                .map(|_| unsafe_allocate_zero_vec(one_hot_params.k_chunk))
+                .collect();
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
-                let mut lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                for i in (0..D).rev() {
-                    let k = lookup_index % K_CHUNK as u128;
+                let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+                for i in 0..one_hot_params.instruction_d {
+                    let k = one_hot_params.lookup_index_chunk(lookup_index, i);
                     result[i][k as usize] += eq_r_cycle[j];
-                    lookup_index >>= LOG_K_CHUNK;
                 }
                 j += 1;
             }
             result
         })
         .reduce(
-            || std::array::from_fn(|_| unsafe_allocate_zero_vec(K_CHUNK)),
+            || {
+                (0..one_hot_params.instruction_d)
+                    .map(|_| unsafe_allocate_zero_vec(one_hot_params.k_chunk))
+                    .collect()
+            },
             |mut running, new| {
-                running
-                    .par_iter_mut()
-                    .zip(new.into_par_iter())
-                    .for_each(|(x, y)| {
-                        x.par_iter_mut()
-                            .zip(y.into_par_iter())
-                            .for_each(|(x, y)| *x += y)
-                    });
+                running.iter_mut().zip(new.into_iter()).for_each(|(x, y)| {
+                    x.par_iter_mut()
+                        .zip(y.into_par_iter())
+                        .for_each(|(x, y)| *x += y)
+                });
                 running
             },
         )

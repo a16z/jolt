@@ -1,6 +1,7 @@
 pub mod commitment;
 pub mod compact_polynomial;
 pub mod dense_mlpoly;
+pub mod eq_plus_one_poly;
 pub mod eq_poly;
 pub mod identity_poly;
 pub mod lagrange_poly;

@@ -9,8 +9,8 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::sparse_matrix_poly::SparseMatrixPolynomial;
-use crate::zkvm::witness::compute_d_parameter;
 use crate::{
     field::JoltField,
     poly::{
@@ -102,12 +102,16 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
         trace: &[Cycle],
-        ram_K: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params =
-            ReadWriteCheckingParams::new(ram_K, trace.len(), opening_accumulator, transcript);
+        let params = ReadWriteCheckingParams::new(
+            trace.len(),
+            one_hot_params,
+            opening_accumulator,
+            transcript,
+        );
 
         let r_prime = opening_accumulator
             .get_virtual_polynomial_opening(
@@ -121,7 +125,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             bytecode_preprocessing,
             memory_layout,
             trace,
-            compute_d_parameter(ram_K),
+            None,
         );
         let sparse_matrix = SparseMatrixPolynomial::new(trace, memory_layout);
         let val_init = initial_memory_state
@@ -406,13 +410,18 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
 
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     pub fn new(
-        ram_K: usize,
         trace_len: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         Self {
-            params: ReadWriteCheckingParams::new(ram_K, trace_len, opening_accumulator, transcript),
+            params: ReadWriteCheckingParams::new(
+                trace_len,
+                one_hot_params,
+                opening_accumulator,
+                transcript,
+            ),
         }
     }
 }
@@ -496,8 +505,8 @@ struct ReadWriteCheckingParams<F: JoltField> {
 
 impl<F: JoltField> ReadWriteCheckingParams<F> {
     pub fn new(
-        ram_K: usize,
         trace_len: usize,
+        one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
@@ -507,7 +516,7 @@ impl<F: JoltField> ReadWriteCheckingParams<F> {
             SumcheckId::SpartanOuter,
         );
         Self {
-            K: ram_K,
+            K: one_hot_params.ram_k,
             T: trace_len,
             gamma,
             r_cycle_stage_1,

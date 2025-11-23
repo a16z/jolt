@@ -203,7 +203,7 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
+    let (lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
 
