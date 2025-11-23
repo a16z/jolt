@@ -208,7 +208,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// - This function returns eq tables over `w_head`, split into two halves
     ///   `w_out` and `w_in`:
     ///     - `w_head = [w_out || w_in]` with `w_out` = first `⌊|w_head| / 2⌋` bits
-    ///   so that
     ///     - `eq(w_head, (x_out, x_in)) = E_out[x_out] * E_in[x_in]`.
     ///
     /// The active window bits are handled separately by [`E_active_for_window`].
@@ -702,10 +701,7 @@ mod tests {
                     assert_eq!(
                         e_out_window[x_out] * e_in_window[x_in],
                         head_evals[idx],
-                        "factorisation mismatch at round={}, x_out={}, x_in={}",
-                        _round,
-                        x_out,
-                        x_in
+                        "factorisation mismatch at round={_round}, x_out={x_out}, x_in={x_in}",
                     );
                 }
             }
@@ -755,12 +751,7 @@ mod tests {
                 assert_eq!(
                     bits_out + bits_in + bits_active + 1,
                     num_unbound,
-                    "bit accounting failed for window_size={} (bits_out={}, bits_in={}, bits_active={}, num_unbound={})",
-                    window_size,
-                    bits_out,
-                    bits_in,
-                    bits_active,
-                    num_unbound,
+                    "bit accounting failed for window_size={window_size} (bits_out={bits_out}, bits_in={bits_in}, bits_active={bits_active}, num_unbound={num_unbound})",
                 );
             }
 

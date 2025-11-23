@@ -226,7 +226,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
 //}
 //
 #[derive(Allocative)]
-pub struct OuterRemainingSumcheckProver<F: JoltField, S: StreamingSchedule> {
+pub struct OuterRemainingSumcheckProver<F: JoltField, S: StreamingSchedule + Allocative> {
     #[allocative(skip)]
     bytecode_preprocessing: BytecodePreprocessing,
     #[allocative(skip)]
@@ -247,7 +247,7 @@ pub struct OuterRemainingSumcheckProver<F: JoltField, S: StreamingSchedule> {
     t_inf: Option<F>,
 }
 
-impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
+impl<F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProver<F, S> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
     pub fn gen(
         trace: Arc<Vec<Cycle>>,
@@ -396,7 +396,8 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         let grid_az_ptr = grid_az.as_mut_ptr() as usize;
         let grid_bz_ptr = grid_bz.as_mut_ptr() as usize;
         let chunk_size = 4096;
-        let num_chunks = (jlen + chunk_size - 1) / chunk_size;
+        // jlen + chunk_size - 1) / chunk_size
+        let num_chunks = jlen.div_ceil(chunk_size);
         (0..num_chunks).into_par_iter().for_each(move |chunk_idx| {
             let start = chunk_idx * chunk_size;
             let end = (start + chunk_size).min(jlen);
@@ -631,8 +632,8 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         )
     }
     fn stream_to_linear_time_parallel(&mut self) {
-        let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
-        let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
+        let num_x_out_vals = self.split_eq_poly.E_out_current_len();
+        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let r_grid = &self.r_grid;
         let num_r_vals = r_grid.len();
 
@@ -648,8 +649,9 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
         let num_threads = rayon::current_num_threads();
         let target_chunks = num_threads * 4;
         let min_chunk_pairs = 16;
-        let pairs_per_chunk =
-            ((output_size + target_chunks - 1) / target_chunks).max(min_chunk_pairs);
+        //let pairs_per_chunk =
+        //((output_size + target_chunks - 1) / target_chunks).max(min_chunk_pairs);
+        let pairs_per_chunk = output_size.div_ceil(target_chunks).max(min_chunk_pairs);
         let chunk_size = pairs_per_chunk * 2;
 
         // Parallel computation with reduction
@@ -744,8 +746,8 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
                         bz_chunk[buffer_offset + 1] = bz1_sum;
 
                         // Local accumulation for t_0 and t_inf
-                        let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
-                        let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
+                        let e_in = self.split_eq_poly.E_in_current()[x_in_val];
+                        let e_out = self.split_eq_poly.E_out_current()[x_out_val];
                         let p0 = az0_sum * bz0_sum;
                         let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
 
@@ -889,8 +891,8 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     //}
     //
     fn _stream_to_linear_time_serial(&mut self) {
-        let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
-        let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
+        let num_x_out_vals = self.split_eq_poly.E_out_current_len();
+        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let r_grid = &self.r_grid;
         let num_r_vals = r_grid.len();
 
@@ -969,8 +971,8 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
                 bz_bound[buffer_offset + 1] = bz1_sum; // B(x_out, x_in, 1, r2, r1)
 
                 // For t_0 and t_inf, apply eq polynomials
-                let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
-                let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
+                let e_in = self.split_eq_poly.E_in_current()[x_in_val];
+                let e_out = self.split_eq_poly.E_out_current()[x_out_val];
                 let p0 = az0_sum * bz0_sum;
                 let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
 
@@ -989,8 +991,8 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     )]
 
     fn stream_to_linear_time_round_zero(&mut self) {
-        let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
-        let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
+        let num_x_out_vals = self.split_eq_poly.E_out_current_len();
+        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
 
         let groups_exact = num_x_out_vals
@@ -1025,7 +1027,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
                         let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
                         let p0 = az0 * bz0;
                         let slope = (az1 - az0) * (bz1 - bz0);
-                        let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
+                        let e_in = self.split_eq_poly.E_in_current()[x_in_val];
                         inner_sum0 += e_in.mul_unreduced::<9>(p0);
                         inner_sum_inf += e_in.mul_unreduced::<9>(slope);
                         let off = 2 * x_in_val;
@@ -1034,7 +1036,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
                         bz_chunk[off] = bz0;
                         bz_chunk[off + 1] = bz1;
                     }
-                    let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
+                    let e_out = self.split_eq_poly.E_out_current()[x_out_val];
                     let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
                     let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
                     acc0 += e_out.mul_unreduced::<9>(reduced0);
@@ -1210,7 +1212,7 @@ impl<F: JoltField, S: StreamingSchedule> OuterRemainingSumcheckProver<F, S> {
     }
 }
 
-impl<F: JoltField, T: Transcript, S: StreamingSchedule> SumcheckInstanceProver<F, T>
+impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckInstanceProver<F, T>
     for OuterRemainingSumcheckProver<F, S>
 {
     fn degree(&self) -> usize {

@@ -181,11 +181,12 @@ impl StreamingSchedule for LinearOnlySchedule {
     }
 
     fn num_unbound_vars(&self, round: usize) -> usize {
-        if round >= self.num_rounds {
-            0
-        } else {
-            self.num_rounds - round
-        }
+        self.num_rounds.saturating_sub(round)
+        //if round >= self.num_rounds {
+        //    0
+        //} else {
+        //    self.num_rounds - round
+        //}
     }
 }
 
@@ -241,15 +242,13 @@ mod tests {
         for round in 0..=3 {
             assert!(
                 schedule.is_streaming(round),
-                "Round {} should be streaming",
-                round
+                "Round {round} should be streaming",
             );
         }
         for round in 4..=7 {
             assert!(
                 !schedule.is_streaming(round),
-                "Round {} should be linear",
-                round
+                "Round {round} should be linear",
             );
         }
 
@@ -264,8 +263,7 @@ mod tests {
         for round in [0, 1, 2, 3, 5, 6, 7] {
             assert!(
                 !schedule.is_first_linear(round),
-                "Round {} is not first linear",
-                round
+                "Round {round} is not first linear",
             );
         }
     }
@@ -415,7 +413,8 @@ mod tests {
                 assert!(schedule.is_window_start(0));
 
                 // Linear start is roughly half
-                assert_eq!(schedule.linear_start, (num_rounds + 1) / 2);
+                assert_eq!(schedule.linear_start, num_rounds.div_ceil(2));
+                //assert_eq!(schedule.linear_start, (num_rounds + 1) / 2);
 
                 // All window starts are in streaming phase
                 for &start in &schedule.window_starts {
