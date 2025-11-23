@@ -1,4 +1,4 @@
-use crate::{subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::witness::DTH_ROOT_OF_K};
+use crate::subprotocols::streaming_schedule::LinearOnlySchedule;
 use std::{
     collections::HashMap,
     fs::File,
@@ -493,6 +493,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 1 baseline");
 
+        // TODO: change this to use the lazy trace
         tracing::info!("Stage 1 proving");
         let (uni_skip_state, first_round_proof) = prove_stage1_uni_skip(
             &self.trace,
@@ -504,6 +505,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // gen needs a schedule
         let schedule = LinearOnlySchedule::new(uni_skip_state.tau.len() - 1);
         //let schedule = HalfSplitSchedule::new(uni_skip_state.tau.len() - 1, 3);
+        // TODO: use the lazy tracer
         let mut spartan_outer_remaining = OuterRemainingSumcheckProver::gen(
             Arc::clone(&self.trace),
             &self.preprocessing.bytecode,
