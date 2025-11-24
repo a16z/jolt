@@ -1,0 +1,515 @@
+# Jolt Verification: The Challenge and Current Recursion Approach
+
+> **⚠️ DEPRECATED**: This document uses outdated "two-layer recursion" framing.
+>
+> **See instead**: [Jolt_Stage6_SNARK_Composition.md](Jolt_Stage6_SNARK_Composition.md) for corrected architecture.
+>
+> **Key correction**: Stage 6 is not a "separate Jolt instance proving Layer 1 verification." It's an extension of the standard 5-stage DAG that commits to auxiliary witness data (exponentiation steps) via Hyrax/Grumpkin and proves correctness via ExpSumcheck.
+>
+> **What this document gets wrong**:
+> - Refers to "Layer 2" as a separate proof system
+> - Suggests a "320M cycle trace" of the verifier
+> - Frames this as "recursion" (nested SNARKs) rather than "composition" (parallel PCS schemes)
+>
+> **What remains useful**: Cost analysis of Dory G_T exponentiations (Part 1) is accurate.
+
+## Overview
+
+This document explains Jolt's verification cost challenge and the current recursion approach to address it.
+
+**Core motivation**: Enable **untrusted verifiers** to efficiently verify Jolt proofs by reducing computational cost from ~1.3B cycles to ~30M cycles (43× improvement). An untrusted party can run the Layer 2 verifier and, if the proof is valid, accept the result while consuming dramatically fewer cycles than the original verifier would require.
+
+**Document structure**:
+- **Part 1**: The challenge - why Jolt verification costs ~1.3B cycles
+- **Part 2-4**: Current approach - how two-layer recursion reduces verifier cost to ~30M cycles
+- **Part 5**: Cost breakdown and open questions
+
+**Why this matters**: By proving "I correctly verified the original proof," recursion enables efficient verification in resource-constrained environments (on-chain EVM, embedded systems, verifier networks) where 1.3B cycles would be prohibitively expensive for untrusted verifiers. Untrusted parties (on-chain contracts, verifier networks, embedded devices) can now efficiently verify while maintaining trustlessness—verification cost reduced 43× while remaining practical.
+
+**Important**: Recursion is a **current approach** that significantly improves verification costs, not "the definitive solution." Whether 30M cycles is sufficient depends on deployment goals. For some use cases (off-chain verification, verifier networks), this may be the endpoint; for others (e.g., EVM on-chain), it may be an intermediate step toward further compression (Groth16, alternative SNARKs, etc.).
+
+---
+
+## Part 1: The Verification Cost Problem
+
+**Note on examples**: Throughout this document, we use $\log_2 N = 16$ (65,536 cycles) as the representative example for typical programs. For reference, the Fibonacci example (`examples/fibonacci`) uses `max_trace_length = 65536`, which pads to $\log_2 N = 16$ (actual execution is 1,040 cycles).
+
+### 1.1 Current Verification Costs
+
+Jolt verification for a typical program ($\log_2 N = 16$, or 65,536 cycles) costs approximately **1.28 billion RISC-V cycles**:
+
+| Component | Cost (cycles) | % of Total |
+|-----------|---------------|------------|
+| **Dory $\mathbb{G}_T$ exponentiations** (109 @ 10M each) | **1.09B** | **85%** |
+| Pairings (5 @ 20M each) | 100M | 8% |
+| G1/G2 scalar-point muls | 50M | 4% |
+| Sumcheck verification (22 instances) | ~20M | 1.5% |
+| Simple $\mathbb{G}_T$ ops + misc | 20M | 1.5% |
+| **Total** | **~1.28B** | **100%** |
+
+**The bottleneck**: $\mathbb{G}_T$ exponentiations in Dory's polynomial commitment scheme account for 85% of verification time. Sumcheck verification (22 instances across 4 stages) is only 1.5% of total cost—**not** the bottleneck.
+
+### 1.2 $\mathbb{G}_T$ Exponentiation Cost
+
+**Per-exponentiation cost**: ~10M RISC-V cycles (with cyclotomic squaring optimization)
+
+**Algorithm**: Binary exponentiation (square-and-multiply) with Granger-Scott cyclotomic squaring
+```
+For each of the 254 bits of the exponent:
+  - Square (cyclotomic): 18 Fq multiplications
+  - Multiply (if bit = 1): 54 Fq multiplications (average ~127 times)
+
+Total per exponentiation:
+  = (254 × 18 × 900) + (127 × 54 × 900)
+  = 4,111,200 + 6,170,400
+  ≈ 10M cycles
+```
+
+**Key optimization**: Granger-Scott algorithm reduces cyclotomic squaring from 54 to 18 base field multiplications (3× faster than general multiplication).
+
+Cost is constant regardless of trace size $N$ (exponent size fixed at 254 bits).
+
+**Detailed breakdown**: See [Dory_Verification_Cost_Summary.md](Dory_Verification_Cost_Summary.md) Section 1.2 for complete mathematical derivation.
+
+### 1.3 Other Dory Operations: Pairings, Scalar Multiplications, and Simple $\mathbb{G}_T$ Operations
+
+Beyond the $\mathbb{G}_T$ exponentiations (90% of cost), Dory verification requires additional operations:
+
+#### Pairings (5 @ ~20M each = 100M cycles)
+
+**What they are**: BN254 bilinear pairings $e: \mathbb{G}_1 \times \mathbb{G}_2 \to \mathbb{G}_T$
+
+**Cost per pairing**: ~20M cycles
+- **Miller loop**: ~12M cycles (iterative computation in $\mathbb{F}_{q^{12}}$)
+- **Final exponentiation**: ~8M cycles (cyclotomic exponentiation)
+
+**Where used**: Dory's opening verification to validate inner product structure (5 pairings total, fixed count)
+
+**Code**: `jolt-core/src/poly/commitment/dory.rs:700-704` (multi_miller_loop + final_exponentiation)
+
+**EVM note**: Pairings have precompile 0x08, making them cheap on-chain (~113K gas). Not a bottleneck.
+
+#### G1/G2 Scalar-Point Multiplications (50M cycles)
+
+**What they are**: Elliptic curve operations on BN254's G1 and G2 groups
+
+**Operations**:
+- **Scalar multiplication**: $[k]P$ using double-and-add (~500K-1M cycles each)
+- **Multi-scalar multiplication (MSM)**: $\sum_{i} [k_i]P_i$ using Pippenger (~50% amortized cost)
+
+**Where used**:
+- Preparing pairing inputs (converting commitments and challenges)
+- Linear combinations of commitment points in Dory verification
+
+**Total**: ~50-100 scalar multiplications across Dory verification = ~50M cycles
+
+#### Simple $\mathbb{G}_T$ Operations + Misc (20M cycles)
+
+**$\mathbb{G}_T$ additions/multiplications** (NOT full exponentiations):
+- Single $\mathbb{F}_{q^{12}}$ multiplication: ~54K cycles (vs 20M for exponentiation)
+- Used for accumulating products, combining intermediate values
+
+**Miscellaneous**:
+- Transcript management (SHA256 hashing): ~100-200 cycles per operation
+- Memory operations: ~10-50 cycles per access
+- Control flow: Negligible
+
+**Total**: ~20M cycles for all simple operations
+
+#### The Cost Hierarchy
+
+| Operation | Per-Op Cost | Count | Total | % |
+|-----------|------------|-------|-------|---|
+| $\mathbb{G}_T$ exponentiations | ~10M | 109 | 1.09B | 85% |
+| Pairings | ~20M | 5 | 100M | 8% |
+| G1/G2 scalar muls | ~500K-1M | ~50-100 | 50M | 4% |
+| Simple $\mathbb{G}_T$ ops + misc | ~1K-54K | hundreds | 20M | 1.5% |
+| Sumcheck (22 instances) | (varies) | 352 rounds | ~20M | 1.5% |
+| **Total** | | | **~1.28B** | **100%** |
+
+**Why recursion targets exponentiations**: They're 85% of cost, have no EVM precompile, and can be replaced with hints + SZ-Check proof.
+
+### 1.4 Exponentiation Count Breakdown
+
+**Dory verification formula** (in execution order):
+$$(5 \times \log_2 N) + 29 \text{ exponentiations}$$
+
+For typical program with $N = 2^{16}$: $(5 \times 16) + 29 = 80 + 29 = 109$ exponentiations
+
+**Composition**:
+- **Stage 5 RLC**: 29 exponentiations (fixed, independent of $N$)
+  - Creates combined commitment: $C_{\text{combined}} = \prod_{i=1}^{29} C_i^{\gamma_i}$
+- **Main Dory opening**: $5 \times \log_2 N$ exponentiations (scales logarithmically)
+  - 10 exponentiations per round over $\log_2(\sqrt{N})$ rounds
+  - Verifies the single combined commitment
+
+**Total cost**: $109 \times 10\text{M} = 1.09\text{B cycles}$
+
+### 1.5 How Costs Scale with Program Size
+
+The number of exponentiations (and thus total cost) **scales logarithmically** with trace size:
+
+| Trace Size | $\log_2 N$ | Stage 5 RLC | Main Dory Opening | **Total Exps** | **Total Cost** |
+|------------|------------|-------------|-------------------|----------------|----------------|
+| 2,048 | 11 | 29 | $5 \times 11 = 55$ | **84** | **1.05B cycles** |
+| 8,192 | 13 | 29 | $5 \times 13 = 65$ | **94** | **1.15B cycles** |
+| **65,536** | **16** | **29** | **$5 \times 16 = 80$** | **109** | **1.30B cycles** |
+| 262,144 | 18 | 29 | $5 \times 18 = 90$ | **119** | **1.40B cycles** |
+| 1,048,576 | 20 | 29 | $5 \times 20 = 100$ | **129** | **1.50B cycles** |
+
+**Key observations** (columns ordered by execution):
+- **Stage 5 RLC**: Fixed at 29 exponentiations (independent of $N$) - happens **first**
+- **Main Dory opening**: Scales as $5 \times \log_2 N$ (linear in log N) - happens **second**
+- For small traces ($\log_2 N \leq 11$): RLC dominates (29/84 = 35%)
+- For large traces ($\log_2 N \geq 20$): Main Dory dominates (80/109 = 73%)
+- **Logarithmic scaling**: $10\times$ larger program → only +16 exponentiations (~320M cycles)
+
+---
+
+## Part 2: Current Recursion Approach - High-Level Strategy
+
+### 2.1 Two-Layer Architecture
+
+Instead of computing expensive exponentiations, **accept them as hints** and prove correctness separately:
+
+```
+┌────────────────────────────────────────────────────────┐
+│ LAYER 1: Standard Jolt (BN254)                        │
+├────────────────────────────────────────────────────────┤
+│ Input: User program P, input x                        │
+│ Output: Proof π₁ (~10 KB)                             │
+│ Verification Cost: 1.28B cycles (if computed)         │
+│   └─ 109 G_T exponentiations @ 10M each               │
+└────────────────────────────────────────────────────────┘
+                        ↓
+┌────────────────────────────────────────────────────────┐
+│ LAYER 2: Recursive Jolt (BN254 + Grumpkin)           │
+├────────────────────────────────────────────────────────┤
+│ Guest: Jolt verifier compiled to RISC-V bytecode     │
+│                                                        │
+│ Modified verification algorithm:                      │
+│   1. Verify sumchecks: ~20M cycles (22 instances)    │
+│   2. Accept 109 G_T exponentiations as hints         │
+│   3. Use hints in Dory verification: ~150M cycles    │
+│   4. Prove hints correct via SZ-Check: ~150M cycles  │
+│                                                        │
+│ Total trace: ~320M RISC-V cycles                     │
+│                                                        │
+│ Mixed PCS:                                             │
+│   • Main trace → Dory over BN254                     │
+│   • Exponentiation witnesses → Hyrax over Grumpkin   │
+│                                                        │
+│ Output: Proof π₂ (~15 KB)                             │
+│ Final Verification Cost: ~30M cycles ✓                │
+│   (43× compression vs. Layer 1's 1.28B)              │
+└────────────────────────────────────────────────────────┘
+                        ↓
+┌────────────────────────────────────────────────────────┐
+│ DEPLOYMENT OPTIONS:                                    │
+├────────────────────────────────────────────────────────┤
+│ • Off-chain: Fast verification (30M cycles)          │
+│ • On-chain: May need additional wrap (Groth16)       │
+│ • Embedded: Resource-constrained environments         │
+│ • Verifier networks: Efficient distributed validation │
+└────────────────────────────────────────────────────────┘
+```
+
+### 2.2 Three Key Insights
+
+**Insight 1: Hints instead of computation**
+- Layer 2 **accepts** 109 $\mathbb{G}_T$ exponentiation results as runtime inputs (hints)
+- Doesn't compute them during RISC-V execution
+- **Savings**: 1.09B cycles not computed in the trace
+
+**Insight 2: Prove hints correct via algorithm structure**
+- Use **SZ-Check protocol** to prove hints are correct exponentiations
+- Verifies that square-and-multiply algorithm was executed correctly (don't trust the result, verify the computation)
+- **Cost**: ~150M cycles for SZ-Check (vs 1.09B to compute exponentiations directly)
+- **Net savings**: 92% reduction
+
+**Insight 3: Mixed PCS terminates recursion**
+- Main trace (330M cycles): **Dory over BN254** (same as Layer 1)
+- Witness data (exponentiation intermediate values): **Hyrax over Grumpkin** (no pairings, just elliptic curve scalar multiplications)
+- Hyrax verification creates **no new $\mathbb{G}_T$ exponentiations** → recursion stops at Layer 2
+
+### 2.3 Security
+
+Layer 2 proves correct execution of the verifier algorithm on $\pi_1$, with cryptographic binding via bytecode (embedded mode) or I/O (input mode) commitments. Prover cannot substitute a different $\pi_1$ without breaking the commitment.
+
+---
+
+## Part 3: The Mixed PCS Strategy
+
+### 3.1 Strategy Overview
+
+Mixed PCS strategy: Dory for main trace, Hyrax/Grumpkin for witnesses to terminate recursion (Hyrax verification requires only MSMs, not $\mathbb{G}_T$ exponentiations).
+
+| Data Type | Size | PCS | Verification Cost |
+|-----------|------|-----|-------------------|
+| **Main trace** | 320M cycles | Dory/BN254 | Offloaded as hints |
+| **Exponentiation witnesses** | ~1K coefficients | Hyrax/Grumpkin | ~8M cycles (MSMs only) |
+
+### 3.2 Why Hyrax/Grumpkin
+
+**Hyrax chosen for witnesses**:
+- Small polynomial size (~1.3K $\mathbb{F}_q$ coefficients: $109 \times 12$, padded to $2^{11}$)
+- MSM-only verification: ~8M cycles total (vs 1.09B for direct computation)
+- Terminates recursion: no pairings, no new $\mathbb{G}_T$ exponentiations
+
+**Grumpkin chosen for field matching**:
+- BN254↔Grumpkin 2-cycle: Grumpkin's scalar field = BN254's base field $\mathbb{F}_q$
+- Enables native arithmetic for $\mathbb{F}_q$ witness values (avoiding ~1000× non-native overhead)
+- MSM cost: ~100K cycles each (200× cheaper than $\mathbb{G}_T$ exponentiations at ~20M cycles)
+
+---
+
+## Part 4: SZ-Check Protocol Overview
+
+**The challenge**: Prove $w = g^x$ without computing the exponentiation (which costs 20M cycles).
+
+**The solution** (SZ-Check): Instead of computing $g^x$, prove that the **square-and-multiply algorithm** was executed correctly. The prover provides 254 intermediate values $r_0, r_1, \ldots, r_{254}$ (one per bit of the 254-bit exponent), and the verifier checks via sumcheck that:
+
+$$r_{j+1} = r_j^2 \cdot (1 + b_j(g - 1))$$
+
+for all steps $j$. If all constraints hold, then $r_{254} = g^x$ is guaranteed by the algorithm's structure.
+
+**Cost breakdown** (for 109 exponentiations):
+- Computing directly: $109 \times 10\text{M} = 1.09\text{B cycles}$
+- SZ-Check: ~150M cycles (batched sumcheck + Hyrax openings)
+- **Savings**: 86% reduction (7× faster)
+
+**Security**: Schwartz-Zippel lemma ensures that any incorrect exponentiation result would require the prover to construct a "cheating polynomial" that passes sumcheck checks, which has negligible probability ($< 2^{-240}$).
+
+For complete SZ-Check details, see [SNARK_Recursion_Overview.md](SNARK_Recursion_Overview.md) or [docs/01_Jolt_Theory_Enhanced.md](01_Jolt_Theory_Enhanced.md) Part VII.
+
+---
+
+## Part 5: Cost Breakdown and Verification Speedup
+
+### 5.1 Verification Cost Summary
+
+| Layer | Verifier Cost | Speedup |
+|-------|---------------|---------|
+| **Layer 1 (direct)** | **1.28B cycles** | Baseline |
+| **Layer 2 (recursion)** | **~30M cycles** | **43×** |
+
+**Layer 1 bottleneck**: 85% of 1.28B cycles spent on 109 $\mathbb{G}_T$ exponentiations. Sumcheck verification (22 instances) is only 1.5% of total cost.
+
+**Layer 2 breakdown** (~30M cycles total):
+- Sumcheck verification: ~5M cycles
+- Dory verification (offloaded): ~15M cycles
+- Hyrax openings (SZ-Check witnesses): ~8M cycles
+- Misc (field ops, transcript): ~2M cycles
+
+**Prover costs**:
+- Layer 1: ~2 seconds (standard Jolt proving)
+- Layer 2: ~20 seconds (proving 320M cycle trace + SZ-Check witnesses)
+
+### 5.2 Practical Implications
+
+**68× verification speedup enables**:
+- **Off-chain**: Milliseconds on modern hardware (vs. seconds for direct)
+- **Verifier networks**: Economical distributed validation at scale
+- **Embedded**: Feasible for resource-constrained devices
+- **On-chain**: Within reach for many blockchain VMs (may need additional Groth16 wrap for EVM)
+
+---
+
+## Part 6: Open Questions and Future Directions
+
+### 6.1 Direct Hyrax+SZ-Check Integration in Layer 1?
+
+**Question**: Could Hyrax+SZ-Check be integrated directly into Layer 1 to avoid Layer 2 entirely?
+
+**Hypothetical Layer 1 (modified)**:
+```
+Layer 1 (with hints):
+  - Main trace: Dory over BN254
+  - Dory exponentiations: Accept as hints (not computed)
+  - Exponentiation witnesses: Commit via Hyrax over Grumpkin
+  - Prove witnesses correct: SZ-Check
+  → Direct verification cost: 22 sumchecks + Hyrax openings + SZ-Check ≈ 30M cycles?
+```
+
+**Why current approach (Layer 2) works**:
+- Layer 2 treats Layer 1 verifier as a "black box" (compiles to RISC-V bytecode)
+- No protocol-level modifications needed to Layer 1
+- Clean separation: Layer 1 unchanged, Layer 2 adds recursion as external wrapper
+
+**Open question**: Is there a fundamental reason why direct integration is impossible, or is it primarily an implementation/modularity choice? Would direct integration offer any advantages (e.g., lower constant factors, simpler overall system)?
+
+### 6.2 Groth16 Constraint Count Limits
+
+**Question**: Can Layer 2's 30M cycle verifier be wrapped in Groth16 for minimal verification cost?
+
+**Motivation**: Groth16 offers:
+- **Constant verification**: ~280K gas on EVM (independent of program size)
+- **Tiny proof size**: 192 bytes
+- **Mature tooling**: Well-supported in Solidity and other smart contract platforms
+
+**Estimated constraint count**:
+- Layer 2 verification: 30M cycles
+- Each RISC-V cycle: ~30 R1CS constraints (typical for Jolt)
+- **Total**: $30\text{M cycles} \times 30 \text{ constraints/cycle} \approx 900\text{M R1CS constraints}$
+
+**Groth16 challenges at this scale**:
+
+1. **Memory bottleneck**:
+   - Groth16 proving requires large FFTs over constraint domain
+   - FFT size: Smallest power of 2 ≥ constraint count
+   - For 900M constraints → need $2^{30}$ FFT (1 billion elements)
+   - Memory requirement: Potentially 100s of GB for witness polynomials + intermediate values
+
+2. **Proving time**:
+   - Groth16 proving time scales roughly as $O(N \log N)$ for $N$ constraints
+   - Multi-exponentiation of size $N$ (dominant cost)
+   - For 900M constraints: Hours? Days? Depends on hardware and implementation
+
+3. **SRS size**:
+   - Structured reference string must support the constraint count
+   - Powers of tau ceremony must generate sufficient elements
+   - Largest known ceremonies: ? (this is an empirical question)
+
+**Open questions**:
+1. What is the **largest Groth16 circuit proven in practice**? (Constraint count, hardware requirements, proving time)
+2. Does **900M constraints** fit within practical Groth16 limits, or is this infeasible?
+3. Are there **alternative final-step SNARKs** better suited for large constraint counts?
+   - **Plonky2**: Recursive SNARK optimized for large circuits (but not EVM-friendly verification)
+   - **Nova/Sangria**: Incremental verifiable computation (IVC) with small recursive overhead
+   - **Halo2**: Recursive SNARK using polynomial commitments (no trusted setup)
+4. Can **constraint count be reduced** via:
+   - Custom R1CS gadgets for hot paths in the verifier?
+   - Exploiting sparsity in the constraint system?
+   - Additional recursion layers (Layer 3) before Groth16 step?
+5. What is the **actual constraint count** for Layer 2 verification? (The 30 constraints/cycle is an estimate based on typical Jolt circuits—actual count may differ for the verifier specifically)
+
+### 6.3 Is 30M Cycles the Final Goal?
+
+**Fundamental question**: What are we actually optimizing for?
+
+**Possible goals** (not mutually exclusive):
+
+1. **Fast direct verification**:
+   - 30M cycles enables millisecond-level verification on modern CPUs
+   - Sufficient for off-chain verifier networks, embedded devices, distributed validation
+
+2. **EVM deployment**:
+   - Target: ≤30M gas for economical on-chain verification
+   - Likely requires additional compression (Groth16 wrap to ~280K gas)
+   - 30M cycles is an **intermediate step**, not the final goal
+
+3. **Cross-VM compatibility**:
+   - Enable verification in other blockchain VMs (Solana, Cosmos, Polkadot, etc.)
+   - Each platform has different constraints
+   - 30M cycles may be sufficient for some, insufficient for others
+
+4. **Proof composition**:
+   - Make Jolt proofs easier to use as building blocks in larger systems
+   - Aggregate multiple Jolt proofs
+   - Combine with other proof systems
+   - Create application-specific verification pipelines
+
+5. **Resource-constrained environments**:
+   - Enable verification on embedded/mobile devices
+   - Depends on specific hardware constraints
+
+**Open questions**:
+- Is recursion primarily a **standalone solution** (30M cycles is the target) or a **stepping stone** (enables subsequent Groth16/other wrapping)?
+- For EVM deployment specifically: Is Groth16 wrapping feasible at 900M constraints? If not, what alternatives exist?
+- Are there deployment targets beyond EVM where 30M cycles is "good enough" vs "needs more compression"?
+- Could future PCS developments (e.g., more efficient pairing-based schemes, different curve choices) reduce the baseline Layer 1 cost enough to avoid recursion entirely?
+- What are the trade-offs between "deeper recursion" (Layer 3, Layer 4) vs "alternative final step" (Plonky2, Nova) vs "accept 30M cycles as sufficient"?
+
+---
+
+## Part 7: Key Formulas
+
+### 7.1 Dory Exponentiation Count
+
+**Total exponentiations** (in execution order):
+$$\boxed{\text{Total} = 29 + (4 \times \log_2 N)}$$
+
+- **Stage 5 RLC**: 29 exponentiations (fixed, independent of $N$)
+- **Main Dory opening**: $4 \times \log_2 N$ exponentiations (scales logarithmically)
+
+**For typical program** ($N = 2^{16}$):
+$$\text{Total} = 29 + (4 \times 16) = 93 \text{ exponentiations}$$
+
+### 9.2 Verification Cost Formulas
+
+**Layer 1 (direct verification)**:
+$$\text{Cost}_{\text{Layer 1}}(N) = [(4 \times \log_2 N) + 29] \times 20\text{M} + 190\text{M cycles}$$
+
+For $N = 2^{16}$:
+$$\text{Cost} = [64 + 29] \times 20\text{M} + 190\text{M} = 1.86\text{B} + 0.19\text{B} = 2.05\text{B cycles}$$
+
+**Layer 2 (recursive verification)**:
+$$\boxed{\text{Cost}_{\text{Layer 2}} \approx 30\text{M cycles (approximately constant)}}$$
+
+**Verification speedup**:
+$$\text{Speedup} = \frac{\text{Cost}_{\text{Layer 1}}(N)}{30\text{M}} \approx \frac{2{,}050\text{M}}{30\text{M}} = 68\times$$
+
+### 9.3 Per-Exponentiation Cost
+
+**Computing $g^x$ in $\mathbb{G}_T$** (independent of trace size):
+
+$$
+\begin{align}
+\text{Square-and-multiply:} \quad & 254 \text{ squarings} + 127 \text{ multiplications (average)} \\
+& = 381 \text{ } \mathbb{F}_q^{12} \text{ operations (average case)} \\
+\\
+\mathbb{F}_q^{12} \text{ multiplication:} \quad & \sim 54 \text{ } \mathbb{F}_q \text{ base field operations (Karatsuba)} \\
+\\
+\mathbb{F}_q \text{ operation:} \quad & \sim 1000 \text{ RISC-V cycles (256-bit modular arithmetic)} \\
+\\
+\text{Total:} \quad & 381 \times 54 \times 1000 \approx 20\text{M cycles}
+\end{align}
+$$
+
+**Why constant?** Exponent size determined by BN254 scalar field (254 bits), not by trace size.
+
+---
+
+## Summary
+
+**The Challenge**:
+- Jolt verification costs ~1.28B cycles, with 90% spent on 109 $\mathbb{G}_T$ exponentiations
+- Sumcheck verification (22 instances) is only 1% of total cost—**not** the bottleneck
+- **Two problems**:
+  1. High computational cost (prohibitive for many deployments)
+  2. Difficult to wrap in other proof systems (1.09B constraint bottleneck from non-native field arithmetic)
+
+**Current Recursion Approach**:
+- **Accept exponentiations as hints** (don't compute them in Layer 2 trace)
+- **Prove hints correct** via SZ-Check (verify algorithm structure, ~150M cycles)
+- **Mixed PCS strategy**: Dory for main trace (320M cycles), Hyrax/Grumpkin for witnesses
+- **Result**: 43× verification improvement (1.28B → 30M cycles)
+
+**Three Key Techniques**:
+1. **Hints instead of computation**: Save 1.09B cycles by accepting exponentiations as inputs
+2. **SZ-Check**: Prove correctness via algorithm structure (86% cost reduction vs. computing directly)
+3. **Curve cycle + Hyrax**: Terminate recursion with simple MSM verification (no Layer 3 needed)
+
+**Trade-offs**:
+- ✅ 43× verification improvement
+- ✅ Fully transparent (no trusted setup)
+- ✅ Enables new deployment scenarios (off-chain, embedded, verifier networks)
+- ❌ 10× slower proving (22s vs 2s)
+- ❓ May need further compression for some targets (e.g., EVM on-chain via Groth16)
+
+**Status**: Fully implemented in `examples/recursion/` (PR #975)
+
+**Context**: This approach significantly improves verification costs and makes integration more feasible. Whether 30M cycles is the "final goal" or an "intermediate step" depends on deployment context. For off-chain verification and verifier networks, 30M cycles may be sufficient. For on-chain EVM deployment, additional compression (e.g., Groth16 wrap) is likely needed, which introduces its own challenges (see Part 8.2).
+
+---
+
+## References
+
+- **Implementation details**: [Jolt_SNARK_Composition_Implementation.md](Jolt_SNARK_Composition_Implementation.md)
+- **Verifier mathematics**: [03_Verifier_Mathematics_and_Code.md](03_Verifier_Mathematics_and_Code.md)
+- **Jolt theory**: [01_Jolt_Theory_Enhanced.md](01_Jolt_Theory_Enhanced.md)
+- **Implementation code**: `examples/recursion/` in codebase
+- **Papers**:
+  - Jolt: SNARKs for Virtual Machines via Lookups (Arasu Arun, Srinath Setty, Justin Thaler)
+  - Dory: Efficient, Transparent arguments for Generalised Inner Products and Polynomial Commitments (Heath et al.)
+  - Twist and Shout: Faster memory checking arguments via one-hot addressing and increments (Srinath Setty, Justin Thaler)

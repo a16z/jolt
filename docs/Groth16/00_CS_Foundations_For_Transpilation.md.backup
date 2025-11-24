@@ -1,0 +1,2489 @@
+# Computer Science Foundations for Transpilation
+
+**Document Purpose**: Comprehensive technical foundations in computer architecture, compilation theory, and program analysis needed to understand and implement the Jolt-to-Groth16 transpilation pipeline.
+
+**Audience**: Engineers with mathematical background who want to deeply understand the CS theory underlying code transformation, extraction, and circuit compilation.
+
+**Scope**: This document covers fundamental CS concepts from first principles with rigorous definitions, small working examples, and connections to the transpilation challenge. It complements the cryptography-focused [01_Jolt_Theory_Enhanced.md](../01_Jolt_Theory_Enhanced.md) by providing the systems and compiler background.
+
+**Date**: 2025-11-07
+**Author**: Parti
+
+---
+
+## Table of Contents
+
+### Part 0: Computer Architecture Fundamentals
+0.1. [The Abstraction Hierarchy: From Silicon to Source](#01-the-abstraction-hierarchy)
+0.2. [Memory Architecture and Addressing](#02-memory-architecture-and-addressing)
+0.3. [Registers: The Fastest Memory](#03-registers-the-fastest-memory)
+0.4. [Instruction Set Architectures](#04-instruction-set-architectures)
+0.5. [The Fetch-Decode-Execute Cycle](#05-the-fetch-decode-execute-cycle)
+0.6. [RISC vs CISC: Philosophical Differences](#06-risc-vs-cisc)
+
+### Part 1: Compilation Pipeline Deep Dive
+1.1. [The Compilation Phases](#11-the-compilation-phases)
+1.2. [Lexical Analysis: From Text to Tokens](#12-lexical-analysis)
+1.3. [Syntactic Analysis: Building the AST](#13-syntactic-analysis)
+1.4. [Semantic Analysis: Type Checking and Scoping](#14-semantic-analysis)
+1.5. [Intermediate Representations](#15-intermediate-representations)
+1.6. [Optimization Passes](#16-optimization-passes)
+1.7. [Code Generation](#17-code-generation)
+
+### Part 2: Abstract Syntax Trees and IRs
+2.1. [Abstract Syntax Trees: Structure and Properties](#21-abstract-syntax-trees)
+2.2. [Three-Address Code](#22-three-address-code)
+2.3. [Static Single Assignment (SSA) Form](#23-static-single-assignment-form)
+2.4. [Control Flow Graphs](#24-control-flow-graphs)
+2.5. [Data Flow Analysis](#25-data-flow-analysis)
+
+### Part 3: Transpilation Theory
+3.1. [Source-to-Source Compilation](#31-source-to-source-compilation)
+3.2. [Semantic Preservation](#32-semantic-preservation)
+3.3. [Type System Mapping](#33-type-system-mapping)
+3.4. [Control Flow Translation](#34-control-flow-translation)
+3.5. [Memory Model Translation](#35-memory-model-translation)
+
+### Part 4: Circuit Representation
+4.1. [Arithmetic Circuits](#41-arithmetic-circuits)
+4.2. [R1CS Constraint Systems](#42-r1cs-constraint-systems)
+4.3. [From Imperative Code to Circuits](#43-from-imperative-code-to-circuits)
+4.4. [Witness Generation](#44-witness-generation)
+
+### Part 5: The Extraction Problem
+5.1. [Static Analysis vs Tracing](#51-static-analysis-vs-tracing)
+5.2. [Operation Capture Techniques](#52-operation-capture-techniques)
+5.3. [Memory Management for IR](#53-memory-management-for-ir)
+5.4. [Optimization: Common Subexpression Elimination](#54-optimization-cse)
+
+### Appendices
+- [Appendix A: Notation Reference](#appendix-a-notation-reference)
+- [Appendix B: Worked Examples](#appendix-b-worked-examples)
+- [Appendix C: Connection to Jolt Transpilation](#appendix-c-connection-to-jolt)
+
+---
+
+# Part 0: Computer Architecture Fundamentals
+
+> **Purpose**: Before understanding transpilation, we must understand what programs *are* at the machine level. This section builds the foundation from hardware to software abstraction layers.
+
+## 0.1 The Abstraction Hierarchy: From Silicon to Source
+
+### The Full Stack
+
+Modern computing operates through layers of abstraction. Understanding transpilation requires clarity about which layer we're operating at and how information transforms between layers.
+
+**The complete hierarchy** (bottom to top):
+
+```
+Level 0: Physics
+├─ Transistors (switches: voltage high/low → binary 1/0)
+├─ Logic gates (NAND, NOR, XOR built from transistors)
+└─ Flip-flops and latches (memory cells)
+
+Level 1: Digital Logic
+├─ Combinational circuits (ALU components)
+├─ Sequential circuits (registers, counters)
+└─ Memory arrays (SRAM, DRAM cells)
+
+Level 2: Microarchitecture
+├─ Datapath (ALU, register file, buses)
+├─ Control unit (FSM driving datapath)
+└─ Cache hierarchy (L1, L2, L3)
+
+Level 3: Instruction Set Architecture (ISA)
+├─ Machine code (binary instruction encoding)
+├─ Opcodes and operands (what operations exist)
+└─ Architectural state (visible registers, memory model)
+
+Level 4: Assembly Language
+├─ Symbolic opcodes (ADD, SUB, JMP)
+├─ Labels and symbolic addresses
+└─ Assembler directives
+
+Level 5: High-Level Languages
+├─ Variables and types (int x = 5;)
+├─ Control structures (if, while, for)
+└─ Functions and procedures
+
+Level 6: Domain-Specific Languages
+├─ SQL (database queries)
+├─ Gnark (arithmetic circuits)
+└─ Lean4 (proof languages)
+```
+
+### Key Insight: Information Preservation and Loss
+
+As we move **up** the hierarchy (silicon → source):
+- ✅ Gain: Abstraction, expressiveness, human readability
+- ❌ Lose: Precise control, timing guarantees, hardware awareness
+
+As we move **down** the hierarchy (source → silicon):
+- ✅ Gain: Precise semantics, deterministic execution
+- ❌ Lose: High-level structure, intent
+
+**Critical for transpilation**: When we transpile (source A → source B), we're typically staying at the same level but *changing representation*. The challenge is preserving semantics while adapting to the target's idioms.
+
+### Machine Code vs Bytecode vs Source Code
+
+These terms are often conflated. Precise definitions:
+
+#### Machine Code
+
+**Definition**: Binary-encoded instructions directly executable by hardware (Level 3).
+
+**Properties**:
+- Fixed-width instruction encoding (e.g., RISC-V: 32-bit instruction words)
+- Decoded by CPU control unit
+- Addresses refer to physical or virtual memory
+- Architecture-specific (x86 machine code won't run on ARM)
+
+**Example (RISC-V RV64I)**:
+```
+Address     Hex          Binary                              Disassembly
+0x1000      0x00A58593   00000000 10100101 10000101 10010011  ADDI a1, a1, 10
+```
+
+Breaking down the encoding:
+```
+Bits [31:20]: 000000001010  → immediate value (10 in decimal)
+Bits [19:15]: 01011        → rs1 (source register a1 = x11)
+Bits [14:12]: 000          → funct3 (ADDI operation)
+Bits [11:7]:  01011        → rd (destination register a1 = x11)
+Bits [6:0]:   0010011      → opcode (I-type arithmetic)
+```
+
+#### Bytecode
+
+**Definition**: Intermediate representation designed for a virtual machine, not hardware (Level 4.5).
+
+**Properties**:
+- Platform-independent
+- Often variable-length encoding
+- Executed by interpreter or JIT compiler
+- Examples: JVM bytecode, Python bytecode, WebAssembly
+
+**Example (JVM bytecode)**:
+```
+Bytecode       Mnemonic      Stack Effect
+0x10 0x0A      BIPUSH 10     [] → [10]
+0x3C           ISTORE_1      [10] → []    (store to local variable 1)
+0x1B           ILOAD_1       [] → [10]    (load from local variable 1)
+0x10 0x14      BIPUSH 20     [10] → [10, 20]
+0x60           IADD          [10, 20] → [30]
+```
+
+**Why bytecode exists**: Allows "write once, run anywhere" by targeting a virtual machine specification rather than hardware.
+
+#### Source Code
+
+**Definition**: Human-readable text in a high-level language (Level 5+).
+
+**Properties**:
+- Uses keywords, identifiers, operators
+- Structured by grammar rules (syntax)
+- Meaning defined by language semantics
+- Requires compilation or interpretation
+
+**Example (Rust)**:
+```rust
+fn add_ten(x: i32) -> i32 {
+    let y = x + 10;
+    y
+}
+```
+
+### The Role of ELF (Executable and Linkable Format)
+
+**ELF is NOT bytecode or machine code—it's a container format.**
+
+**What ELF contains**:
+
+```
+┌─────────────────────────────────┐
+│ ELF Header                       │
+│  ├─ Magic: 0x7F 'E' 'L' 'F'    │
+│  ├─ Class: 64-bit               │
+│  ├─ Data: Little-endian         │
+│  ├─ Machine: RISC-V             │
+│  └─ Entry point: 0x80000000     │
+├─────────────────────────────────┤
+│ Program Headers (segments)       │
+│  ├─ LOAD: map .text to memory   │
+│  ├─ LOAD: map .data to memory   │
+│  └─ DYNAMIC: linker info         │
+├─────────────────────────────────┤
+│ Section: .text (executable)      │
+│  ├─ Machine code instructions    │ ← This is what CPU executes
+│  └─ Size: 1024 bytes             │
+├─────────────────────────────────┤
+│ Section: .rodata (read-only)     │
+│  ├─ String constants             │
+│  └─ Jump tables                  │
+├─────────────────────────────────┤
+│ Section: .data (initialized)     │
+│  ├─ Global variables             │
+│  └─ Static data                  │
+├─────────────────────────────────┤
+│ Section: .bss (uninitialized)    │
+│  └─ Zero-initialized globals     │
+├─────────────────────────────────┤
+│ Section: .symtab (symbol table)  │
+│  ├─ Function names               │
+│  └─ Variable names               │
+├─────────────────────────────────┤
+│ Section: .strtab (string table)  │
+│  └─ Symbol name strings          │
+└─────────────────────────────────┘
+```
+
+**Compilation pipeline to ELF**:
+
+```
+Rust source (.rs)
+    ↓ [rustc frontend: parse, type check, borrow check]
+MIR (Mid-level IR)
+    ↓ [rustc backend: optimization]
+LLVM IR
+    ↓ [LLVM: target-specific optimization]
+Assembly (.s)
+    ↓ [Assembler: encode to machine code]
+Object file (.o)
+    ↓ [Linker: resolve symbols, layout sections]
+ELF executable
+```
+
+**What Jolt does with ELF**:
+
+```rust
+// In jolt-core/src/host/program.rs
+pub struct Program {
+    pub elf: Vec<u8>,                    // Raw ELF bytes
+    pub bytecode: Vec<ELFInstruction>,   // Extracted from .text section
+    pub memory_layout: MemoryLayout,     // Address ranges
+}
+
+impl Program {
+    pub fn from_elf(elf_bytes: &[u8]) -> Self {
+        // Parse ELF structure
+        let elf = goblin::elf::Elf::parse(elf_bytes)?;
+
+        // Extract .text section (machine code)
+        let text_section = elf.section_headers
+            .iter()
+            .find(|s| s.sh_name == ".text")?;
+
+        // Decode machine code to ELFInstruction structs
+        let bytecode = decode_instructions(
+            &elf_bytes[text_section.sh_offset..],
+            text_section.sh_size
+        );
+
+        // Set up memory layout
+        let memory_layout = MemoryLayout::from_elf(&elf);
+
+        Self { elf: elf_bytes.to_vec(), bytecode, memory_layout }
+    }
+}
+```
+
+**Three distinct concepts**:
+1. **ELF file**: Container with metadata + multiple sections
+2. **Machine code**: Binary instructions in `.text` section
+3. **Bytecode** (Jolt's usage): Decoded representation of machine code as structs
+
+**Why this matters for Jolt**:
+- ✅ ELF provides structure (code vs data separation)
+- ✅ Machine code is what gets proven (execution trace)
+- ✅ Bytecode commitment is what verifier checks against
+
+---
+
+## 0.2 Memory Architecture and Addressing
+
+### The Memory Hierarchy
+
+Modern computers organize memory by speed-capacity trade-off:
+
+```
+Register File
+├─ Size: 64-256 bytes (32-64 registers × 4-8 bytes each)
+├─ Access time: 0 cycles (synchronous with ALU)
+└─ Bandwidth: 10-20 reads/writes per cycle
+
+L1 Cache
+├─ Size: 32-64 KB per core
+├─ Access time: 3-4 cycles
+└─ Bandwidth: 1-2 cache lines (64 bytes) per cycle
+
+L2 Cache
+├─ Size: 256 KB - 1 MB per core
+├─ Access time: 10-20 cycles
+└─ Bandwidth: Shared with L1
+
+L3 Cache
+├─ Size: 8-32 MB shared across all cores
+├─ Access time: 40-75 cycles
+└─ Bandwidth: Shared across all cores
+
+DRAM (Main Memory)
+├─ Size: 8-128 GB
+├─ Access time: 200-300 cycles
+└─ Bandwidth: 50-100 GB/s
+
+SSD/HDD (Storage)
+├─ Size: 256 GB - 16 TB
+├─ Access time: 10,000+ cycles (SSD), 10,000,000+ cycles (HDD)
+└─ Bandwidth: 500 MB/s (SSD), 100 MB/s (HDD)
+```
+
+**Critical insight for zkVMs**: Jolt's memory model abstracts away caching. The prover must track *every* memory access to RAM and registers, but doesn't model cache behavior. This is sound because:
+- Cache is transparent (doesn't change program semantics)
+- We're proving *correctness*, not *performance*
+
+### Memory Models: Byte-Addressable vs Word-Addressable
+
+#### Byte-Addressable Memory (RISC-V, x86, ARM)
+
+**Definition**: Each memory address refers to a single byte (8 bits).
+
+**Addressing arithmetic**:
+```
+Address    Value (hex)    Interpretation
+0x1000     0x12          Byte at address 0x1000
+0x1001     0x34          Byte at address 0x1001
+0x1002     0x56          Byte at address 0x1002
+0x1003     0x78          Byte at address 0x1003
+
+Reading 32-bit word from 0x1000 (little-endian):
+    0x78563412
+
+Reading 64-bit doubleword from 0x1000 (little-endian):
+    0x????????78563412  (need 4 more bytes)
+```
+
+**Why little-endian**: Least significant byte at lowest address. Makes multi-precision arithmetic easier.
+
+#### Word-Addressable Memory (Hypothetical)
+
+**Definition**: Each memory address refers to a word (e.g., 32-bit or 64-bit).
+
+**Addressing arithmetic**:
+```
+Address    Value (hex)        Interpretation
+0x0        0x12345678         Word 0
+0x1        0x9ABCDEF0         Word 1
+0x2        0x11223344         Word 2
+
+To address individual bytes: Need byte-within-word offset
+```
+
+**Why word-addressable is simpler for zkVMs**:
+- Fewer memory cells to track (divide address space by word size)
+- Most operations work on full words anyway
+- Simplifies circuit size
+
+#### Jolt's Hybrid Approach
+
+**RISC-V is byte-addressable**, but Jolt optimizes by treating memory as **doubleword-addressable internally**:
+
+**Address remapping formula**:
+```
+Jolt_index = (RISC-V_address - 0x80000000) / 8 + 1
+```
+
+**Example**:
+```
+RISC-V address    Jolt index    Contents
+0x80000000   →   1            Doubleword 1 (bytes 0-7)
+0x80000008   →   2            Doubleword 2 (bytes 8-15)
+0x80000010   →   3            Doubleword 3 (bytes 16-23)
+```
+
+**For sub-word operations** (LB, LH, LW, etc.), Jolt expands them to load/store full doubleword + masking:
+
+**Example: LB (load byte)**:
+```
+RISC-V instruction: LB r1, 0x80000002(r0)
+
+Expanded to virtual sequence:
+1. LD r_temp, 0x80000000(r0)      # Load doubleword containing target byte
+2. SRLI r_temp, r_temp, 16        # Shift right by 16 bits (byte offset 2)
+3. ANDI r1, r_temp, 0xFF          # Mask to get lowest byte
+4. SEXT r1, r1, 8                 # Sign-extend from 8 bits
+```
+
+**Why this works**:
+- Fewer memory consistency checks (only track doubleword operations)
+- Twist's K parameter (memory size) reduced by factor of 8
+- Trade-off: More instructions per byte operation (but rare in practice)
+
+### Memory Layout: Stack vs Heap
+
+#### The Stack
+
+**Definition**: Contiguous memory region managed via stack pointer, grows downward (by convention).
+
+**Operations**:
+- **PUSH**: Decrement SP, write value
+- **POP**: Read value, increment SP
+
+**Used for**:
+- Function call frames (local variables, return address, saved registers)
+- Temporary storage
+- Expression evaluation in stack-based VMs
+
+**Example (RISC-V ABI)**:
+```
+Stack pointer (SP = x2) initially at 0x7FFFFFFF
+
+Function call sequence:
+    ADDI sp, sp, -32      # Allocate 32-byte frame
+    SD   ra, 24(sp)       # Save return address
+    SD   s0, 16(sp)       # Save saved register s0
+    SD   s1, 8(sp)        # Save saved register s1
+    # ... function body ...
+    LD   s1, 8(sp)        # Restore s1
+    LD   s0, 16(sp)       # Restore s0
+    LD   ra, 24(sp)       # Restore return address
+    ADDI sp, sp, 32       # Deallocate frame
+    RET                   # Return (jump to ra)
+```
+
+**Stack frame layout**:
+```
+Higher addresses
+    ↑
+0x7FFFFFFF  ┌───────────────┐  ← SP before call
+            │  Return addr  │
+            ├───────────────┤
+            │  Saved s0     │
+            ├───────────────┤
+            │  Saved s1     │
+            ├───────────────┤
+            │  Local var 1  │
+            ├───────────────┤
+            │  Local var 2  │
+            ├───────────────┤
+            │  ...          │
+0x7FFFFFE0  └───────────────┘  ← SP after prologue (32 bytes below)
+    ↓
+Lower addresses
+```
+
+#### The Heap
+
+**Definition**: Dynamically allocated memory, managed by allocator (malloc/free or Vec/Box).
+
+**Operations**:
+- **Allocate**: Request N bytes, receive pointer
+- **Free**: Return pointer, mark memory available
+
+**Used for**:
+- Dynamic data structures (vectors, trees, hash maps)
+- Long-lived data
+- Variable-size data
+
+**Example (Rust Box::new)**:
+```rust
+let x = Box::new(42);  // Allocates 4 bytes on heap, x is pointer
+```
+
+**Heap management in Jolt**:
+- Guest programs can use `alloc` crate (Vec, Box, etc.)
+- Allocator built into guest runtime
+- Jolt's memory tracking treats heap same as any RAM access
+
+**Why stack vs heap matters for transpilation**:
+- Stack: Local, structured, easy to analyze statically
+- Heap: Global, unstructured, requires pointer aliasing analysis
+- When extracting operations, stack operations often compile to simple register operations, while heap operations require memory load/store in target
+
+---
+
+## 0.3 Registers: The Fastest Memory
+
+### What Registers Are
+
+**Definition**: Small, fixed-size storage locations directly accessible by ALU.
+
+**Physical implementation**: D flip-flops with address decoder, integrated into CPU datapath.
+
+**Key properties**:
+1. **Fixed number**: ISA defines how many (e.g., RISC-V: 32 general-purpose registers)
+2. **Fixed width**: All registers same size (e.g., RISC-V RV64: 64-bit registers)
+3. **Named access**: Instructions specify registers by number (e.g., `ADD x3, x1, x2`)
+4. **Zero latency**: Register reads/writes happen in same clock cycle as ALU operation
+
+### RISC-V Register File
+
+**RV64I General-Purpose Registers** (32 total):
+
+```
+Register    ABI Name    Description                  Saved by
+x0          zero        Hardwired zero               N/A (immutable)
+x1          ra          Return address               Caller
+x2          sp          Stack pointer                Callee
+x3          gp          Global pointer               N/A (static)
+x4          tp          Thread pointer               N/A (static)
+x5-x7       t0-t2       Temporaries                  Caller
+x8          s0/fp       Saved register/Frame ptr     Callee
+x9          s1          Saved register               Callee
+x10-x11     a0-a1       Function args/return vals    Caller
+x12-x17     a2-a7       Function arguments           Caller
+x18-x27     s2-s11      Saved registers              Callee
+x28-x31     t3-t6       Temporaries                  Caller
+```
+
+**Calling convention** (RISC-V ABI):
+- **a0-a7**: Function arguments (first 8 integer args)
+- **a0-a1**: Return values (up to 128 bits)
+- **t0-t6**: Temporaries (caller-saved, not preserved across calls)
+- **s0-s11**: Saved registers (callee-saved, must be preserved)
+- **ra**: Return address (where to jump back after function)
+- **sp**: Stack pointer (top of current stack frame)
+
+**Example: Function call**:
+```rust
+fn add(x: u64, y: u64) -> u64 {
+    x + y
+}
+
+fn main() {
+    let result = add(10, 20);
+}
+```
+
+**Compiled to RISC-V**:
+```asm
+# Function: add(x: u64, y: u64) -> u64
+add:
+    # Arguments: a0 = x, a1 = y
+    add a0, a0, a1      # a0 = x + y (return value in a0)
+    ret                 # Return (jump to address in ra)
+
+# Function: main()
+main:
+    addi sp, sp, -16    # Allocate stack frame
+    sd   ra, 8(sp)      # Save return address
+
+    # Call add(10, 20)
+    li   a0, 10         # Load immediate 10 into a0 (first arg)
+    li   a1, 20         # Load immediate 20 into a1 (second arg)
+    call add            # Call function (stores PC+4 in ra, jumps to add)
+    # Result is now in a0
+
+    ld   ra, 8(sp)      # Restore return address
+    addi sp, sp, 16     # Deallocate stack frame
+    ret                 # Return
+```
+
+### Register Renaming (Microarchitectural Detail)
+
+**Problem**: Instruction-level parallelism limited by register reuse.
+
+**Example**:
+```asm
+add x3, x1, x2    # x3 = x1 + x2
+sub x5, x3, x4    # x5 = x3 - x4  (depends on previous x3)
+add x3, x6, x7    # x3 = x6 + x7  (reuses x3, creates false dependency)
+mul x8, x3, x9    # x8 = x3 * x9  (depends on new x3)
+```
+
+**False dependency**: Third instruction doesn't actually depend on first, but reuses x3.
+
+**Solution (microarchitectural)**: Rename x3 to different physical register:
+```
+add p10, p1, p2   # x3 → p10
+sub p11, p10, p4  # x5 → p11, depends on p10
+add p12, p6, p7   # x3 → p12 (different physical register, no dependency!)
+mul p13, p12, p9  # x8 → p13, depends on p12
+```
+
+**Why Jolt doesn't model this**: Register renaming is invisible at ISA level. Jolt proves correctness of architectural state (x0-x31), not microarchitectural state (physical registers).
+
+### Virtual Registers in Jolt
+
+**Jolt extends RISC-V with 32 virtual registers** (x32-x63 conceptually) for use in virtual instruction sequences.
+
+**Why virtual registers**:
+- Virtual sequences (e.g., division) need scratch space
+- Can't use architectural registers (would violate RISC-V semantics)
+- Virtual registers only exist during multi-step operation expansion
+
+**Example: Division using virtual registers**:
+```asm
+# RISC-V instruction: DIV x3, x10, x11  (x3 = x10 / x11)
+
+# Expanded to virtual sequence:
+# Step 1: Load advice (quotient guess from prover)
+VLOAD v0, ADVICE_QUOT      # v0 = virtual register 0
+
+# Step 2: Load advice (remainder guess)
+VLOAD v1, ADVICE_REM       # v1 = virtual register 1
+
+# Step 3: Verify: quotient * divisor + remainder = dividend
+MUL   v2, v0, x11          # v2 = quotient * divisor
+ADD   v3, v2, v1           # v3 = quotient * divisor + remainder
+ASSERT_EQ v3, x10          # Assert v3 == dividend
+
+# Step 4: Verify: remainder < divisor
+SLTU  v4, v1, x11          # v4 = 1 if remainder < divisor, else 0
+ASSERT_EQ v4, 1            # Assert remainder < divisor
+
+# Step 5: Store quotient to destination
+MOV   x3, v0               # x3 = quotient
+```
+
+**Key point**: Virtual registers (v0-v31) never appear in architectural state. They're internal to the virtual sequence expansion.
+
+---
+
+## 0.4 Instruction Set Architectures
+
+### ISA: The Hardware-Software Contract
+
+**Definition**: An Instruction Set Architecture (ISA) is the specification of:
+1. **Instruction formats**: How instructions are encoded (bits → operation)
+2. **Addressing modes**: How operands are specified (register, immediate, memory)
+3. **Data types**: What sizes operations work on (byte, word, doubleword)
+4. **Register set**: How many registers, what purpose
+5. **Memory model**: Address space, alignment, endianness
+6. **Exception/interrupt handling**: What happens on errors
+
+**ISA is NOT**:
+- ❌ A specific CPU implementation (e.g., Intel Core i9 implements x86-64)
+- ❌ A programming language (though assembly is tied to ISA)
+- ❌ A microarchitecture (e.g., out-of-order execution, branch prediction)
+
+**ISA examples**:
+- **x86-64**: Variable-length instructions, complex addressing modes, many instructions (CISC)
+- **ARM**: Fixed-length instructions (32-bit or 16-bit Thumb), load-store architecture (RISC)
+- **RISC-V**: Fixed-length base (32-bit), optional compressed (16-bit), modular extensions
+
+### RISC-V: A Modular ISA
+
+**Base ISAs**:
+- **RV32I**: 32-bit integer base (32 instructions)
+- **RV64I**: 64-bit integer base (extends RV32I with 64-bit ops)
+- **RV128I**: 128-bit integer base (experimental)
+
+**Standard extensions**:
+- **M**: Integer multiplication and division (8 instructions)
+- **A**: Atomic operations (11 instructions)
+- **F**: Single-precision floating-point (26 instructions)
+- **D**: Double-precision floating-point (26 instructions)
+- **C**: Compressed instructions (16-bit encoding, ~40 instructions)
+
+**Jolt targets RV64IMAC**:
+- RV64I: Base 64-bit integer instructions
+- M: Multiplication/division
+- A: Atomic operations (for concurrent programming)
+- C: Compressed instructions
+
+### Instruction Formats
+
+RISC-V uses six instruction formats, all derived from 32-bit words:
+
+#### R-type (Register-register operations)
+
+```
+Format:
+ 31        25 24      20 19      15 14    12 11       7 6          0
+┌───────────┬──────────┬──────────┬────────┬──────────┬────────────┐
+│  funct7   │   rs2    │   rs1    │ funct3 │    rd    │   opcode   │
+│  (7 bits) │ (5 bits) │ (5 bits) │(3 bits)│ (5 bits) │  (7 bits)  │
+└───────────┴──────────┴──────────┴────────┴──────────┴────────────┘
+```
+
+**Example: ADD x3, x1, x2** (x3 = x1 + x2)
+```
+funct7 = 0000000   (ADD, not SUB)
+rs2    = 00010     (x2)
+rs1    = 00001     (x1)
+funct3 = 000       (ADD operation)
+rd     = 00011     (x3)
+opcode = 0110011   (R-type ALU operation)
+
+Full encoding: 0x002081B3
+```
+
+#### I-type (Immediate operations)
+
+```
+Format:
+ 31                    20 19      15 14    12 11       7 6          0
+┌────────────────────────┬──────────┬────────┬──────────┬────────────┐
+│      immediate         │   rs1    │ funct3 │    rd    │   opcode   │
+│      (12 bits)         │ (5 bits) │(3 bits)│ (5 bits) │  (7 bits)  │
+└────────────────────────┴──────────┴────────┴──────────┴────────────┘
+```
+
+**Example: ADDI x1, x1, 10** (x1 = x1 + 10)
+```
+immediate = 000000001010  (10 in binary, sign-extended)
+rs1       = 00001         (x1)
+funct3    = 000           (ADDI operation)
+rd        = 00001         (x1, same as source)
+opcode    = 0010011       (I-type ALU operation)
+
+Full encoding: 0x00A08093
+```
+
+#### S-type (Store operations)
+
+```
+Format:
+ 31        25 24      20 19      15 14    12 11       7 6          0
+┌───────────┬──────────┬──────────┬────────┬──────────┬────────────┐
+│  imm[11:5]│   rs2    │   rs1    │ funct3 │ imm[4:0] │   opcode   │
+│  (7 bits) │ (5 bits) │ (5 bits) │(3 bits)│ (5 bits) │  (7 bits)  │
+└───────────┴──────────┴──────────┴────────┴──────────┴────────────┘
+```
+
+**Why split immediate?** Keeps register fields (rs1, rs2) in same positions across formats, simplifying decoding.
+
+**Example: SD x5, 8(x2)** (store x5 to address x2+8)
+```
+imm[11:5] = 0000000  (upper 7 bits of offset 8)
+rs2       = 00101    (x5, data to store)
+rs1       = 00010    (x2, base address)
+funct3    = 011      (SD, store doubleword)
+imm[4:0]  = 01000    (lower 5 bits of offset 8)
+opcode    = 0100011  (STORE)
+
+Reconstructed offset: 0000000 || 01000 = 0x08 (8 in decimal)
+```
+
+#### B-type (Branch operations)
+
+```
+Format:
+ 31  30      25 24      20 19      15 14    12 11    8  7  6          0
+┌────┬─────────┬──────────┬──────────┬────────┬──────┬───┬────────────┐
+│[12]│ [10:5]  │   rs2    │   rs1    │ funct3 │ [4:1]│[11]│   opcode   │
+│(1b)│ (6 bits)│ (5 bits) │ (5 bits) │(3 bits)│(4b)  │(1b)│  (7 bits)  │
+└────┴─────────┴──────────┴──────────┴────────┴──────┴───┴────────────┘
+```
+
+**Example: BEQ x1, x2, 16** (if x1 == x2, PC = PC + 16)
+```
+imm[12]   = 0
+imm[10:5] = 000000
+rs2       = 00010    (x2)
+rs1       = 00001    (x1)
+funct3    = 000      (BEQ, branch if equal)
+imm[4:1]  = 1000     (offset bits [4:1])
+imm[11]   = 0
+opcode    = 1100011  (BRANCH)
+
+Reconstructed offset (sign-extended, always multiple of 2):
+0 || 0 || 000000 || 1000 || 0 = 0x10 (16 in decimal)
+```
+
+#### U-type (Upper immediate)
+
+```
+Format:
+ 31                                  12 11       7 6          0
+┌──────────────────────────────────────┬──────────┬────────────┐
+│             immediate                │    rd    │   opcode   │
+│            (20 bits)                 │ (5 bits) │  (7 bits)  │
+└──────────────────────────────────────┴──────────┴────────────┘
+```
+
+**Example: LUI x1, 0x12345** (load upper immediate, x1 = 0x12345000)
+```
+immediate = 00010010001101000101  (0x12345 in binary)
+rd        = 00001                 (x1)
+opcode    = 0110111               (LUI)
+
+Result: x1 = 0x0000000012345000  (immediate shifted left by 12 bits)
+```
+
+#### J-type (Jump operations)
+
+```
+Format:
+ 31  30       21  20  19         12 11       7 6          0
+┌────┬───────────┬───┬────────────┬──────────┬────────────┐
+│[20]│  [10:1]   │[11]│   [19:12]  │    rd    │   opcode   │
+│(1b)│ (10 bits) │(1b)│  (8 bits)  │ (5 bits) │  (7 bits)  │
+└────┴───────────┴───┴────────────┴──────────┴────────────┘
+```
+
+**Example: JAL x1, 100** (jump to PC+100, save PC+4 in x1)
+```
+imm[20]    = 0
+imm[10:1]  = 0000110010  (bits [10:1] of offset 100)
+imm[11]    = 0
+imm[19:12] = 00000000
+rd         = 00001       (x1, store return address)
+opcode     = 1101111     (JAL)
+
+Reconstructed offset: 0 || 00000000 || 0 || 0000110010 || 0 = 100
+```
+
+### Decoding Example: Complete Walkthrough
+
+**Given machine code: 0x003100B3**
+
+**Step 1: Extract opcode (bits [6:0])**
+```
+0x003100B3 in binary:
+0000 0000 0011 0001 0000 0000 1011 0011
+                              └──┬──┘
+                              0110011 (R-type)
+```
+
+**Step 2: Identify format**
+```
+Opcode 0110011 → R-type arithmetic operation
+```
+
+**Step 3: Extract fields**
+```
+ 31        25 24      20 19      15 14    12 11       7 6          0
+┌───────────┬──────────┬──────────┬────────┬──────────┬────────────┐
+│ 0000000   │  00011   │  00010   │  000   │  00001   │  0110011   │
+└───────────┴──────────┴──────────┴────────┴──────────┴────────────┘
+  funct7      rs2        rs1       funct3     rd         opcode
+```
+
+**Step 4: Decode operation**
+```
+funct7 = 0000000, funct3 = 000 → ADD
+rs2 = 00011 → x3
+rs1 = 00010 → x2
+rd  = 00001 → x1
+
+Instruction: ADD x1, x2, x3  (x1 = x2 + x3)
+```
+
+---
+
+## 0.5 The Fetch-Decode-Execute Cycle
+
+### The Classical Von Neumann Cycle
+
+All stored-program computers follow this pattern:
+
+```
+┌──────────────────────────────────────────┐
+│                                          │
+│  ┌────────┐      ┌────────┐      ┌────┐ │
+│  │ FETCH  │  →   │ DECODE │  →   │ EX │ │
+│  └────────┘      └────────┘      └────┘ │
+│       ↓                              ↓   │
+│       └──────────── PC ←─────────────┘   │
+│                                          │
+└──────────────────────────────────────────┘
+```
+
+### Phase 1: FETCH
+
+**Goal**: Retrieve next instruction from memory.
+
+**Steps**:
+1. Read PC (Program Counter) to get instruction address
+2. Send address to memory/cache
+3. Wait for memory to respond with instruction word
+4. Store instruction in Instruction Register (IR)
+
+**Example**:
+```
+PC = 0x80000000
+
+Memory[0x80000000] = 0x002081B3  (ADD x3, x1, x2)
+
+After fetch:
+  IR = 0x002081B3
+  PC = 0x80000000  (unchanged yet)
+```
+
+**In RISC-V**: Instructions are 32-bit aligned, so PC always increments by 4 (or 2 for compressed instructions).
+
+### Phase 2: DECODE
+
+**Goal**: Interpret instruction bit pattern to determine operation and operands.
+
+**Steps**:
+1. Extract opcode (bits [6:0])
+2. Identify format based on opcode
+3. Extract register specifiers (rs1, rs2, rd)
+4. Extract immediate values (if any)
+5. Generate control signals for datapath
+
+**Example**:
+```
+IR = 0x002081B3
+
+Decode:
+  Opcode = 0110011 → R-type
+  funct7 = 0000000, funct3 = 000 → ADD operation
+  rs1 = 00001 → x1
+  rs2 = 00010 → x2
+  rd  = 00011 → x3
+
+Control signals:
+  - Read register x1
+  - Read register x2
+  - ALU operation: ADD
+  - Write result to register x3
+```
+
+### Phase 3: EXECUTE
+
+**Goal**: Perform the operation.
+
+**Steps**:
+1. Read operands from register file (if register instruction)
+2. Compute result using ALU or other functional unit
+3. Update PC (normally PC+4, or branch target if branch taken)
+
+**Example**:
+```
+Before:
+  x1 = 10
+  x2 = 20
+  x3 = 0  (uninitialized)
+  PC = 0x80000000
+
+Execute ADD x3, x1, x2:
+  1. Read register x1 → value 10
+  2. Read register x2 → value 20
+  3. ALU: 10 + 20 → 30
+  4. Write 30 to register x3
+  5. Update PC: 0x80000000 + 4 = 0x80000004
+
+After:
+  x1 = 10
+  x2 = 20
+  x3 = 30  ← Changed
+  PC = 0x80000004  ← Next instruction
+```
+
+### Memory Operations: Load/Store
+
+**LOAD (LD)**: Read from memory into register
+
+**Example: LD x5, 8(x2)** (load doubleword from address x2+8 into x5)
+
+```
+Before:
+  x2 = 0x80001000  (base address)
+  x5 = 0           (uninitialized)
+  Memory[0x80001008] = 0x123456789ABCDEF0
+
+Execute:
+  1. Compute address: x2 + 8 = 0x80001000 + 8 = 0x80001008
+  2. Send read request to memory at address 0x80001008
+  3. Wait for memory to respond with data
+  4. Write data to register x5
+
+After:
+  x5 = 0x123456789ABCDEF0  ← Loaded from memory
+  PC = PC + 4
+```
+
+**STORE (SD)**: Write from register to memory
+
+**Example: SD x5, 8(x2)** (store doubleword from x5 to address x2+8)
+
+```
+Before:
+  x2 = 0x80001000  (base address)
+  x5 = 0xDEADBEEFCAFEBABE
+  Memory[0x80001008] = 0x0000000000000000
+
+Execute:
+  1. Compute address: x2 + 8 = 0x80001008
+  2. Read data from register x5: 0xDEADBEEFCAFEBABE
+  3. Send write request to memory at address 0x80001008 with data
+
+After:
+  Memory[0x80001008] = 0xDEADBEEFCAFEBABE  ← Stored
+  PC = PC + 4
+```
+
+### Branch and Jump Instructions
+
+**Branch (conditional)**: Update PC if condition holds
+
+**Example: BEQ x1, x2, 16** (if x1 == x2, then PC = PC + 16)
+
+```
+Before:
+  x1 = 42
+  x2 = 42
+  PC = 0x80000100
+
+Execute:
+  1. Read x1 and x2
+  2. Compare: x1 == x2? → 42 == 42 → TRUE
+  3. Compute target: PC + 16 = 0x80000100 + 16 = 0x80000110
+  4. Update PC to target
+
+After:
+  PC = 0x80000110  ← Branch taken
+```
+
+**If x1 ≠ x2**:
+```
+PC = 0x80000104  ← PC + 4, branch not taken
+```
+
+**Jump (unconditional)**: Always update PC
+
+**Example: JAL x1, 100** (jump to PC+100, save PC+4 in x1)
+
+```
+Before:
+  x1 = 0
+  PC = 0x80000200
+
+Execute:
+  1. Save return address: x1 = PC + 4 = 0x80000204
+  2. Compute target: PC + 100 = 0x80000200 + 100 = 0x80000264
+  3. Update PC to target
+
+After:
+  x1 = 0x80000204  ← Return address saved
+  PC = 0x80000264  ← Jumped
+```
+
+### What Jolt Proves About Execution
+
+For each cycle $t$ in the execution trace of length $T$:
+
+**1. Correct instruction fetch** (Bytecode component):
+$$\text{Instruction at } \text{PC}_t \text{ matches committed bytecode}$$
+
+Proved via Shout lookup argument: Claim $\text{instr}_t = \text{Bytecode}[\text{PC}_t]$
+
+**2. Correct instruction execution** (Instruction component):
+$$\text{Output}_t = f(\text{Input1}_t, \text{Input2}_t)$$
+
+where $f$ is the instruction's specification (e.g., ADD, XOR, MUL).
+
+Proved via Shout lookup: Claim $(\text{Input1}, \text{Input2}) \to \text{Output}$ in lookup table.
+
+**3. Correct state transitions** (R1CS, Registers, RAM):
+- **Registers**: $\text{Reg}[r]_t = \text{last write to } r \text{ before cycle } t$
+- **RAM**: $\text{RAM}[a]_t = \text{last write to } a \text{ before cycle } t$
+- **PC**: $\text{PC}_{t+1} = \begin{cases} \text{PC}_t + 4 & \text{if not branch/jump} \\ \text{target} & \text{if branch taken or jump} \end{cases}$
+
+Proved via Twist (Registers, RAM) and Spartan (PC updates, consistency checks).
+
+---
+
+## 0.6 RISC vs CISC: Philosophical Differences
+
+### Definitions
+
+**RISC (Reduced Instruction Set Computer)**:
+- Philosophy: Simple instructions, executed in one cycle (ideally)
+- Examples: RISC-V, ARM, MIPS, SPARC
+- Design goals: Regular encoding, simple hardware, compiler-friendly
+
+**CISC (Complex Instruction Set Computer)**:
+- Philosophy: Complex instructions, multiple cycles, close to high-level constructs
+- Examples: x86, x86-64, VAX, 68000
+- Design goals: Reduce code size, simplify compilers (historically)
+
+### Comparison
+
+| Aspect | RISC | CISC |
+|--------|------|------|
+| **Instruction count** | ~100-200 instructions | ~1000+ instructions |
+| **Instruction length** | Fixed (typically 32-bit) | Variable (1-15 bytes on x86) |
+| **Addressing modes** | Simple (register, immediate, register+offset) | Complex (many modes) |
+| **Execution time** | 1 cycle per instruction (ideal, pipelined) | Multiple cycles |
+| **Registers** | Many (32+) | Few (8-16, historically) |
+| **Memory access** | Load/store only | Many instructions can access memory |
+| **Compiler complexity** | More complex (must schedule instructions) | Simpler (hardware does more) |
+
+### Concrete Example: String Copy
+
+**Task**: Copy 100 bytes from address in R1 to address in R2.
+
+#### CISC Approach (x86)
+
+```asm
+; Single instruction does entire operation
+MOV ECX, 100          ; Set count to 100
+REP MOVSB             ; Repeat: copy byte [ESI] to [EDI], increment both, decrement ECX
+                      ; This is ONE instruction that copies 100 bytes!
+```
+
+**Microarchitecture**: REP MOVSB is actually implemented as a microcoded loop inside the CPU. It takes ~100 cycles but looks like one instruction.
+
+#### RISC Approach (RISC-V)
+
+```asm
+; Explicit loop required
+    li   t0, 0        ; Initialize offset to 0
+    li   t1, 100      ; Initialize count to 100
+loop:
+    lb   t2, 0(a0)    ; Load byte from source (a0 + 0)
+    sb   t2, 0(a1)    ; Store byte to dest (a1 + 0)
+    addi a0, a0, 1    ; Increment source pointer
+    addi a1, a1, 1    ; Increment dest pointer
+    addi t0, t0, 1    ; Increment counter
+    bne  t0, t1, loop ; Branch if counter != count
+```
+
+**6 instructions per iteration × 100 iterations = 600 instructions** (vs 2 for CISC)
+
+**But**: With pipelining and out-of-order execution, RISC can approach 1 cycle per iteration (after pipeline fill), achieving similar performance with simpler hardware.
+
+### Why Jolt Uses RISC-V
+
+**Advantages for zkVMs**:
+
+1. **Regular instruction encoding**: All instructions are 32-bit (or 16-bit compressed), simplifying decoding in circuits
+2. **Load-store architecture**: Memory operations are explicit (LD/SD only), making memory tracking cleaner
+3. **Large register file**: 32 registers reduce memory traffic (easier to prove)
+4. **Simple semantics**: Each instruction does one simple thing, easier to specify in lookup tables
+5. **Open standard**: No licensing restrictions, good toolchain support
+
+**Example: Why x86 would be harder**:
+
+x86 instruction: `ADD [RAX + RBX*4 + 0x10], RCX`
+
+This single instruction:
+1. Reads RBX, multiplies by 4
+2. Adds RAX
+3. Adds immediate 0x10
+4. Loads from computed address
+5. Reads RCX
+6. Adds loaded value and RCX
+7. Stores result back to memory
+
+**In RISC-V, this becomes**:
+```asm
+slli t0, rbx, 2       # t0 = rbx * 4
+add  t0, rax, t0      # t0 = rax + (rbx * 4)
+addi t0, t0, 0x10     # t0 = rax + (rbx * 4) + 0x10
+ld   t1, 0(t0)        # t1 = memory[t0]
+add  t1, t1, rcx      # t1 = t1 + rcx
+sd   t1, 0(t0)        # memory[t0] = t1
+```
+
+6 simple operations vs 1 complex operation. For proving:
+- RISC-V: 6 lookup table queries (one per instruction)
+- x86: Would need to decompose the complex instruction into sub-operations anyway
+
+**Conclusion**: RISC simplicity aligns with lookup-centric proving.
+
+---
+
+**End of Part 0**
+
+---
+
+# Part 1: Compilation Pipeline Deep Dive
+
+> **Purpose**: Understanding transpilation requires understanding compilation. This section provides rigorous treatment of how source code transforms through lexical analysis, parsing, semantic analysis, IR generation, optimization, and code generation. We focus on the mathematical properties that enable automated transformation.
+
+## 1.1 The Compilation Phases
+
+### The Classical Compiler Pipeline
+
+```
+Source Code (text file)
+    ↓
+┌────────────────────────────────────────────────┐
+│ FRONTEND                                       │
+├────────────────────────────────────────────────┤
+│                                                │
+│  Lexical Analysis (Scanner)                   │
+│    ├─ Input: Character stream                 │
+│    └─ Output: Token stream                    │
+│         ↓                                      │
+│  Syntactic Analysis (Parser)                  │
+│    ├─ Input: Token stream                     │
+│    └─ Output: Abstract Syntax Tree (AST)      │
+│         ↓                                      │
+│  Semantic Analysis                             │
+│    ├─ Input: AST                              │
+│    ├─ Operations: Type checking, scoping      │
+│    └─ Output: Annotated AST                   │
+│                                                │
+└────────────────────────────────────────────────┘
+    ↓
+┌────────────────────────────────────────────────┐
+│ MIDDLE-END                                     │
+├────────────────────────────────────────────────┤
+│                                                │
+│  IR Generation                                 │
+│    ├─ Input: Annotated AST                    │
+│    └─ Output: Intermediate Representation      │
+│         ↓                                      │
+│  IR Optimization                               │
+│    ├─ Constant folding                        │
+│    ├─ Dead code elimination                   │
+│    ├─ Common subexpression elimination        │
+│    ├─ Loop optimization                       │
+│    └─ Output: Optimized IR                    │
+│                                                │
+└────────────────────────────────────────────────┘
+    ↓
+┌────────────────────────────────────────────────┐
+│ BACKEND                                        │
+├────────────────────────────────────────────────┤
+│                                                │
+│  Instruction Selection                         │
+│    ├─ Input: Optimized IR                     │
+│    └─ Output: Target instructions (abstract)  │
+│         ↓                                      │
+│  Register Allocation                           │
+│    ├─ Assign variables to registers           │
+│    └─ Insert spill code if needed             │
+│         ↓                                      │
+│  Instruction Scheduling                        │
+│    ├─ Reorder for pipeline efficiency         │
+│    └─ Output: Assembly                         │
+│         ↓                                      │
+│  Assembler                                     │
+│    └─ Output: Machine code                    │
+│                                                │
+└────────────────────────────────────────────────┘
+    ↓
+Machine Code (ELF binary)
+```
+
+### Key Insight: Phase Independence
+
+**Critical property**: Each phase can be developed and reasoned about independently, as long as interfaces are well-defined.
+
+**Implication for transpilation**: We can extract IR from one compiler and feed it to another, enabling automatic code transformation.
+
+**Example interfaces**:
+- Scanner → Parser: Token stream (defined by token grammar)
+- Parser → Semantic analyzer: AST (defined by AST grammar)
+- Semantic analyzer → IR generator: Typed AST
+- IR generator → Optimizer: IR (defined by IR specification)
+
+---
+
+## 1.2 Lexical Analysis: From Text to Tokens
+
+### What is Lexical Analysis?
+
+**Definition**: Lexical analysis (scanning) converts a character stream into a token stream by recognizing lexical patterns defined by regular expressions.
+
+**Mathematical model**:
+- Input: String $s \in \Sigma^*$ where $\Sigma$ is the alphabet (ASCII or Unicode characters)
+- Output: Sequence of tokens $[t_1, t_2, \ldots, t_n]$ where each $t_i = (\text{type}, \text{value}, \text{position})$
+
+**Token**: A tuple $(\text{TokenType}, \text{Lexeme}, \text{SourceLocation})$
+
+### Token Types
+
+**Examples from Rust-like language**:
+
+```
+TokenType:
+├─ KEYWORD: fn, let, if, else, while, return, u32, i64
+├─ IDENTIFIER: variable names, function names
+├─ LITERAL:
+│  ├─ INTEGER: 42, 0xFF, 0b1010
+│  ├─ FLOAT: 3.14, 1.0e-5
+│  ├─ STRING: "hello"
+│  └─ CHAR: 'a'
+├─ OPERATOR: +, -, *, /, ==, !=, <, >, &&, ||
+├─ DELIMITER: (, ), {, }, [, ], ;, ,, :
+└─ COMMENT: // single-line, /* multi-line */
+```
+
+### Concrete Example
+
+**Input source code**:
+```rust
+fn add(x: u32, y: u32) -> u32 {
+    x + y
+}
+```
+
+**Character stream**:
+```
+['f', 'n', ' ', 'a', 'd', 'd', '(', 'x', ':', ' ', 'u', '3', '2', ',', ' ', ...]
+```
+
+**Token stream**:
+```
+Token 1: (KEYWORD, "fn", Line 1, Col 1)
+Token 2: (IDENTIFIER, "add", Line 1, Col 4)
+Token 3: (DELIMITER, "(", Line 1, Col 7)
+Token 4: (IDENTIFIER, "x", Line 1, Col 8)
+Token 5: (DELIMITER, ":", Line 1, Col 9)
+Token 6: (KEYWORD, "u32", Line 1, Col 11)
+Token 7: (DELIMITER, ",", Line 1, Col 14)
+Token 8: (IDENTIFIER, "y", Line 1, Col 16)
+Token 9: (DELIMITER, ":", Line 1, Col 17)
+Token 10: (KEYWORD, "u32", Line 1, Col 19)
+Token 11: (DELIMITER, ")", Line 1, Col 22)
+Token 12: (OPERATOR, "->", Line 1, Col 24)
+Token 13: (KEYWORD, "u32", Line 1, Col 27)
+Token 14: (DELIMITER, "{", Line 1, Col 31)
+Token 15: (IDENTIFIER, "x", Line 2, Col 5)
+Token 16: (OPERATOR, "+", Line 2, Col 7)
+Token 17: (IDENTIFIER, "y", Line 2, Col 9)
+Token 18: (DELIMITER, "}", Line 3, Col 1)
+Token 19: (EOF, "", Line 3, Col 2)
+```
+
+### Regular Expressions for Token Recognition
+
+**Formal definition**: Token patterns defined by regular languages.
+
+**Examples**:
+
+| Token Type | Regular Expression | Examples |
+|------------|-------------------|----------|
+| IDENTIFIER | `[a-zA-Z_][a-zA-Z0-9_]*` | `x`, `add`, `my_var` |
+| INTEGER | `[0-9]+` or `0x[0-9a-fA-F]+` | `42`, `0xFF` |
+| FLOAT | `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?` | `3.14`, `1e-5` |
+| KEYWORD | Literal matches | `fn`, `let`, `if` |
+| WHITESPACE | `[ \t\n\r]+` | Ignored |
+| COMMENT | `//.*` or `/\*(.|\n)*\*/` | Ignored |
+
+### Finite Automata Implementation
+
+**Key insight**: Regular expressions compiled to Deterministic Finite Automaton (DFA) for efficient scanning.
+
+**Example: Recognizing identifiers**
+
+**Regular expression**: `[a-zA-Z_][a-zA-Z0-9_]*`
+
+**DFA**:
+```
+States: {START, IDENT, ERROR}
+Alphabet: {a-z, A-Z, _, 0-9, other}
+
+START:
+  [a-zA-Z_] → IDENT
+  [0-9] → ERROR
+  other → ERROR
+
+IDENT (accepting state):
+  [a-zA-Z0-9_] → IDENT
+  other → END (emit IDENTIFIER token)
+
+ERROR:
+  * → ERROR
+```
+
+**Execution trace** for input `add`:
+```
+State      Input    Action
+START      'a'      Transition to IDENT
+IDENT      'd'      Stay in IDENT
+IDENT      'd'      Stay in IDENT
+IDENT      '('      End of identifier, emit token (IDENTIFIER, "add")
+```
+
+### Maximal Munch Principle
+
+**Rule**: Scanner always produces the longest possible token.
+
+**Example**:
+```
+Input: "return42"
+
+Without maximal munch:
+  Could tokenize as: (KEYWORD, "return"), (INTEGER, "42")
+  Or: (IDENTIFIER, "return42")
+
+With maximal munch:
+  Always choose: (IDENTIFIER, "return42")
+```
+
+**Why this matters**: Prevents ambiguity. The scanner always prefers longer matches.
+
+### Handling Keywords vs Identifiers
+
+**Problem**: Keywords (like `fn`, `if`) match the identifier pattern `[a-zA-Z_][a-zA-Z0-9_]*`.
+
+**Solution 1: Reserved word table**
+```
+Algorithm:
+1. Scan identifier using identifier DFA
+2. Look up lexeme in reserved word table
+3. If found, emit KEYWORD token; otherwise emit IDENTIFIER token
+
+Example:
+  Input: "fn" → Scan as identifier → Lookup "fn" → Found → Emit (KEYWORD, "fn")
+  Input: "foo" → Scan as identifier → Lookup "foo" → Not found → Emit (IDENTIFIER, "foo")
+```
+
+**Solution 2: Separate DFA for each keyword**
+```
+Build DFA with:
+- Accepting states for "fn", "let", "if", etc.
+- Lower priority than identifier pattern
+
+Priority ordering ensures keywords matched before identifiers.
+```
+
+### Error Handling
+
+**When lexical errors occur**:
+```
+Input: "let x = @42;"
+                ^
+                Unexpected character '@'
+```
+
+**Error recovery strategies**:
+1. **Panic mode**: Skip characters until next valid token start (e.g., whitespace, semicolon)
+2. **Error token**: Emit special ERROR token, let parser handle it
+3. **Suggestion**: "Did you mean '=' instead of '@'?"
+
+---
+
+## 1.3 Syntactic Analysis: Building the AST
+
+### What is Parsing?
+
+**Definition**: Parsing (syntactic analysis) converts a token stream into an Abstract Syntax Tree by recognizing syntactic patterns defined by context-free grammars.
+
+**Mathematical model**:
+- Input: Token sequence $[t_1, t_2, \ldots, t_n]$
+- Grammar: Context-free grammar $G = (N, T, P, S)$
+  - $N$: Non-terminals (syntactic categories)
+  - $T$: Terminals (tokens)
+  - $P$: Production rules
+  - $S$: Start symbol
+- Output: Parse tree or Abstract Syntax Tree (AST)
+
+### Context-Free Grammar (CFG)
+
+**Formal definition**: A grammar $G = (N, T, P, S)$ where:
+- $N$: Finite set of non-terminal symbols
+- $T$: Finite set of terminal symbols (tokens)
+- $P$: Finite set of production rules $A \to \alpha$ where $A \in N$ and $\alpha \in (N \cup T)^*$
+- $S \in N$: Start symbol
+
+**Example grammar for arithmetic expressions**:
+
+```
+Non-terminals: {Expr, Term, Factor}
+Terminals: {INTEGER, +, -, *, /, (, )}
+Start symbol: Expr
+
+Productions:
+  Expr   → Expr + Term       (E1)
+         | Expr - Term       (E2)
+         | Term              (E3)
+
+  Term   → Term * Factor     (T1)
+         | Term / Factor     (T2)
+         | Factor            (T3)
+
+  Factor → ( Expr )          (F1)
+         | INTEGER           (F2)
+```
+
+**Derivation** for `2 + 3 * 4`:
+
+```
+Expr
+  ⇒ Expr + Term                [Apply E1]
+  ⇒ Term + Term                [Apply E3 on left Expr]
+  ⇒ Factor + Term              [Apply T3]
+  ⇒ INTEGER + Term             [Apply F2]
+  ⇒ 2 + Term                   [Substitute token]
+  ⇒ 2 + Term * Factor          [Apply T1]
+  ⇒ 2 + Factor * Factor        [Apply T3]
+  ⇒ 2 + INTEGER * Factor       [Apply F2]
+  ⇒ 2 + 3 * Factor             [Substitute token]
+  ⇒ 2 + 3 * INTEGER            [Apply F2]
+  ⇒ 2 + 3 * 4                  [Substitute token]
+```
+
+### Parse Tree vs Abstract Syntax Tree
+
+**Parse tree**: Represents complete derivation, includes all grammar symbols.
+
+**Abstract Syntax Tree (AST)**: Condenses parse tree, removing unnecessary nodes.
+
+**Example: Parse tree for `2 + 3`**:
+
+```
+           Expr
+            |
+      ┌─────┼─────┐
+      Expr  +   Term
+      |         |
+     Term      Factor
+      |         |
+    Factor    INTEGER
+      |         |
+   INTEGER      3
+      |
+      2
+```
+
+**Abstract Syntax Tree for `2 + 3`**:
+
+```
+     Add
+    /   \
+   2     3
+```
+
+**Why AST is better**:
+- ✅ Smaller: No redundant nodes
+- ✅ Easier to manipulate: Direct representation of program structure
+- ✅ Language-independent: Same AST structure can represent expressions in different languages
+
+### Recursive Descent Parsing
+
+**Idea**: One recursive function per non-terminal, functions call each other to match production rules.
+
+**Example: Parser for arithmetic expressions**
+
+**Grammar (simplified)**:
+```
+Expr   → Term (('+' | '-') Term)*
+Term   → Factor (('*' | '/') Factor)*
+Factor → INTEGER | '(' Expr ')'
+```
+
+**Recursive descent implementation** (Rust-like pseudocode):
+
+```rust
+struct Parser {
+    tokens: Vec<Token>,
+    current: usize,
+}
+
+impl Parser {
+    fn parse_expr(&mut self) -> ASTNode {
+        let mut left = self.parse_term();
+
+        while self.match_tokens(&[TokenType::PLUS, TokenType::MINUS]) {
+            let op = self.previous();
+            let right = self.parse_term();
+            left = ASTNode::BinaryOp { op, left: Box::new(left), right: Box::new(right) };
+        }
+
+        left
+    }
+
+    fn parse_term(&mut self) -> ASTNode {
+        let mut left = self.parse_factor();
+
+        while self.match_tokens(&[TokenType::STAR, TokenType::SLASH]) {
+            let op = self.previous();
+            let right = self.parse_factor();
+            left = ASTNode::BinaryOp { op, left: Box::new(left), right: Box::new(right) };
+        }
+
+        left
+    }
+
+    fn parse_factor(&mut self) -> ASTNode {
+        if self.match_tokens(&[TokenType::INTEGER]) {
+            return ASTNode::Literal(self.previous().value);
+        }
+
+        if self.match_tokens(&[TokenType::LPAREN]) {
+            let expr = self.parse_expr();
+            self.expect(TokenType::RPAREN, "Expected ')' after expression");
+            return expr;
+        }
+
+        panic!("Expected expression at token {}", self.current());
+    }
+
+    fn match_tokens(&mut self, types: &[TokenType]) -> bool {
+        for t in types {
+            if self.current().token_type == *t {
+                self.advance();
+                return true;
+            }
+        }
+        false
+    }
+
+    fn current(&self) -> &Token {
+        &self.tokens[self.current]
+    }
+
+    fn advance(&mut self) {
+        self.current += 1;
+    }
+
+    fn previous(&self) -> &Token {
+        &self.tokens[self.current - 1]
+    }
+
+    fn expect(&mut self, token_type: TokenType, message: &str) {
+        if self.current().token_type != token_type {
+            panic!("{}", message);
+        }
+        self.advance();
+    }
+}
+```
+
+**Execution trace** for `2 + 3 * 4`:
+
+```
+Call stack                          Token stream
+─────────────────────────────────────────────────
+parse_expr()                        [2, +, 3, *, 4]
+  parse_term()                      [2, +, 3, *, 4]
+    parse_factor()                  [2, +, 3, *, 4]
+      Match INTEGER                 [2, +, 3, *, 4]
+      Return Literal(2)                 ^
+    Return Literal(2)
+  Check for * or /                  [2, +, 3, *, 4]
+  No match, return Literal(2)              ^
+Check for + or -                    [2, +, 3, *, 4]
+Match PLUS                                 ^
+parse_term()                        [2, +, 3, *, 4]
+  parse_factor()                               ^
+    Match INTEGER                   [2, +, 3, *, 4]
+    Return Literal(3)                     ^
+  Check for * or /                  [2, +, 3, *, 4]
+  Match STAR                                    ^
+  parse_factor()                    [2, +, 3, *, 4]
+    Match INTEGER                            ^
+    Return Literal(4)
+  Return BinaryOp(*, Literal(3), Literal(4))
+Return BinaryOp(+, Literal(2), BinaryOp(*, Literal(3), Literal(4)))
+```
+
+**Resulting AST**:
+```
+        Add
+       /   \
+      2     Mul
+           /   \
+          3     4
+```
+
+### Operator Precedence
+
+**Problem**: Without precedence rules, `2 + 3 * 4` could be `(2 + 3) * 4 = 20` or `2 + (3 * 4) = 14`.
+
+**Solution**: Grammar structure encodes precedence.
+
+**Precedence levels** (lowest to highest):
+```
+1. Addition, Subtraction       (+, -)
+2. Multiplication, Division    (*, /)
+3. Parentheses                 ( )
+```
+
+**Grammar reflects precedence**:
+```
+Expr   → Term (('+' | '-') Term)*      # Lowest precedence (parsed first)
+Term   → Factor (('*' | '/') Factor)*  # Higher precedence (parsed deeper)
+Factor → '(' Expr ')' | INTEGER        # Highest precedence (parsed deepest)
+```
+
+**Key insight**: The deeper in the grammar, the higher the precedence. Multiplication binds tighter because it's parsed in `parse_term()` which is called from `parse_expr()`.
+
+### Left Recursion and LL(1) Parsing
+
+**Problem**: Left-recursive grammars cause infinite recursion in recursive descent.
+
+**Left-recursive grammar**:
+```
+Expr → Expr + Term    # Left recursion: Expr on left side of production
+     | Term
+```
+
+**Why it fails**:
+```
+parse_expr():
+  To parse Expr, first parse Expr  (recursive call)
+    To parse Expr, first parse Expr  (recursive call)
+      ... infinite recursion!
+```
+
+**Solution: Left factoring**
+
+**Original (left-recursive)**:
+```
+Expr → Expr + Term
+     | Term
+```
+
+**Transformed (right-recursive with iteration)**:
+```
+Expr → Term (('+' | '-') Term)*
+```
+
+**Implementation uses loop instead of recursion for repetition** (as shown in `parse_expr()` above).
+
+---
+
+## 1.4 Semantic Analysis: Type Checking and Scoping
+
+### What is Semantic Analysis?
+
+**Definition**: Semantic analysis verifies that the program follows language-specific rules beyond syntax.
+
+**Key tasks**:
+1. **Type checking**: Ensure operations apply to compatible types
+2. **Scope resolution**: Ensure variables are declared before use
+3. **Name resolution**: Bind identifiers to declarations
+4. **Semantic error detection**: Catch errors like duplicate declarations
+
+**Mathematical model**:
+- Input: AST $T$
+- Symbol table: $\Gamma : \text{Identifier} \to \text{Type}$
+- Type rules: $\Gamma \vdash e : \tau$ (expression $e$ has type $\tau$ in context $\Gamma$)
+- Output: Typed AST $T'$ with annotations
+
+### Type Systems
+
+**Purpose**: Prevent undefined behavior by rejecting ill-typed programs.
+
+**Type**: A set of values and operations on those values.
+
+**Examples**:
+- `u32`: {0, 1, 2, ..., 2^32-1}, operations: {+, -, *, /, &, |, ^, <<, >>}
+- `bool`: {true, false}, operations: {&&, ||, !}
+- `u32 -> u32`: Functions from u32 to u32
+
+### Type Checking Rules (Formal)
+
+**Notation**: $\Gamma \vdash e : \tau$ means "In context $\Gamma$, expression $e$ has type $\tau$"
+
+**Type rules for arithmetic expressions**:
+
+**Integer literal**:
+$$\frac{}{\Gamma \vdash n : \text{u32}} \quad \text{(T-INT)}$$
+
+**Variable**:
+$$\frac{x : \tau \in \Gamma}{\Gamma \vdash x : \tau} \quad \text{(T-VAR)}$$
+
+**Addition**:
+$$\frac{\Gamma \vdash e_1 : \text{u32} \quad \Gamma \vdash e_2 : \text{u32}}{\Gamma \vdash e_1 + e_2 : \text{u32}} \quad \text{(T-ADD)}$$
+
+**Function application**:
+$$\frac{\Gamma \vdash f : \tau_1 \to \tau_2 \quad \Gamma \vdash e : \tau_1}{\Gamma \vdash f(e) : \tau_2} \quad \text{(T-APP)}$$
+
+### Worked Example: Type Checking
+
+**Program**:
+```rust
+fn add(x: u32, y: u32) -> u32 {
+    x + y
+}
+
+fn main() {
+    let result = add(10, 20);
+}
+```
+
+**Type checking derivation**:
+
+**Step 1: Build initial context $\Gamma_0$**:
+```
+Γ₀ = {add : (u32, u32) -> u32}
+```
+
+**Step 2: Check body of `add`**:
+```
+Γ_add = Γ₀ ∪ {x : u32, y : u32}
+
+Derivation for `x + y`:
+  Γ_add ⊢ x : u32       (T-VAR, x : u32 ∈ Γ_add)
+  Γ_add ⊢ y : u32       (T-VAR, y : u32 ∈ Γ_add)
+  ─────────────────────────────────────────────  (T-ADD)
+  Γ_add ⊢ x + y : u32
+
+Return type matches declared return type u32 ✓
+```
+
+**Step 3: Check body of `main`**:
+```
+Γ_main = Γ₀
+
+Derivation for `add(10, 20)`:
+  Γ_main ⊢ add : (u32, u32) -> u32    (T-VAR, add ∈ Γ₀)
+  Γ_main ⊢ 10 : u32                   (T-INT)
+  Γ_main ⊢ 20 : u32                   (T-INT)
+  ──────────────────────────────────────────────  (T-APP twice)
+  Γ_main ⊢ add(10, 20) : u32
+
+Binding result:
+  Γ_main' = Γ_main ∪ {result : u32}
+```
+
+**Type checking succeeds ✓**
+
+### Example: Type Error
+
+**Program**:
+```rust
+fn add(x: u32, y: u32) -> u32 {
+    x + y
+}
+
+fn main() {
+    let result = add(10, true);  // Error: second argument has wrong type
+}
+```
+
+**Type checking derivation**:
+```
+Γ_main ⊢ add : (u32, u32) -> u32
+Γ_main ⊢ 10 : u32
+Γ_main ⊢ true : bool          ← Type mismatch!
+
+Expected: u32
+Found:    bool
+Error: Cannot apply function of type (u32, u32) -> u32 to arguments (u32, bool)
+```
+
+### Scoping Rules
+
+**Scope**: The region of code where a variable binding is valid.
+
+**Lexical scoping** (most common): Variable bindings determined by textual structure.
+
+**Example**:
+```rust
+fn outer() {
+    let x = 10;        // Scope: outer function body
+
+    {
+        let y = 20;    // Scope: inner block
+        println!("{} {}", x, y);  // x and y both in scope
+    }
+
+    println!("{}", x);   // Only x in scope
+    println!("{}", y);   // Error: y not in scope
+}
+```
+
+**Symbol table implementation**: Stack of scopes
+
+```
+Structure:
+  Scope stack: [global, function_outer, block_inner]
+
+Operations:
+  - enter_scope(): Push new scope onto stack
+  - exit_scope(): Pop scope from stack
+  - declare(name, type): Add binding to current scope
+  - lookup(name): Search stack from top to bottom
+```
+
+**Execution trace for example above**:
+
+```
+Action                   Scope stack            Symbol table
+─────────────────────────────────────────────────────────────
+enter_scope(outer)       [global, outer]        {}
+declare(x, u32)          [global, outer]        {x: u32}
+enter_scope(block)       [global, outer, block] {x: u32}
+declare(y, u32)          [global, outer, block] {x: u32, y: u32}
+lookup(x)                [global, outer, block] Found in outer
+lookup(y)                [global, outer, block] Found in block
+exit_scope()             [global, outer]        {x: u32}  (y removed)
+lookup(x)                [global, outer]        Found in outer
+lookup(y)                [global, outer]        Not found → Error!
+exit_scope()             [global]               {}
+```
+
+### Name Resolution
+
+**Problem**: Same identifier may refer to different entities in different contexts.
+
+**Example**:
+```rust
+let x = 10;        // Global x
+
+fn foo(x: u32) {   // Parameter x (shadows global x)
+    let x = x + 1; // Local x (shadows parameter x)
+    println!("{}", x);  // Which x?
+}
+```
+
+**Resolution**: Each use of `x` is annotated with its declaration site.
+
+**Annotated AST**:
+```
+GlobalDecl(x, 10)                         // x₀ = 10
+
+FunctionDecl(foo, [Param(x, u32)],        // x₁: u32
+  Block([
+    LetDecl(x, Add(Var(x), 1))            // x₂ = x₁ + 1
+    FunctionCall(println, [Var(x)])       // Refers to x₂
+  ])
+)
+```
+
+**Each variable use is uniquely resolved to its declaration**.
+
+---
+
+## 1.5 Intermediate Representations
+
+### Why IR?
+
+**Problem**: Compiling N languages to M architectures requires N×M compilers.
+
+**Solution**: Use intermediate representation (IR) as common format.
+
+```
+N source languages → IR → M target architectures
+Requires: N frontends + M backends = N + M components (not N×M)
+```
+
+**Example: LLVM ecosystem**
+```
+Source languages:        IR:       Target architectures:
+  Rust     ─┐           LLVM IR   ┌─ x86-64
+  C/C++    ─┼──────→   (SSA-based) ──┼─ ARM
+  Swift    ─┘                      └─ RISC-V
+```
+
+### Desirable IR Properties
+
+**1. Language-independent**: Not tied to any source language syntax
+**2. Target-independent**: Not tied to any machine architecture
+**3. Compact**: Easy to manipulate and analyze
+**4. Easy to generate**: From AST
+**5. Easy to optimize**: Support standard optimizations
+**6. Easy to translate**: To target code
+
+### Three-Address Code (TAC)
+
+**Definition**: IR where each instruction has at most three operands (two sources, one destination).
+
+**General form**:
+```
+x = y op z    (binary operation)
+x = op y      (unary operation)
+x = y         (copy)
+goto L        (unconditional jump)
+if x goto L   (conditional jump)
+```
+
+**Example: Source code**:
+```rust
+let a = 2 + 3 * 4;
+```
+
+**Three-address code**:
+```
+t1 = 3 * 4
+t2 = 2 + t1
+a = t2
+```
+
+**Characteristics**:
+- ✅ Each operation produces one result
+- ✅ Intermediate values stored in temporaries ($t_1, t_2, \ldots$)
+- ✅ Close to assembly but architecture-independent
+
+### Static Single Assignment (SSA) Form
+
+**Definition**: IR where each variable is assigned exactly once.
+
+**Key idea**: When a variable is reassigned, create a new variable.
+
+**Example: Non-SSA**:
+```
+x = 10
+y = x + 5
+x = 20        // Reassignment
+z = x + y
+```
+
+**SSA form**:
+```
+x₁ = 10
+y₁ = x₁ + 5
+x₂ = 20       // New variable x₂
+z₁ = x₂ + y₁
+```
+
+**Why SSA?**
+- ✅ Simplifies data flow analysis
+- ✅ Enables powerful optimizations (constant propagation, dead code elimination)
+- ✅ Each use of a variable has unique definition (def-use chain is trivial)
+
+**Challenge: Control flow merges**
+
+**Problem**: What value does variable have when multiple paths merge?
+
+**Example**:
+```rust
+let x;
+if condition {
+    x = 10;
+} else {
+    x = 20;
+}
+let y = x + 5;  // Which x? 10 or 20?
+```
+
+**Solution: Φ (phi) functions**
+
+**SSA with phi function**:
+```
+       if condition
+      /            \
+    x₁ = 10      x₂ = 20
+      \            /
+       x₃ = φ(x₁, x₂)    // x₃ is x₁ if came from left, x₂ if came from right
+       y₁ = x₃ + 5
+```
+
+**Formal definition of φ function**:
+$$x_3 = \phi(x_1, x_2) = \begin{cases} x_1 & \text{if control flow came from left branch} \\ x_2 & \text{if control flow came from right branch} \end{cases}$$
+
+**Phi functions are not real instructions**—they're analysis constructs. Code generation eliminates them by inserting copies on each incoming edge.
+
+### Control Flow Graph (CFG)
+
+**Definition**: Directed graph $G = (V, E)$ where:
+- $V$: Set of **basic blocks** (maximal sequences of straight-line code)
+- $E$: Set of **control flow edges** (possible execution paths)
+
+**Basic block**: Sequence of instructions with:
+- One entry point (first instruction)
+- One exit point (last instruction)
+- No internal branches
+
+**Example: Source code**:
+```rust
+fn abs_diff(x: i32, y: i32) -> i32 {
+    if x > y {
+        x - y
+    } else {
+        y - x
+    }
+}
+```
+
+**Control Flow Graph**:
+```
+          ┌──────────────────┐
+          │ Entry            │
+          │ t1 = x > y       │
+          └────────┬─────────┘
+                   │
+         ┌─────────┴─────────┐
+         │                   │
+         v (true)            v (false)
+  ┌──────────┐        ┌──────────┐
+  │ Block 2  │        │ Block 3  │
+  │ t2 = x-y │        │ t3 = y-x │
+  │ return t2│        │ return t3│
+  └────┬─────┘        └────┬─────┘
+       │                   │
+       └─────────┬─────────┘
+                 v
+          ┌──────────────┐
+          │ Exit         │
+          └──────────────┘
+```
+
+**Each basic block**:
+```
+Block 1 (Entry):
+  Instructions: [t1 = x > y]
+  Successors: [Block 2, Block 3]
+
+Block 2:
+  Instructions: [t2 = x - y, return t2]
+  Successors: [Exit]
+
+Block 3:
+  Instructions: [t3 = y - x, return t3]
+  Successors: [Exit]
+```
+
+### LLVM IR Example
+
+LLVM uses SSA-based IR with typed instructions.
+
+**Source (C-like)**:
+```c
+int add(int x, int y) {
+    return x + y;
+}
+```
+
+**LLVM IR**:
+```llvm
+define i32 @add(i32 %x, i32 %y) {
+entry:
+  %result = add i32 %x, %y
+  ret i32 %result
+}
+```
+
+**Characteristics**:
+- `i32`: 32-bit integer type
+- `%x, %y`: Virtual registers (infinite supply)
+- `@add`: Global function name
+- `entry`: Basic block label
+- SSA form: Each register assigned once
+
+**More complex example with control flow**:
+```c
+int abs_diff(int x, int y) {
+    int result;
+    if (x > y) {
+        result = x - y;
+    } else {
+        result = y - x;
+    }
+    return result;
+}
+```
+
+**LLVM IR**:
+```llvm
+define i32 @abs_diff(i32 %x, i32 %y) {
+entry:
+  %cmp = icmp sgt i32 %x, %y    ; %cmp = (x > y)
+  br i1 %cmp, label %then, label %else
+
+then:
+  %diff1 = sub i32 %x, %y       ; diff1 = x - y
+  br label %merge
+
+else:
+  %diff2 = sub i32 %y, %x       ; diff2 = y - x
+  br label %merge
+
+merge:
+  %result = phi i32 [%diff1, %then], [%diff2, %else]  ; result = φ(diff1, diff2)
+  ret i32 %result
+}
+```
+
+**Note the phi function at merge point**: Selects `%diff1` if came from `%then`, `%diff2` if came from `%else`.
+
+---
+
+## 1.6 Optimization Passes
+
+### What is Optimization?
+
+**Definition**: Transformation that preserves program semantics while improving some metric (speed, code size, power consumption).
+
+**Key insight**: IR enables optimizations independent of source language and target architecture.
+
+**Optimization categories**:
+1. **Local**: Within a single basic block
+2. **Global**: Across basic blocks within a function
+3. **Interprocedural**: Across function boundaries
+
+### Constant Folding
+
+**Idea**: Evaluate constant expressions at compile time.
+
+**Example**:
+```
+Before:
+  x = 2 + 3
+  y = x * 4
+
+After:
+  x = 5
+  y = 20
+```
+
+**Why this works**: Compiler can evaluate arithmetic on constants, no need to emit instructions.
+
+**Implementation**:
+```rust
+fn constant_fold(expr: &mut Expr) {
+    match expr {
+        Expr::BinaryOp { op: Op::Add, left, right } => {
+            constant_fold(left);
+            constant_fold(right);
+            if let (Expr::Literal(a), Expr::Literal(b)) = (&**left, &**right) {
+                *expr = Expr::Literal(a + b);  // Replace with constant
+            }
+        }
+        // Similar for other operators
+        _ => {}
+    }
+}
+```
+
+### Constant Propagation
+
+**Idea**: Replace variable uses with their known constant values.
+
+**Example**:
+```
+Before:
+  x = 5
+  y = x + 3
+  z = x * 2
+
+After:
+  x = 5
+  y = 5 + 3    // Propagated x = 5
+  z = 5 * 2    // Propagated x = 5
+
+After constant folding:
+  x = 5
+  y = 8
+  z = 10
+```
+
+**Why this enables more optimization**: After propagation, we can constant fold.
+
+### Dead Code Elimination (DCE)
+
+**Idea**: Remove computations whose results are never used.
+
+**Example**:
+```
+Before:
+  x = 10
+  y = x + 5    // y is never used!
+  z = 20
+  return z
+
+After:
+  x = 10       // x might be removed if also unused
+  z = 20
+  return z
+```
+
+**Why this works**: If a variable is never read, its definition is useless.
+
+**Implementation** (requires liveness analysis):
+```rust
+fn dead_code_elimination(cfg: &mut CFG) {
+    let live_vars = liveness_analysis(cfg);
+
+    for block in cfg.blocks.iter_mut() {
+        block.instructions.retain(|instr| {
+            match instr {
+                Instr::Assign { target, .. } => {
+                    // Keep instruction if target is live after this point
+                    live_vars.get(instr.id()).contains(target)
+                }
+                _ => true  // Keep all other instructions
+            }
+        });
+    }
+}
+```
+
+### Common Subexpression Elimination (CSE)
+
+**Idea**: If an expression is computed multiple times with the same operands, compute once and reuse.
+
+**Example**:
+```
+Before:
+  a = x + y
+  b = x + y    // Same expression as a
+  c = a + b
+
+After:
+  a = x + y
+  b = a        // Reuse a instead of recomputing
+  c = a + b
+```
+
+**Why this works**: If `x` and `y` haven't changed, `x + y` produces same result.
+
+**Implementation** (requires available expressions analysis):
+```rust
+fn cse(block: &mut BasicBlock) {
+    let mut available: HashMap<Expr, Variable> = HashMap::new();
+
+    for instr in block.instructions.iter_mut() {
+        match instr {
+            Instr::Assign { target, expr } => {
+                // Check if expression already computed
+                if let Some(&var) = available.get(expr) {
+                    // Replace with copy
+                    *instr = Instr::Copy { target: *target, source: var };
+                } else {
+                    // Record this expression as available
+                    available.insert(expr.clone(), *target);
+                }
+            }
+            // Handle other instructions (invalidate available expressions if needed)
+            _ => {}
+        }
+    }
+}
+```
+
+### Loop Optimizations
+
+**Loop-invariant code motion**: Move computations that don't change inside loop to before loop.
+
+**Example**:
+```
+Before:
+  for i in 0..n {
+      x = y * 2    // y * 2 doesn't depend on i
+      a[i] = x + i
+  }
+
+After:
+  x = y * 2        // Moved outside loop
+  for i in 0..n {
+      a[i] = x + i
+  }
+```
+
+**Why this works**: Avoid recomputing `y * 2` on every iteration.
+
+---
+
+## 1.7 Code Generation
+
+### What is Code Generation?
+
+**Definition**: Translate IR to target machine code or assembly.
+
+**Key tasks**:
+1. **Instruction selection**: Map IR operations to target instructions
+2. **Register allocation**: Assign variables to physical registers
+3. **Instruction scheduling**: Reorder instructions for pipeline efficiency
+
+### Instruction Selection
+
+**Problem**: Map high-level IR operations to sequences of target instructions.
+
+**Example: IR to RISC-V**:
+
+**IR**:
+```
+t1 = a + b
+t2 = t1 * 4
+c = t2
+```
+
+**RISC-V assembly**:
+```
+add  t0, a0, a1      # t0 = a + b  (a in a0, b in a1)
+slli t1, t0, 2       # t1 = t0 << 2 (multiply by 4 via shift left by 2)
+mv   a2, t1          # c = t1 (result in a2)
+```
+
+**Challenge: Multiple options**
+
+Multiply by 4 can be done as:
+- `slli t1, t0, 2` (shift left by 2, 1 instruction)
+- `mul t1, t0, 4` (multiply with immediate if supported, 1-2 instructions)
+- `add t1, t0, t0; add t1, t1, t1` (two adds, 2 instructions)
+
+**Heuristic**: Choose fastest/smallest code sequence for target architecture.
+
+### Register Allocation
+
+**Problem**: IR has infinite virtual registers, hardware has finite physical registers (32 for RISC-V).
+
+**Task**: Assign virtual registers to physical registers, spill to memory when necessary.
+
+**Example: Before register allocation**:
+```
+v1 = 10
+v2 = 20
+v3 = v1 + v2
+v4 = v3 * 2
+return v4
+```
+
+**After register allocation** (assuming 3 physical registers: t0, t1, t2):
+```
+li   t0, 10          # v1 → t0
+li   t1, 20          # v2 → t1
+add  t2, t0, t1      # v3 → t2
+slli t2, t2, 1       # v4 → t2 (reuse t2, v3 dead)
+mv   a0, t2          # return value in a0
+ret
+```
+
+**Graph coloring algorithm**:
+
+**Step 1: Build interference graph**
+
+Nodes: Virtual registers
+Edges: Two registers interfere if they're live at the same time
+
+**Example**:
+```
+v1 = ...
+v2 = ...
+v3 = v1 + v2    # v1, v2, v3 all live
+v4 = v3 * 2     # v3, v4 live
+return v4       # v4 live
+```
+
+**Interference graph**:
+```
+v1 ─── v2       v1 and v2 live simultaneously
+│      │
+└──v3──┘        v1, v2, v3 form triangle
+   │
+   v4           v3 and v4 interfere
+```
+
+**Step 2: Color graph**
+
+Assign colors (physical registers) such that adjacent nodes have different colors.
+
+```
+v1 → t0  (color 0)
+v2 → t1  (color 1)
+v3 → t2  (color 2)
+v4 → t2  (color 2, v3 dead when v4 assigned, so can reuse)
+```
+
+**If not enough colors**: Spill least-frequently-used variables to memory.
+
+**Spilling example**:
+```
+If only 2 registers available (t0, t1):
+v1 → t0
+v2 → t1
+v3 → spill to stack (store v3 to memory)
+Later: Load v3 from stack when needed
+```
+
+### Instruction Scheduling
+
+**Problem**: Modern CPUs use pipelining, want to avoid pipeline stalls.
+
+**Example: Pipeline hazard**:
+
+```
+Original:
+  ld   t0, 0(a0)     # Load from memory (3-cycle latency)
+  add  t1, t0, t2    # Uses t0 immediately → stall!
+```
+
+**Optimized**:
+```
+  ld   t0, 0(a0)     # Load from memory
+  sub  t3, t4, t5    # Independent instruction (fill delay slot)
+  add  t1, t0, t2    # By now, t0 is ready
+```
+
+**Key insight**: Reorder instructions to fill pipeline bubbles, without changing semantics.
+
+**Constraint**: Cannot reorder if data dependency exists.
+
+---
+
+**End of Part 1**
+

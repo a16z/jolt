@@ -77,7 +77,7 @@ Twist and Shout.md
 
 # Personal learning folders
 Theory/
-docs/
+# docs/  # Temporarily unignored for IDE tagging during development
 
 # Temporary build and execution artifacts
 *.bin
