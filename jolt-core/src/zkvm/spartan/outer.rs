@@ -319,6 +319,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     // at r0 with the current `r_grid` weights:
     //   scaled_w[k][t] = lagrange_evals_r0[t] * r_grid[k]  (for klen > 1)
     // and scaled_w[0][t] = lagrange_evals_r0[t] when klen == 1 (no r_grid factor).
+    #[allow(clippy::too_many_arguments)]
     fn build_grids(
         &self,
         grid_az: &mut [F],

@@ -174,8 +174,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 // Assert they match
                 assert_eq!(
                     &checkpoint_cycle, expected_cycle,
-                    "Mismatch at cycle {}: checkpoint != trace",
-                    time_step_idx
+                    "Mismatch at cycle {time_step_idx}: checkpoint != trace",
                 );
             }
             println!(

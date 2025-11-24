@@ -4,7 +4,6 @@
 extern crate alloc;
 extern crate core;
 
-use core::usize;
 use itertools::Itertools;
 use std::vec;
 use tracing::{error, info};
