@@ -4,6 +4,7 @@ use allocative::Allocative;
 use ark_std::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
+use tracer::LazyTraceIterator;
 
 use crate::field::BarrettReduce;
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
@@ -226,7 +227,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
 //}
 //
 #[derive(Allocative)]
-pub struct OuterRemainingSumcheckProver<F: JoltField, S: StreamingSchedule + Allocative> {
+pub struct OuterRemainingSumcheckProver<'a, F: JoltField, S: StreamingSchedule + Allocative> {
     #[allocative(skip)]
     bytecode_preprocessing: BytecodePreprocessing,
     #[allocative(skip)]
@@ -245,12 +246,17 @@ pub struct OuterRemainingSumcheckProver<F: JoltField, S: StreamingSchedule + All
     schedule: S,
     t_0: Option<F>,
     t_inf: Option<F>,
+    #[allocative(skip)]
+    checkpoints: &'a [std::iter::Take<LazyTraceIterator>],
+    checkpoint_interval: usize,
 }
 
-impl<F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProver<F, S> {
+impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProver<'a, F, S> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
     pub fn gen(
         trace: Arc<Vec<Cycle>>,
+        checkpoints: &'a [std::iter::Take<LazyTraceIterator>], // Add lifetime 'a, use slice
+        checkpoint_interval: usize,
         bytecode_preprocessing: &BytecodePreprocessing,
         uni: &UniSkipState<F>,
         schedule: S,
@@ -285,10 +291,13 @@ impl<F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProv
         //    ExpandingTable::new_with_order(1 << n_cycle_vars, ExpansionOrder::MostSignificantBit);
         r_grid.reset(F::one());
 
+        // TODO: need a the checkpoints here
         Self {
             split_eq_poly,
             bytecode_preprocessing,
             trace,
+            checkpoints,         // Add this
+            checkpoint_interval, // Add this
             az: None,
             bz: None,
             t_prime_poly: None,
@@ -321,6 +330,8 @@ impl<F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProv
         scaled_w: &[[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]],
     ) {
         let preprocess = &self.bytecode_preprocessing;
+        let checkpoints = &self.checkpoints;
+        let checkpoint_interval = self.checkpoint_interval;
         let trace = &self.trace;
         debug_assert_eq!(scaled_w.len(), klen);
         debug_assert_eq!(grid_az.len(), jlen);
@@ -341,9 +352,17 @@ impl<F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProv
                     let current_step_idx = full_idx >> 1;
                     let selector = (full_idx & 1) == 1;
 
-                    let row_inputs =
+                    // TODO: use the lazy trace iterator here instead of indexing directly into the
+                    // trace that is all that needs to change for now
+                    let row_inputs_prime = R1CSCycleInputs::from_checkpoints::<F>(
+                        preprocess,
+                        checkpoints,
+                        checkpoint_interval,
+                        current_step_idx,
+                    );
+                    let _row_inputs =
                         R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs_prime);
                     let w_k = &scaled_w[k];
 
                     if !selector {
@@ -1213,7 +1232,7 @@ impl<F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProv
 }
 
 impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckInstanceProver<F, T>
-    for OuterRemainingSumcheckProver<F, S>
+    for OuterRemainingSumcheckProver<'_, F, S>
 {
     fn degree(&self) -> usize {
         OUTER_REMAINING_DEGREE_BOUND
