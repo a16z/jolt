@@ -65,3 +65,28 @@ jolt-sdk/tests/fib_io_device_bytes.rs
 jolt-sdk/tests/fib_proof_bytes.rs
 jolt-sdk/tests/jolt_verifier_preprocessing_bytes.rs
 
+# Personal documentation and notes (not part of official repo)
+CLAUDE.md
+FIBONACCI_EXECUTION_ANALYSIS.md
+LEARNING_PATH.md
+LEARNING_PATH_v2.md
+PRACTICAL_IMPLEMENTATION_APPROACH.md
+SCOPE_OF_WORK_EVM_VERIFIER.md
+fibonacci_main_branch.log
+Twist and Shout.md
+
+# Personal learning folders
+Theory/
+docs/
+
+# Temporary build and execution artifacts
+*.bin
+!examples/**/*.expected.bin
+*.dat
+*.log
+output_pr975_recursion/
+tmp-jolt-targets
+examples/recursion/examples/
+examples/recursion/output/
+examples/fibonacci/fibonacci_run.log
+
