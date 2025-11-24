@@ -1,3 +1,4 @@
+pub mod batch_inverse;
 pub mod commitment;
 pub mod compact_polynomial;
 pub mod dense_mlpoly;

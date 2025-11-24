@@ -1,7 +1,10 @@
+use std::{iter::zip, mem::MaybeUninit};
+
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
+use itertools::izip;
 use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -12,6 +15,7 @@ use super::LOG_K;
 use crate::{
     field::{JoltField, MulTrunc},
     poly::{
+        batch_inverse::par_batch_inverse,
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
@@ -116,8 +120,6 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
 
     /// Precomputed lookup keys k (bit-packed) per cycle j.
     lookup_indices: Vec<LookupBits>,
-    /// Indices of cycles grouped by selected lookup table; used to form per-table flags.
-    lookup_indices_by_table: Vec<Vec<usize>>,
     /// Cycle indices with interleaved operands (used for left/right operand prefix-suffix Q).
     lookup_indices_uninterleave: Vec<usize>,
     /// Cycle indices with identity path (non-interleaved) used as the RAF flag source.
@@ -135,9 +137,17 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     /// Expanding tables accumulating address-prefix products per phase (see `u_evals_*`).
     v: Vec<ExpandingTable<F>>,
     /// u_evals for read-checking part: eq(r_spartan,j) + gamma·eq(r_branch,j).
+    ///
+    /// Doesn't include values for trace padding.
     u_evals_rv: Vec<F>,
+    /// Inverses of the initial state of `u_evals_rv`.
+    ///
+    /// Used to recover ra evals from `u_evals_rv` once it gets fully condensed.
+    initial_u_evals_rv_inv: Vec<F>,
     /// u_evals for RAF part: eq(r_spartan,j).
     u_evals_raf: Vec<F>,
+    /// Length of trace without padding.
+    unpadded_trace_len: usize,
 
     // State related to Gruen EQ optimization
     /// Gruen-split equality polynomial over cycle vars for Spartan part (high-to-low binding).
@@ -182,6 +192,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::gen")]
     pub fn gen(
         trace: &[Cycle],
+        unpadded_trace_len: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
@@ -209,8 +220,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), log_m, LOG_K);
         drop(_guard);
         drop(span);
-
-        let num_tables = LookupTables::<XLEN>::COUNT;
 
         let span = tracing::span!(tracing::Level::INFO, "Build cycle_data");
         let _guard = span.enter();
@@ -272,38 +281,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             })
         };
 
-        // Build lookup_indices_by_table fully in parallel
-        // Create a vector for each table in parallel
-        let lookup_indices_by_table: Vec<Vec<usize>> = {
-            let span = tracing::span!(tracing::Level::INFO, "build lookup_indices_by_table");
-            let _guard = span.enter();
-            cycle_data
-                .par_iter()
-                .with_min_len(4096)
-                .fold(
-                    || vec![Vec::new(); num_tables],
-                    |mut buckets, data| {
-                        if let Some(table) = data.table {
-                            let t_idx = LookupTables::<XLEN>::enum_index(&table);
-                            buckets[t_idx].push(data.idx);
-                        }
-                        buckets
-                    },
-                )
-                .reduce(
-                    || vec![Vec::new(); num_tables],
-                    |mut a, mut b| {
-                        for (a_bucket, b_bucket) in a.iter_mut().zip(b.iter_mut()) {
-                            a_bucket.append(b_bucket);
-                        }
-                        a
-                    },
-                )
-        };
-        drop_in_background_thread(cycle_data);
-        drop(_guard);
-        drop(span);
-
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
             .collect::<Vec<_>>()
             .par_iter()
@@ -360,6 +337,11 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     rv_chunk[off + 1] = eval1_s + eval1_b;
                 }
             });
+        // u_evals_rv.truncate(unpadded_trace_len);
+        assert!(u_evals_rv.iter().all(|v| !v.is_zero()));
+        // let mut initial_u_evals_rv_inv = unsafe_allocate_zero_vec(unpadded_trace_len);
+        let mut initial_u_evals_rv_inv = unsafe_allocate_zero_vec(u_evals_rv.len());
+        par_batch_inverse(&u_evals_rv, &mut initial_u_evals_rv_inv);
         drop(_guard);
         drop(span);
 
@@ -369,7 +351,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             lookup_indices,
 
             // Prefix-suffix state (first log(K) rounds)
-            lookup_indices_by_table,
             lookup_indices_uninterleave,
             lookup_indices_identity,
             is_interleaved_operands,
@@ -379,10 +360,12 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .map(|_| ExpandingTable::new(1 << log_m, BindingOrder::HighToLow))
                 .collect(),
             u_evals_rv,
+            initial_u_evals_rv_inv,
             u_evals_raf,
             right_operand_ps,
             left_operand_ps,
             identity_ps,
+            unpadded_trace_len,
 
             // State for last log(T) rounds
             ra: None,
@@ -418,12 +401,10 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             let _guard = span.enter();
             self.lookup_indices
                 .par_iter()
-                .zip(self.u_evals_rv.par_iter_mut())
-                .zip(self.u_evals_raf.par_iter_mut())
-                .for_each(|((k, u), u_raf)| {
+                .zip(&mut self.u_evals_raf)
+                .for_each(|(k, u_raf)| {
                     let (prefix, _) = k.split((self.params.phases - phase) * log_m);
                     let k_bound: usize = prefix % m;
-                    *u *= self.v[phase - 1][k_bound];
                     *u_raf *= self.v[phase - 1][k_bound];
                 });
         }
@@ -465,76 +446,79 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     fn init_suffix_polys(&mut self, phase: usize) {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
+        let m_mask = m - 1;
 
-        let new_suffix_polys: Vec<_> = {
-            LookupTables::<XLEN>::iter()
-                .collect::<Vec<_>>()
-                .par_iter()
-                .zip(self.lookup_indices_by_table.par_iter())
-                .map(|(table, lookup_indices)| {
-                    let suffixes = table.suffixes();
-                    let unreduced_polys = lookup_indices
-                        .par_chunks(chunk_size)
-                        .map(|chunk| {
-                            let mut chunk_result: Vec<Vec<F::Unreduced<6>>> =
-                                vec![unsafe_allocate_zero_vec(m); suffixes.len()];
+        // Collect table metadata.
+        let mut n_suffixes = 0;
+        let mut suffixes_per_table = Vec::new();
+        let mut table_offsets = Vec::new();
+        for table in LookupTables::<XLEN>::iter() {
+            table_offsets.push(n_suffixes * m);
+            let suffixes = table.suffixes();
+            n_suffixes += suffixes.len();
+            suffixes_per_table.push(suffixes);
+        }
 
-                            for j in chunk {
-                                let k = self.lookup_indices[*j];
-                                let (prefix_bits, suffix_bits) =
-                                    k.split((self.params.phases - 1 - phase) * log_m);
-                                for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut())
-                                {
-                                    let t = suffix.suffix_mle::<XLEN>(suffix_bits);
-                                    if t != 0 {
-                                        let u = self.u_evals_rv[*j];
-                                        result[prefix_bits % m] += u.mul_u64_unreduced(t);
-                                    }
-                                }
-                            }
+        let num_chunks = rayon::current_num_threads() * 4;
+        let chunk_size = self.lookup_indices.len() / num_chunks;
 
-                            chunk_result
-                        })
-                        .reduce(
-                            || vec![unsafe_allocate_zero_vec(m); suffixes.len()],
-                            |mut acc, new| {
-                                for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
-                                    for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter())
-                                    {
-                                        *acc_coeff += new_coeff;
-                                    }
-                                }
-                                acc
-                            },
-                        );
+        let buff = (
+            // Padding doesn't contribute to suffix polys.
+            self.lookup_indices[..self.unpadded_trace_len].par_chunks(chunk_size),
+            self.lookup_tables[..self.unpadded_trace_len].par_chunks(chunk_size),
+            self.u_evals_rv[..self.unpadded_trace_len].par_chunks_mut(chunk_size),
+        )
+            .into_par_iter()
+            .map(|(indices, tables, u_evals)| {
+                let mut buff = unsafe_allocate_zero_vec(m * n_suffixes);
 
-                    // Reduce the unreduced values to field elements
-                    unreduced_polys
-                        .into_iter()
-                        .map(|unreduced_coeffs| {
-                            unreduced_coeffs
-                                .into_iter()
-                                .map(F::from_barrett_reduce)
-                                .collect::<Vec<F>>()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect()
-        };
+                for (index, table, u_eval) in izip!(indices, tables, u_evals) {
+                    let n_suffix_bits = (self.params.phases - 1 - phase) * log_m;
+                    let (prefix_bits, suffix_bits) = index.split(n_suffix_bits);
 
-        // Replace existing suffix polynomials
-        self.suffix_polys
-            .iter_mut()
-            .zip(new_suffix_polys.into_iter())
-            .for_each(|(old, new)| {
-                old.iter_mut()
-                    .zip(new.into_iter())
-                    .for_each(|(poly, mut coeffs)| {
-                        *poly = DensePolynomial::new(std::mem::take(&mut coeffs));
-                    });
-            });
+                    if phase != 0 {
+                        // Condense u-evals.
+                        let k_bound = prefix_bits.and(m_mask << log_m) >> log_m;
+                        *u_eval *= self.v[phase - 1][k_bound];
+                    }
+
+                    let Some(table) = table else { continue };
+                    let table_i = LookupTables::enum_index(table);
+                    let table_offset = table_offsets[table_i];
+                    let table_suffixes = &suffixes_per_table[table_i];
+                    let offset = table_offset + table_suffixes.len() * prefix_bits.and(m_mask);
+
+                    for (offset, suffix) in zip(offset.., table_suffixes) {
+                        let t = suffix.suffix_mle::<XLEN>(suffix_bits);
+                        if t != 0 {
+                            buff[offset] += u_eval.mul_u64_unreduced(t);
+                        }
+                    }
+                }
+
+                buff
+            })
+            .reduce(
+                || unsafe_allocate_zero_vec::<F::Unreduced<6>>(m * n_suffixes),
+                |a, b| zip(a, b).map(|(a, b)| a + b).collect(),
+            );
+
+        // Replace existing suffix polynomials.
+        self.suffix_polys = LookupTables::<XLEN>::iter()
+            .map(|table| {
+                let table_i = LookupTables::enum_index(&table);
+                let n_suffixes = suffixes_per_table[table_i].len();
+                let mut suffixes = vec![vec![]; n_suffixes];
+                let mut offset = table_offsets[table_i];
+                for _ in 0..m {
+                    for suffix in &mut suffixes {
+                        suffix.push(F::from_barrett_reduce(buff[offset]));
+                        offset += 1;
+                    }
+                }
+                suffixes.into_iter().map(DensePolynomial::new).collect()
+            })
+            .collect();
     }
 
     /// To be called before the last log(T) rounds
@@ -549,10 +533,10 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     fn init_log_t_rounds(&mut self, gamma: F, gamma_sqr: F) {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
+        let m_mask = m - 1;
         // Drop stuff that's no longer needed
         drop_in_background_thread((
             std::mem::take(&mut self.u_evals_raf),
-            std::mem::take(&mut self.u_evals_rv),
             std::mem::take(&mut self.lookup_indices_uninterleave),
         ));
 
@@ -560,21 +544,36 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let ra = {
             let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomial");
             let _guard = span.enter();
-            self.lookup_indices
-                .par_iter()
-                .map(|k| {
-                    (0..self.params.phases)
-                        .map(|phase| {
-                            let (prefix, _) = k.split((self.params.phases - 1 - phase) * log_m);
-                            let k_bound: usize = prefix % m;
-                            self.v[phase][k_bound]
-                        })
-                        .product::<F>()
-                })
-                .collect::<Vec<_>>()
+            let mut ra_evals = Vec::with_capacity(self.lookup_indices.len());
+            let (unpadded_ra_evals, padded_ra_evals) = ra_evals
+                .spare_capacity_mut()
+                .split_at_mut(self.unpadded_trace_len);
+            // 1. Handle unpadded cycles.
+            unpadded_ra_evals
+                .par_iter_mut()
+                .enumerate()
+                .with_min_len(4096)
+                .for_each(|(i, ra_eval)| {
+                    let k_bound = self.lookup_indices[i].and(m_mask);
+                    let last_condensing_factor = self.v[self.params.phases - 1][k_bound];
+                    let condensed_u_eval = self.u_evals_rv[i] * last_condensing_factor;
+                    let uncondensed_u_eval_inv = self.initial_u_evals_rv_inv[i];
+                    ra_eval.write(condensed_u_eval * uncondensed_u_eval_inv);
+                });
+            // 2. Handle padded cycles.
+            let padding_ra_eval = self.v.iter().map(|t| t[0]).product();
+            padded_ra_evals.fill(MaybeUninit::new(padding_ra_eval));
+            // Safety: all values init.
+            unsafe { ra_evals.set_len(self.lookup_indices.len()) };
+            ra_evals
         };
 
-        drop_in_background_thread(std::mem::take(&mut self.v));
+        // Drop stuff that's no longer needed
+        drop_in_background_thread((
+            std::mem::take(&mut self.v),
+            std::mem::take(&mut self.u_evals_rv),
+            std::mem::take(&mut self.initial_u_evals_rv_inv),
+        ));
 
         let prefixes: Vec<PrefixEval<F>> = std::mem::take(&mut self.prefix_checkpoints)
             .into_iter()
@@ -586,7 +585,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             let _guard = span.enter();
             combined_val_poly
                 .par_iter_mut()
-                .zip(std::mem::take(&mut self.lookup_tables))
+                .zip(&self.lookup_tables)
                 .for_each(|(val, table)| {
                     if let Some(table) = table {
                         let suffixes: Vec<_> = table
@@ -932,16 +931,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         let (_r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
         let eq_r_cycle_prime = EqPolynomial::<F>::evals(&r_cycle.r);
 
-        let flag_claims = self
-            .lookup_indices_by_table
+        // Padding doesn't contribute to flag claims
+        let flag_claims = self.lookup_tables[..self.unpadded_trace_len]
             .par_iter()
-            .map(|table_lookups| {
-                table_lookups
-                    .par_iter()
-                    .map(|j| eq_r_cycle_prime[*j])
-                    .sum::<F>()
-            })
-            .collect::<Vec<F>>();
+            .with_min_len(4096)
+            .enumerate()
+            .fold(
+                || vec![F::zero(); LookupTables::<XLEN>::COUNT],
+                |mut acc, (cycle_i, table)| {
+                    if let Some(table) = table {
+                        let table_i = LookupTables::enum_index(table);
+                        acc[table_i] += eq_r_cycle_prime[cycle_i];
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || vec![F::zero(); LookupTables::<XLEN>::COUNT],
+                |a, b| zip(a, b).map(|(a, b)| a + b).collect(),
+            );
         flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
             accumulator.append_virtual(
                 transcript,
@@ -1507,7 +1515,7 @@ mod tests {
         );
 
         let mut prover_sumcheck =
-            ReadRafSumcheckProver::gen(&trace, &prover_opening_accumulator, prover_transcript);
+            ReadRafSumcheckProver::gen(&trace, T, &prover_opening_accumulator, prover_transcript);
 
         let (proof, r_sumcheck) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],

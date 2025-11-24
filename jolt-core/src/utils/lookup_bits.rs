@@ -69,6 +69,11 @@ impl LookupBits {
             .wrapping_shl(128 - self.len as u32)
             .leading_ones()
     }
+
+    pub fn and(&self, rhs: usize) -> usize {
+        let lhs = usize::from_le_bytes(self.bytes[0..size_of::<usize>()].try_into().unwrap());
+        lhs & rhs
+    }
 }
 
 impl Display for LookupBits {

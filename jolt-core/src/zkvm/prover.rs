@@ -732,6 +732,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let lookups_read_raf = LookupsReadRafSumcheckProver::gen(
             &self.trace,
+            self.unpadded_trace_len,
             &self.opening_accumulator,
             &mut self.transcript,
         );
