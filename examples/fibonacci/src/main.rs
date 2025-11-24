@@ -46,6 +46,33 @@ pub fn main() {
             .expect("Could not serialize io_device.");
     }
 
+    // Verify Stage 1 only (R1CS constraints) - for Groth16 transpilation experiment
+    info!("Running Stage 1-only verification...");
+    use jolt_core::zkvm::stage1_only_verifier::{
+        Stage1OnlyPreprocessing, Stage1OnlyProof, Stage1OnlyVerifier,
+    };
+    use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
+
+    let (stage1_proof, opening_claims, commitments, ram_K) =
+        Stage1OnlyProof::from_full_proof::<DoryCommitmentScheme>(&proof);
+
+    let stage1_preprocessing = Stage1OnlyPreprocessing::new(proof.trace_length);
+
+    let stage1_verifier = Stage1OnlyVerifier::new::<DoryCommitmentScheme>(
+        stage1_preprocessing,
+        stage1_proof,
+        opening_claims,
+        &io_device,
+        &commitments,
+        ram_K,
+    )
+    .expect("Failed to create Stage 1 verifier");
+
+    stage1_verifier
+        .verify()
+        .expect("Stage 1 verification failed");
+    info!("Stage 1 verification PASSED");
+
     let is_valid = verify_fib(50, output, io_device.panic, proof);
     info!("output: {output}");
     info!("valid: {is_valid}");

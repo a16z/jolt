@@ -77,6 +77,27 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 ///
 /// Contains only the sumcheck proofs needed for Spartan outer sumcheck.
 /// Does not include commitments, opening proofs, or other stage proofs.
+///
+/// ## Purpose
+///
+/// This structure is designed for **Groth16 transpilation**, where the verification
+/// algorithm will be converted to an arithmetic circuit. The intended workflow is:
+///
+/// 1. **For Groth16 circuit**: Use this verifier's `verify()` logic directly
+///    - Replace Fiat-Shamir transcript with public randomness (challenges as public inputs)
+///    - Convert sumcheck verification to R1CS constraints
+///    - No polynomial commitments needed (all data is witness)
+///
+/// 2. **For testing with real proofs**: Must provide full transcript context
+///    - Use `new()` with all required parameters (program_io, commitments, etc.)
+///    - This reconstructs the Fiat-Shamir transcript state
+///    - Allows testing against real Jolt proofs
+///
+/// ## Why the complex API?
+///
+/// The verifier needs the Fiat-Shamir preamble and commitments to generate the same
+/// random challenges that the prover used. For Groth16, you'll bypass all of this
+/// and provide challenges directly as circuit inputs.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage1OnlyProof<F: JoltField, ProofTranscript: Transcript> {
     /// Univariate-skip first round proof
@@ -93,15 +114,30 @@ impl<F: JoltField, ProofTranscript: Transcript> Stage1OnlyProof<F, ProofTranscri
     /// This extracts just the Stage 1 components from a complete proof,
     /// useful for testing and comparing the isolated verifier against
     /// the full verifier.
-    #[cfg(test)]
+    ///
+    /// Returns:
+    /// - Stage1OnlyProof
+    /// - Opening claims
+    /// - Commitments (needed to reconstruct transcript state)
+    /// - ram_K, bytecode_K (needed for Fiat-Shamir preamble)
     pub fn from_full_proof<PCS: crate::poly::commitment::commitment_scheme::CommitmentScheme<Field = F>>(
         full_proof: &crate::zkvm::proof_serialization::JoltProof<F, PCS, ProofTranscript>,
-    ) -> Self {
-        Self {
-            uni_skip_first_round_proof: full_proof.stage1_uni_skip_first_round_proof.clone(),
-            sumcheck_proof: full_proof.stage1_sumcheck_proof.clone(),
-            trace_length: full_proof.trace_length,
-        }
+    ) -> (
+        Self,
+        crate::poly::opening_proof::Openings<F>,
+        Vec<PCS::Commitment>,
+        usize, // ram_K
+    ) {
+        (
+            Self {
+                uni_skip_first_round_proof: full_proof.stage1_uni_skip_first_round_proof.clone(),
+                sumcheck_proof: full_proof.stage1_sumcheck_proof.clone(),
+                trace_length: full_proof.trace_length,
+            },
+            full_proof.opening_claims.0.clone(),
+            full_proof.commitments.clone(),
+            full_proof.ram_K,
+        )
     }
 }
 
@@ -177,12 +213,20 @@ impl<F: JoltField, ProofTranscript: Transcript> Stage1OnlyVerifier<F, ProofTrans
     /// # Arguments
     /// * `preprocessing` - Contains Spartan key derived from trace length
     /// * `proof` - Stage 1 proof (uni-skip + sumcheck)
+    /// * `opening_claims` - Polynomial opening claims from full proof
+    /// * `program_io` - Program I/O device (for Fiat-Shamir preamble)
+    /// * `commitments` - Polynomial commitments (to reconstruct transcript state)
+    /// * `ram_K` - RAM size parameter (for Fiat-Shamir preamble)
     ///
     /// # Returns
     /// A verifier ready to run `verify()`
-    pub fn new(
+    pub fn new<PCS: crate::poly::commitment::commitment_scheme::CommitmentScheme<Field = F>>(
         preprocessing: Stage1OnlyPreprocessing<F>,
         proof: Stage1OnlyProof<F, ProofTranscript>,
+        opening_claims: crate::poly::opening_proof::Openings<F>,
+        program_io: &crate::zkvm::JoltDevice,
+        commitments: &[PCS::Commitment],
+        ram_K: usize,
     ) -> Result<Self, ProofVerifyError> {
         // Validate trace length is power of 2
         if !proof.trace_length.is_power_of_two() {
@@ -191,11 +235,30 @@ impl<F: JoltField, ProofTranscript: Transcript> Stage1OnlyVerifier<F, ProofTrans
             ));
         }
 
-        // Initialize transcript
-        let transcript = ProofTranscript::new(b"Jolt Stage 1 Only");
+        // Initialize transcript with same seed as full verifier
+        let mut transcript = ProofTranscript::new(b"Jolt");
 
-        // Initialize opening accumulator (won't be used for PCS, but needed for sumcheck interface)
-        let opening_accumulator = VerifierOpeningAccumulator::new(proof.trace_length.log_2());
+        // Reconstruct transcript state to match full verifier
+        // This is necessary for Fiat-Shamir to produce the same challenges
+        crate::zkvm::fiat_shamir_preamble(
+            program_io,
+            ram_K,
+            proof.trace_length,
+            &mut transcript,
+        );
+
+        // Append commitments to transcript (same as full verifier)
+        for commitment in commitments {
+            transcript.append_serializable(commitment);
+        }
+
+        // Initialize opening accumulator and populate with claims from full proof
+        let mut opening_accumulator = VerifierOpeningAccumulator::new(proof.trace_length.log_2());
+        for (key, (_, claim)) in &opening_claims {
+            opening_accumulator
+                .openings
+                .insert(*key, (crate::poly::opening_proof::OpeningPoint::default(), *claim));
+        }
 
         Ok(Self {
             proof,
@@ -370,7 +433,23 @@ mod tests {
             trace_length,
         };
 
-        let result = Stage1OnlyVerifier::new(preprocessing, proof);
+        use crate::poly::opening_proof::Openings;
+        use crate::poly::commitment::dory::DoryCommitmentScheme;
+        use crate::zkvm::JoltDevice;
+
+        let opening_claims = Openings::new();
+        let program_io = JoltDevice::default();
+        let commitments: Vec<<DoryCommitmentScheme as crate::poly::commitment::commitment_scheme::CommitmentScheme>::Commitment> = vec![];
+        let ram_K = 1024;
+
+        let result = Stage1OnlyVerifier::<F, ProofTranscript>::new::<DoryCommitmentScheme>(
+            preprocessing,
+            proof,
+            opening_claims,
+            &program_io,
+            &commitments,
+            ram_K,
+        );
         assert!(result.is_err());
     }
 

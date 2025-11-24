@@ -1156,6 +1156,7 @@ name = "fibonacci"
 version = "0.1.0"
 dependencies = [
  "fibonacci-guest",
+ "jolt-core",
  "jolt-sdk",
  "tracing",
  "tracing-subscriber",
