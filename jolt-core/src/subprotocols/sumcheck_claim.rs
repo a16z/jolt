@@ -124,13 +124,13 @@ pub struct Claim<F: JoltField> {
 }
 
 pub struct InputOutputClaims<F: JoltField> {
-    claims: Vec<Claim<F>>,
-    output_sumcheck_id: SumcheckId,
-    gamma_pows: Vec<F>,
+    pub claims: Vec<Claim<F>>,
+    pub output_sumcheck_id: SumcheckId,
+    pub gamma_pows: Vec<F>,
 }
 
 impl<F: JoltField> InputOutputClaims<F> {
-    pub fn new(claims: Vec<Claim<F>>, output_sumcheck_id: SumcheckId, gamma: F) -> Self {
+    pub fn new_from_gamma(claims: Vec<Claim<F>>, output_sumcheck_id: SumcheckId, gamma: F) -> Self {
         let gamma_pows: Vec<F> = std::iter::successors(Some(F::one()), |prev| Some(*prev * gamma))
             .take(claims.len())
             .collect();
@@ -157,7 +157,7 @@ impl<F: JoltField> InputOutputClaims<F> {
 
     pub fn expected_output_claim(
         &self,
-        r: OpeningPoint<BIG_ENDIAN, F>,
+        r: &OpeningPoint<BIG_ENDIAN, F>,
         acc: &impl OpeningAccumulator<F>,
     ) -> F {
         let mut eq_eval_cache: HashMap<SumcheckId, F> = HashMap::new();
@@ -207,6 +207,6 @@ impl<F: JoltField> InputOutputClaims<F> {
     }
 }
 
-pub trait FrontendSumcheck<F: JoltField> {
-    fn input_output_claims(gamma: F) -> InputOutputClaims<F>;
+pub trait SumcheckFrontend<F: JoltField> {
+    fn input_output_claims(&self) -> InputOutputClaims<F>;
 }

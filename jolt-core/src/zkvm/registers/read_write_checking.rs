@@ -1,7 +1,7 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_claim::{Claim, ClaimExpr, FrontendSumcheck, InputOutputClaims};
+use crate::subprotocols::sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -1407,7 +1407,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 /// - `r_cycle_stage_3` is the randomness from instruction input sumcheck (stage 3).
 pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
     params: RegistersReadWriteCheckingParams<F>,
-    input_output_claims: InputOutputClaims<F>,
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
@@ -1423,11 +1422,7 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
             opening_accumulator,
             transcript,
         );
-        let input_output_claims = Self::input_output_claims(params.gamma);
-        Self {
-            params,
-            input_output_claims,
-        }
+        Self { params }
     }
 }
 
@@ -1443,7 +1438,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = self.input_output_claims.input_claim(accumulator);
+        let result = self.input_output_claims().input_claim(accumulator);
 
         #[cfg(test)]
         {
@@ -1463,12 +1458,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let (_, r_cycle) = r.split_at(LOG_K);
 
         let result = self
-            .input_output_claims
-            .expected_output_claim(r_cycle, accumulator);
+            .input_output_claims()
+            .expected_output_claim(&r_cycle, accumulator);
 
         #[cfg(test)]
         {
-            let (_, r_cycle) = r.split_at(LOG_K);
             let eq_eval_stage_1 = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle_stage_1);
             let eq_eval_stage_3 = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle_stage_3);
 
@@ -1551,8 +1545,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
-impl<F: JoltField> FrontendSumcheck<F> for RegistersReadWriteCheckingVerifier<F> {
-    fn input_output_claims(gamma: F) -> InputOutputClaims<F> {
+impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F> {
+    fn input_output_claims(&self) -> InputOutputClaims<F> {
         let rs1_value: ClaimExpr<F> = VirtualPolynomial::Rs1Value.into();
         let rs2_value: ClaimExpr<F> = VirtualPolynomial::Rs2Value.into();
         let rd_write_value: ClaimExpr<F> = VirtualPolynomial::RdWriteValue.into();
@@ -1563,7 +1557,7 @@ impl<F: JoltField> FrontendSumcheck<F> for RegistersReadWriteCheckingVerifier<F>
         let rd_wa: ClaimExpr<F> = VirtualPolynomial::RdWa.into();
         let rd_inc: ClaimExpr<F> = CommittedPolynomial::RdInc.into();
 
-        InputOutputClaims::new(
+        InputOutputClaims::new_from_gamma(
             vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
@@ -1597,7 +1591,7 @@ impl<F: JoltField> FrontendSumcheck<F> for RegistersReadWriteCheckingVerifier<F>
                 },
             ],
             SumcheckId::RegistersReadWriteChecking,
-            gamma,
+            self.params.gamma,
         )
     }
 }
