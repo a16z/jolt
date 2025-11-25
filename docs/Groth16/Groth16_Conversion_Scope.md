@@ -58,28 +58,67 @@ We assume these optimizations will bring constraint counts into the feasible ran
 
 ## 5. Existing Approaches
 
-Both major zkVMs use Gnark for Groth16 circuit compilation:
+Both major zkVMs use Gnark for Groth16 circuit compilation, but with **different automation levels**:
 
-**Risc0** ([stark2snark](https://github.com/risc0/risc0/tree/main/groth16_proof)):
+### **RISC Zero** ([groth16_proof](https://github.com/risc0/risc0/tree/main/groth16_proof))
 
-- Hand-written Circom circuits that verify STARK proofs
-- Uses Gnark via `circom-compat` bridge for proving
-- Pipeline: STARK proof → JSON → Circom circuit → Gnark proving → on-chain proof
-- Works because STARK verification protocol is stable
+| Aspect | Details |
+|--------|---------|
+| **Approach** | Fully manual, hand-written Circom |
+| **Circuit File** | `stark_verify.circom` - **55.7 MB** (stored in Git LFS) |
+| **Pipeline** | STARK proof → Circom circuit → snarkjs → Groth16 proof |
+| **Trusted Setup** | Hermez rollup with 2^23 powers of tau |
+| **Platform Limitation** | x86-only (Circom witness generator uses x86 assembly) |
 
-**SP1** ([verifier](https://github.com/succinctlabs/sp1/tree/dev/crates/verifier)):
+**Why manual works for RISC Zero**: Their STARK verification protocol is mature and stable. The enormous 55MB Circom file is a one-time investment that rarely needs updates.
 
-- Hand-written Gnark circuit that verifies their recursion protocol
-- Uses `gnark-ffi` (Rust → Go FFI) for circuit compilation and proving
-- Works because recursion protocol is stable
+Sources:
+- [stark_verify.circom](https://github.com/risc0/risc0/blob/main/groth16_proof/groth16/stark_verify.circom)
+- [Trusted Setup Ceremony](https://dev.risczero.com/api/trusted-setup-ceremony)
 
-### **Why Gnark:**
+### **SP1** ([recursion/gnark-ffi](https://github.com/succinctlabs/sp1/tree/dev/crates/recursion/gnark-ffi))
 
-- Faster circuit compilation than Arkworks
+| Aspect | Details |
+|--------|---------|
+| **Approach** | Semi-automatic via **Recursion DSL Compiler** |
+| **Architecture** | STARK proof → Recursion DSL → Gnark circuit → Groth16 proof |
+| **Circuit Generation** | **Precompiled circuits** ("hot start") - ~18s pure prove time |
+| **FFI** | `sp1-recursion-gnark-ffi` crate for Rust→Go interop |
+| **Maintenance** | DSL program changes → circuit auto-regenerates |
+
+**Key insight**: SP1 built a **custom DSL compiler** that translates their recursion program to Gnark circuits. This validates the "compile from higher representation" approach - when the protocol changes, they update the DSL program, not the circuit directly.
+
+Sources:
+- [SP1 Testnet Launch](https://blog.succinct.xyz/sp1-testnet/) - Recursion compiler details
+- [sp1-recursion-gnark-ffi](https://crates.io/crates/sp1-recursion-gnark-ffi) - FFI crate
+- [ZKVM Kings Clash](https://medium.com/@gavin.ygy/zkvm-kings-clash-inside-the-architecture-performance-battle-between-pico-and-sp1-636ffede8831) - SP1 vs Pico comparison
+
+### **Comparison Matrix**
+
+| Aspect | RISC Zero | SP1 | Jolt (proposed) |
+|--------|-----------|-----|-----------------|
+| **Automation** | ❌ Manual | ✅ Semi-automatic (DSL) | ✅ Automatic (zkLean) |
+| **Circuit Language** | Circom | Custom DSL → Gnark | Rust → AST → Gnark |
+| **Maintenance** | Manual updates | DSL program updates | Re-run extractor |
+| **Protocol Stability** | Stable | Evolving | Evolving |
+| **Existing Infra** | N/A | Built custom compiler | Reuse zkLean |
+
+### **Why Gnark (Not Arkworks or Circom):**
+
+- **5-10× faster** proving than Arkworks and snarkjs ([benchmarks](https://blog.celer.network/2023/08/04/the-pantheon-of-zero-knowledge-proof-development-frameworks/))
+- **25% faster** than rapidsnark
 - Optimized gadgets for field arithmetic, hashing, elliptic curves
-- General-purpose language makes Rust → Go transpilation feasible (vs Circom's limited DSL)
+- General-purpose Go language enables automatic code generation
+- In-circuit recursive verifier in ~11.5k constraints
 
-Risc0 and SP1 have stable protocols, but Jolt is in active development. PR #975's hint mechanism and upcoming lattice PCS demonstrate the protocol is still undergoing optimization. Manual rewrite would require updating the Gnark circuit with every protocol change.
+### **Why Jolt Needs Automatic Approach**
+
+RISC Zero and SP1 have stable protocols, but Jolt is in active development:
+- PR #975's hint mechanism demonstrates ongoing optimization
+- Upcoming lattice PCS will change verification flow
+- Manual rewrite would require updating the Gnark circuit with every protocol change
+
+**SP1's approach validates our strategy**: They faced the same problem (evolving protocol) and solved it with automatic generation from a higher-level representation. We can do the same by reusing zkLean's existing extraction infrastructure.
 
 ## 6. Approach Options
 

@@ -1,6 +1,6 @@
 # Reusing zkLean Infrastructure for Gnark Transpilation
 
-**Date**: 2025-11-18
+**Date**: 2025-11-18 (Updated: 2025-11-25)
 **Context**: Jolt team feedback on Groth16 conversion approach
 **Goal**: Understand zkLean's runtime introspection approach and how to adapt it for Gnark generation
 
@@ -15,14 +15,38 @@
 
 **Key insight**: zkLean already extracts Jolt's verification logic into a structured format. We can adapt this extraction to generate Gnark circuits instead of Lean4 code.
 
-**What you now understand**:
+### 1.1 Industry Validation (Research Update 2025-11-25)
+
+Our approach is **validated by SP1's architecture**:
+
+| Aspect | SP1 | Jolt (proposed) |
+|--------|-----|-----------------|
+| **Problem** | Evolving recursion protocol | Evolving verification protocol |
+| **Solution** | Custom DSL → Gnark compiler | zkLean AST → Gnark generator |
+| **Automation** | Semi-automatic | Fully automatic |
+| **Infrastructure** | Built custom compiler | Reuse existing zkLean |
+
+**SP1's key insight**: They faced the same maintenance problem with an evolving protocol and solved it by **compiling from a higher-level representation** rather than hand-writing circuits. Their Recursion DSL compiler generates Gnark circuits automatically.
+
+**RISC Zero's contrasting approach**: Hand-written 55MB Circom file (`stark_verify.circom`). Works because their STARK verification is **stable** - but would be unmaintainable for Jolt's evolving protocol.
+
+Sources:
+- [SP1 Testnet Launch](https://blog.succinct.xyz/sp1-testnet/) - Recursion compiler architecture
+- [sp1-recursion-gnark-ffi](https://crates.io/crates/sp1-recursion-gnark-ffi) - FFI interface
+- [RISC Zero stark_verify.circom](https://github.com/risc0/risc0/blob/main/groth16_proof/groth16/stark_verify.circom)
+
+### 1.2 What you now understand
+
 - ✅ zkLean uses recording types (`MleAst`) that implement `JoltField` trait
 - ✅ Instead of parsing Rust syntax, zkLean *runs* Jolt's actual functions with recording types
 - ✅ Operator overloading captures operations as AST nodes (e.g., `a + b` records "Add" node)
 - ✅ The entire extraction infrastructure is reusable - just need to add Gnark code generator
 - ✅ Property tests validate that AST evaluation matches direct computation
+- ✅ **SP1 validates the "compile from higher representation" pattern**
+- ✅ **Our approach is more efficient than SP1's** - we reuse zkLean instead of building a custom compiler
 
-**What you need to do**:
+### 1.3 What you need to do
+
 1. Run zkLean yourself to see actual output (Section 13.1)
 2. Create `zklean-extractor/src/to_gnark.rs` (skeleton provided in Section 12.2)
 3. Convert `MleAst` nodes to Gnark API calls (example: `Add` → `api.Add(...)`)
@@ -1049,6 +1073,92 @@ fn main() -> Result<(), FSError> {
 - **Related docs**:
   - `Partial_Transpilation_Exploration.md` - Transpilation theory and toy examples
   - `Groth16_Conversion_Scope.md` - Project scope and options
+
+---
+
+## 14. Industry Research Findings (Added 2025-11-25)
+
+### 14.1 SP1's Approach: Recursion DSL Compiler
+
+SP1 (Succinct) faced the **same problem** we're solving: an evolving protocol that would be unmaintainable with hand-written circuits.
+
+**Their solution**: Build a **Recursion DSL Compiler** that generates Gnark circuits automatically.
+
+```
+SP1 Architecture:
+STARK proof → Recursion DSL program → Compiler → Gnark circuit → Groth16 proof
+```
+
+**Key characteristics**:
+- **Semi-automatic**: DSL is hand-written, but circuit generation is automatic
+- **Precompiled circuits**: "Hot start" with ~18s pure prove time
+- **FFI**: `sp1-recursion-gnark-ffi` crate bridges Rust↔Go
+- **Maintenance**: When protocol changes, update DSL program → circuit auto-regenerates
+
+Sources:
+- [SP1 Testnet Launch](https://blog.succinct.xyz/sp1-testnet/)
+- [sp1-recursion-gnark-ffi](https://crates.io/crates/sp1-recursion-gnark-ffi)
+
+### 14.2 RISC Zero's Approach: Manual Circom
+
+RISC Zero uses **fully manual** hand-written Circom circuits.
+
+**Key characteristics**:
+- **Circuit file**: `stark_verify.circom` - **55.7 MB** (stored in Git LFS!)
+- **Platform limitation**: x86-only (Circom witness generator uses x86 assembly)
+- **Trusted setup**: Hermez rollup with 2^23 powers of tau
+- **Maintenance**: Manual updates when protocol changes
+
+**Why manual works for RISC Zero**: Their STARK verification protocol is **mature and stable**. The enormous Circom file is a one-time investment.
+
+Sources:
+- [stark_verify.circom](https://github.com/risc0/risc0/blob/main/groth16_proof/groth16/stark_verify.circom)
+- [Trusted Setup Ceremony](https://dev.risczero.com/api/trusted-setup-ceremony)
+
+### 14.3 Why Our Approach is Better
+
+| Aspect | RISC Zero | SP1 | Jolt (zkLean) |
+|--------|-----------|-----|---------------|
+| **Automation** | ❌ Manual | ✅ Semi-auto | ✅ Full auto |
+| **Infrastructure** | N/A | Built custom | Reuse zkLean |
+| **Dev Effort** | High (circuit) | High (compiler) | Medium (generator) |
+| **Protocol Coupling** | Tight | Loose | Loose |
+| **Maintenance** | Manual | DSL updates | Re-run extractor |
+
+**Our advantage**: We don't need to build a custom compiler like SP1 did. zkLean's extraction infrastructure already exists - we just add a new code generator.
+
+### 14.4 Why Not zkLLVM?
+
+During research, we explored [zkLLVM](https://github.com/NilFoundation/zkLLVM) as an automatic Rust-to-circuit compiler.
+
+**Critical finding**: zkLLVM is **incompatible with Groth16**.
+
+| Aspect | zkLLVM | Our Requirement |
+|--------|--------|-----------------|
+| **Output format** | PLONK (Placeholder) | R1CS (Groth16) |
+| **Rust support** | Archived (Feb 2025) | Active |
+| **Arithmetization** | PLONKish | R1CS |
+
+PLONK and R1CS are fundamentally different constraint systems. Converting between them defeats the purpose of automatic generation.
+
+**Other tools explored**:
+- **Circom**: Outputs R1CS but requires manual DSL writing
+- **Arkworks**: No automatic Rust→circuit tool (manual `ConstraintSynthesizer`)
+- **Lurk**: Lisp-based, uses Nova (not Groth16)
+- **Chiquito**: Rust DSL but targets Halo2/PLONK (not R1CS)
+
+**Conclusion**: Runtime introspection via zkLean is the only viable automatic approach for Groth16.
+
+### 14.5 Gnark Performance
+
+Gnark is the right choice for circuit proving:
+
+- **5-10× faster** proving than Arkworks and snarkjs
+- **25% faster** than rapidsnark
+- In-circuit recursive verifier in ~11.5k constraints
+- General-purpose Go enables automatic code generation
+
+Source: [Celer ZK Framework Comparison](https://blog.celer.network/2023/08/04/the-pantheon-of-zero-knowledge-proof-development-frameworks/)
 
 ---
 

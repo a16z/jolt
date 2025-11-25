@@ -1785,6 +1785,46 @@ func (circuit *JoltVerifierCircuit) Define(api frontend.API) error {
 
 ## 20. Comparison: Full Rewrite vs Partial Extraction
 
+### 20.0 Industry Research Findings (November 2025)
+
+Before comparing approaches, let's examine what SP1 and RISC Zero actually do:
+
+#### **RISC Zero: Fully Manual Circom**
+
+| Aspect | Details |
+|--------|---------|
+| **Approach** | Fully manual, hand-written Circom |
+| **Circuit File** | `stark_verify.circom` - **55.7 MB** (stored in Git LFS) |
+| **Pipeline** | STARK proof → Circom circuit → snarkjs → Groth16 proof |
+| **Trusted Setup** | Hermez rollup with 2^23 powers of tau |
+| **Platform Limitation** | x86-only (Circom witness generator uses x86 assembly) |
+
+**Why manual works for RISC Zero**: Their STARK verification protocol is mature and stable. The enormous 55MB Circom file is a one-time investment that rarely needs updates.
+
+#### **SP1: Semi-Automatic via Recursion DSL**
+
+| Aspect | Details |
+|--------|---------|
+| **Approach** | Semi-automatic via **Recursion DSL Compiler** |
+| **Architecture** | STARK proof → Recursion DSL → Gnark circuit → Groth16 proof |
+| **Circuit Generation** | **Precompiled circuits** ("hot start") - ~18s pure prove time |
+| **FFI** | `sp1-recursion-gnark-ffi` crate for Rust→Go interop |
+| **Maintenance** | DSL program changes → circuit auto-regenerates |
+
+**Key insight**: SP1 built a **custom DSL compiler** that translates their recursion program to Gnark circuits. This validates the "compile from higher representation" approach.
+
+#### **Industry Comparison Matrix**
+
+| Aspect | RISC Zero | SP1 | Jolt (proposed) |
+|--------|-----------|-----|-----------------|
+| **Automation** | ❌ Manual | ✅ Semi-automatic (DSL) | ✅ Automatic (zkLean) |
+| **Circuit Language** | Circom | Custom DSL → Gnark | Rust → AST → Gnark |
+| **Maintenance** | Manual updates | DSL program updates | Re-run extractor |
+| **Protocol Stability** | Stable | Evolving | Evolving |
+| **Existing Infra** | N/A | Built custom compiler | Reuse zkLean |
+
+**Validation**: SP1's approach validates our strategy - they faced the same problem (evolving protocol) and solved it with automatic generation from a higher-level representation. We can do the same by reusing zkLean's existing extraction infrastructure.
+
 ### 20.1 Full Rewrite (SP1/Risc0 Approach)
 
 **How it works**:
@@ -1805,6 +1845,7 @@ func (circuit *JoltVerifierCircuit) Define(api frontend.API) error {
 - Divergence risk (Rust verifier ≠ Go circuit)
 - Every protocol change requires manual circuit update
 - Testing burden (ensure equivalence)
+- **RISC Zero's 55MB Circom file demonstrates the maintenance burden**
 
 ### 20.2 Partial Extraction (Proposed)
 
@@ -1942,7 +1983,67 @@ Applied to Groth16 conversion:
 
 ---
 
-## Appendix A: Full Parser Example (Using syn)
+## Appendix A: Why Not Automatic Rust-to-Circuit Compilers?
+
+### A.1 The Appeal of Automatic Compilation
+
+The ideal approach would be: write Rust, automatically get a circuit. Several projects attempt this:
+
+| Tool | Output Format | Status |
+|------|---------------|--------|
+| **zkLLVM** | PLONK (Placeholder) | Rust repo archived Feb 2025 |
+| **Lurk** | Nova/SuperNova | Lisp-based, not Rust |
+| **Nexus** | Nova/Folding | Own VM, not direct transpilation |
+| **Arkworks** | R1CS | Manual constraint writing only |
+
+### A.2 zkLLVM Investigation
+
+We investigated zkLLVM as a potential automatic approach:
+
+**What zkLLVM does**:
+- LLVM-based circuit compiler
+- Compile C++/Rust → LLVM IR → Circuit
+- Used by =nil; Foundation for zkProof generation
+
+**Critical blocker discovered**:
+- **zkLLVM outputs PLONK (Placeholder), NOT R1CS**
+- Groth16 requires R1CS format
+- These are fundamentally different arithmetization approaches
+- No straightforward conversion between PLONK and R1CS
+
+**Additional concerns**:
+- zkLLVM's Rust repository ([zkllvm-rslang](https://github.com/nickvergessen/zkllvm-rslang)) was **archived in February 2025**
+- Active development focused on C++ frontend
+- Complex LLVM integration required
+
+### A.3 The Fundamental Trade-off
+
+| Approach | Automation Level | Output Format |
+|----------|------------------|---------------|
+| **zkLLVM/Noir/Leo** | ✅ Automatic | PLONK (not R1CS) |
+| **zkVMs (RISC0, SP1)** | ✅ Automatic | STARK → Groth16 wrapper |
+| **Arkworks manual** | ❌ Manual | R1CS |
+| **zkLean transpilation** | ✅ Automatic | R1CS (via Gnark) |
+
+**Conclusion**: There is no existing tool for automatic Rust → R1CS conversion. This is why the zkLean-based transpilation approach is the only viable path for:
+1. **Automatic** generation (not manual rewrite)
+2. **R1CS output** (required for Groth16)
+3. **Maintainability** (re-run when Jolt changes)
+
+### A.4 Why zkLean Approach Works
+
+The zkLean approach sidesteps the "automatic compiler" problem by:
+
+1. **Not parsing Rust** - Instead, execute Rust with recording types
+2. **Capturing semantics, not syntax** - Records what operations happen, not how they're written
+3. **Reusing Jolt's type system** - Rust compiler handles all complexity
+4. **Targeting constraint-friendly IR** - MleAst already represents algebraic operations
+
+This is similar to how SP1 built their Recursion DSL Compiler - they didn't try to compile arbitrary Rust, they built a targeted extraction from their specific domain.
+
+---
+
+## Appendix B: Full Parser Example (Using syn)
 
 For reference, here's how you'd parse Rust using the `syn` crate:
 
@@ -2009,16 +2110,31 @@ pub fn parse_rust_to_ir(rust_code: &str) -> Result<Program, String> {
 
 ---
 
-## Appendix B: References
+## Appendix C: References
 
+### Internal Documentation
 - PR #1060: zkLean extractor implementation
 - [zklean-extractor/](../../zklean-extractor/): Source code for extraction tool
 - [jolt-core/src/zkvm/](../../jolt-core/src/zkvm/): Verifier implementation
-- SP1 and Risc0: Examples of full rewrite approach
+
+### Industry Approaches
+- **RISC Zero**: [groth16_proof](https://github.com/risc0/risc0/tree/main/groth16_proof) - Manual Circom approach
+  - [stark_verify.circom](https://github.com/risc0/risc0/blob/main/groth16_proof/groth16/stark_verify.circom) - 55.7MB circuit
+  - [Trusted Setup Ceremony](https://dev.risczero.com/api/trusted-setup-ceremony)
+- **SP1**: [recursion/gnark-ffi](https://github.com/succinctlabs/sp1/tree/dev/crates/recursion/gnark-ffi) - DSL compiler approach
+  - [SP1 Testnet Launch](https://blog.succinct.xyz/sp1-testnet/) - Recursion compiler details
+  - [sp1-recursion-gnark-ffi](https://crates.io/crates/sp1-recursion-gnark-ffi) - FFI crate
+
+### Target Framework
 - [Gnark documentation](https://docs.gnark.consensys.io/): Target circuit framework
+- [Gnark benchmarks](https://blog.celer.network/2023/08/04/the-pantheon-of-zero-knowledge-proof-development-frameworks/): 5-10× faster than Arkworks
+
+### Research on Automatic Approaches
+- zkLLVM: PLONK output, not R1CS - incompatible with Groth16
+- No existing tool for automatic Rust → R1CS conversion
 
 ---
 
 **Document Status**: Educational guide + proposal
-**Date**: 2025-11-10
+**Date**: 2025-11-10 (Updated 2025-11-25 with industry research findings)
 **Next Steps**: Validate PoC for single sumcheck round

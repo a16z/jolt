@@ -91,7 +91,51 @@ pub fn main() {
     info!("valid: {is_valid}");
 }
 
-/// Run Groth16 setup/prove/verify with real Stage 1 proof data
+/// Transpile Stage 1 verification into a Groth16 proof for EVM-efficient verification.
+///
+/// This function demonstrates the Jolt → Groth16 transpilation pipeline:
+///
+/// ## Background
+///
+/// Jolt's native verifier uses Dory polynomial commitments and interactive sumcheck
+/// protocols, which are efficient for native execution but expensive on-chain (~1.2B gas).
+/// By transpiling Stage 1 (Spartan outer sumcheck) into a Groth16 circuit, we get:
+/// - **Constant-size proof**: 2 G1 + 1 G2 elements (~256 bytes)
+/// - **O(1) verification**: Single pairing check (~200k gas on EVM)
+///
+/// ## What the circuit verifies
+///
+/// 1. **Uni-skip first round**: Power sum check `Σ_j a_j * S_j == 0` over symmetric
+///    domain D = {-4, -3, ..., 5}, where S_j are precomputed power sums.
+///
+/// 2. **Sumcheck round consistency**: For each round i, verifies `g_i(0) + g_i(1) == claim_{i-1}`
+///    and computes the next claim as `g_i(r_i)`.
+///
+/// ## Current limitations
+///
+/// The final claim check (Lagrange kernel × eq polynomial × inner sum product) is not yet
+/// implemented. This requires computing:
+/// - `L(τ_high, r0)`: Lagrange kernel evaluation
+/// - `eq(τ_low, r_tail)`: Multilinear equality polynomial
+/// - `A(rx, r) * B(rx, r)`: Inner product from R1CS evaluations
+///
+/// For now, the polynomial opening verification is handled by Dory commitments in the
+/// native Jolt verifier, and we trust this part.
+///
+/// ## Pipeline
+///
+/// ```text
+/// Stage1OnlyProof ──► Stage1CircuitData ──► Stage1Circuit ──► Groth16 proof
+///                     (witness extraction)   (R1CS constraints)
+/// ```
+///
+/// # Arguments
+///
+/// * `stage1_proof` - The Stage 1 proof containing uni-skip polynomial and sumcheck rounds
+/// * `opening_claims` - Polynomial evaluation claims from the Jolt proof
+/// * `io_device` - Program I/O (inputs, outputs, panic status)
+/// * `commitments` - Dory polynomial commitments from the Jolt proof
+/// * `ram_K` - RAM size parameter (number of memory cells)
 #[cfg(feature = "groth16")]
 fn run_groth16_verification(
     stage1_proof: &jolt_core::zkvm::stage1_only_verifier::Stage1OnlyProof<ark_bn254::Fr, jolt_core::transcripts::Blake2bTranscript>,
@@ -163,11 +207,14 @@ fn run_groth16_verification(
     info!("  Setup time:   {:.2}s", setup_time.as_secs_f64());
     info!("  Prove time:   {:.2}s", prove_time.as_secs_f64());
     info!("  Verify time:  {:.6}s", verify_time.as_secs_f64());
-    info!("  Verification: {}", if is_valid { "PASSED" } else { "FAILED (expected with simplified circuit)" });
+    info!("  Verification: {}", if is_valid { "PASSED ✓" } else { "FAILED ✗" });
 
-    if !is_valid {
-        info!("NOTE: Verification failure is expected because the circuit constraints");
-        info!("      are simplified (missing Lagrange kernel checks, power sums, etc.)");
-        info!("      The important result is that setup/prove/verify flow works with real data.");
+    if is_valid {
+        info!("Groth16 verification succeeded! The circuit verifies:");
+        info!("  1. Uni-skip power sum check: Σ_j a_j * S_j == 0");
+        info!("  2. Sumcheck round consistency: g_i(0) + g_i(1) == claim_{{i-1}}");
+        info!("Note: Full Stage 1 verification requires additional final claim check.");
+    } else {
+        info!("ERROR: Groth16 verification failed unexpectedly!");
     }
 }
