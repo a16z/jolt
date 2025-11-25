@@ -32,12 +32,14 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
-        instruction_lookups::read_raf_checking::ReadRafSumcheckParams,
+        instruction_lookups::{
+            ra_virtual::InstructionRaSumcheckParams, read_raf_checking::ReadRafSumcheckParams,
+        },
         ram::{
             hamming_booleanity::HammingBooleanityParams,
             output_check::OutputSumcheckParams,
             populate_memory_states,
-            ra_virtual::RaSumcheckParams,
+            ra_virtual::RamRaSumcheckParams,
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams,
             val_evaluation::{
@@ -63,7 +65,7 @@ use crate::{
         },
         fiat_shamir_preamble,
         instruction_lookups::{
-            self, ra_virtual::RaSumcheckProver as LookupsRaSumcheckProver,
+            self, ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::ReadRafSumcheckProver as LookupsReadRafSumcheckProver,
         },
         proof_serialization::{Claims, JoltProof},
@@ -71,7 +73,7 @@ use crate::{
         ram::{
             self, gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
             output_check::OutputSumcheckProver, prover_accumulate_advice,
-            ra_virtual::RaSumcheckProver as RamRaSumcheckProver,
+            ra_virtual::RamRaSumcheckProver,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
             read_write_checking::RamReadWriteCheckingProver, RAMPreprocessing,
         },
@@ -692,9 +694,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_ra_booleanity = ram::gen_ra_booleanity_prover(
-            &self.trace,
-            &self.program_io.memory_layout,
+        let ram_ra_booleanity_params = ram::gen_ra_booleanity_params(
+            self.trace.len(),
             &self.one_hot_params,
             &mut self.transcript,
         );
@@ -712,6 +713,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
+        );
+        let ram_ra_booleanity = ram::gen_ra_booleanity_prover(
+            ram_ra_booleanity_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
         );
         let ram_val_evaluation = RamValEvaluationSumcheckProver::initialize(
             ram_val_evaluation_params,
@@ -766,7 +773,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
         let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
-        let ram_ra_virtual_params = RaSumcheckParams::new(
+        let ram_ra_virtual_params = RamRaSumcheckParams::new(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -843,31 +850,57 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let bytecode_hamming_weight_params = bytecode::gen_ra_hamming_weight_params(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let bytecode_booleanity_params = bytecode::gen_ra_booleanity_params(
+            self.trace.len(),
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let ram_hamming_weight_params = ram::gen_ra_hamming_weight_params(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let lookups_ra_virtual_params =
+            InstructionRaSumcheckParams::new(&self.one_hot_params, &self.opening_accumulator);
+        let lookups_hamming_weight_params = instruction_lookups::gen_ra_hamming_weight_params(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let lookups_booleanity_params = instruction_lookups::gen_ra_booleanity_params(
+            self.trace.len(),
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+
         let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::gen_ra_one_hot_provers(
+            bytecode_hamming_weight_params,
+            bytecode_booleanity_params,
             &self.trace,
             &self.preprocessing.bytecode,
             &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
         );
         let ram_hamming_weight = ram::gen_ra_hamming_weight_prover(
+            ram_hamming_weight_params,
             &self.trace,
             &self.program_io.memory_layout,
             &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
         );
-        let lookups_ra_virtual = LookupsRaSumcheckProver::gen(
-            &self.trace,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-        );
+        let lookups_ra_virtual =
+            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
         let (lookups_ra_booleanity, lookups_ra_hamming_weight) =
             instruction_lookups::gen_ra_one_hot_provers(
+                lookups_hamming_weight_params,
+                lookups_booleanity_params,
                 &self.trace,
                 &self.one_hot_params,
-                &self.opening_accumulator,
-                &mut self.transcript,
             );
 
         #[cfg(feature = "allocative")]

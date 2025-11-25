@@ -44,7 +44,7 @@ use rayon::prelude::*;
 //   with r_address split into chunks r_{address,i}.
 
 #[derive(Allocative)]
-pub struct RaSumcheckParams<F: JoltField> {
+pub struct RamRaSumcheckParams<F: JoltField> {
     gamma_powers: [F; 3],
     /// Random challenge r_cycle
     r_cycle: [Vec<F::Challenge>; 3],
@@ -55,7 +55,7 @@ pub struct RaSumcheckParams<F: JoltField> {
     T: usize,
 }
 
-impl<F: JoltField> RaSumcheckParams<F> {
+impl<F: JoltField> RamRaSumcheckParams<F> {
     pub fn new(
         trace_len: usize,
         one_hot_params: &OneHotParams,
@@ -114,7 +114,7 @@ impl<F: JoltField> RaSumcheckParams<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for RaSumcheckParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for RamRaSumcheckParams<F> {
     /// Returns the degree of the sumcheck round polynomials.
     fn degree(&self) -> usize {
         self.d + 1
@@ -150,18 +150,18 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaSumcheckParams<F> {
 }
 
 #[derive(Allocative)]
-pub struct RaSumcheckProver<F: JoltField> {
+pub struct RamRaSumcheckProver<F: JoltField> {
     /// `ra` polys to be constructed based addresses
     ra_i_polys: Vec<RaPolynomial<u16, F>>,
     /// eq poly
     eq_poly: MultilinearPolynomial<F>,
-    params: RaSumcheckParams<F>,
+    params: RamRaSumcheckParams<F>,
 }
 
-impl<F: JoltField> RaSumcheckProver<F> {
+impl<F: JoltField> RamRaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::initialize")]
     pub fn initialize(
-        params: RaSumcheckParams<F>,
+        params: RamRaSumcheckParams<F>,
         trace: &[Cycle],
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
@@ -205,7 +205,7 @@ impl<F: JoltField> RaSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaSumcheckProver<F> {
     fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
         Box::new(&self.params)
     }
@@ -292,7 +292,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaSumcheckPro
 }
 
 pub struct RaSumcheckVerifier<F: JoltField> {
-    params: RaSumcheckParams<F>,
+    params: RamRaSumcheckParams<F>,
 }
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
@@ -303,7 +303,7 @@ impl<F: JoltField> RaSumcheckVerifier<F> {
         transcript: &mut impl Transcript,
     ) -> Self {
         let params =
-            RaSumcheckParams::new(trace_len, one_hot_params, opening_accumulator, transcript);
+            RamRaSumcheckParams::new(trace_len, one_hot_params, opening_accumulator, transcript);
         Self { params }
     }
 }
