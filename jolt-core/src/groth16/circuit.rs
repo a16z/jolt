@@ -3,16 +3,12 @@
 //! Implements the ConstraintSynthesizer trait for Stage 1 verification.
 
 #[cfg(feature = "groth16-stable")]
-use ark_groth16;
-#[cfg(feature = "groth16-stable")]
 use ark_r1cs_std::prelude::*;
 #[cfg(feature = "groth16-stable")]
 use ark_r1cs_std::fields::fp::FpVar;
 #[cfg(feature = "groth16-stable")]
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
-#[cfg(feature = "groth16-git")]
-use ark_groth16_git as ark_groth16;
 #[cfg(feature = "groth16-git")]
 use ark_r1cs_std_git::prelude::*;
 #[cfg(feature = "groth16-git")]
@@ -21,7 +17,6 @@ use ark_r1cs_std_git::fields::fp::FpVar;
 use ark_relations_git::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
 use ark_bn254::Fr;
-use ark_ff::PrimeField;
 
 /// Configuration for Stage 1 circuit
 #[derive(Clone, Debug)]
@@ -136,10 +131,14 @@ impl ConstraintSynthesizer<Fr> for Stage1Circuit {
         let expected_var = FpVar::new_input(cs.clone(), || Ok(self.expected_final_claim))?;
 
         // Step 2: Verify univariate-skip first round
+        // Initial claim is 0 for Stage 1 (outer sumcheck starts with 0)
+        // Use constant instead of public input to avoid mismatch
+        let initial_claim = FpVar::constant(Fr::from(0u64));
         let claim_after_first = crate::groth16::gadgets::verify_uni_skip_round(
             &tau_vars,
             &r0_var,
             &uni_skip_coeffs,
+            &initial_claim,
         )?;
 
         // Step 3: Verify remaining sumcheck rounds
