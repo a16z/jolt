@@ -83,15 +83,7 @@ impl Stage1CircuitData {
         transcript.append_serializable(&proof.uni_skip_first_round_proof.uni_poly);
         let r0: F = transcript.challenge_scalar();
 
-        // 4. Replay sumcheck rounds to extract challenges
-        let mut sumcheck_challenges = Vec::with_capacity(num_rounds - 1);
-        for compressed_poly in &proof.sumcheck_proof.compressed_polys {
-            transcript.append_serializable(compressed_poly);
-            let challenge: F = transcript.challenge_scalar();
-            sumcheck_challenges.push(challenge);
-        }
-
-        // 5. Extract proof polynomial coefficients
+        // 4. Extract uni-skip polynomial coefficients (already complete)
         let uni_skip_poly_coeffs: Vec<Fr> = proof
             .uni_skip_first_round_proof
             .uni_poly
@@ -100,18 +92,48 @@ impl Stage1CircuitData {
             .map(|&c| c.into())
             .collect();
 
-        let sumcheck_round_polys: Vec<Vec<Fr>> = proof
-            .sumcheck_proof
-            .compressed_polys
-            .iter()
-            .map(|compressed| {
-                compressed
-                    .coeffs_except_linear_term
-                    .iter()
-                    .map(|&c| c.into())
-                    .collect()
-            })
-            .collect();
+        // 5. Replay sumcheck rounds and decompress polynomials
+        // The key is: each compressed poly needs the "hint" (previous claim) to reconstruct linear term
+        // Formula: c_1 = hint - 2*c_0 - (c_2 + c_3 + ... + c_n)
+
+        let mut sumcheck_challenges = Vec::with_capacity(num_rounds - 1);
+        let mut sumcheck_round_polys = Vec::with_capacity(num_rounds - 1);
+
+        // Initial claim after uni-skip first round
+        // Evaluate uni_poly at r0 to get the claim for the first sumcheck round
+        let mut current_claim: F = {
+            let mut result = F::zero();
+            let mut r0_power = F::one();
+            for coeff in &proof.uni_skip_first_round_proof.uni_poly.coeffs {
+                result += *coeff * r0_power;
+                r0_power *= r0;
+            }
+            result
+        };
+
+        for compressed_poly in &proof.sumcheck_proof.compressed_polys {
+            transcript.append_serializable(compressed_poly);
+            let challenge: F = transcript.challenge_scalar();
+            sumcheck_challenges.push(challenge);
+
+            // Decompress polynomial using current_claim as hint
+            let decompressed = compressed_poly.decompress(&current_claim);
+
+            // Store full coefficients (including reconstructed linear term)
+            let full_coeffs: Vec<Fr> = decompressed.coeffs.iter().map(|&c| c.into()).collect();
+            sumcheck_round_polys.push(full_coeffs);
+
+            // Update claim for next round: evaluate poly at challenge
+            current_claim = {
+                let mut result = F::zero();
+                let mut challenge_power = F::one();
+                for coeff in &decompressed.coeffs {
+                    result += *coeff * challenge_power;
+                    challenge_power *= challenge;
+                }
+                result
+            };
+        }
 
         // 6. Extract R1CS evaluations from opening claims
         // In Stage 1, the final check involves evaluating Az(r), Bz(r), Cz(r)
