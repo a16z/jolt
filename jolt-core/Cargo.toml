@@ -51,6 +51,9 @@ monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
+# Groth16 circuit features
+groth16-stable = ["ark-relations", "ark-r1cs-std", "ark-groth16", "ark-snark"]
+groth16-git = ["ark-relations-git", "ark-r1cs-std-git", "ark-groth16-git", "ark-snark-git"]
 
 [dependencies]
 ark-bn254.workspace = true
@@ -115,6 +118,18 @@ pprof = { version = "0.15", features = [
 prost = { version = "0.14", optional = true }
 bytemuck = "1.23.2"
 bytemuck_derive = "1.10.1"
+
+# Groth16 circuit dependencies (stable versions)
+ark-relations = { version = "0.5", optional = true }
+ark-r1cs-std = { version = "0.5", optional = true }
+ark-groth16 = { version = "0.5", optional = true }
+ark-snark = { version = "0.5", optional = true }
+
+# Groth16 circuit dependencies (git master versions for testing)
+ark-relations-git = { package = "ark-relations", git = "https://github.com/arkworks-rs/snark", optional = true }
+ark-r1cs-std-git = { package = "ark-r1cs-std", git = "https://github.com/arkworks-rs/r1cs-std", optional = true }
+ark-groth16-git = { package = "ark-groth16", git = "https://github.com/arkworks-rs/groth16", optional = true }
+ark-snark-git = { package = "ark-snark", git = "https://github.com/arkworks-rs/snark", optional = true }
 
 [dev-dependencies]
 criterion.workspace = true

@@ -20,4 +20,8 @@ pub mod subprotocols;
 pub mod transcripts;
 pub mod utils;
 pub mod zkvm;
+
+#[cfg(any(feature = "groth16-stable", feature = "groth16-git"))]
+pub mod groth16;
+
 pub use ark_bn254;
