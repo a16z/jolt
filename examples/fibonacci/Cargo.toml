@@ -3,10 +3,19 @@ name = "fibonacci"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+groth16 = ["jolt-core/groth16-stable", "dep:ark-groth16", "dep:ark-snark", "dep:ark-std"]
+
 [dependencies]
 jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
 jolt-core = { path = "../../jolt-core" }
+common = { path = "../../common" }
 tracing-subscriber = "0.3"
 tracing = "0.1"
 guest = { package = "fibonacci-guest", path = "./guest" }
+ark-bn254 = "0.5"
+ark-groth16 = { version = "0.5", optional = true }
+ark-snark = { version = "0.5", optional = true }
+ark-std = { version = "0.5", optional = true }
 

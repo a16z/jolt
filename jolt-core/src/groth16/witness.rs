@@ -75,8 +75,10 @@ impl Stage1CircuitData {
 
         // 2. Extract tau (initial challenges for outer sumcheck)
         // These are generated at the start of Stage 1 (Spartan outer sumcheck)
-        let num_rounds = proof.trace_length.log_2();
-        let tau: Vec<F> = transcript.challenge_vector(num_rounds);
+        // IMPORTANT: num_rows_bits = num_cycle_vars + 2 (for univariate skip and streaming round)
+        let num_cycle_vars = proof.trace_length.log_2();
+        let num_rows_bits = num_cycle_vars + 2;
+        let tau: Vec<F> = transcript.challenge_vector(num_rows_bits);
 
         // 3. Replay uni-skip first round to extract r0
         // The verifier appends the uni_poly, then samples r0
@@ -95,9 +97,11 @@ impl Stage1CircuitData {
         // 5. Replay sumcheck rounds and decompress polynomials
         // The key is: each compressed poly needs the "hint" (previous claim) to reconstruct linear term
         // Formula: c_1 = hint - 2*c_0 - (c_2 + c_3 + ... + c_n)
-
-        let mut sumcheck_challenges = Vec::with_capacity(num_rounds - 1);
-        let mut sumcheck_round_polys = Vec::with_capacity(num_rounds - 1);
+        //
+        // The remaining sumcheck has num_rows_bits - 1 rounds (one round consumed by uni-skip)
+        let num_sumcheck_rounds = num_rows_bits - 1;
+        let mut sumcheck_challenges = Vec::with_capacity(num_sumcheck_rounds);
+        let mut sumcheck_round_polys = Vec::with_capacity(num_sumcheck_rounds);
 
         // Initial claim after uni-skip first round
         // Evaluate uni_poly at r0 to get the claim for the first sumcheck round
