@@ -13,6 +13,15 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type ProverSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
     type VerifierSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
+    type CompressedCommitment: Default
+        + Debug
+        + Sync
+        + Send
+        + PartialEq
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + AppendToTranscript
+        + Clone;
     type Commitment: Default
         + Debug
         + Sync

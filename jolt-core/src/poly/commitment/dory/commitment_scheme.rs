@@ -3,8 +3,8 @@
 use super::dory_globals::DoryGlobals;
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
-    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-    JoltToDoryTranscript, BN254,
+    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkGTCompressed, ArkworksProverSetup,
+    ArkworksVerifierSetup, JoltToDoryTranscript, BN254,
 };
 use crate::{
     field::JoltField,
@@ -26,7 +26,9 @@ use std::borrow::Borrow;
 use tracing::trace_span;
 
 #[derive(Clone)]
-pub struct DoryCommitmentScheme;
+pub struct DoryCommitmentScheme {
+    compression_enabled: bool,
+}
 
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
@@ -36,6 +38,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type Proof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
     type OpeningProofHint = Vec<ArkG1>;
+    type CompressedCommitment = ArkGTCompressed;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
