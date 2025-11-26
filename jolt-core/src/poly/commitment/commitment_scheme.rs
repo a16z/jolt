@@ -148,3 +148,33 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
         tier1_commitments: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint);
 }
+
+/// Generic extension trait for commitment schemes that adds recursion support
+pub trait RecursionExt<F: JoltField>: CommitmentScheme<Field = F> {
+    /// Full witness data (for proving hints are well-formed)
+    type Witness;
+    /// Lightweight hints for efficient verification
+    type Hint;
+
+    /// Generate witnesses and convert them to hints
+    /// Returns both the full witnesses (for proving) and hints (for verification)
+    fn witness_gen<ProofTranscript: Transcript>(
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut ProofTranscript,
+        point: &[<F as JoltField>::Challenge],
+        evaluation: &F,
+        commitment: &Self::Commitment,
+    ) -> Result<(Self::Witness, Self::Hint), ProofVerifyError>;
+
+    /// Verify with hint-based approach
+    fn verify_with_hint<ProofTranscript: Transcript>(
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut ProofTranscript,
+        point: &[<F as JoltField>::Challenge],
+        evaluation: &F,
+        commitment: &Self::Commitment,
+        hint: &Self::Hint,
+    ) -> Result<(), ProofVerifyError>;
+}

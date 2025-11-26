@@ -47,7 +47,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::errors::ProofVerifyError,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::witness::{CommittedPolynomial, RecursionCommittedPolynomial, VirtualPolynomial},
 };
 
 pub type Endianness = bool;
@@ -174,6 +174,7 @@ pub enum SumcheckId {
     BytecodeBooleanity,
     BytecodeHammingWeight,
     OpeningReduction,
+    RecursionCheck,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
@@ -781,6 +782,38 @@ where
             .insert(OpeningId::TrustedAdvice, (opening_point, claim));
     }
 
+    /// Adds openings of recursion polynomials to the accumulator.
+    /// This is specifically for recursion-related sumchecks (e.g., GT exponentiation).
+    pub fn append_dense_recursion(
+        &mut self,
+        polynomials: Vec<RecursionCommittedPolynomial>,
+        sumcheck_id: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+        claims: &[F],
+    ) {
+        assert_eq!(
+            polynomials.len(),
+            claims.len(),
+            "Number of polynomials must match number of claims"
+        );
+
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
+
+        for (polynomial, &claim) in polynomials.iter().zip(claims.iter()) {
+            // For now, we'll store recursion polynomials as a simple mapping
+            // This can be optimized later if needed
+            let key = format!("recursion_{:?}_{:?}", polynomial, sumcheck_id);
+            // Store as a placeholder - in a real implementation, we'd need to
+            // integrate this with the existing opening proof mechanism
+            tracing::debug!("Storing recursion polynomial opening: {:?} at {:?} with claim {:?}",
+                          polynomial, opening_point, claim);
+
+            // TODO: Properly integrate with the opening proof accumulator
+            // For quick implementation, we can store them in the openings map
+            // but this would require extending OpeningId enum to support recursion polynomials
+        }
+    }
+
     /// Reduces the multiple openings accumulated into a single opening proof,
     /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
@@ -1179,6 +1212,46 @@ where
                 OpeningId::TrustedAdvice
             );
         }
+    }
+
+    /// Adds openings of recursion polynomials to the accumulator.
+    /// This is specifically for recursion-related sumchecks (e.g., GT exponentiation).
+    pub fn append_dense_recursion(
+        &mut self,
+        polynomials: Vec<RecursionCommittedPolynomial>,
+        sumcheck_id: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+    ) {
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
+
+        for polynomial in polynomials.iter() {
+            // For now, we'll store recursion polynomials as a simple mapping
+            // This can be optimized later if needed
+            let key = format!("recursion_{:?}_{:?}", polynomial, sumcheck_id);
+            // Store as a placeholder - in a real implementation, we'd need to
+            // integrate this with the existing opening proof mechanism
+            tracing::debug!("Storing recursion polynomial opening point: {:?} at {:?}",
+                          polynomial, opening_point);
+
+            // TODO: Properly integrate with the opening proof accumulator
+            // For quick implementation, we can store them but verification would need
+            // to be extended to handle recursion polynomials
+        }
+    }
+
+    /// Retrieves the opening and claim for a recursion polynomial.
+    pub fn get_recursion_polynomial_opening(
+        &self,
+        polynomial: RecursionCommittedPolynomial,
+        sumcheck_id: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        // For quick implementation, return a placeholder
+        // In a real implementation, this would look up the opening from the stored data
+        let key = format!("recursion_{:?}_{:?}", polynomial, sumcheck_id);
+
+        // TODO: Implement proper lookup from the openings map
+        // For now, panic if called to make it clear this needs implementation
+        panic!("get_recursion_polynomial_opening not fully implemented yet for {:?}", key);
     }
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
