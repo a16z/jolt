@@ -84,7 +84,7 @@ use rayon::prelude::*;
 use tracer::{
     emulator::memory::Memory,
     instruction::{Cycle, Instruction},
-    trace_checkpoints, ChunksIterator, JoltDevice, LazyTraceIterator,
+    ChunksIterator, JoltDevice, LazyTraceIterator,
 };
 
 /// Jolt CPU prover for RV64IMAC.
@@ -132,15 +132,21 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             program_size: Some(preprocessing.memory_layout.program_size),
         };
 
-        let checkpoint_interval = 256;
-        let (checkpoints, _jolt_device) = trace_checkpoints(
-            elf_contents,
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            &memory_config,
-            checkpoint_interval,
-        );
+        // TODO: Currently we're manifesting the entire trace
+        // There is some debate on how to stream this efficiently
+        // We can move forward with streaming implementations assuming this will be
+        // fixed in the coming days
+
+        //let checkpoint_interval = 256;
+        //let (checkpoints, _jolt_device) = trace_checkpoints(
+        //    elf_contents,
+        //    inputs,
+        //    untrusted_advice,
+        //    trusted_advice,
+        //    &memory_config,
+        //    checkpoint_interval,
+        //);
+
         let (lazy_trace, trace, final_memory_state, program_io) = {
             let _pprof_trace = pprof_scope!("trace");
             guest::program::trace(
@@ -153,36 +159,36 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             )
         };
 
-        #[cfg(debug_assertions)]
-        {
-            for (time_step_idx, expected_cycle) in trace.iter().enumerate() {
-                // Calculate which checkpoint and offset
-                let checkpoint_idx = time_step_idx / checkpoint_interval;
-                let offset = time_step_idx % checkpoint_interval;
-
-                // Clone the checkpoint and advance to target
-                let mut iter = checkpoints[checkpoint_idx].clone();
-
-                // Skip offset cycles
-                for _ in 0..offset {
-                    iter.next();
-                }
-
-                // Get the cycle from checkpoint
-                let checkpoint_cycle = iter.next().expect("checkpoint should have cycle");
-
-                // Assert they match
-                assert_eq!(
-                    &checkpoint_cycle, expected_cycle,
-                    "Mismatch at cycle {time_step_idx}: checkpoint != trace",
-                );
-            }
-            println!(
-                "✓ All {} cycles match between checkpoints and full trace",
-                trace.len()
-            );
-        }
-
+        //#[cfg(debug_assertions)]
+        //{
+        //    for (time_step_idx, expected_cycle) in trace.iter().enumerate() {
+        //        // Calculate which checkpoint and offset
+        //        let checkpoint_idx = time_step_idx / checkpoint_interval;
+        //        let offset = time_step_idx % checkpoint_interval;
+        //
+        //        // Clone the checkpoint and advance to target
+        //        let mut iter = checkpoints[checkpoint_idx].clone();
+        //
+        //        // Skip offset cycles
+        //        for _ in 0..offset {
+        //            iter.next();
+        //        }
+        //
+        //        // Get the cycle from checkpoint
+        //        let checkpoint_cycle = iter.next().expect("checkpoint should have cycle");
+        //
+        //        // Assert they match
+        //        assert_eq!(
+        //            &checkpoint_cycle, expected_cycle,
+        //            "Mismatch at cycle {time_step_idx}: checkpoint != trace",
+        //        );
+        //    }
+        //    println!(
+        //        "✓ All {} cycles match between checkpoints and full trace",
+        //        trace.len()
+        //    );
+        //}
+        //
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -215,8 +221,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // Set checkpoints after construction
-        prover.checkpoints = checkpoints;
-        prover.checkpoint_interval = checkpoint_interval;
+        // Vec<std::iter::Take<LazyTraceIterator>>
+        prover.checkpoints = Vec::new();
+        prover.checkpoint_interval = 0;
         prover
     }
 
