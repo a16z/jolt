@@ -287,17 +287,14 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
         // TODO: Double check this binding order
         let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::LowToHigh);
-        //let mut r_grid =
-        //    ExpandingTable::new_with_order(1 << n_cycle_vars, ExpansionOrder::MostSignificantBit);
         r_grid.reset(F::one());
 
-        // TODO: need a the checkpoints here
         Self {
             split_eq_poly,
             bytecode_preprocessing,
             trace,
-            checkpoints,         // Add this
-            checkpoint_interval, // Add this
+            checkpoints,
+            checkpoint_interval,
             az: None,
             bz: None,
             t_prime_poly: None,
