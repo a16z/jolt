@@ -285,7 +285,8 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                 Some(lagrange_tau_r0),
             );
 
-        // TODO: Double check this binding order
+        // NOTE: The API changed recently: Both binding orders will technically pass
+        // based on current implementation.
         let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::LowToHigh);
         r_grid.reset(F::one());
 
@@ -648,6 +649,9 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
             DensePolynomial::new(bz_bound),
         )
     }
+
+    // TODO: No small value optimisation in this function currently.
+    // TODO: Put meaningful doc strings
     fn stream_to_linear_time_parallel(&mut self) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
@@ -1007,6 +1011,8 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         name = "OuterRemainingSumcheckProver::stream_to_linear_time_helper"
     )]
 
+    // If the first round of the sumcheck is linear -- then manifesting Az and Bz
+    // is significantly simpler.
     fn stream_to_linear_time_round_zero(&mut self) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
