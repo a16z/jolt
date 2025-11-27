@@ -6,8 +6,8 @@ use crate::{
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     transcripts::{AppendToTranscript, Transcript},
 };
-use ark_bn254::{CompressedFq12, Fr, G1Affine};
-use ark_ec::CurveGroup;
+use ark_bn254::{Bn254, CompressedFq12, Fr, G1Affine};
+use ark_ec::{pairing::CompressedPairing, CurveGroup};
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::{
@@ -24,8 +24,31 @@ use num_traits::One;
 use rayon::prelude::*;
 
 pub use dory::backends::arkworks::{
-    ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup, BN254,
+    ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
+    BN254 as DoryBN254,
 };
+
+#[derive(Default, Clone, Debug)]
+pub struct JoltBn254;
+
+impl PairingCurve for JoltBn254 {
+    type G1 = ArkG1;
+    type G2 = ArkG2;
+    type GT = ArkGT;
+
+    fn pair(p: &Self::G1, q: &Self::G2) -> Self::GT {
+        DoryBN254::pair(p, q)
+    }
+}
+
+impl CompressedPairingCurve for JoltBn254 {
+    type CompressedGT = ArkGTCompressed;
+
+    fn multi_pair_compressed(ps: &[Self::G1], qs: &[Self::G2]) -> Self::CompressedGT {
+        let res = Bn254::compressed_multi_pairing(ps.iter().map(|p| p.0), qs.iter().map(|q| q.0));
+        ArkGTCompressed(res)
+    }
+}
 
 pub type JoltFieldWrapper = ArkFr;
 
@@ -330,7 +353,7 @@ impl<'a, T: Transcript> JoltToDoryTranscript<'a, T> {
 }
 
 impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
-    type Curve = BN254;
+    type Curve = JoltBn254;
 
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
         let transcript = self

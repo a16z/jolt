@@ -3,9 +3,10 @@
 use super::dory_globals::DoryGlobals;
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
-    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkGTCompressed, ArkworksProverSetup,
-    ArkworksVerifierSetup, JoltToDoryTranscript, BN254 as DoryBN254,
+    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkGTCompressed, JoltBn254,
+    JoltToDoryTranscript,
 };
+use crate::poly::commitment::dory::setup::{DoryProverSetup, DoryVerifierSetup};
 use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
@@ -31,8 +32,8 @@ pub struct DoryCommitmentScheme {}
 
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
-    type ProverSetup = ArkworksProverSetup;
-    type VerifierSetup = ArkworksVerifierSetup;
+    type ProverSetup = DoryProverSetup;
+    type VerifierSetup = DoryVerifierSetup;
     type Commitment = ArkGT;
     type Proof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
@@ -41,7 +42,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
-        let setup = ArkworksProverSetup::new_from_urs(&mut OsRng, max_num_vars);
+        let setup = DoryProverSetup::new_from_urs(&mut OsRng, max_num_vars);
 
         DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
 
@@ -66,7 +67,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
             ArkFr,
-        >>::commit::<DoryBN254, JoltG1Routines>(
+        >>::commit::<JoltBn254, JoltG1Routines>(
             poly, nu, sigma, setup
         )
         .expect("commitment should succeed");
@@ -85,15 +86,14 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
-        todo!()
-        // let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
-        //     ArkFr,
-        // >>::commit_compressed::<ArkBn254, JoltG1Routines>(
-        //     poly, nu, sigma, setup
-        // )
-        // .expect("commitment should succeed");
+        let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
+            ArkFr,
+        >>::commit_compressed::<JoltBn254, JoltG1Routines>(
+            poly, nu, sigma, setup
+        )
+        .expect("commitment should succeed");
 
-        // (tier_2, row_commitments)
+        (tier_2, row_commitments)
     }
 
     fn batch_commit<U>(
@@ -142,7 +142,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::prove::<ArkFr, DoryBN254, JoltG1Routines, JoltG2Routines, _, _>(
+        dory::prove::<ArkFr, JoltBn254, JoltG1Routines, JoltG2Routines, _, _>(
             poly,
             &ark_point,
             row_commitments,
@@ -177,7 +177,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::verify::<ArkFr, DoryBN254, JoltG1Routines, JoltG2Routines, _>(
+        dory::verify::<ArkFr, JoltBn254, JoltG1Routines, JoltG2Routines, _>(
             *commitment,
             ark_eval,
             &ark_point,
@@ -339,8 +339,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             }
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 =
-                <DoryBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+            let tier_2 = JoltBn254::multi_pair_g2_setup(&row_commitments, g2_bases);
 
             (tier_2, row_commitments)
         } else {
@@ -348,8 +347,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 =
-                <DoryBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+            let tier_2 = JoltBn254::multi_pair_g2_setup(&row_commitments, g2_bases);
 
             (tier_2, row_commitments)
         }

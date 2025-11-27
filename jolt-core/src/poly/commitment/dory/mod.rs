@@ -6,6 +6,8 @@
 mod commitment_scheme;
 mod dory_globals;
 mod jolt_dory_routines;
+mod serde;
+mod setup;
 mod wrappers;
 
 #[cfg(test)]
@@ -16,5 +18,6 @@ pub use dory_globals::{DoryContext, DoryGlobals};
 pub use jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 pub use wrappers::{
     ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-    JoltFieldWrapper, BN254,
+    DoryBN254, JoltBn254, JoltFieldWrapper,
 };
+pub use setup::{DoryProverSetup, DoryVerifierSetup};
