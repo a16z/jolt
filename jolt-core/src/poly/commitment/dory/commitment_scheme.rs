@@ -17,7 +17,7 @@ use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
 use dory::primitives::{
-    arithmetic::{Group, PairingCurve},
+    arithmetic::{CompressedPairingCurve, Group, PairingCurve},
     poly::Polynomial,
 };
 use rand_core::OsRng;
@@ -301,6 +301,35 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
+        let (row_commitments, g2_bases) =
+            Self::get_tier2_commitment_inputs(setup, onehot_k, chunks);
+        <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "DoryCommitmentScheme::compute_tier2_commitment_compressed"
+    )]
+    fn aggregate_chunks_compressed(
+        setup: &Self::ProverSetup,
+        onehot_k: Option<usize>,
+        chunks: &[Self::ChunkState],
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
+        let (row_commitments, g2_bases) =
+            Self::get_tier2_commitment_inputs(setup, onehot_k, chunks);
+        <BN254 as CompressedPairingCurve>::multi_pair_g2_setup_compressed(
+            &row_commitments,
+            g2_bases,
+        )
+    }
+}
+
+impl DoryCommitmentScheme {
+    fn get_tier2_commitment_inputs(
+        setup: &Self::ProverSetup,
+        onehot_k: Option<usize>,
+        chunks: &[Self::ChunkState],
+    ) -> Vec<ArkG1> {
         if let Some(K) = onehot_k {
             let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
@@ -318,17 +347,15 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             }
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-            (tier_2, row_commitments)
+            (row_commitments, g2_bases)
         } else {
             let row_commitments: Vec<ArkG1> =
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-            (tier_2, row_commitments)
+            (row_commitments, g2_bases)
         }
     }
 }

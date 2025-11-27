@@ -12,7 +12,7 @@ use ark_ff::Zero;
 use dory::{
     error::DoryError,
     primitives::{
-        arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve},
+        arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve, CompressedPairingCurve},
         poly::{MultilinearLagrange, Polynomial as DoryPolynomial},
         transcript::Transcript as DoryTranscript,
         DorySerialize,
@@ -77,6 +77,29 @@ pub fn ark_to_jolt(ark: &ArkFr) -> Fr {
     unsafe { std::mem::transmute_copy(ark) }
 }
 
+impl MultilinearPolynomial<Fr> {
+    fn tier_2_commitment_inputs<E: PairingCurve>(
+        &self,
+        _nu: usize,
+        sigma: usize,
+        setup: &ProverSetup<E>,
+    ) -> Result<(E::GT, Vec<E::G1>), DoryError>
+    where
+        E: PairingCurve,
+        _M1: DoryRoutines<E::G1>,
+        E::G1: DoryGroup<Scalar = ArkFr>,
+    {
+        let num_cols = 1 << sigma;
+
+        // Perform an MSM per row of the polynomial's matrix representation
+        let row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
+        let g2_bases = &setup.g2_vec[..row_commitments.len()];
+
+        (row_commitments, g2_bases)
+    }
+
+}
+
 impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
     fn num_vars(&self) -> usize {
         self.get_num_vars()
@@ -105,13 +128,25 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         _M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
-        let num_cols = 1 << sigma;
-
-        // Perform an MSM per row of the polynomial's matrix representation
-        let row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
-
-        let g2_bases = &setup.g2_vec[..row_commitments.len()];
+        let (row_commitments, g2_bases) = self.tier_2_commitment_inputs::<E>(nu, sigma, setup)?;
         let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
+
+        Ok((commitment, row_commitments))
+    }
+
+    fn commit_compressed<E, M1>(
+        &self,
+        nu: usize,
+        sigma: usize,
+        setup: &ProverSetup<E>,
+    ) -> Result<(E::CompressedGT, Vec<E::G1>), DoryError>
+    where
+        E: CompressedPairingCurve + PairingCurve,
+        M1: DoryRoutines<E::G1>,
+        E::G1: DoryGroup<Scalar = ArkFr>,
+    {
+        let (row_commitments, g2_bases) = self.tier_2_commitment_inputs::<E>(nu, sigma, setup)?;
+        let commitment = E::multi_pair_g2_setup_compressed(&row_commitments, g2_bases);
 
         Ok((commitment, row_commitments))
     }

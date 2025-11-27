@@ -59,6 +59,22 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint);
 
+    /// Commits to a multilinear polynomial using the provided setup, where the commitment is compressed.
+    ///
+    /// # Arguments
+    /// * `poly` - The multilinear polynomial to commit to
+    /// * `setup` - The prover setup for the commitment scheme
+    ///
+    /// # Returns
+    /// A tuple containing the compressed commitment to the polynomial and a hint that can be used
+    /// to optimize opening proof generation
+    fn commit_compressed(
+        poly: &MultilinearPolynomial<Self::Field>,
+        setup: &Self::ProverSetup,
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
+        panic!("`commit_compressed` is not implemented for this commitment scheme. CompressedCommitment of type `{}` not supported.", std::any::type_name::<Self::CompressedCommitment>());
+    }
+
     /// Commits to multiple multilinear polynomials in batch.
     ///
     /// # Arguments
@@ -156,4 +172,13 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
         onehot_k: Option<usize>,
         tier1_commitments: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint);
+
+    /// Compute tier 2 commitment from accumulated tier 1 commitments, where the output commitment is compressed.
+    fn aggregate_chunks_compressed(
+        setup: &Self::ProverSetup,
+        onehot_k: Option<usize>,
+        tier1_commitments: &[Self::ChunkState],
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
+        panic!("`aggregate_chunks_compressed` is not implemented for this commitment scheme. CompressedCommitment of type `{}` not supported.", std::any::type_name::<Self::CompressedCommitment>());
+    }
 }
