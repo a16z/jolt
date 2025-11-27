@@ -6,13 +6,14 @@ use crate::{
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     transcripts::{AppendToTranscript, Transcript},
 };
-use ark_bn254::{Fr, G1Affine};
+use ark_bn254::{CompressedFq12, Fr, G1Affine};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::{
     error::DoryError,
     primitives::{
-        arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve, CompressedPairingCurve},
+        arithmetic::{CompressedPairingCurve, DoryRoutines, Group as DoryGroup, PairingCurve},
         poly::{MultilinearLagrange, Polynomial as DoryPolynomial},
         transcript::Transcript as DoryTranscript,
         DorySerialize,
@@ -23,11 +24,20 @@ use num_traits::One;
 use rayon::prelude::*;
 
 pub use dory::backends::arkworks::{
-    ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkGTCompressed, ArkworksProverSetup,
-    ArkworksVerifierSetup, BN254,
+    ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup, BN254,
 };
 
 pub type JoltFieldWrapper = ArkFr;
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct ArkGTCompressed(pub CompressedFq12);
+
+impl From<ArkGTCompressed> for ArkGT {
+    fn from(gt: ArkGTCompressed) -> Self {
+        let decompressed = CompressedFq12::decompress_to_fq12(gt.0);
+        Self(decompressed)
+    }
+}
 
 impl AppendToTranscript for ArkGT {
     fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
@@ -97,7 +107,6 @@ impl MultilinearPolynomial<Fr> {
 
         (row_commitments, g2_bases)
     }
-
 }
 
 impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
