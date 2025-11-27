@@ -19,5 +19,5 @@ pub use jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 pub use setup::{DoryProverSetup, DoryVerifierSetup};
 pub use wrappers::{
     ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-    DoryBN254, JoltBn254, JoltFieldWrapper,
+    JoltBn254, JoltFieldWrapper,
 };
