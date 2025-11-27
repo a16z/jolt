@@ -13,12 +13,12 @@ use crate::{
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
-use ark_bn254::{Bn254 as ArkBn254, G1Affine, G1Projective, G2Affine};
+use ark_bn254::{Bn254 as ArkBn254, G1Affine, G1Projective};
 use ark_ec::pairing::{CompressedPairing, MillerLoopOutput, Pairing};
 use ark_ec::CurveGroup;
 use ark_ff::{One, Zero};
 use dory::primitives::{
-    arithmetic::{CompressedPairingCurve, Group, PairingCurve},
+    arithmetic::{Group, PairingCurve},
     poly::Polynomial,
 };
 use rand_core::OsRng;
@@ -27,9 +27,7 @@ use std::borrow::Borrow;
 use tracing::trace_span;
 
 #[derive(Clone)]
-pub struct DoryCommitmentScheme {
-    compression_enabled: bool,
-}
+pub struct DoryCommitmentScheme {}
 
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
@@ -74,6 +72,28 @@ impl CommitmentScheme for DoryCommitmentScheme {
         .expect("commitment should succeed");
 
         (tier_2, row_commitments)
+    }
+
+    fn commit_compressed(
+        poly: &MultilinearPolynomial<ark_bn254::Fr>,
+        setup: &Self::ProverSetup,
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
+        let _span = trace_span!("DoryCommitmentScheme::commit").entered();
+
+        let num_cols = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_max_num_rows();
+        let sigma = num_cols.log_2();
+        let nu = num_rows.log_2();
+
+        todo!()
+        // let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
+        //     ArkFr,
+        // >>::commit_compressed::<ArkBn254, JoltG1Routines>(
+        //     poly, nu, sigma, setup
+        // )
+        // .expect("commitment should succeed");
+
+        // (tier_2, row_commitments)
     }
 
     fn batch_commit<U>(

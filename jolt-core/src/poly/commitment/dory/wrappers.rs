@@ -150,7 +150,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         setup: &ProverSetup<E>,
     ) -> Result<(E::CompressedGT, Vec<E::G1>), DoryError>
     where
-        E: CompressedPairingCurve + PairingCurve,
+        E: CompressedPairingCurve,
         M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
