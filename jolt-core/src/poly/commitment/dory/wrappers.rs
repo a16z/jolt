@@ -88,12 +88,12 @@ pub fn ark_to_jolt(ark: &ArkFr) -> Fr {
 }
 
 impl MultilinearPolynomial<Fr> {
-    fn tier_2_commitment_inputs<E: PairingCurve>(
+    fn tier_1_commit<E: PairingCurve, _M1: DoryRoutines<E::G1>>(
         &self,
         _nu: usize,
         sigma: usize,
         setup: &ProverSetup<E>,
-    ) -> Result<(E::GT, Vec<E::G1>), DoryError>
+    ) -> Result<Vec<E::G1>, DoryError>
     where
         E: PairingCurve,
         _M1: DoryRoutines<E::G1>,
@@ -103,9 +103,8 @@ impl MultilinearPolynomial<Fr> {
 
         // Perform an MSM per row of the polynomial's matrix representation
         let row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
-        let g2_bases = &setup.g2_vec[..row_commitments.len()];
 
-        (row_commitments, g2_bases)
+        Ok(row_commitments)
     }
 }
 
@@ -128,7 +127,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
 
     fn commit<E, _M1>(
         &self,
-        _nu: usize,
+        nu: usize,
         sigma: usize,
         setup: &ProverSetup<E>,
     ) -> Result<(E::GT, Vec<E::G1>), DoryError>
@@ -137,7 +136,8 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         _M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
-        let (row_commitments, g2_bases) = self.tier_2_commitment_inputs::<E>(nu, sigma, setup)?;
+        let row_commitments = self.tier_1_commit::<E, _M1>(nu, sigma, setup)?;
+        let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
 
         Ok((commitment, row_commitments))
@@ -154,7 +154,8 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
-        let (row_commitments, g2_bases) = self.tier_2_commitment_inputs::<E>(nu, sigma, setup)?;
+        let row_commitments = self.tier_1_commit::<E, M1>(nu, sigma, setup)?;
+        let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let commitment = E::multi_pair_g2_setup_compressed(&row_commitments, g2_bases);
 
         Ok((commitment, row_commitments))

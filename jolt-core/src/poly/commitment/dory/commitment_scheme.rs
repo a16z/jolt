@@ -3,8 +3,8 @@
 use super::dory_globals::DoryGlobals;
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
-    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkGTCompressed, ArkworksProverSetup,
-    ArkworksVerifierSetup, JoltToDoryTranscript, BN254,
+    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkGTCompressed, ArkworksProverSetup,
+    ArkworksVerifierSetup, JoltToDoryTranscript, BN254 as DoryBN254,
 };
 use crate::{
     field::JoltField,
@@ -13,9 +13,10 @@ use crate::{
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
-use ark_bn254::{G1Affine, G1Projective};
+use ark_bn254::{Bn254 as ArkBn254, G1Affine, G1Projective, G2Affine};
+use ark_ec::pairing::{CompressedPairing, MillerLoopOutput, Pairing};
 use ark_ec::CurveGroup;
-use ark_ff::Zero;
+use ark_ff::{One, Zero};
 use dory::primitives::{
     arithmetic::{CompressedPairingCurve, Group, PairingCurve},
     poly::Polynomial,
@@ -67,7 +68,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
             ArkFr,
-        >>::commit::<BN254, JoltG1Routines>(
+        >>::commit::<DoryBN254, JoltG1Routines>(
             poly, nu, sigma, setup
         )
         .expect("commitment should succeed");
@@ -121,7 +122,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _>(
+        dory::prove::<ArkFr, DoryBN254, JoltG1Routines, JoltG2Routines, _, _>(
             poly,
             &ark_point,
             row_commitments,
@@ -156,7 +157,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::verify::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _>(
+        dory::verify::<ArkFr, DoryBN254, JoltG1Routines, JoltG2Routines, _>(
             *commitment,
             ark_eval,
             &ark_point,
@@ -301,35 +302,6 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        let (row_commitments, g2_bases) =
-            Self::get_tier2_commitment_inputs(setup, onehot_k, chunks);
-        <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases)
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "DoryCommitmentScheme::compute_tier2_commitment_compressed"
-    )]
-    fn aggregate_chunks_compressed(
-        setup: &Self::ProverSetup,
-        onehot_k: Option<usize>,
-        chunks: &[Self::ChunkState],
-    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
-        let (row_commitments, g2_bases) =
-            Self::get_tier2_commitment_inputs(setup, onehot_k, chunks);
-        <BN254 as CompressedPairingCurve>::multi_pair_g2_setup_compressed(
-            &row_commitments,
-            g2_bases,
-        )
-    }
-}
-
-impl DoryCommitmentScheme {
-    fn get_tier2_commitment_inputs(
-        setup: &Self::ProverSetup,
-        onehot_k: Option<usize>,
-        chunks: &[Self::ChunkState],
-    ) -> Vec<ArkG1> {
         if let Some(K) = onehot_k {
             let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
@@ -347,15 +319,130 @@ impl DoryCommitmentScheme {
             }
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier_2 =
+                <DoryBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-            (row_commitments, g2_bases)
+            (tier_2, row_commitments)
         } else {
             let row_commitments: Vec<ArkG1> =
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier_2 =
+                <DoryBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-            (row_commitments, g2_bases)
+            (tier_2, row_commitments)
         }
     }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "DoryCommitmentScheme::compute_tier2_commitment_compressed"
+    )]
+    fn aggregate_chunks_compressed(
+        setup: &Self::ProverSetup,
+        onehot_k: Option<usize>,
+        chunks: &[Self::ChunkState],
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
+        if let Some(K) = onehot_k {
+            let row_len = DoryGlobals::get_num_columns();
+            let T = DoryGlobals::get_T();
+            let rows_per_k = T / row_len;
+            let num_rows = K * T / row_len;
+
+            let mut row_commitments = vec![ArkG1(G1Projective::zero()); num_rows];
+            for (chunk_index, commitments) in chunks.iter().enumerate() {
+                row_commitments
+                    .par_iter_mut()
+                    .skip(chunk_index)
+                    .step_by(rows_per_k)
+                    .zip(commitments.par_iter())
+                    .for_each(|(dest, src)| *dest = *src);
+            }
+
+            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier_2 = multi_pair_g2_setup_optimized_compressed(&row_commitments, g2_bases);
+
+            (tier_2, row_commitments)
+        } else {
+            let row_commitments: Vec<ArkG1> =
+                chunks.iter().flat_map(|chunk| chunk.clone()).collect();
+
+            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier_2 = multi_pair_g2_setup_optimized_compressed(&row_commitments, g2_bases);
+
+            (tier_2, row_commitments)
+        }
+    }
+}
+
+fn determine_chunk_size(total: usize) -> usize {
+    const MIN_CHUNK: usize = 32;
+    const MAX_CHUNK: usize = 128;
+
+    if total < MIN_CHUNK {
+        return total;
+    }
+
+    let num_threads = rayon::current_num_threads();
+    let chunk = total.div_ceil(num_threads);
+    chunk.clamp(MIN_CHUNK, MAX_CHUNK)
+}
+
+/// Optimized multi-pairing dispatch for G2 from setup
+fn multi_pair_g2_setup_optimized_compressed(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGTCompressed {
+    let combined = multi_pair_g1_setup_parallel(ps, qs);
+
+    let result = ArkBn254::compressed_final_exponentiation(combined)
+        .expect("Final exponentiation should not fail");
+    ArkGTCompressed(result)
+}
+
+/// Parallel multi-pairing with G1 from setup (uses cache if available)
+#[tracing::instrument(skip_all, name = "multi_pair_g1_setup_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
+fn multi_pair_g1_setup_parallel(
+    ps: &[ArkG1],
+    qs: &[ArkG2],
+) -> MillerLoopOutput<ark_ec::bn::Bn<ark_bn254::Config>> {
+    use ark_bn254::G1Affine;
+    use ark_bn254::G2Affine;
+    use rayon::prelude::*;
+
+    let chunk_size = determine_chunk_size(ps.len());
+
+    // NOTE: no cache as in the dory arkworks implementation.
+
+    qs.par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_idx, qs_chunk)| {
+            let start_idx = chunk_idx * chunk_size;
+            let end_idx = start_idx + qs_chunk.len();
+
+            let qs_prep: Vec<<ArkBn254 as ark_ec::pairing::Pairing>::G2Prepared> = qs_chunk
+                .iter()
+                .map(|q| {
+                    let affine: G2Affine = q.0.into();
+                    affine.into()
+                })
+                .collect();
+
+            let ps_prep: Vec<<ArkBn254 as ark_ec::pairing::Pairing>::G1Prepared> = ps
+                [start_idx..end_idx]
+                .iter()
+                .map(|p| {
+                    let affine: G1Affine = p.0.into();
+                    affine.into()
+                })
+                .collect();
+
+            ArkBn254::multi_miller_loop(ps_prep, qs_prep)
+        })
+        .reduce(
+            || {
+                ark_ec::pairing::MillerLoopOutput(
+                    <<ArkBn254 as ark_ec::pairing::Pairing>::TargetField>::one(),
+                )
+            },
+            |a, b| ark_ec::pairing::MillerLoopOutput(a.0 * b.0),
+        )
 }
