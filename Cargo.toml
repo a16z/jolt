@@ -127,7 +127,6 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
-dory-pcs = { git = "https://github.com/a16z/dory", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -146,7 +145,7 @@ ark-std = { version = "0.5.0", default-features = false }
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
-jolt-optimizations = { git = "https://github.com/a16z/jolt-optimizations", branch = "main" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.1.0", features = ["backends", "cache", "disk-persistence"] }
 
 # Core Utilities
