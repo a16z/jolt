@@ -122,23 +122,23 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-bn254 = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression" }
-ark-ff = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression" }
-ark-ec = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression" }
-ark-serialize = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
-dory-pcs = { git = "https://github.com/JuI3s/dory", branch = "compression-integration" }
+dory-pcs = { git = "https://github.com/a16z/dory", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
 # Cryptography and Math
-ark-bn254 = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression", default-features = false }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-grumpkin = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression", default-features = false }
-ark-ec = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression", default-features = false }
-ark-ff = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression", default-features = false }
-ark-serialize = { git = "https://github.com/JuI3s/arkworks-algebra", branch = "compression", default-features = false, features = [
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
     "derive",
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
