@@ -19,6 +19,7 @@ use crate::{
 use common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
+pub mod claim_reduction;
 pub mod ra_virtual;
 pub mod read_raf_checking;
 

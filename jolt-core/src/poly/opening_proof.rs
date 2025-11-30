@@ -173,6 +173,7 @@ pub enum SumcheckId {
     BytecodeReadRaf,
     BytecodeBooleanity,
     BytecodeHammingWeight,
+    InstructionClaimReduction,
     OpeningReduction,
 }
 

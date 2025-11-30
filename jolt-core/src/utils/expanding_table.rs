@@ -13,7 +13,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 pub struct ExpandingTable<F: JoltField> {
     binding_order: BindingOrder,
     len: usize,
-    values: Vec<F>,
+    pub values: Vec<F>,
     scratch_space: Vec<F>,
 }
 

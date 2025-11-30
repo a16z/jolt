@@ -13,7 +13,8 @@ use crate::zkvm::{
     },
     fiat_shamir_preamble,
     instruction_lookups::{
-        self, ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
+        self, claim_reduction::InstructionClaimReductionSumcheckVerifier,
+        ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
         read_raf_checking::ReadRafSumcheckVerifier as LookupsReadRafSumcheckVerifier,
     },
     proof_serialization::JoltProof,
@@ -236,6 +237,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
+        let instruction_claim_reduction = InstructionClaimReductionSumcheckVerifier::new(
+            self.proof.trace_length.log_2(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
@@ -244,6 +250,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &ram_raf_evaluation,
                 &ram_read_write_checking,
                 &ram_output_check,
+                &instruction_claim_reduction,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,

@@ -507,6 +507,7 @@ pub enum VirtualPolynomial {
     InstructionRaf,
     InstructionRafFlag,
     InstructionRa,
+    // InstructionRaD32(usize),
     RegistersVal,
     RamAddress,
     RamRa,
