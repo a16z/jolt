@@ -48,18 +48,6 @@ pub enum CommittedPolynomial {
     RamRa(usize),
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
-pub enum RecursionCommittedPolynomial {
-    /// ρ_i accumulator polynomials for GT exponentiation (exp_index, rho_index)
-    RecursionRho(usize, usize),
-    /// q_i quotient polynomials for GT exponentiation (exp_index, constraint_index)
-    RecursionQuotient(usize, usize),
-    /// Base polynomial a(x) for GT exponentiation (exp_index)
-    RecursionBase(usize),
-    /// g(x) = X^12 - 18X^6 + 82 polynomial for GT exponentiation (exp_index)
-    RecursionG(usize),
-}
-
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
 struct WitnessData {

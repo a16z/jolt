@@ -90,6 +90,21 @@ impl Into<ark_bn254::Fr> for &MontU128Challenge<ark_bn254::Fr> {
 }
 
 impl_field_ops_inline!(MontU128Challenge<ark_bn254::Fr>, ark_bn254::Fr, optimized);
+impl_field_ops_inline!(MontU128Challenge<ark_bn254::Fq>, ark_bn254::Fq, optimized);
+
+impl Into<ark_bn254::Fq> for MontU128Challenge<ark_bn254::Fq> {
+    #[inline(always)]
+    fn into(self) -> ark_bn254::Fq {
+        ark_bn254::Fq::from_bigint_unchecked(BigInt::new(self.value())).unwrap()
+    }
+}
+
+impl Into<ark_bn254::Fq> for &MontU128Challenge<ark_bn254::Fq> {
+    #[inline(always)]
+    fn into(self) -> ark_bn254::Fq {
+        ark_bn254::Fq::from_bigint_unchecked(BigInt::new(self.value())).unwrap()
+    }
+}
 
 impl Into<TrackedFr> for MontU128Challenge<TrackedFr> {
     #[inline(always)]
@@ -127,6 +142,34 @@ impl OptimizedMul<ark_bn254::Fr, ark_bn254::Fr> for MontU128Challenge<ark_bn254:
     fn mul_01_optimized(self, other: ark_bn254::Fr) -> Self::Output {
         if other.is_zero() {
             ark_bn254::Fr::zero()
+        } else if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+}
+
+impl OptimizedMul<ark_bn254::Fq, ark_bn254::Fq> for MontU128Challenge<ark_bn254::Fq> {
+    fn mul_0_optimized(self, other: ark_bn254::Fq) -> Self::Output {
+        if other.is_zero() {
+            ark_bn254::Fq::zero()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_1_optimized(self, other: ark_bn254::Fq) -> Self::Output {
+        if other.is_one() {
+            self.into()
+        } else {
+            self * other
+        }
+    }
+
+    fn mul_01_optimized(self, other: ark_bn254::Fq) -> Self::Output {
+        if other.is_zero() {
+            ark_bn254::Fq::zero()
         } else if other.is_one() {
             self.into()
         } else {

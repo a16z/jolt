@@ -4,6 +4,9 @@
 //! specifically needed for recursive SNARK composition.
 
 use crate::field::{FieldOps, JoltField};
+#[cfg(feature = "challenge-254-bit")]
+use crate::field::challenge::Mont254BitChallenge;
+use crate::field::challenge::MontU128Challenge;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{BigInt, BigInteger, Field, One, PrimeField, UniformRand, Zero};
 use rayon::prelude::*;
@@ -23,6 +26,14 @@ impl JoltField for ark_bn254::Fq {
 
     type Unreduced<const N: usize> = BigInt<N>;
     type SmallValueLookupTables = [Vec<Self>; 2];
+
+    // Default: Use optimized 125-bit MontChallenge
+    #[cfg(not(feature = "challenge-254-bit"))]
+    type Challenge = MontU128Challenge<ark_bn254::Fq>;
+
+    // Optional: Use full 254-bit field elements
+    #[cfg(feature = "challenge-254-bit")]
+    type Challenge = Mont254BitChallenge<ark_bn254::Fq>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
@@ -225,12 +236,11 @@ impl JoltField for ark_bn254::Fq {
                     let prod = a_limbs[i] as u128 * b_limbs[j] as u128;
                     let lo = prod as u64;
                     let hi = (prod >> 64) as u64;
-                    let mut carry = 0u64;
 
                     // Add lo to result[i+j]
                     let (sum, c) = result.0[i + j].overflowing_add(lo);
                     result.0[i + j] = sum;
-                    carry = c as u64;
+                    let mut carry = c as u64;
 
                     // Propagate carry and add hi
                     if i + j + 1 < N {

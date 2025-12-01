@@ -68,11 +68,11 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
             "Committing single polynomial"
         );
 
-        let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
+        let gens = &generators.generators[..R_size];
         let row_commitments = poly
             .Z
             .par_chunks(R_size)
-            .map(|row| PedersenCommitment::commit_vector(row, &gens))
+            .map(|row| PedersenCommitment::commit_vector(row, gens))
             .collect();
 
         tracing::debug!(duration_ms = start.elapsed().as_millis(), "Commit complete");
@@ -109,7 +109,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         }
 
         let gen_start = std::time::Instant::now();
-        let gens = CurveGroup::normalize_batch(&generators.generators[..ROW_SIZE]);
+        let gens = &generators.generators[..ROW_SIZE];
         tracing::debug!(
             duration_ms = gen_start.elapsed().as_millis(),
             "Generator normalization complete"
@@ -211,7 +211,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         );
 
         let gen_start = std::time::Instant::now();
-        let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
+        let gens = &generators.generators[..R_size];
         tracing::debug!(
             duration_ms = gen_start.elapsed().as_millis(),
             "Generator normalization complete"
@@ -313,8 +313,8 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         );
 
         let eq_start = std::time::Instant::now();
-        let L = EqPolynomial::evals(&opening_point[..L_size.log_2()]);
-        let R = EqPolynomial::evals(&opening_point[L_size.log_2()..]);
+        let L: Vec<G::ScalarField> = EqPolynomial::evals(&opening_point[..L_size.log_2()]);
+        let R: Vec<G::ScalarField> = EqPolynomial::evals(&opening_point[L_size.log_2()..]);
         tracing::debug!(
             duration_us = eq_start.elapsed().as_micros(),
             "Computed EqPolynomial evals for L and R"
@@ -339,9 +339,8 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         );
 
         let msm2_start = std::time::Instant::now();
-        let normalized_generators = G::normalize_batch(&pedersen_generators.generators[..R_size]);
         let product_commitment = VariableBaseMSM::msm_field_elements(
-            &normalized_generators,
+            &pedersen_generators.generators[..R_size],
             &self.vector_matrix_product,
         )
         .unwrap();
@@ -548,7 +547,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
     }
 }
 
-#[cfg(all(test, feature = "recursion"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::transcripts::Blake2bTranscript;
