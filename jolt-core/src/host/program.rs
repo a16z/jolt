@@ -127,12 +127,11 @@ impl Program {
             rust_flags.push("-C".to_string());
             match opt_level.as_str() {
                 "0" | "1" | "2" | "3" | "s" | "z" => {
-                    rust_flags.push(format!("opt-level={}", opt_level).to_string());
+                    rust_flags.push(format!("opt-level={opt_level}").to_string());
                 }
                 _ => {
                     panic!(
-                        "Invalid JOLT_GUEST_OPT value: {}. Allowed values are 0, 1, 2, 3, s, z",
-                        opt_level
+                        "Invalid JOLT_GUEST_OPT value: {opt_level}. Allowed values are 0, 1, 2, 3, s, z",
                     );
                 }
             }
