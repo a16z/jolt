@@ -283,9 +283,11 @@ impl MacroBuilder {
         let inputs = &self.func.sig.inputs;
         let output = &self.func.sig.output;
         let body = &self.func.block;
+        let attrs = &self.func.attrs;
 
         quote! {
             #[cfg(not(target_arch = "wasm32"))]
+            #(#attrs)*
              pub fn #fn_name(#inputs) #output {
                  #body
              }
@@ -758,8 +760,16 @@ impl MacroBuilder {
 
         let check_input_len = quote! {};
 
+        let attrs = &self.func.attrs;
+        let output = &self.func.sig.output;
         let block = &self.func.block;
-        let block = quote! {let to_return = (|| -> _ { #block })();};
+        let fn_name = self.get_func_name();
+        let inner_fn_name = syn::Ident::new(&format!("__jolt_guest_{}", fn_name), fn_name.span());
+        let block = quote! {
+            #(#attrs)*
+            fn #inner_fn_name() #output #block
+            let to_return = #inner_fn_name();
+        };
 
         let handle_return = match &self.func.sig.output {
             ReturnType::Default => quote! {},
