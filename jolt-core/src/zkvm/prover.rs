@@ -814,6 +814,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.one_hot_params,
             &self.opening_accumulator,
+            &mut self.transcript,
         );
         let (lookups_ra_booleanity, lookups_ra_hamming_weight) =
             instruction_lookups::gen_ra_one_hot_provers(

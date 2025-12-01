@@ -114,7 +114,7 @@ fn compute_mles_product_sum_evals_generic<F: JoltField>(
 macro_rules! impl_mles_product_sum_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
-        fn $fn_name<F: JoltField>(
+        pub fn $fn_name<F: JoltField>(
             mles: &[RaPolynomial<u16, F>],
             eq_poly: &GruenSplitEqPolynomial<F>,
         ) -> Vec<F> {
@@ -146,6 +146,7 @@ macro_rules! impl_mles_product_sum_evals_d {
     };
 }
 
+impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d4, 4, eval_prod_4_assign);
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d13, 13, eval_prod_13_assign);
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d15, 15, eval_prod_15_assign);
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d16, 16, eval_prod_16_assign);
@@ -365,7 +366,7 @@ fn eval_prod_4_assign<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F]) {
 /// The product is split into a size-2 prefix and size-3 suffix. The suffix uses
 /// a single polynomial times a pair, so it reuses the existing `d = 2`
 /// quadratic extrapolator.
-fn eval_prod_5_assign<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F]) {
+pub fn eval_prod_5_assign<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F]) {
     debug_assert!(outputs.len() >= 5);
 
     // Prefix: two polynomials → degree-2 product evaluated on 1..4 via `ex2`.
@@ -398,6 +399,46 @@ fn eval_prod_5_assign<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F]) {
     outputs[2] = a3 * b3; // 3
     outputs[3] = a4 * b4; // 4
     outputs[4] = a_inf * b_inf; // ∞
+}
+
+/// Evaluate the product of 5 linear polynomials on `U_5 = [1, 2, 3, 4, ∞]`.
+///
+/// The product is split into a size-2 prefix and size-3 suffix. The suffix uses
+/// a single polynomial times a pair, so it reuses the existing `d = 2`
+/// quadratic extrapolator.
+pub fn eval_prod_5_acc<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F::Unreduced<9>]) {
+    debug_assert!(outputs.len() >= 5);
+
+    // Prefix: two polynomials → degree-2 product evaluated on 1..4 via `ex2`.
+    let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
+    let a3 = ex2(&[a1, a2], &a_inf);
+    let a4 = ex2(&[a2, a3], &a_inf);
+
+    // Suffix: single polynomial times a pair.
+    let (tail1, tail2) = (p[3], p[4]);
+    let (r1, r2, r_inf) = eval_linear_prod_2_internal(tail1, tail2);
+    let r3 = ex2(&[r1, r2], &r_inf);
+    let r4 = ex2(&[r2, r3], &r_inf);
+
+    let (lin0, lin1) = p[2];
+    let delta = lin1 - lin0;
+    let l1 = lin1;
+    let l2 = l1 + delta;
+    let l3 = l2 + delta;
+    let l4 = l3 + delta;
+    let l_inf = delta;
+
+    let b1 = l1 * r1;
+    let b2 = l2 * r2;
+    let b3 = l3 * r3;
+    let b4 = l4 * r4;
+    let b_inf = l_inf * r_inf;
+
+    outputs[0] += a1.mul_unreduced::<9>(b1); // 1
+    outputs[1] += a2.mul_unreduced::<9>(b2); // 2
+    outputs[2] += a3.mul_unreduced::<9>(b3); // 3
+    outputs[3] += a4.mul_unreduced::<9>(b4); // 4
+    outputs[4] += a_inf.mul_unreduced::<9>(b_inf); // ∞
 }
 
 /// Internal evaluator for the product of `d` linear polynomials on the grid
