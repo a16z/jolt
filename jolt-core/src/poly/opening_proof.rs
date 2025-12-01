@@ -8,12 +8,13 @@
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
-    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
-    zkvm::config::OneHotParams,
+    poly::{commitment::dory::{DoryContext, DoryGlobals}, multilinear_polynomial::PolynomialEvaluation, rlc_polynomial::{RLCPolynomial, RLCStreamingData}},
+    zkvm::{config::OneHotParams, witness::AllCommittedPolynomials},
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use ark_std::log2;
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 #[cfg(test)]
@@ -483,7 +484,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         let mut r = sumcheck_challenges.to_vec();
         match self.polynomial {
-            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => r.reverse(),
+            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc 
+            // | CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice 
+            => r.reverse(),
             CommittedPolynomial::InstructionRa(_)
             | CommittedPolynomial::BytecodeRa(_)
             | CommittedPolynomial::RamRa(_) => {
@@ -491,6 +494,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 // reverse log_T rounds since they are bounded LowToHigh
                 r[log_K..].reverse();
             }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => panic!("We don't call expected output claim for trusted or untrusted advice polynomials, they still don't have sumcheck instances"), // TODO any better error handling?
         }
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);
         eq_eval * self.sumcheck_claim.unwrap()
@@ -564,6 +568,7 @@ pub struct ReducedOpeningProof<
     joint_poly: MultilinearPolynomial<F>,
     #[cfg(test)]
     joint_commitment: PCS::Commitment,
+    trusted_advice_claim: F,
 }
 
 impl<F> Default for ProverOpeningAccumulator<F>
@@ -791,6 +796,11 @@ where
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
         streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+        trusted_advice_poly: Option<MultilinearPolynomial<F>>,
+        _trusted_advice_point: Option<(OpeningPoint<BIG_ENDIAN, F>, F)>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        commitments: Vec<PCS::Commitment>,
+        trusted_advice_commitment: Option<PCS::Commitment>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
@@ -817,6 +827,58 @@ where
                     });
             }
         }
+        // #[cfg(test)]
+        // {
+        //     if let (Some(poly), Some((opening_point, claim))) = (trusted_advice_poly, trusted_advice_point) {
+        //         // Add trusted advice polynomial to dense_polynomial_map
+        //         self.dense_polynomial_map.insert(
+        //             CommittedPolynomial::TrustedAdvice, 
+        //             Arc::new(RwLock::new(SharedDensePolynomial::new(poly)))
+        //         );
+                
+        //         // Create eq polynomial for the opening point
+        //         // let shared_eq = self
+        //         //     .eq_cycle_map
+        //         //     .entry(opening_point.r.clone())
+        //         //     .or_insert_with(|| Arc::new(RwLock::new(EqCycleState::new(&opening_point.r))));
+                
+        //         // // Create sumcheck for trusted advice opening
+        //         // let trusted_advice_sumcheck = OpeningProofReductionSumcheckProver::new_dense(
+        //         //     CommittedPolynomial::TrustedAdvice,
+        //         //     SumcheckId::OpeningReduction,
+        //         //     shared_eq.clone(),
+        //         //     opening_point.r.clone(),
+        //         //     claim,
+        //         //     self.log_T,
+        //         // );
+
+        //         self.append_dense(
+        //             transcript,
+        //             CommittedPolynomial::TrustedAdvice,
+        //             SumcheckId::OpeningReduction,
+        //             opening_point.r.clone(),
+        //             claim,
+        //         );
+                
+                // self.sumchecks.push(trusted_advice_sumcheck);
+        //         tracing::info!("Added trusted advice sumcheck, total sumchecks: {}", self.sumchecks.len());
+        //     }
+        // }
+        // Add trusted advice polynomial to the polynomials map if present
+        if let Some(poly) = &trusted_advice_poly {
+            polynomials.insert(CommittedPolynomial::TrustedAdvice, poly.clone());
+            // self.dense_polynomial_map.insert(
+            //     CommittedPolynomial::TrustedAdvice,
+            //     Arc::new(RwLock::new(SharedDensePolynomial::new(trusted_advice_poly.clone().unwrap()))),
+            // );
+            // self.append_dense(transcript, CommittedPolynomial::TrustedAdvice, SumcheckId::OpeningReduction, opening_point.r.clone(), claim);
+        }
+        
+        // Add trusted advice hint to the opening_hints map if present
+        if let Some(hint) = trusted_advice_hint {
+            opening_hints.insert(CommittedPolynomial::TrustedAdvice, hint);
+        }
+
 
         self.sumchecks.par_iter_mut().for_each(|sumcheck| {
             sumcheck.prepare_sumcheck(&polynomials, &self.dense_polynomial_map);
@@ -833,12 +895,16 @@ where
 
         transcript.append_scalars(&sumcheck_claims);
 
-        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
+        // Determine how many gamma coefficients we need (sumchecks + possibly trusted advice)
+        let num_gammas = self.sumchecks.len() + if trusted_advice_poly.is_some() { 1 } else { 0 };
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(num_gammas);
+
+        let mut trusted_advice_claim = F::zero();
+        let mut rlc_map = BTreeMap::new();
 
         // Combines the individual polynomials into the RLC that will be used for the
         // batched opening proof.
         let (joint_poly, hint) = {
-            let mut rlc_map = BTreeMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
                 if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
                     *value += *gamma;
@@ -847,15 +913,62 @@ where
                 }
             }
 
+            // Add trusted advice if present
+            if let Some(poly) = &trusted_advice_poly {
+                let trusted_advice_gamma = gamma_powers[self.sumchecks.len()];
+                
+                let previous_context = DoryGlobals::current_context();
+            
+                let _ctx = DoryGlobals::with_context(DoryContext::Main);
+                let main_columns = log2(DoryGlobals::get_num_columns()) as usize;
+                let main_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
+                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+                let trusted_advice_columns = log2(DoryGlobals::get_num_columns()) as usize;
+                let trusted_advice_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
+
+                tracing::info!("DEBUGGG:main_columns={}, trusted_advice_columns={}", main_columns, trusted_advice_columns);
+                tracing::info!("DEBUGGG:main_rows={}, trusted_advice_rows={}", main_rows, trusted_advice_rows);
+                let _ctx = DoryGlobals::with_context(previous_context);
+
+                let r_columns = &r_sumcheck[..main_columns];
+                let r_rows = &r_sumcheck[main_columns..];
+
+                let mut r_eval: F = r_rows[trusted_advice_rows..].iter().map(|r| F::one() - r).product();
+                r_eval *= r_columns[trusted_advice_columns..].iter().map(|r| F::one() - r).product::<F>();
+                let poly_num_vars = poly.get_num_vars();
+                tracing::info!("Trusted advice num_vars={}, r_sumcheck.len()={}, log_K={}", 
+                    poly_num_vars, r_sumcheck.len(), log_K);
+                
+                // Trusted advice only has log_T variables, so use only the r_cycle portion
+                // r_sumcheck = [columns (main_columns), rows (remaining)]
+                // For trusted advice, we need: [trusted_advice_columns, trusted_advice_rows]
+                let eval_point: Vec<_> = r_sumcheck[..trusted_advice_columns]
+                    .iter()
+                    .chain(&r_sumcheck[main_columns..main_columns + trusted_advice_rows])
+                    .copied()
+                    .collect();
+                tracing::info!("Evaluating trusted advice: poly_num_vars={}, eval_point.len()={}, log_K={}", 
+                    poly_num_vars, eval_point.len(), log_K);
+                trusted_advice_claim = poly.evaluate(&eval_point) * r_eval;
+                tracing::info!("Trusted advice evaluated: claim={:?}, gamma={:?}", 
+                    trusted_advice_claim, trusted_advice_gamma);
+                
+                rlc_map.insert(CommittedPolynomial::TrustedAdvice, trusted_advice_gamma);
+            }
+
             let (poly_ids, coeffs, polys): (
                 Vec<CommittedPolynomial>,
                 Vec<F>,
                 Vec<MultilinearPolynomial<F>>,
-            ) = rlc_map
+            ) = rlc_map.clone()
                 .iter()
                 .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
                 .multiunzip();
 
+            tracing::info!("Polynomials before RLC are:");
+            polys.iter().for_each(|poly| {
+                tracing::info!("num_vars={}", poly.get_num_vars());
+            });
             let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
                 polys.into_iter().map(Arc::new).collect();
 
@@ -863,12 +976,17 @@ where
                 poly_ids.clone(),
                 poly_arcs.clone(),
                 &coeffs,
+                trusted_advice_poly,
                 streaming_context,
             ));
 
-            let hints: Vec<PCS::OpeningProofHint> = rlc_map
+            let hints: Vec<PCS::OpeningProofHint> = rlc_map.clone()
                 .into_keys()
-                .map(|k| opening_hints.remove(&k).unwrap())
+                .map(|k| {
+                    opening_hints.remove(&k).unwrap_or_else(|| {
+                        panic!("Missing hint for polynomial {:?}. Available hints: {:?}", k, opening_hints.keys().collect::<Vec<_>>())
+                    })
+                })
                 .collect();
             debug_assert!(
                 opening_hints.is_empty(),
@@ -887,6 +1005,7 @@ where
 
         #[cfg(test)]
         let joint_commitment = {
+            tracing::info!("are we coming here?");
             let (joint_poly_ref, poly_ids, poly_arcs, coeffs) = &joint_poly;
             let materialized_poly = match joint_poly_ref {
                 MultilinearPolynomial::RLC(rlc) => {
@@ -897,6 +1016,43 @@ where
             PCS::commit(&materialized_poly, pcs_setup).0
         };
 
+
+
+        // Compute the expected evaluation of the joint polynomial at r_sumcheck
+        // This is ∑ᵢ γⁱ⋅ claimᵢ where claimᵢ are the sumcheck final claims
+        let num_sumcheck_rounds = self.sumchecks
+            .iter()
+            .map(|s| s.opening_point.len())
+            .max()
+            .unwrap_or(0);
+        tracing::info!("num_sumcheck_rounds={}", num_sumcheck_rounds);
+        tracing::info!("gamma_powers.len()={}", gamma_powers.len());
+        tracing::info!("sumcheck_claims.len()={}", sumcheck_claims.len());
+        tracing::info!("self.sumchecks.len()={}", self.sumchecks.len());
+        let mut joint_eval: F = gamma_powers
+            .iter()
+            .zip(sumcheck_claims.iter())
+            .zip(self.sumchecks.iter())
+            .map(|((coeff, claim), opening)| {
+                let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                let portion = *coeff * claim * lagrange_eval;
+                tracing::info!("Adding portion={:?}, coefficient={:?}", portion, coeff);
+                portion
+            })
+            .sum();
+        
+        // Add trusted advice contribution if present
+        if trusted_advice_claim != F::zero() {
+            let trusted_advice_gamma = gamma_powers[self.sumchecks.len()];
+            joint_eval += trusted_advice_gamma * trusted_advice_claim;
+        }
+        
+        tracing::info!("Joint polynomial expected evaluation at r_sumcheck: {:?}", joint_eval);
+
+
+
+
         #[cfg(test)]
         let joint_poly = joint_poly.0;
 
@@ -905,10 +1061,61 @@ where
             let sumchecks = std::mem::take(&mut self.sumchecks);
             crate::utils::thread::drop_in_background_thread(sumchecks);
         }
+        let mut transcript_copy = transcript.clone();
 
+        tracing::info!("Starting from here");
         // Reduced opening proof
         let joint_opening_proof =
             PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, Some(hint), transcript);
+
+
+        // ------------------------------
+
+
+        let mut commitments_map = HashMap::new();
+        for (polynomial, commitment) in
+            AllCommittedPolynomials::iter().zip_eq(commitments)
+        {
+            commitments_map.insert(*polynomial, commitment.clone());
+        }
+
+        // Add trusted advice commitment if present
+        if let Some(trusted_commitment) = trusted_advice_commitment {
+            commitments_map.insert(CommittedPolynomial::TrustedAdvice, trusted_commitment.clone());
+        }
+
+        tracing::info!("PCS::prove completed successfully");
+
+
+        let joint_commitment = {
+        
+
+            let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
+                .into_iter()
+                .map(|(k, v)| (v, commitments_map.remove(&k).unwrap()))
+                .unzip();
+            debug_assert!(commitments_map.is_empty(), "Every commitment should be used");
+
+            PCS::combine_commitments(&commitments, &coeffs)
+        };
+
+        tracing::info!("DEBUGG:joint_commitment={:?}", joint_commitment);
+
+        // Verify the proof we just generated
+        let verifier_setup = PCS::setup_verifier(pcs_setup);
+        // let cm = PCS::combine_commitments(commitments_map.values().collect::<Vec<_>>().as_slice(), gamma_powers.as_slice());
+        // let joint_eval = F::from_bytes(&[238, 112, 102, 203, 157, 183, 200, 136, 152, 30, 89, 219, 83, 98, 161, 237, 157, 174, 69, 121, 200, 110, 61, 156, 155, 114, 14, 10, 129, 109, 240, 7]);
+        PCS::verify(
+            &joint_opening_proof,
+            &verifier_setup,
+            &mut transcript_copy,
+            &r_sumcheck,
+            &joint_eval,
+            &joint_commitment,
+        )
+        .expect("Self-verification of joint opening proof failed");
+        tracing::info!("Self-verification passed");
+    // }
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -918,6 +1125,7 @@ where
             joint_poly,
             #[cfg(test)]
             joint_commitment,
+            trusted_advice_claim,
         }
     }
 
@@ -1189,6 +1397,7 @@ where
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
+        has_trusted_advice: bool,
     ) -> Result<(), ProofVerifyError> {
         #[cfg(test)]
         if let Some(prover_openings) = &self.prover_opening_accumulator {
@@ -1215,7 +1424,9 @@ where
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
-        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
+        // Determine how many gamma coefficients we need (sumchecks + possibly trusted advice)
+        let num_gammas = self.sumchecks.len() + if has_trusted_advice { 1 } else { 0 };
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(num_gammas);
 
         // Compute the commitment for the reduced opening proof by homomorphically combining
         // the commitments of the individual polynomials.
@@ -1227,6 +1438,12 @@ where
                 } else {
                     rlc_map.insert(sumcheck.polynomial, *gamma);
                 }
+            }
+
+            // Add trusted advice if present
+            if has_trusted_advice {
+                let trusted_advice_gamma = gamma_powers[self.sumchecks.len()];
+                rlc_map.insert(CommittedPolynomial::TrustedAdvice, trusted_advice_gamma);
             }
 
             let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
@@ -1245,16 +1462,34 @@ where
         );
 
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
-        let joint_claim: F = gamma_powers
+        let mut joint_claim: F = gamma_powers
             .iter()
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .zip(self.sumchecks.iter())
             .map(|((coeff, claim), opening)| {
                 let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
                 let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
-                *coeff * claim * lagrange_eval
+                let portion = *coeff * claim * lagrange_eval;
+                tracing::info!("Sumcheck portion={:?}, coefficient={:?}", portion, coeff);
+                portion
             })
             .sum();
+        
+        // Add trusted advice contribution if present
+        if has_trusted_advice {
+            let trusted_advice_gamma = gamma_powers[self.sumchecks.len()];
+            // Trusted advice is evaluated at r_cycle portion (r_sumcheck[log_K..])
+            // The lagrange polynomial multiplier for the r_address portion (first log_K vars)
+            let log_K = r_sumcheck.len() - self.log_T;
+            let r_address_slice = &r_sumcheck[log_K..];
+            let lagrange_eval: F = r_address_slice.iter().map(|r| F::one() - r).product();
+            
+            joint_claim += trusted_advice_gamma * reduced_opening_proof.trusted_advice_claim;
+            tracing::info!("Added trusted advice to joint_claim with gamma={:?}, claim={:?}, lagrange={:?}", 
+                trusted_advice_gamma, reduced_opening_proof.trusted_advice_claim, lagrange_eval);
+        }
+
+        tracing::info!("joint_claim={:?}", joint_claim);
 
         // Verify the reduced opening proof
         PCS::verify(

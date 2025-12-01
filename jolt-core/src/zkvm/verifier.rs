@@ -36,7 +36,7 @@ use crate::zkvm::{
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
-    witness::AllCommittedPolynomials,
+    witness::{AllCommittedPolynomials, CommittedPolynomial},
     ProverDebugInfo, Serializable,
 };
 use crate::{
@@ -464,12 +464,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             commitments_map.insert(*polynomial, commitment.clone());
         }
 
+        // Add trusted advice commitment if present
+        if let Some(trusted_commitment) = &self.trusted_advice_commitment {
+            commitments_map.insert(CommittedPolynomial::TrustedAdvice, trusted_commitment.clone());
+        }
+
         self.opening_accumulator
             .reduce_and_verify(
                 &self.preprocessing.generators,
                 &mut commitments_map,
                 &self.proof.reduced_opening_proof,
                 &mut self.transcript,
+                self.trusted_advice_commitment.is_some(),
             )
             .context("Stage 7")?;
 

@@ -282,7 +282,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
-        self.generate_and_commit_trusted_advice();
+        let trusted_advice_commitment = self.generate_and_commit_trusted_advice();
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
         let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof) = self.prove_stage2();
         let stage3_sumcheck_proof = self.prove_stage3();
@@ -290,9 +290,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
         tracing::info!("Stage 7 proving");
-        let trusted_advice_proof = self.prove_trusted_advice();
+        let (trusted_advice_proof, trusted_advice_hint) = self.prove_trusted_advice();
         let untrusted_advice_proof = self.prove_untrusted_advice();
-        let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
+        let reduced_opening_proof = self.prove_stage7(opening_proof_hints, trusted_advice_hint, commitments.clone(), trusted_advice_commitment.clone());
 
         #[cfg(test)]
         assert!(
@@ -365,17 +365,24 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let row_len = DoryGlobals::get_num_columns();
         let num_rows = T / DoryGlobals::get_max_num_rows();
 
-        tracing::debug!(
-            "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
+        tracing::info!(
+            "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}, onehot_k={}",
             polys.len(),
             T,
             row_len,
-            num_rows
+            num_rows,
+            self.one_hot_params.k_chunk
         );
 
         // Tier 1: Compute row commitments for each polynomial
         let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
-
+        let x = self.lazy_trace
+            .clone()
+            .pad_using(T, |_| Cycle::NoOp)
+            .iter_chunks(row_len)
+            .collect::<Vec<_>>()
+            .len();
+        tracing::info!("number of chunks is ={}", x);
         self.lazy_trace
             .clone()
             .pad_using(T, |_| Cycle::NoOp)
@@ -384,9 +391,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .par_bridge()
             .for_each(|(chunk, row_tier1_commitments)| {
                 let res: Vec<_> = polys
-                    .par_iter()
-                    .map(|poly| {
+                    .par_iter().enumerate()
+                    .map(|(poly_idx, poly)| {
                         poly.stream_witness_and_commit_rows::<_, PCS>(
+                            poly_idx,
                             &self.preprocessing.generators,
                             self.preprocessing,
                             &chunk,
@@ -409,11 +417,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .collect();
 
         // Tier 2: Compute final commitments from tier1 commitments
+        tracing::info!("Calling PCS::aggregate_chunks for {} witness polynomials to compute tier2 commitments", polys.len());
         let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
             .into_par_iter()
             .zip(polys)
             .map(|(tier1_commitments, poly)| {
                 let onehot_k = poly.get_onehot_k(&self.one_hot_params);
+                tracing::info!("tier1_commitments.len()={}, poly_idx={}", tier1_commitments.len(), poly.to_index());
+
                 PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
             })
             .unzip();
@@ -453,6 +464,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
+        tracing::info!("Calling PCS::commit for untrusted advice polynomial");
         let (commitment, _hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript.append_serializable(&commitment);
 
@@ -461,9 +473,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         Some(commitment)
     }
 
-    fn generate_and_commit_trusted_advice(&mut self) {
+    fn generate_and_commit_trusted_advice(&mut self) -> Option<PCS::Commitment> {
         if self.program_io.trusted_advice.is_empty() {
-            return;
+            return None;
         }
 
         let mut trusted_advice_vec =
@@ -480,6 +492,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         self.advice.trusted_advice_polynomial = Some(poly);
         self.transcript
             .append_serializable(self.advice.trusted_advice_commitment.as_ref().unwrap());
+
+        self.advice.trusted_advice_commitment.clone()
     }
 
     #[tracing::instrument(skip_all)]
@@ -860,37 +874,40 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_trusted_advice(&mut self) -> Option<PCS::Proof> {
-        self.advice
-            .trusted_advice_polynomial
-            .as_ref()
-            .map(|trusted_advice_poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-                let (point, _) = self
-                    .opening_accumulator
-                    .get_trusted_advice_opening()
-                    .unwrap();
-                PCS::prove(
-                    &self.preprocessing.generators,
-                    trusted_advice_poly,
-                    &point.r,
-                    None,
-                    &mut self.transcript,
-                )
-            })
+    fn prove_trusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::OpeningProofHint>) {
+        if let Some(trusted_advice_poly) = self.advice.trusted_advice_polynomial.as_ref().clone() {
+            let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+            let (point, _) = self
+                .opening_accumulator
+                .get_trusted_advice_opening()
+                .unwrap().clone();
+            tracing::info!("Calling PCS::prove for trusted advice polynomial opening");
+            let (_, hint) = PCS::commit(trusted_advice_poly, &self.preprocessing.generators);
+            let p = PCS::prove(
+                &self.preprocessing.generators,
+                trusted_advice_poly,
+                &point.r,
+                Some(hint.clone()),
+                &mut self.transcript,
+            );
+            (Some(p), Some(hint))
+        } else {
+            (None, None)
+        }
     }
 
     #[tracing::instrument(skip_all)]
     fn prove_untrusted_advice(&mut self) -> Option<PCS::Proof> {
         self.advice
             .untrusted_advice_polynomial
-            .as_ref()
+            .as_ref().clone()
             .map(|untrusted_advice_poly| {
                 let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
                 let (point, _) = self
                     .opening_accumulator
                     .get_untrusted_advice_opening()
-                    .unwrap();
+                    .unwrap().clone();
+                tracing::info!("Calling PCS::prove for untrusted advice polynomial opening");
                 PCS::prove(
                     &self.preprocessing.generators,
                     untrusted_advice_poly,
@@ -905,6 +922,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     fn prove_stage7(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        commitments: Vec<PCS::Commitment>,
+        trusted_advice_commitment: Option<PCS::Commitment>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         let _guard = (
             DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
@@ -928,6 +948,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             memory_layout: self.preprocessing.memory_layout.clone(),
         });
 
+        tracing::info!("Calling opening_accumulator.reduce_and_prove to batch prove all polynomial openings (will invoke PCS::prove, PCS::combine_commitments, PCS::combine_hints)");
+        let trusted_advice_poly = self.advice.trusted_advice_polynomial.as_ref().cloned();
+        let trusted_advice_point = self.opening_accumulator.get_trusted_advice_opening();
+
         self.opening_accumulator.reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
@@ -938,6 +962,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 streaming_data,
                 self.one_hot_params.clone(),
             )),
+            trusted_advice_poly,
+            trusted_advice_point,
+            trusted_advice_hint,
+            commitments,
+            trusted_advice_commitment,
         )
     }
 }
@@ -974,6 +1003,7 @@ where
         let bytecode = BytecodePreprocessing::preprocess(bytecode);
         let ram = RAMPreprocessing::preprocess(memory_init);
 
+        tracing::info!("Calling PCS::setup_prover to initialize commitment scheme generators for preprocessing");
         let generators = PCS::setup_prover(log_chunk + max_T.log_2());
 
         JoltProverPreprocessing {
@@ -1006,6 +1036,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
     for JoltVerifierPreprocessing<F, PCS>
 {
     fn from(preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
+        tracing::info!("Calling PCS::setup_verifier to derive verifier setup from prover preprocessing");
         let generators = PCS::setup_verifier(&preprocessing.generators);
         Self {
             generators,
@@ -1259,6 +1290,7 @@ mod tests {
                 crate::poly::commitment::dory::DoryContext::TrustedAdvice,
             );
             let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
+            tracing::info!("Calling PCS::commit for trusted advice polynomial in test setup");
             let (trusted_advice_commitment, _hint) =
                 <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
                     &poly,

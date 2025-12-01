@@ -32,6 +32,8 @@ unsafe impl Sync for SharedWitnessData {}
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
+    TrustedAdvice,
+    UntrustedAdvice,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -172,6 +174,7 @@ impl CommittedPolynomial {
     /// Generate witness data and compute tier 1 commitment for a single row
     pub fn stream_witness_and_commit_rows<F, PCS>(
         &self,
+        poly_idx: usize,
         setup: &PCS::ProverSetup,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         row_cycles: &[tracer::instruction::Cycle],
@@ -190,6 +193,7 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
+                tracing::info!("Poly id is ={}, len of row is ={}", poly_idx, 1);
                 PCS::process_chunk(setup, &row)
             }
             CommittedPolynomial::RamInc => {
@@ -202,6 +206,7 @@ impl CommittedPolynomial {
                         _ => 0,
                     })
                     .collect();
+                tracing::info!("Poly id is ={}, len of row is ={}", poly_idx, 1);
                 PCS::process_chunk(setup, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
@@ -212,6 +217,7 @@ impl CommittedPolynomial {
                         Some(one_hot_params.lookup_index_chunk(lookup_index, *idx) as usize)
                     })
                     .collect();
+                tracing::info!("Poly id is ={}, len of row is ={}", poly_idx, one_hot_params.k_chunk);
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
@@ -222,6 +228,7 @@ impl CommittedPolynomial {
                         Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
                     })
                     .collect();
+                tracing::info!("Poly id is ={}, len of row is ={}", poly_idx, one_hot_params.k_chunk);
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
@@ -235,8 +242,10 @@ impl CommittedPolynomial {
                         .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize)
                     })
                     .collect();
+                tracing::info!("Poly id is ={}, len of row is ={}", poly_idx, one_hot_params.k_chunk);
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => panic!("We don't stream commit trusted or untrusted advice polynomials"), // TODO any better error handling?
         }
     }
 
@@ -380,8 +389,28 @@ impl CommittedPolynomial {
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
+                CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => panic!("We don't generate witness batch for trusted or untrusted advice polynomials"), // TODO any better error handling?
             }
         }
+        
+        // Log summary of results
+        tracing::info!("Generated {} witness polynomials:", results.len());
+        for (poly, mlp) in results.iter() {
+            match mlp {
+                MultilinearPolynomial::OneHot(onehot) => {
+                    tracing::info!("  {:?}: OneHot, K={}, indices_len={}, num_vars={}", 
+                        poly, onehot.K, onehot.nonzero_indices.len(), mlp.get_num_vars());
+                }
+                MultilinearPolynomial::I128Scalars(_) => {
+                    tracing::info!("  {:?}: I128Scalars, num_vars={}", poly, mlp.get_num_vars());
+                }
+                _ => {
+                    tracing::info!("  {:?}: {:?}, num_vars={}", poly, 
+                        std::mem::discriminant(mlp), mlp.get_num_vars());
+                }
+            }
+        }
+        
         results
     }
 
@@ -464,6 +493,7 @@ impl CommittedPolynomial {
                     one_hot_params.k_chunk,
                 ))
             }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => panic!("We don't generate witness for trusted or untrusted advice polynomials"), // TODO any better error handling?
         }
     }
 
