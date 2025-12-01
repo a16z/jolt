@@ -119,3 +119,11 @@ fn int_to_string(n: i32) -> String {
 ```
 
 Note that `jolt_print` and `jolt_println` support format strings. The printed strings are written to stdout during RISC-V emulation of the guest.
+
+## Optimization level
+
+By default, the guest program is compiled with optimization level 3 to attempt to minimize the number of RISC-V instructions executed during emulation.
+
+To change this optimization level, set the `JOLT_GUEST_OPT` environment variable to one of the allowed values: `0`, `1`, `2`, `3`, `s`, or `z`.
+
+A common choice is `z` which optimizes for code size, at the cost of a larger number of instructions executed.
