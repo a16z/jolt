@@ -120,12 +120,23 @@ impl Program {
                 rust_flags.push("strip=symbols".to_string());
             }
 
-            rust_flags.extend_from_slice(&[
-                "-C".to_string(),
-                "opt-level=z".to_string(),
-                "--cfg".to_string(),
-                "getrandom_backend=\"custom\"".to_string(),
-            ]);
+            // Check environment variable opt level
+            // 3 is default if not set
+            let opt_level = std::env::var("JOLT_GUEST_OPT").unwrap_or_else(|_| "3".to_string());
+            // validate opt level
+            rust_flags.push("-C".to_string());
+            match opt_level.as_str() {
+                "0" | "1" | "2" | "3" | "s" | "z" => {
+                    rust_flags.push(format!("opt-level={opt_level}").to_string());
+                }
+                _ => {
+                    panic!(
+                        "Invalid JOLT_GUEST_OPT value: {opt_level}. Allowed values are 0, 1, 2, 3, s, z",
+                    );
+                }
+            }
+            rust_flags.push("--cfg".to_string());
+            rust_flags.push("getrandom_backend=\"custom\"".to_string());
 
             let target_triple = if self.std {
                 "riscv64imac-jolt-zkvm-elf"
