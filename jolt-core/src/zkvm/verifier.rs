@@ -171,14 +171,23 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .append_serializable(trusted_advice_commitment);
         }
 
+        tracing::info!("DEBUGG: Verifying stage 1");
         self.verify_stage1()?;
+        tracing::info!("DEBUGG: Verifying stage 2");
         self.verify_stage2()?;
+        tracing::info!("DEBUGG: Verifying stage 3");
         self.verify_stage3()?;
+        tracing::info!("DEBUGG: Verifying stage 4");
         self.verify_stage4()?;
+        tracing::info!("DEBUGG: Verifying stage 5");
         self.verify_stage5()?;
+        tracing::info!("DEBUGG: Verifying stage 6");
         self.verify_stage6()?;
+        tracing::info!("DEBUGG: Verifying trusted advice opening proofs");
         self.verify_trusted_advice_opening_proofs()?;
+        tracing::info!("DEBUGG: Verifying untrusted advice opening proofs");
         self.verify_untrusted_advice_opening_proofs()?;
+        tracing::info!("DEBUGG: Verifying stage 7");
         self.verify_stage7()?;
 
         Ok(())
