@@ -262,6 +262,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all)]
     pub fn prove(
         mut self,
     ) -> (
