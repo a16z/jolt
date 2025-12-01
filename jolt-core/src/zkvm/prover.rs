@@ -1045,6 +1045,12 @@ mod tests {
 
     #[test]
     #[serial]
+    fn fib_e2e_dory_compression() {
+        todo!()
+    }
+
+    #[test]
+    #[serial]
     fn fib_e2e_dory() {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();

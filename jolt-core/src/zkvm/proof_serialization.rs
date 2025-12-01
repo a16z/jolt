@@ -20,9 +20,14 @@ use crate::{
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
+pub enum JoltProofCommitments<PCS: CommitmentScheme> {
+    Compressed(Vec<PCS::CompressedCommitment>),
+    Uncompressed(Vec<PCS::Commitment>),
+}
+
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
-    pub commitments: Vec<PCS::Commitment>,
+    pub commitments: JoltProofCommitments<PCS>,
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
     pub stage1_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
@@ -40,6 +45,68 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub bytecode_K: usize,
     pub log_k_chunk: usize,
     pub twist_sumcheck_switch_index: usize,
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CanonicalSerialize
+    for JoltProofCommitments<PCS>
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            JoltProofCommitments::Compressed(commitments) => {
+                commitments.serialize_with_mode(&mut writer, compress)
+            }
+            JoltProofCommitments::Uncompressed(items) => {
+                items.len().serialize_with_mode(&mut writer, compress)
+            }
+        }
+    }
+    
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            JoltProofCommitments::Compressed(commitments) => {
+                commitments.serialized_size(compress)
+            }
+            JoltProofCommitments::Uncompressed(items) => {
+                items.len().serialized_size(compress)
+            }
+        }
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CanonicalDeserialize
+    for JoltProofCommitments<PCS>
+{
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        match compress {
+            Compress::Yes => {
+                let commitments = Vec::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(JoltProofCommitments::Compressed(commitments))
+            }
+            Compress::No => {
+                let items = Vec::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(JoltProofCommitments::Uncompressed(items))
+            }
+    }
+}
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Valid
+    for JoltProofCommitments<PCS>
+{
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            JoltProofCommitments::Compressed(commitments) => commitments.iter().all(|c| c.check().is_ok()).then_some(Ok(())),
+            JoltProofCommitments::Uncompressed(items) => items.iter().all(|c| c.check().is_ok()).then_some(Ok(())),
+        }
+    }
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
