@@ -102,6 +102,7 @@ jolt-sdk = { workspace = true, features = ["host"] }
 jolt-core = { workspace = true, features = ["default"] }
 tracer = { workspace = true, features = ["default"] }
 common = { workspace = true, features = ["std"] }
+expect-test = "1.5.1"
 
 [profile.test]
 opt-level = 3
