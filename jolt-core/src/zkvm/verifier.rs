@@ -21,7 +21,8 @@ use crate::zkvm::{
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, output_check::ValFinalSumcheckVerifier,
-        ra_virtual::RaSumcheckVerifier as RamRaSumcheckVerifier,
+        ra_reduction::RamRaReductionSumcheckVerifier,
+        ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
@@ -336,7 +337,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let n_cycle_vars = self.proof.trace_length.log_2();
         let registers_val_evaluation = RegistersValEvaluationSumcheckVerifier::new(n_cycle_vars);
         let ram_hamming_booleanity = HammingBooleanitySumcheckVerifier::new(n_cycle_vars);
-        let ram_ra_virtual = RamRaSumcheckVerifier::new(
+        let ram_ra_reduction = RamRaReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -350,7 +351,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             vec![
                 &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &ram_hamming_booleanity,
-                &ram_ra_virtual,
+                &ram_ra_reduction,
                 &lookups_read_raf,
             ],
             &mut self.opening_accumulator,
@@ -377,6 +378,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let ram_hamming_weight =
             ram::new_ra_hamming_weight_verifier(&self.one_hot_params, &mut self.transcript);
+        let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
+            self.proof.trace_length,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let lookups_ra_virtual =
             LookupsRaSumcheckVerifier::new(&self.one_hot_params, &self.opening_accumulator);
         let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
@@ -393,6 +400,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &bytecode_hamming_weight,
                 &bytecode_booleanity,
                 &ram_hamming_weight,
+                &ram_ra_virtual,
                 &lookups_ra_virtual,
                 &lookups_ra_booleanity,
                 &lookups_rs_hamming_weight,

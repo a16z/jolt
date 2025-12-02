@@ -31,6 +31,7 @@ use tracer::JoltDevice;
 
 pub mod hamming_booleanity;
 pub mod output_check;
+pub mod ra_reduction;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;

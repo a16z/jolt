@@ -164,6 +164,7 @@ pub enum SumcheckId {
     RamHammingWeight,
     RamHammingBooleanity,
     RamBooleanity,
+    RamRaReduction,
     RamRaVirtualization,
     RamOutputCheck,
     RamValEvaluation,
