@@ -187,7 +187,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         F::zero()
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message", fields(variant = ?self.params.sumcheck_id))]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_k_chunk {
             // Phase 1: First log(K_chunk) rounds
@@ -198,7 +198,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge", fields(variant = ?self.params.sumcheck_id))]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.params.log_k_chunk {
             // Phase 1: Bind B and update F
