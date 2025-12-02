@@ -1,3 +1,48 @@
+//! RAM checking module for Jolt.
+//!
+//! This module implements the RAM checking protocol, which verifies that memory
+//! reads and writes are consistent throughout program execution.
+//!
+//! # Important: Sumcheck Stage Constraints
+//!
+//! The RAM RA reduction sumcheck (`ra_reduction.rs`) consolidates four RA claims
+//! into a single claim. For this to work correctly, certain challenge coincidences
+//! must hold. These coincidences are guaranteed by the following constraints on
+//! how sumchecks are batched:
+//!
+//! ## Required Coincidences
+//!
+//! The four RA claims use these opening points:
+//!
+//! | Sumcheck | Opening Point | Stage |
+//! |----------|---------------|-------|
+//! | RamReadWriteChecking | `ra(r_address_rw, r_cycle_rw)` | Stage 2 |
+//! | RamRafEvaluation | `ra(r_address_raf, r_cycle_raf)` | Stage 2 |
+//! | RamValEvaluation | `ra(r_address_rw, r_cycle_val)` | Stage 4 |
+//! | RamValFinal | `ra(r_address_raf, r_cycle_val)` | Stage 4 |
+//!
+//! The following equalities must hold:
+//! - `r_address_raf = r_address_val_final`
+//! - `r_address_val_eval = r_address_rw`
+//! - `r_cycle_val_eval = r_cycle_val_final`
+//!
+//! ## Constraints to Ensure Coincidences
+//!
+//! **These constraints MUST be maintained when modifying the prover/verifier:**
+//!
+//! 1. **OutputCheck and RafEvaluation** MUST be in the same batched sumcheck (currently Stage 2),
+//!    and both must use challenges `[0 .. log_K]` for `r_address`.
+//!
+//! 2. **ValEvaluation and ValFinal** MUST be in the same batched sumcheck (currently Stage 4),
+//!    and have the same `num_rounds = log_T`.
+//!
+//! 3. **ValEvaluation** MUST read `r_address` from RamReadWriteChecking's opening.
+//!
+//! 4. **ValFinal** MUST read `r_address` from OutputCheck's opening.
+//!
+//! Violating these constraints will cause the RA reduction sumcheck to fail with
+//! mismatched challenge vectors.
+
 #![allow(clippy::too_many_arguments)]
 
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};

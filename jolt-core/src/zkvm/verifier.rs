@@ -21,8 +21,7 @@ use crate::zkvm::{
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, output_check::ValFinalSumcheckVerifier,
-        ra_reduction::RamRaReductionSumcheckVerifier,
-        ra_virtual::RamRaVirtualSumcheckVerifier,
+        ra_reduction::RamRaReductionSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,

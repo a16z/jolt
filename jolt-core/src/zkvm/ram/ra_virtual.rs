@@ -289,10 +289,8 @@ impl<F: JoltField> RaVirtualParams<F> {
         let log_K = one_hot_params.ram_k.log_2();
 
         // Get the reduced RA claim from RA reduction sumcheck
-        let (r, _ra_claim_reduced) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamRaReduction,
-        );
+        let (r, _ra_claim_reduced) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
 
         // Split the opening point into address and cycle parts
         let (r_address, r_cycle_opening) = r.split_at(log_K);
@@ -320,10 +318,8 @@ impl<F: JoltField> RaVirtualParams<F> {
     }
 
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, ra_claim_reduced) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamRaReduction,
-        );
+        let (_, ra_claim_reduced) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
         ra_claim_reduced
     }
 }

@@ -90,8 +90,9 @@
 //! ### Phase 1: Address Rounds (log_K rounds)
 //!
 //! During these rounds, we bind address variables while maintaining:
-//! - `B_1`, `B_2`: eq polynomials at `r_address_1`, `r_address_2`
-//! - `F_1`, `F_2`: expanding tables tracking partial eq evaluations
+//! - `B_1`: eq(r_address_1, k) polynomial, bound during address rounds
+//! - `B_2`: eq(r_address_2, k) polynomial, bound during address rounds
+//! - `F`: expanding table tracking eq(r_addr_reduced, k) where r_addr_reduced is the sumcheck challenges
 //! - `G_A[k] = Σ_{c: address[c]=k} eq_cycle_A(c)` where `eq_cycle_A = eq(r_cycle_raf, ·) + γ·eq(r_cycle_val, ·)`
 //! - `G_B[k] = Σ_{c: address[c]=k} eq_cycle_B(c)` where `eq_cycle_B = eq(r_cycle_rw, ·) + γ·eq(r_cycle_val, ·)`
 //!
@@ -100,16 +101,22 @@
 //! inner_sum = Σ_k B_1[k] · G_A[k] + γ² · Σ_k B_2[k] · G_B[k]
 //! ```
 //!
-//! After all address rounds, `F_1` and `F_2` contain `eq(r_address_1, k)` and `eq(r_address_2, k)` for all k.
+//! After all address rounds:
+//! - `α_1 = B_1.final_sumcheck_claim() = eq(r_address_1, r_addr_reduced)`
+//! - `α_2 = B_2.final_sumcheck_claim() = eq(r_address_2, r_addr_reduced)`
+//! - `F[k] = eq(r_addr_reduced, k)` for all k
 //!
 //! ### Phase 2: Cycle Rounds (log_T rounds)
 //!
-//! For each cycle c, we look up `address[c]` and compute:
+//! Initialize `H[c] = F[address[c]] = eq(r_addr_reduced, address[c]) = ra(r_addr_reduced, c)`.
+//!
+//! The cycle round sum is:
 //! ```text
-//! contribution = F_1[address[c]] · eq_cycle_A(c) + γ² · F_2[address[c]] · eq_cycle_B(c)
+//! Σ_c H[c] · [α_1·eq_cycle_A(c) + γ²·α_2·eq_cycle_B(c)]
+//! = α_1 · Σ_c H[c]·eq_raf(c) + γ²·α_2 · Σ_c H[c]·eq_rw(c) + (γ·α_1 + γ³·α_2) · Σ_c H[c]·eq_val(c)
 //! ```
 //!
-//! This uses Gruen's optimization on `eq_cycle_A` and `eq_cycle_B`.
+//! This uses Gruen's optimization on `eq_raf`, `eq_rw`, and `eq_val` separately.
 //!
 //! ## Output
 //!
@@ -128,6 +135,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::jolt_device::MemoryLayout;
+use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
@@ -148,11 +156,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::{
-        config::OneHotParams,
-        ram::remap_address,
-        witness::VirtualPolynomial,
-    },
+    zkvm::{config::OneHotParams, ram::remap_address, witness::VirtualPolynomial},
 };
 
 /// Degree bound of the sumcheck round polynomials.
@@ -169,33 +173,47 @@ pub struct RamRaReductionSumcheckProver<F: JoltField> {
     /// `addresses[c] = Some(k)` if address k was accessed at cycle c.
     addresses: Arc<Vec<Option<usize>>>,
 
-    // ========== Group A state (r_address_1 = r_address_raf) ==========
-    /// eq(r_address_1, k) polynomial - bound during address rounds
+    // ========== Address round state ==========
+    /// eq(r_address_1, k) polynomial - bound during address rounds.
+    /// After all address rounds, B_1.final_sumcheck_claim() = eq(r_address_1, r_addr_reduced) = α_1
     B_1: MultilinearPolynomial<F>,
-    /// Expanding table for r_address_1, tracking partial eq evaluations
-    F_1: ExpandingTable<F>,
+    /// eq(r_address_2, k) polynomial - bound during address rounds.
+    /// After all address rounds, B_2.final_sumcheck_claim() = eq(r_address_2, r_addr_reduced) = α_2
+    B_2: MultilinearPolynomial<F>,
+    /// Expanding table tracking eq(r_addr_reduced, k) where r_addr_reduced is
+    /// the vector of sumcheck challenges bound so far.
+    F: ExpandingTable<F>,
     /// G_A[k] = Σ_{c: address[c]=k} eq_cycle_A(c)
     G_A: Vec<F>,
-
-    // ========== Group B state (r_address_2 = r_address_rw) ==========
-    /// eq(r_address_2, k) polynomial - bound during address rounds
-    B_2: MultilinearPolynomial<F>,
-    /// Expanding table for r_address_2, tracking partial eq evaluations
-    F_2: ExpandingTable<F>,
     /// G_B[k] = Σ_{c: address[c]=k} eq_cycle_B(c)
     G_B: Vec<F>,
 
-    // ========== Phase 2 state (cycle rounds) ==========
-    /// H_1[c] = F_1[address[c]] - set after address rounds complete
-    /// During cycle rounds, this stores the combined coefficient for each cycle.
-    H_combined: MultilinearPolynomial<F>,
-    /// eq_cycle_A = eq(r_cycle_raf, ·) + γ · eq(r_cycle_val, ·)
-    /// Using Gruen optimization for the underlying eq polynomial
+    // ========== Cycle round state (Phase 2) ==========
+    /// H[c] = eq(r_addr_reduced, address[c]) = ra(r_addr_reduced, c)
+    /// This is the multilinear extension of the one-hot polynomial ra evaluated
+    /// at r_addr_reduced for the address variables.
+    /// Initialized to None, set to Some after address rounds complete.
+    H: Option<MultilinearPolynomial<F>>,
+    /// eq(r_cycle_raf, ·) using Gruen optimization
     eq_cycle_raf: GruenSplitEqPolynomial<F>,
-    /// eq_cycle_rw: eq(r_cycle_rw, ·)
+    /// eq(r_cycle_rw, ·) using Gruen optimization
     eq_cycle_rw: GruenSplitEqPolynomial<F>,
-    /// eq_cycle_val: eq(r_cycle_val, ·)
+    /// eq(r_cycle_val, ·) using Gruen optimization
     eq_cycle_val: GruenSplitEqPolynomial<F>,
+
+    // ========== Cycle round Gruen state ==========
+    /// Previous claim for eq_raf: Σ_c H[c] * eq_raf(c)
+    prev_claim_raf: Option<F>,
+    /// Previous claim for eq_rw: Σ_c H[c] * eq_rw(c)
+    prev_claim_rw: Option<F>,
+    /// Previous claim for eq_val: Σ_c H[c] * eq_val(c)
+    prev_claim_val: Option<F>,
+    /// Previous round polynomial for eq_raf
+    prev_round_poly_raf: Option<UniPoly<F>>,
+    /// Previous round polynomial for eq_rw
+    prev_round_poly_rw: Option<UniPoly<F>>,
+    /// Previous round polynomial for eq_val
+    prev_round_poly_val: Option<UniPoly<F>>,
 
     #[allocative(skip)]
     params: RaReductionParams<F>,
@@ -252,18 +270,14 @@ impl<F: JoltField> RaReductionParams<F> {
         let log_T = trace_len.log_2();
 
         // Get the four RA claims from the accumulator
-        let (r_raf, claim_raf) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamRafEvaluation,
-        );
+        let (r_raf, claim_raf) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
         let (r_rw, claim_rw) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_val_eval, claim_val_eval) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamValEvaluation,
-        );
+        let (r_val_eval, claim_val_eval) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
         let (r_val_final, claim_val_final) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
@@ -324,12 +338,8 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaReductionParams::new(
-            trace.len(),
-            one_hot_params,
-            opening_accumulator,
-            transcript,
-        );
+        let params =
+            RaReductionParams::new(trace.len(), one_hot_params, opening_accumulator, transcript);
 
         // Extract addresses from trace
         let addresses: Arc<Vec<Option<usize>>> = Arc::new(
@@ -346,11 +356,9 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
         let B_1 = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&params.r_address_1));
         let B_2 = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&params.r_address_2));
 
-        // Initialize expanding tables for tracking partial eq evaluations
-        let mut F_1 = ExpandingTable::new(one_hot_params.ram_k, BindingOrder::LowToHigh);
-        F_1.reset(F::one());
-        let mut F_2 = ExpandingTable::new(one_hot_params.ram_k, BindingOrder::LowToHigh);
-        F_2.reset(F::one());
+        // Initialize expanding table for tracking eq(r_addr_reduced, k)
+        let mut F = ExpandingTable::new(one_hot_params.ram_k, BindingOrder::LowToHigh);
+        F.reset(F::one());
 
         // Compute G_A[k] = Σ_{c: address[c]=k} eq_cycle_A(c)
         // and G_B[k] = Σ_{c: address[c]=k} eq_cycle_B(c)
@@ -366,25 +374,29 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
         );
 
         // Initialize Gruen eq polynomials for cycle rounds
-        let eq_cycle_raf = GruenSplitEqPolynomial::new(&params.r_cycle_raf, BindingOrder::LowToHigh);
+        let eq_cycle_raf =
+            GruenSplitEqPolynomial::new(&params.r_cycle_raf, BindingOrder::LowToHigh);
         let eq_cycle_rw = GruenSplitEqPolynomial::new(&params.r_cycle_rw, BindingOrder::LowToHigh);
-        let eq_cycle_val = GruenSplitEqPolynomial::new(&params.r_cycle_val, BindingOrder::LowToHigh);
-
-        // H_combined will be initialized after address rounds complete
-        let H_combined = MultilinearPolynomial::from(Vec::<F>::new());
+        let eq_cycle_val =
+            GruenSplitEqPolynomial::new(&params.r_cycle_val, BindingOrder::LowToHigh);
 
         Self {
             addresses,
             B_1,
-            F_1,
-            G_A,
             B_2,
-            F_2,
+            F,
+            G_A,
             G_B,
-            H_combined,
+            H: None, // Initialized after address rounds complete
             eq_cycle_raf,
             eq_cycle_rw,
             eq_cycle_val,
+            prev_claim_raf: None,
+            prev_claim_rw: None,
+            prev_claim_val: None,
+            prev_round_poly_raf: None,
+            prev_round_poly_rw: None,
+            prev_round_poly_val: None,
             params,
         }
     }
@@ -459,8 +471,12 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
             .into_par_iter()
             .map(|k_prime| {
                 // Get sumcheck evals for B_1 and B_2 at position k'
-                let B_1_evals = self.B_1.sumcheck_evals_array::<2>(k_prime, BindingOrder::LowToHigh);
-                let B_2_evals = self.B_2.sumcheck_evals_array::<2>(k_prime, BindingOrder::LowToHigh);
+                let B_1_evals = self
+                    .B_1
+                    .sumcheck_evals_array::<2>(k_prime, BindingOrder::LowToHigh);
+                let B_2_evals = self
+                    .B_2
+                    .sumcheck_evals_array::<2>(k_prime, BindingOrder::LowToHigh);
 
                 // Sum over all k that share prefix k'
                 // k ranges from k' << m to (k' + 1) << m
@@ -471,13 +487,12 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
                     // Extract the m-th bit (the variable being bound in this round)
                     // k is a global index, so we need to mask to get just bit (m-1)
                     let k_m = (k >> (m - 1)) & 1;
-                    let F_1_k = self.F_1[k % (1 << (m - 1))];
-                    let F_2_k = self.F_2[k % (1 << (m - 1))];
+                    let F_k = self.F[k % (1 << (m - 1))];
                     let G_A_k = self.G_A[k];
                     let G_B_k = self.G_B[k];
 
-                    let contrib_A = G_A_k * F_1_k;
-                    let contrib_B = G_B_k * F_2_k;
+                    let contrib_A = G_A_k * F_k;
+                    let contrib_B = G_B_k * F_k;
 
                     // For eval at 0: only k_m = 0 contributes
                     // For eval at 2: linear extrapolation from 0 and 1
@@ -505,81 +520,183 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             );
 
-        UniPoly::from_evals_and_hint(previous_claim, &evals.to_vec())
+        UniPoly::from_evals_and_hint(previous_claim, evals.as_ref())
     }
 
     /// Compute the round polynomial for cycle rounds (phase 2).
     ///
-    /// After address rounds, we have:
-    /// Σ_c [H_combined[c] · (eq_raf(c) + γ·eq_val(c)) + γ² · H_combined[c] · (eq_rw(c) + γ·eq_val(c))]
-    /// = Σ_c H_combined[c] · (eq_raf(c) + γ·eq_val(c) + γ²·eq_rw(c) + γ³·eq_val(c))
+    /// After address rounds, the identity we're proving is:
+    /// ```text
+    /// Σ_c H[c] · [α_1·(eq_raf(c) + γ·eq_val(c)) + γ²·α_2·(eq_rw(c) + γ·eq_val(c))]
+    /// = α_1 · Σ_c H[c]·eq_raf(c) + γ²·α_2 · Σ_c H[c]·eq_rw(c) + (γ·α_1 + γ³·α_2) · Σ_c H[c]·eq_val(c)
+    /// ```
     ///
-    /// But we need to track Group A and B separately, so H_combined stores:
-    /// H_combined[c] = F_1[address[c]] + γ² · F_2[address[c]]
-    fn cycle_round_compute_message(&self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        // The identity is:
-        // Σ_c H_combined[c] · combined_eq_cycle(c)
-        // where combined_eq_cycle(c) = eq_raf(c) + γ·eq_val(c) + γ²·eq_rw(c) + γ³·eq_val(c)
-        //                            = eq_raf(c) + γ²·eq_rw(c) + (γ + γ³)·eq_val(c)
-        let gamma_coeff_val = self.params.gamma + self.params.gamma_cubed;
+    /// We track three separate sums and compute three separate round polynomials using Gruen,
+    /// then combine them: combined = coeff_raf * poly_raf + coeff_rw * poly_rw + coeff_val * poly_val
+    fn cycle_round_compute_message(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
+        // Get α_1 and α_2 from the final B polynomial claims
+        let alpha_1 = self.B_1.final_sumcheck_claim();
+        let alpha_2 = self.B_2.final_sumcheck_claim();
 
-        // For Gruen optimization, we need the final eq_address claims
-        let eq_address_claim = self.B_1.final_sumcheck_claim()
-            + self.params.gamma_squared * self.B_2.final_sumcheck_claim();
+        // Compute coefficients for each eq_cycle polynomial
+        let coeff_raf = alpha_1;
+        let coeff_rw = self.params.gamma_squared * alpha_2;
+        let coeff_val = self.params.gamma * alpha_1 + self.params.gamma_cubed * alpha_2;
 
-        // Use Gruen's poly_deg_2 for each eq polynomial component
-        // Compute contribution from each component
-        let [gruen_eval_raf_0] = self.eq_cycle_raf.par_fold_out_in_unreduced::<9, 1>(&|g| {
-            [self.H_combined.get_bound_coeff(2 * g)]
-        });
-        let [gruen_eval_rw_0] = self.eq_cycle_rw.par_fold_out_in_unreduced::<9, 1>(&|g| {
-            [self.H_combined.get_bound_coeff(2 * g)]
-        });
-        let [gruen_eval_val_0] = self.eq_cycle_val.par_fold_out_in_unreduced::<9, 1>(&|g| {
-            [self.H_combined.get_bound_coeff(2 * g)]
-        });
-
-        // Get individual round polynomials
-        let poly_raf = self.eq_cycle_raf.gruen_poly_deg_2(
-            gruen_eval_raf_0,
-            previous_claim / eq_address_claim,
+        // Lockstep invariant for split-eq structures
+        debug_assert_eq!(
+            self.eq_cycle_raf.E_out_current_len(),
+            self.eq_cycle_rw.E_out_current_len()
         );
-        let poly_rw = self.eq_cycle_rw.gruen_poly_deg_2(
-            gruen_eval_rw_0,
-            previous_claim / eq_address_claim,
+        debug_assert_eq!(
+            self.eq_cycle_raf.E_out_current_len(),
+            self.eq_cycle_val.E_out_current_len()
         );
-        let poly_val = self.eq_cycle_val.gruen_poly_deg_2(
-            gruen_eval_val_0,
-            previous_claim / eq_address_claim,
+        debug_assert_eq!(
+            self.eq_cycle_raf.E_in_current_len(),
+            self.eq_cycle_rw.E_in_current_len()
+        );
+        debug_assert_eq!(
+            self.eq_cycle_raf.E_in_current_len(),
+            self.eq_cycle_val.E_in_current_len()
         );
 
-        // Combine: poly_raf + γ²·poly_rw + (γ + γ³)·poly_val
-        // Use references for addition since Add is implemented for &UniPoly
-        let mut combined = poly_raf;
-        combined += &(poly_rw * self.params.gamma_squared);
-        combined += &(poly_val * gamma_coeff_val);
+        let H = self
+            .H
+            .as_ref()
+            .expect("H must be initialized before cycle rounds");
 
-        combined * eq_address_claim
+        // Compute eval_at_0 for each eq polynomial using Gruen folds
+        // gruen_poly_deg_2 only needs q_0 (eval at X=0), not eval at infinity
+        let [eval_at_0_raf] = self
+            .eq_cycle_raf
+            .par_fold_out_in_unreduced::<9, 1>(&|g| [H.get_bound_coeff(2 * g)]);
+        let [eval_at_0_rw] = self
+            .eq_cycle_rw
+            .par_fold_out_in_unreduced::<9, 1>(&|g| [H.get_bound_coeff(2 * g)]);
+        let [eval_at_0_val] = self
+            .eq_cycle_val
+            .par_fold_out_in_unreduced::<9, 1>(&|g| [H.get_bound_coeff(2 * g)]);
+
+        // Compute individual Gruen round polynomials using the tracked prev_claims
+        let round_poly_raf = self.eq_cycle_raf.gruen_poly_deg_2(
+            eval_at_0_raf,
+            self.prev_claim_raf.expect("prev_claim_raf must be set"),
+        );
+        let round_poly_rw = self.eq_cycle_rw.gruen_poly_deg_2(
+            eval_at_0_rw,
+            self.prev_claim_rw.expect("prev_claim_rw must be set"),
+        );
+        let round_poly_val = self.eq_cycle_val.gruen_poly_deg_2(
+            eval_at_0_val,
+            self.prev_claim_val.expect("prev_claim_val must be set"),
+        );
+
+        // Store for use in ingest_challenge
+        self.prev_round_poly_raf = Some(round_poly_raf.clone());
+        self.prev_round_poly_rw = Some(round_poly_rw.clone());
+        self.prev_round_poly_val = Some(round_poly_val.clone());
+
+        // Combine: coeff_raf * poly_raf + coeff_rw * poly_rw + coeff_val * poly_val
+        let mut combined = round_poly_raf * coeff_raf;
+        combined += &(round_poly_rw * coeff_rw);
+        combined += &(round_poly_val * coeff_val);
+
+        combined
     }
 
-    /// Initialize H_combined after address rounds complete.
-    /// H_combined[c] = F_1[address[c]] + γ² · F_2[address[c]]
-    fn initialize_H_combined(&mut self) {
-        let F_1_values = self.F_1.clone_values();
-        let F_2_values = self.F_2.clone_values();
-        let gamma_squared = self.params.gamma_squared;
+    /// Initialize H and compute initial prev_claims after address rounds complete.
+    /// H[c] = F[address[c]] = eq(r_addr_reduced, address[c]) = ra(r_addr_reduced, c)
+    ///
+    /// Also computes initial claims for each eq polynomial:
+    /// - prev_claim_raf = Σ_c H[c] * eq_raf(c)
+    /// - prev_claim_rw = Σ_c H[c] * eq_rw(c)
+    /// - prev_claim_val = Σ_c H[c] * eq_val(c)
+    #[tracing::instrument(skip_all, name = "RamRaReductionSumcheckProver::initialize_H")]
+    fn initialize_H(&mut self) {
+        let F_values = self.F.clone_values();
         let addresses = &self.addresses;
 
-        let H: Vec<F> = addresses
+        let H_vec: Vec<F> = addresses
             .par_iter()
-            .map(|addr| {
-                addr.map_or(F::zero(), |k| {
-                    F_1_values[k] + gamma_squared * F_2_values[k]
-                })
-            })
+            .map(|addr| addr.map_or(F::zero(), |k| F_values[k]))
             .collect();
 
-        self.H_combined = MultilinearPolynomial::from(H);
+        // Compute initial prev_claims using Gruen's E_out/E_in structure
+        // Similar pattern to read_raf_checking.rs init_log_t_rounds
+        let e_out_raf = self.eq_cycle_raf.E_out_current();
+        let e_out_rw = self.eq_cycle_rw.E_out_current();
+        let e_out_val = self.eq_cycle_val.E_out_current();
+        debug_assert_eq!(e_out_raf.len(), e_out_rw.len());
+        debug_assert_eq!(e_out_raf.len(), e_out_val.len());
+
+        let in_len = self.eq_cycle_raf.E_in_current_len();
+        debug_assert_eq!(in_len, self.eq_cycle_rw.E_in_current_len());
+        debug_assert_eq!(in_len, self.eq_cycle_val.E_in_current_len());
+        let x_in_bits = in_len.log_2();
+
+        // Precompute merged inner coeffs
+        let merged_raf = self.eq_cycle_raf.merged_in_with_current_w();
+        let merged_rw = self.eq_cycle_rw.merged_in_with_current_w();
+        let merged_val = self.eq_cycle_val.merged_in_with_current_w();
+
+        let (prev_claim_raf_unr, prev_claim_rw_unr, prev_claim_val_unr) = (0..e_out_raf.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let high_raf = e_out_raf[x_out];
+                let high_rw = e_out_rw[x_out];
+                let high_val = e_out_val[x_out];
+
+                let mut inner_raf = F::Unreduced::<9>::zero();
+                let mut inner_rw = F::Unreduced::<9>::zero();
+                let mut inner_val = F::Unreduced::<9>::zero();
+
+                for x_in in 0..in_len {
+                    let base_index = (x_out << (x_in_bits + 1)) + (x_in << 1);
+                    let off = 2 * x_in;
+
+                    // j = base_index (c_0 = 0)
+                    {
+                        let j0 = base_index;
+                        let h_j0 = H_vec[j0];
+                        inner_raf += merged_raf[off].mul_unreduced::<9>(h_j0);
+                        inner_rw += merged_rw[off].mul_unreduced::<9>(h_j0);
+                        inner_val += merged_val[off].mul_unreduced::<9>(h_j0);
+                    }
+                    // j = base_index + 1 (c_0 = 1)
+                    {
+                        let j1 = base_index + 1;
+                        let h_j1 = H_vec[j1];
+                        inner_raf += merged_raf[off + 1].mul_unreduced::<9>(h_j1);
+                        inner_rw += merged_rw[off + 1].mul_unreduced::<9>(h_j1);
+                        inner_val += merged_val[off + 1].mul_unreduced::<9>(h_j1);
+                    }
+                }
+
+                let scaled_raf =
+                    high_raf.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_raf));
+                let scaled_rw =
+                    high_rw.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_rw));
+                let scaled_val =
+                    high_val.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_val));
+                (scaled_raf, scaled_rw, scaled_val)
+            })
+            .reduce(
+                || {
+                    (
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
+                    )
+                },
+                |(r0, w0, v0), (r1, w1, v1)| (r0 + r1, w0 + w1, v0 + v1),
+            );
+
+        self.prev_claim_raf = Some(F::from_montgomery_reduce::<9>(prev_claim_raf_unr));
+        self.prev_claim_rw = Some(F::from_montgomery_reduce::<9>(prev_claim_rw_unr));
+        self.prev_claim_val = Some(F::from_montgomery_reduce::<9>(prev_claim_val_unr));
+
+        self.H = Some(MultilinearPolynomial::from(H_vec));
 
         // Clear G arrays as they're no longer needed
         self.G_A.clear();
@@ -590,12 +707,11 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
     fn address_round_bind(&mut self, r_j: F::Challenge, round: usize) {
         self.B_1.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.B_2.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.F_1.update(r_j);
-        self.F_2.update(r_j);
+        self.F.update(r_j);
 
-        // If this is the last address round, initialize H_combined
+        // If this is the last address round, initialize H
         if round == self.params.log_K - 1 {
-            self.initialize_H_combined();
+            self.initialize_H();
         }
     }
 
@@ -604,7 +720,30 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
         self.eq_cycle_raf.bind(r_j);
         self.eq_cycle_rw.bind(r_j);
         self.eq_cycle_val.bind(r_j);
-        self.H_combined.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.H
+            .as_mut()
+            .expect("H must be initialized before cycle rounds")
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
+
+        // Update prev_claims by evaluating round polynomials at the challenge
+        self.prev_claim_raf = Some(
+            self.prev_round_poly_raf
+                .take()
+                .expect("prev_round_poly_raf must be set")
+                .evaluate(&r_j),
+        );
+        self.prev_claim_rw = Some(
+            self.prev_round_poly_rw
+                .take()
+                .expect("prev_round_poly_rw must be set")
+                .evaluate(&r_j),
+        );
+        self.prev_claim_val = Some(
+            self.prev_round_poly_val
+                .take()
+                .expect("prev_round_poly_val must be set")
+                .evaluate(&r_j),
+        );
     }
 }
 
@@ -657,35 +796,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
             .concat(),
         );
 
-        // Compute the reduced RA claim.
-        // After sumcheck, we have: eq_combined(r_reduced) · ra(r_reduced) = final_claim
-        // So: ra_claim_reduced = final_claim / eq_combined(r_reduced)
-        //
-        // eq_combined(r_reduced) = eq_addr_1 · eq_cycle_A + γ² · eq_addr_2 · eq_cycle_B
-        // where eq_cycle_A = eq_raf + γ·eq_val and eq_cycle_B = eq_rw + γ·eq_val
-        let eq_addr_1 = self.B_1.final_sumcheck_claim();
-        let eq_addr_2 = self.B_2.final_sumcheck_claim();
-
-        // Get final eq_cycle values from Gruen polynomials
-        let eq_raf = self.eq_cycle_raf.current_scalar;
-        let eq_rw = self.eq_cycle_rw.current_scalar;
-        let eq_val = self.eq_cycle_val.current_scalar;
-
-        let eq_cycle_A = eq_raf + self.params.gamma * eq_val;
-        let eq_cycle_B = eq_rw + self.params.gamma * eq_val;
-
-        let eq_combined = eq_addr_1 * eq_cycle_A + self.params.gamma_squared * eq_addr_2 * eq_cycle_B;
-
-        // ra_claim_reduced = H_combined[final] / eq_addr_combined
-        // But actually we need to recover ra from the identity:
-        // H_combined[c] · (eq_cycle_A + γ²·eq_cycle_B) = eq_combined · ra(r_reduced)
-        // So ra_claim_reduced = H_combined.final_claim / eq_combined
-        let ra_claim_reduced = self.H_combined.final_sumcheck_claim() / eq_combined;
+        // The reduced RA claim is simply H.final_sumcheck_claim().
+        // H[c] = eq(r_addr_reduced, address[c]) = ra(r_addr_reduced, c)
+        // After binding all cycle variables, H.final_sumcheck_claim() = ra(r_addr_reduced, r_cycle_reduced)
+        let ra_claim_reduced = self
+            .H
+            .as_ref()
+            .expect("H must be initialized before cache_openings")
+            .final_sumcheck_claim();
 
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
-            SumcheckId::RamRaVirtualization, // The RA virtualization will use this
+            SumcheckId::RamRaReduction, // Output of RA reduction, consumed by RA virtualization
             opening_point,
             ra_claim_reduced,
         );
@@ -705,12 +828,8 @@ impl<F: JoltField> RamRaReductionSumcheckVerifier<F> {
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaReductionParams::new(
-            trace_len,
-            one_hot_params,
-            opening_accumulator,
-            transcript,
-        );
+        let params =
+            RaReductionParams::new(trace_len, one_hot_params, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -761,10 +880,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             eq_addr_1 * eq_cycle_A + self.params.gamma_squared * eq_addr_2 * eq_cycle_B;
 
         // Get the reduced ra claim that was cached by the prover
-        let (_, ra_claim_reduced) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamRaVirtualization,
-        );
+        let (_, ra_claim_reduced) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
 
         eq_combined * ra_claim_reduced
     }
@@ -790,9 +907,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
-            SumcheckId::RamRaVirtualization,
+            SumcheckId::RamRaReduction,
             opening_point,
         );
     }
 }
-
