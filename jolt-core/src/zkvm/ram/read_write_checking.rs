@@ -6,7 +6,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
-use crate::poly::read_write_matrix::{ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor};
+use crate::subprotocols::read_write_matrix::{ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
