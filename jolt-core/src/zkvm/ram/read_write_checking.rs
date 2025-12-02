@@ -11,7 +11,9 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::ram::sparse_matrix_poly::{SparseMatrixPolynomial, COL_MAJOR, ROW_MAJOR};
+use crate::zkvm::ram::sparse_matrix_poly::{
+    ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -85,8 +87,8 @@ pub struct ReadWriteSumcheckClaims<F: JoltField> {
 #[derive(Allocative)]
 pub struct RamReadWriteCheckingProver<F: JoltField> {
     val_init: Vec<F>,
-    sparse_matrix_phase1: SparseMatrixPolynomial<ROW_MAJOR, F>,
-    sparse_matrix_phase2: SparseMatrixPolynomial<COL_MAJOR, F>,
+    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F>,
+    sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
     // The following polynomials are instantiated after
@@ -155,7 +157,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             .par_iter()
             .map(|x| F::from_u64(*x))
             .collect();
-        let sparse_matrix = SparseMatrixPolynomial::new(trace, val_init.clone(), memory_layout);
+        let sparse_matrix = ReadWriteMatrixCycleMajor::new(trace, val_init.clone(), memory_layout);
         let (sparse_matrix_phase1, sparse_matrix_phase2) =
             if phase1_num_rounds(params.K, params.T) > 0 {
                 (sparse_matrix, Default::default())
@@ -205,7 +207,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     };
 
                     let inner_sum_evals =
-                        SparseMatrixPolynomial::<ROW_MAJOR, _>::prover_message_contribution(
+                        ReadWriteMatrixCycleMajor::prover_message_contribution(
                             even_row,
                             odd_row,
                             inc_evals,
@@ -249,7 +251,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             [inc_0, inc_infty]
                         };
 
-                        let inner_sum_evals = SparseMatrixPolynomial::<ROW_MAJOR, _>::prover_message_contribution(
+                        let inner_sum_evals = ReadWriteMatrixCycleMajor::prover_message_contribution(
                             even_row,
                             odd_row,
                             inc_evals,
