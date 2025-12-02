@@ -339,7 +339,12 @@ impl CanonicalSerialize for CommittedPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.to_index() as u16).serialize_with_mode(&mut writer, compress)
+        let index = self.to_index();
+        debug_assert!(
+            index <= u16::MAX as usize,
+            "CommittedPolynomial index {index} exceeds u16::MAX"
+        );
+        (index as u16).serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -370,7 +375,12 @@ impl CanonicalSerialize for VirtualPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.to_index() as u16).serialize_with_mode(&mut writer, compress)
+        let index = self.to_index();
+        debug_assert!(
+            index <= u16::MAX as usize,
+            "VirtualPolynomial index {index} exceeds u16::MAX"
+        );
+        (index as u16).serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
