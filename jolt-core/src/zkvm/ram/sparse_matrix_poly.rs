@@ -15,16 +15,29 @@ use ark_std::Zero;
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, RAMAccess};
 
-/// Represents a non-zero coefficient of the ra(k, j) polynomial and the
-/// corresponding coefficient of the Val(k, j) polynomial. Conceptually,
-/// both ra and Val can be seen as K x T matrices, hence `MatrixEntry`.
+/// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
+/// Conceptually, both ra and Val can be seen as K x T matrices.
+///
+/// # Usage
+///
+/// This struct is used **only** by [`ReadWriteMatrixCycleMajor`] (Array-of-Structs layout).
+/// The address-major representation ([`ReadWriteMatrixAddressMajor`]) uses a different
+/// Struct-of-Arrays layout with separate vectors for each field, plus dense `val_init`
+/// and `val_final` arrays to derive `next_val` on-the-fly.
+///
+/// # Why AoS for Cycle-Major?
+///
+/// Cycle-major operations (binding, prover message) access multiple fields per entry
+/// (`ra_coeff`, `val_coeff`, `prev_val`, `next_val`), making AoS cache-friendly.
+/// Additionally, `prev_val` and `next_val` must be stored explicitly because entries
+/// are sorted by row (cycle), so the next entry in the same *column* could be anywhere.
 #[derive(Allocative, Debug, PartialEq, Clone, Copy)]
-pub struct MatrixEntry<F: JoltField> {
+pub struct ReadWriteEntry<F: JoltField> {
     /// The row index. Before binding, row \in [0, T)
     pub row: usize,
     /// The column index. Before binding, col \in [0, K)
     pub col: usize,
-    /// In round i, each MatrixEntry represents a coefficient
+    /// In round i, each ReadWriteEntry represents a coefficient
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
     /// Val(k, j', 11...1).
@@ -32,7 +45,7 @@ pub struct MatrixEntry<F: JoltField> {
     /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
     /// Val(k, j'-1, 11...1)
     prev_val: F,
-    /// In round i, each MatrixEntry represents a coefficient
+    /// In round i, each ReadWriteEntry represents a coefficient
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
     /// Val(k, j', 11...1).
@@ -58,7 +71,7 @@ pub struct MatrixEntry<F: JoltField> {
 /// This view is used for binding *cycle variables* first.
 #[derive(Allocative, Debug, Default, Clone)]
 pub struct ReadWriteMatrixCycleMajor<F: JoltField> {
-    pub entries: Vec<MatrixEntry<F>>,
+    pub entries: Vec<ReadWriteEntry<F>>,
     val_init: MultilinearPolynomial<F>,
 }
 
@@ -67,7 +80,7 @@ pub struct ReadWriteMatrixCycleMajor<F: JoltField> {
 ///
 /// # Memory Layout: Struct-of-Arrays (SoA)
 ///
-/// Unlike `ReadWriteMatrixCycleMajor` which uses Array-of-Structs (`Vec<MatrixEntry>`),
+/// Unlike `ReadWriteMatrixCycleMajor` which uses Array-of-Structs (`Vec<ReadWriteEntry>`),
 /// this uses SoA for better cache performance during address binding:
 ///
 /// ```text
@@ -157,7 +170,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
                     RAMAccess::Write(write) => {
                         let pre_value = F::from_u64(write.pre_value);
                         let post_value = F::from_u64(write.post_value);
-                        Some(MatrixEntry {
+                        Some(ReadWriteEntry {
                             row: j,
                             col: remap_address(write.address, memory_layout).unwrap() as usize,
                             ra_coeff: F::one(),
@@ -168,7 +181,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
                     }
                     RAMAccess::Read(read) => {
                         let read_value = F::from_u64(read.value);
-                        Some(MatrixEntry {
+                        Some(ReadWriteEntry {
                             row: j,
                             col: remap_address(read.address, memory_layout).unwrap() as usize,
                             ra_coeff: F::one(),
@@ -199,10 +212,10 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// the number of entries that would be in the bound row, which can be used to
     /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn bind_rows(
-        even_row: &[MatrixEntry<F>],
-        odd_row: &[MatrixEntry<F>],
+        even_row: &[ReadWriteEntry<F>],
+        odd_row: &[ReadWriteEntry<F>],
         r: F::Challenge,
-        out: &mut [MaybeUninit<MatrixEntry<F>>],
+        out: &mut [MaybeUninit<ReadWriteEntry<F>>],
         dry_run: bool,
     ) -> usize {
         /// Threshold where we stop parallelizing and do a plain linear merge.
@@ -297,10 +310,10 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// the number of entries that would be in the bound row, which can be used to
     /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn seq_bind_rows(
-        even: &[MatrixEntry<F>],
-        odd: &[MatrixEntry<F>],
+        even: &[ReadWriteEntry<F>],
+        odd: &[ReadWriteEntry<F>],
         r: F::Challenge,
-        out: &mut [MaybeUninit<MatrixEntry<F>>],
+        out: &mut [MaybeUninit<ReadWriteEntry<F>>],
         dry_run: bool,
     ) -> usize {
         // Even index
@@ -362,16 +375,16 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
     /// Instead, we can infer its values from the matrix entry that is `Some`.
     fn bind_entries(
-        even: Option<&MatrixEntry<F>>,
-        odd: Option<&MatrixEntry<F>>,
+        even: Option<&ReadWriteEntry<F>>,
+        odd: Option<&ReadWriteEntry<F>>,
         r: F::Challenge,
-    ) -> MatrixEntry<F> {
+    ) -> ReadWriteEntry<F> {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row.is_even());
                 debug_assert!(odd.row.is_odd());
                 debug_assert_eq!(even.col, odd.col);
-                MatrixEntry {
+                ReadWriteEntry {
                     row: even.row / 2,
                     col: even.col,
                     ra_coeff: even.ra_coeff + r.mul_0_optimized(odd.ra_coeff - even.ra_coeff),
@@ -387,7 +400,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
                 // means that its implicit Val coeff is even.next, and its implicit
                 // ra coeff is 0.
                 let odd_val_coeff = even.next_val;
-                MatrixEntry {
+                ReadWriteEntry {
                     row: even.row / 2,
                     col: even.col,
                     ra_coeff: (F::one() - r).mul_1_optimized(even.ra_coeff),
@@ -403,7 +416,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
                 // means that its implicit Val coeff is odd.prev, and its implicit
                 // ra coeff is 0.
                 let even_val_coeff = odd.prev_val;
-                MatrixEntry {
+                ReadWriteEntry {
                     row: odd.row / 2,
                     col: odd.col,
                     ra_coeff: r.mul_1_optimized(odd.ra_coeff),
@@ -433,7 +446,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
             .collect();
 
         let bound_length = row_lengths.iter().map(|(_, bound_len)| bound_len).sum();
-        let mut bound_entries: Vec<MatrixEntry<F>> = Vec::with_capacity(bound_length);
+        let mut bound_entries: Vec<ReadWriteEntry<F>> = Vec::with_capacity(bound_length);
         let mut bound_entries_slice = bound_entries.spare_capacity_mut();
         let mut unbound_entries_slice = self.entries.as_slice();
 
@@ -469,8 +482,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
     /// sumcheck message. This is a recursive, parallel algorithm.
     pub fn prover_message_contribution(
-        even_row: &[MatrixEntry<F>],
-        odd_row: &[MatrixEntry<F>],
+        even_row: &[ReadWriteEntry<F>],
+        odd_row: &[ReadWriteEntry<F>],
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F; 2] {
@@ -530,8 +543,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// Each `compute_evals_unreduced` returns `Unreduced<8>` (no reduction on the final multiply),
     /// and we accumulate into `Unreduced<9>` for headroom. Only one Montgomery reduction at the end.
     fn seq_prover_message_contribution(
-        even: &[MatrixEntry<F>],
-        odd: &[MatrixEntry<F>],
+        even: &[ReadWriteEntry<F>],
+        odd: &[ReadWriteEntry<F>],
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F; 2] {
@@ -592,8 +605,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// This is used in `seq_prover_message_contribution` for better performance when
     /// accumulating many entries.
     fn compute_evals_unreduced(
-        even: Option<&MatrixEntry<F>>,
-        odd: Option<&MatrixEntry<F>>,
+        even: Option<&ReadWriteEntry<F>>,
+        odd: Option<&ReadWriteEntry<F>>,
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F::Unreduced<8>; 2] {
@@ -1398,6 +1411,10 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
     }
 
     /// Sequential prover message contribution - the base case for `prover_message_contribution`.
+    ///
+    /// Uses `Unreduced<9>` accumulator to delay modular reductions for better performance.
+    /// Each `compute_evals_*_unreduced` returns `Unreduced<8>` (no reduction on the final multiply),
+    /// and we accumulate into `Unreduced<9>` for headroom. Only one Montgomery reduction at the end.
     #[allow(clippy::too_many_arguments)]
     fn seq_prover_message_contribution(
         &self,
@@ -1413,14 +1430,14 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
     ) -> [F; 2] {
         let mut i = e0;
         let mut j = o0;
-        let mut evals_accumulator = [F::zero(); 2];
+        let mut evals_accumulator = [F::Unreduced::<9>::zero(); 2];
 
         while i < e1 && j < o1 {
             let row_e = self.rows[i];
             let row_o = self.rows[j];
 
             if row_e == row_o {
-                let evals = self.compute_evals_both(
+                let evals = self.compute_evals_both_unreduced(
                     i,
                     j,
                     inc.get_bound_coeff(row_e),
@@ -1434,7 +1451,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
                 i += 1;
                 j += 1;
             } else if row_e < row_o {
-                let evals = self.compute_evals_even_only(
+                let evals = self.compute_evals_even_only_unreduced(
                     i,
                     odd_checkpoint,
                     inc.get_bound_coeff(row_e),
@@ -1446,7 +1463,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
                 evals_accumulator[1] += evals[1];
                 i += 1;
             } else {
-                let evals = self.compute_evals_odd_only(
+                let evals = self.compute_evals_odd_only_unreduced(
                     j,
                     even_checkpoint,
                     inc.get_bound_coeff(row_o),
@@ -1462,7 +1479,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
 
         while i < e1 {
             let row_e = self.rows[i];
-            let evals = self.compute_evals_even_only(
+            let evals = self.compute_evals_even_only_unreduced(
                 i,
                 odd_checkpoint,
                 inc.get_bound_coeff(row_e),
@@ -1476,7 +1493,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
 
         while j < o1 {
             let row_o = self.rows[j];
-            let evals = self.compute_evals_odd_only(
+            let evals = self.compute_evals_odd_only_unreduced(
                 j,
                 even_checkpoint,
                 inc.get_bound_coeff(row_o),
@@ -1488,18 +1505,22 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
             j += 1;
         }
 
-        evals_accumulator
+        [
+            F::from_montgomery_reduce(evals_accumulator[0]),
+            F::from_montgomery_reduce(evals_accumulator[1]),
+        ]
     }
 
     /// Compute evals when both even and odd entries are present.
-    fn compute_evals_both(
+    /// Returns `Unreduced<8>` to avoid the final Montgomery reduction.
+    fn compute_evals_both_unreduced(
         &self,
         even_idx: usize,
         odd_idx: usize,
         inc_eval: F,
         eq_eval: F,
         gamma: F,
-    ) -> [F; 2] {
+    ) -> [F::Unreduced<8>; 2] {
         debug_assert!(self.cols[even_idx].is_even());
         debug_assert!(self.cols[odd_idx].is_odd());
         debug_assert_eq!(self.rows[even_idx], self.rows[odd_idx]);
@@ -1513,20 +1534,21 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         let val_evals = [val_even, val_odd + val_odd - val_even];
 
         [
-            eq_eval * ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
-            eq_eval * ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
+            eq_eval.mul_unreduced(ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0]))),
+            eq_eval.mul_unreduced(ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1]))),
         ]
     }
 
     /// Compute evals when only even entry is present (odd is implicit).
-    fn compute_evals_even_only(
+    /// Returns `Unreduced<8>` to avoid the final Montgomery reduction.
+    fn compute_evals_even_only_unreduced(
         &self,
         even_idx: usize,
         odd_checkpoint: F,
         inc_eval: F,
         eq_eval: F,
         gamma: F,
-    ) -> [F; 2] {
+    ) -> [F::Unreduced<8>; 2] {
         let ra_even = self.ras[even_idx];
         let val_even = self.vals[even_idx];
 
@@ -1534,20 +1556,21 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         let val_evals = [val_even, odd_checkpoint + odd_checkpoint - val_even];
 
         [
-            eq_eval * ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
-            eq_eval * ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
+            eq_eval.mul_unreduced(ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0]))),
+            eq_eval.mul_unreduced(ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1]))),
         ]
     }
 
     /// Compute evals when only odd entry is present (even is implicit).
-    fn compute_evals_odd_only(
+    /// Returns `Unreduced<8>` to avoid the final Montgomery reduction.
+    fn compute_evals_odd_only_unreduced(
         &self,
         odd_idx: usize,
         even_checkpoint: F,
         inc_eval: F,
         eq_eval: F,
         gamma: F,
-    ) -> [F; 2] {
+    ) -> [F::Unreduced<8>; 2] {
         let ra_odd = self.ras[odd_idx];
         let val_odd = self.vals[odd_idx];
 
@@ -1555,8 +1578,8 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         let val_evals = [even_checkpoint, val_odd + val_odd - even_checkpoint];
 
         [
-            F::zero(), // ra_evals[0] is zero
-            eq_eval * ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
+            F::Unreduced::<8>::zero(), // ra_evals[0] is zero
+            eq_eval.mul_unreduced(ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1]))),
         ]
     }
 
