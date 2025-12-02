@@ -7,6 +7,7 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use num::FromPrimitive;
+use strum::EnumCount;
 
 use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
@@ -257,6 +258,16 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
     }
 }
 
+// Compact encoding for OpeningId:
+// - 0 = UntrustedAdvice (1 byte total)
+// - 1 = TrustedAdvice (1 byte total)
+// - 2 + sumcheck_id = Committed (2 bytes: fused byte + poly index)
+// - (2 + NUM_SUMCHECKS) + sumcheck_id = Virtual (2 bytes: fused byte + poly index)
+const OPENING_ID_UNTRUSTED_ADVICE: u8 = 0;
+const OPENING_ID_TRUSTED_ADVICE: u8 = 1;
+const OPENING_ID_COMMITTED_BASE: u8 = 2;
+const OPENING_ID_VIRTUAL_BASE: u8 = OPENING_ID_COMMITTED_BASE + SumcheckId::COUNT as u8;
+
 impl CanonicalSerialize for OpeningId {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -265,29 +276,33 @@ impl CanonicalSerialize for OpeningId {
     ) -> Result<(), SerializationError> {
         match self {
             OpeningId::Committed(committed_polynomial, sumcheck_id) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                (*sumcheck_id as u8).serialize_with_mode(&mut writer, compress)?;
+                let fused = OPENING_ID_COMMITTED_BASE + (*sumcheck_id as u8);
+                fused.serialize_with_mode(&mut writer, compress)?;
                 committed_polynomial.serialize_with_mode(&mut writer, compress)
             }
             OpeningId::Virtual(virtual_polynomial, sumcheck_id) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                (*sumcheck_id as u8).serialize_with_mode(&mut writer, compress)?;
+                let fused = OPENING_ID_VIRTUAL_BASE + (*sumcheck_id as u8);
+                fused.serialize_with_mode(&mut writer, compress)?;
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
             }
-            OpeningId::UntrustedAdvice => 2u8.serialize_with_mode(&mut writer, compress),
-            OpeningId::TrustedAdvice => 3u8.serialize_with_mode(&mut writer, compress),
+            OpeningId::UntrustedAdvice => {
+                OPENING_ID_UNTRUSTED_ADVICE.serialize_with_mode(&mut writer, compress)
+            }
+            OpeningId::TrustedAdvice => {
+                OPENING_ID_TRUSTED_ADVICE.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
             OpeningId::Committed(committed_polynomial, _) => {
-                // +1 for OpeningIdVariant, +1 for sumcheck_id (which is a u8)
-                committed_polynomial.serialized_size(compress) + 2
+                // 1 byte fused (variant + sumcheck_id) + poly index
+                1 + committed_polynomial.serialized_size(compress)
             }
             OpeningId::Virtual(virtual_polynomial, _) => {
-                // +1 for OpeningIdVariant, +1 for sumcheck_id (which is a u8)
-                virtual_polynomial.serialized_size(compress) + 2
+                // 1 byte fused (variant + sumcheck_id) + poly index
+                1 + virtual_polynomial.serialized_size(compress)
             }
             OpeningId::UntrustedAdvice => 1,
             OpeningId::TrustedAdvice => 1,
@@ -307,10 +322,12 @@ impl CanonicalDeserialize for OpeningId {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let opening_type = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        let sumcheck_id = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        match opening_type {
-            0 => {
+        let fused = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        match fused {
+            OPENING_ID_UNTRUSTED_ADVICE => Ok(OpeningId::UntrustedAdvice),
+            OPENING_ID_TRUSTED_ADVICE => Ok(OpeningId::TrustedAdvice),
+            _ if (OPENING_ID_COMMITTED_BASE..OPENING_ID_VIRTUAL_BASE).contains(&fused) => {
+                let sumcheck_id = fused - OPENING_ID_COMMITTED_BASE;
                 let polynomial =
                     CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(OpeningId::Committed(
@@ -318,7 +335,8 @@ impl CanonicalDeserialize for OpeningId {
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
-            1 => {
+            _ if fused >= OPENING_ID_VIRTUAL_BASE => {
+                let sumcheck_id = fused - OPENING_ID_VIRTUAL_BASE;
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(OpeningId::Virtual(
@@ -326,8 +344,6 @@ impl CanonicalDeserialize for OpeningId {
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
-            2 => Ok(OpeningId::UntrustedAdvice),
-            3 => Ok(OpeningId::TrustedAdvice),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -339,11 +355,16 @@ impl CanonicalSerialize for CommittedPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.to_index().serialize_with_mode(&mut writer, compress)
+        let index = self.to_index();
+        debug_assert!(
+            index <= u8::MAX as usize,
+            "CommittedPolynomial index {index} exceeds u8::MAX"
+        );
+        (index as u8).serialize_with_mode(&mut writer, compress)
     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.to_index().serialized_size(compress)
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        1 // u8
     }
 }
 
@@ -359,7 +380,7 @@ impl CanonicalDeserialize for CommittedPolynomial {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let index = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let index = u8::deserialize_with_mode(&mut reader, compress, validate)? as usize;
         Ok(CommittedPolynomial::from_index(index))
     }
 }
@@ -370,11 +391,16 @@ impl CanonicalSerialize for VirtualPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.to_index().serialize_with_mode(&mut writer, compress)
+        let index = self.to_index();
+        debug_assert!(
+            index <= u8::MAX as usize,
+            "VirtualPolynomial index {index} exceeds u8::MAX"
+        );
+        (index as u8).serialize_with_mode(&mut writer, compress)
     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.to_index().serialized_size(compress)
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        1 // u8
     }
 }
 
@@ -390,7 +416,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let index = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let index = u8::deserialize_with_mode(&mut reader, compress, validate)? as usize;
         Ok(VirtualPolynomial::from_index(index))
     }
 }
