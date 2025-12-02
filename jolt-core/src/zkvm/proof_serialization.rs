@@ -339,11 +339,11 @@ impl CanonicalSerialize for CommittedPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.to_index().serialize_with_mode(&mut writer, compress)
+        (self.to_index() as u16).serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.to_index().serialized_size(compress)
+        0u16.serialized_size(compress)
     }
 }
 
@@ -359,7 +359,7 @@ impl CanonicalDeserialize for CommittedPolynomial {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let index = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let index = u16::deserialize_with_mode(&mut reader, compress, validate)? as usize;
         Ok(CommittedPolynomial::from_index(index))
     }
 }
@@ -370,11 +370,11 @@ impl CanonicalSerialize for VirtualPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.to_index().serialize_with_mode(&mut writer, compress)
+        (self.to_index() as u16).serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.to_index().serialized_size(compress)
+        0u16.serialized_size(compress)
     }
 }
 
@@ -390,7 +390,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let index = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let index = u16::deserialize_with_mode(&mut reader, compress, validate)? as usize;
         Ok(VirtualPolynomial::from_index(index))
     }
 }
