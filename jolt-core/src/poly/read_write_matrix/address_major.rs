@@ -7,14 +7,17 @@ use std::mem::MaybeUninit;
 
 use allocative::Allocative;
 use ark_std::Zero;
+use common::jolt_device::MemoryLayout;
 use num::Integer;
 use rayon::prelude::*;
+use tracer::instruction::{Cycle, RAMAccess};
 
 use crate::field::JoltField;
 use crate::field::OptimizedMul;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::unipoly::UniPoly;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::ram::remap_address;
 
 use super::cycle_major::ReadWriteMatrixCycleMajor;
 
@@ -95,6 +98,94 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
             self.vals[i + 1]
         } else {
             self.val_final.get_bound_coeff(self.cols[i])
+        }
+    }
+
+    /// Creates a new `ReadWriteMatrixAddressMajor` directly from the execution trace.
+    ///
+    /// This is the primary constructor for **address-first sumcheck** where we bind
+    /// address variables before cycle variables.
+    ///
+    /// # Arguments
+    ///
+    /// * `trace` - The execution trace containing RAM accesses
+    /// * `val_init` - Initial memory state (value at each address before execution)
+    /// * `memory_layout` - Memory layout for address remapping
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Extract (row=cycle, col=address, val, ra) from each RAM access in trace
+    /// 2. Sort entries by (col, row) for address-major order
+    /// 3. Compute `val_final[k]` = value at address k after the last access to it
+    #[tracing::instrument(skip_all, name = "ReadWriteMatrixAddressMajor::from_trace")]
+    pub fn from_trace(trace: &[Cycle], val_init: Vec<F>, memory_layout: &MemoryLayout) -> Self {
+        // Step 1: Extract entries from trace in parallel
+        // Each entry is (row=cycle_idx, col=address, val_coeff, next_val)
+        let mut entries: Vec<(usize, usize, F, F)> = trace
+            .par_iter()
+            .enumerate()
+            .filter_map(|(j, cycle)| {
+                let ram_op = cycle.ram_access();
+                match ram_op {
+                    RAMAccess::Write(write) => {
+                        let pre_value = F::from_u64(write.pre_value);
+                        let post_value = F::from_u64(write.post_value);
+                        let col = remap_address(write.address, memory_layout)? as usize;
+                        Some((j, col, pre_value, post_value))
+                    }
+                    RAMAccess::Read(read) => {
+                        let read_value = F::from_u64(read.value);
+                        let col = remap_address(read.address, memory_layout)? as usize;
+                        Some((j, col, read_value, read_value))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+
+        // Step 2: Sort by (col, row) - address-major order
+        entries.par_sort_by(|a, b| match a.1.cmp(&b.1) {
+            Ordering::Equal => a.0.cmp(&b.0),
+            other => other,
+        });
+
+        let n = entries.len();
+        let k_size = val_init.len();
+
+        // Step 3: Build SoA arrays
+        let rows: Vec<usize> = entries.par_iter().map(|(row, _, _, _)| *row).collect();
+        let cols: Vec<usize> = entries.par_iter().map(|(_, col, _, _)| *col).collect();
+        let ras: Vec<F> = vec![F::one(); n]; // ra = 1 for all explicit accesses
+
+        // For vals, we need the val_coeff (pre_value for writes, read_value for reads)
+        let vals: Vec<F> = entries.par_iter().map(|(_, _, val, _)| *val).collect();
+
+        // Step 4: Compute val_final
+        // Initialize from val_init, then update with last entry's next_val per column
+        let mut val_final_vec: Vec<F> = (0..k_size).into_par_iter().map(|k| val_init[k]).collect();
+
+        // Update val_final for columns that have entries
+        // entries is sorted by (col, row), so consecutive entries with same col form groups
+        let val_final_ptr = val_final_vec.as_mut_ptr() as usize;
+        entries
+            .par_chunk_by(|a, b| a.1 == b.1) // chunk by col
+            .for_each(|column_entries| {
+                let col = column_entries[0].1;
+                let last_next_val = column_entries.last().unwrap().3; // next_val of last entry
+                // SAFETY: Each column appears in exactly one chunk, so writes are disjoint
+                unsafe {
+                    let ptr = val_final_ptr as *mut F;
+                    *ptr.add(col) = last_next_val;
+                }
+            });
+
+        ReadWriteMatrixAddressMajor {
+            rows,
+            cols,
+            vals,
+            ras,
+            val_init: val_init.into(),
+            val_final: val_final_vec.into(),
         }
     }
 }

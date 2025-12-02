@@ -1587,6 +1587,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         claim_stage_1 + self.gamma_cub * claim_stage_3
     }
 
+    // Invariant: we want big-endian, with address variables being "higher" than cycle variables
     fn get_opening_point(
         &self,
         sumcheck_challenges: &[F::Challenge],
@@ -1597,7 +1598,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         let mut r_cycle = sumcheck_challenges[sumcheck_switch_index..n_cycle_vars].to_vec();
         // First sumcheck_switch_index rounds bind cycle variables from low to high
         r_cycle.extend(sumcheck_challenges[..sumcheck_switch_index].iter().rev());
-        // Address variables are bound high-to-low
+        // Address variables are bound low to high in phase 3
         let r_address = sumcheck_challenges[n_cycle_vars..]
             .iter()
             .rev()
