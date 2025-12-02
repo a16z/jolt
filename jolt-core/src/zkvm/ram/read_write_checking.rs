@@ -206,13 +206,12 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                         [inc_0, inc_infty]
                     };
 
-                    let inner_sum_evals =
-                        ReadWriteMatrixCycleMajor::prover_message_contribution(
-                            even_row,
-                            odd_row,
-                            inc_evals,
-                            params.gamma,
-                        );
+                    let inner_sum_evals = ReadWriteMatrixCycleMajor::prover_message_contribution(
+                        even_row,
+                        odd_row,
+                        inc_evals,
+                        params.gamma,
+                    );
 
                     [
                         eq_eval.mul_unreduced::<9>(inner_sum_evals[0]),

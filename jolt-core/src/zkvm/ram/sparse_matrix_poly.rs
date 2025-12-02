@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 use std::mem::MaybeUninit;
-use std::sync::{Arc, Mutex};
 
 use allocative::Allocative;
 use num::Integer;
@@ -9,6 +8,7 @@ use rayon::prelude::*;
 use crate::field::OptimizedMul;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::poly::unipoly::UniPoly;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::ram::remap_address;
 use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use ark_std::Zero;
@@ -525,6 +525,10 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
 
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
     /// sumcheck message. This is the sequential counterpart of `prover_message_contribution`.
+    ///
+    /// Uses `Unreduced<9>` accumulator to delay modular reductions for better performance.
+    /// Each `compute_evals_unreduced` returns `Unreduced<8>` (no reduction on the final multiply),
+    /// and we accumulate into `Unreduced<9>` for headroom. Only one Montgomery reduction at the end.
     fn seq_prover_message_contribution(
         even: &[MatrixEntry<F>],
         odd: &[MatrixEntry<F>],
@@ -533,53 +537,66 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     ) -> [F; 2] {
         let mut i = 0;
         let mut j = 0;
-        let mut evals_accumulator = [F::zero(); 2];
+        let mut evals_accumulator = [F::Unreduced::<9>::zero(); 2];
 
         while i < even.len() && j < odd.len() {
             if even[i].col == odd[j].col {
-                let evals = Self::compute_evals(Some(&even[i]), Some(&odd[j]), inc_evals, gamma);
+                let evals =
+                    Self::compute_evals_unreduced(Some(&even[i]), Some(&odd[j]), inc_evals, gamma);
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 i += 1;
                 j += 1;
             } else if even[i].col < odd[j].col {
-                let evals = Self::compute_evals(Some(&even[i]), None, inc_evals, gamma);
+                let evals = Self::compute_evals_unreduced(Some(&even[i]), None, inc_evals, gamma);
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 i += 1;
             } else {
-                let evals = Self::compute_evals(None, Some(&odd[j]), inc_evals, gamma);
+                let evals = Self::compute_evals_unreduced(None, Some(&odd[j]), inc_evals, gamma);
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 j += 1;
             }
         }
         for remaining_even_entry in even[i..].iter() {
-            let evals = Self::compute_evals(Some(remaining_even_entry), None, inc_evals, gamma);
+            let evals =
+                Self::compute_evals_unreduced(Some(remaining_even_entry), None, inc_evals, gamma);
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }
         for remaining_odd_entry in odd[j..].iter() {
-            let evals = Self::compute_evals(None, Some(remaining_odd_entry), inc_evals, gamma);
+            let evals =
+                Self::compute_evals_unreduced(None, Some(remaining_odd_entry), inc_evals, gamma);
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }
 
-        evals_accumulator
+        [
+            F::from_montgomery_reduce(evals_accumulator[0]),
+            F::from_montgomery_reduce(evals_accumulator[1]),
+        ]
     }
 
     /// For the given pair of adjacent entries, computes the pair's contribution to the prover's
-    /// sumcheck message. By "adjacent", here we mean entries that are in the same column and
+    /// sumcheck message, returning `Unreduced<8>` to avoid Montgomery reduction.
+    ///
+    /// By "adjacent", here we mean entries that are in the same column and
     /// adjacent rows (rows 2j and 2j+1).
     /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
     /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
     /// Instead, we can infer its values from the matrix entry that is `Some`.
-    fn compute_evals(
+    ///
+    /// The final `ra * (...)` uses `mul_unreduced` instead of regular multiplication.
+    /// The final `ra * (...)` uses `mul_unreduced` instead of regular multiplication.
+    /// This is used in `seq_prover_message_contribution` for better performance when
+    /// accumulating many entries.
+    fn compute_evals_unreduced(
         even: Option<&MatrixEntry<F>>,
         odd: Option<&MatrixEntry<F>>,
         inc_evals: [F; 2],
         gamma: F,
-    ) -> [F; 2] {
+    ) -> [F::Unreduced<8>; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row.is_even());
@@ -588,36 +605,26 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
                 let ra_evals = [even.ra_coeff, odd.ra_coeff - even.ra_coeff];
                 let val_evals = [even.val_coeff, odd.val_coeff - even.val_coeff];
                 [
-                    ra_evals[0] * (val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
-                    ra_evals[1] * (val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                    ra_evals[0].mul_unreduced(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
+                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
                 ]
             }
             (Some(even), None) => {
-                // For ReadWriteMatrixCycleMajor, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an odd-row entry in the same column as even
-                // means that its implicit Val coeff is even.next, and its implicit
-                // ra coeff is 0.
                 let odd_val_coeff = even.next_val;
                 let ra_evals = [even.ra_coeff, -even.ra_coeff];
                 let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
                 [
-                    ra_evals[0] * (val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
-                    ra_evals[1] * (val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                    ra_evals[0].mul_unreduced(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
+                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
                 ]
             }
             (None, Some(odd)) => {
-                // For ReadWriteMatrixCycleMajor, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an even-row entry in the same column as odd
-                // means that its implicit Val coeff is odd.prev, and its implicit
-                // ra coeff is 0.
                 let even_val_coeff = odd.prev_val;
                 let ra_evals = [F::zero(), odd.ra_coeff];
                 let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
                 [
-                    F::zero(), // ra_evals[0] is zero
-                    ra_evals[1] * (val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                    F::Unreduced::<8>::zero(), // ra_evals[0] is zero
+                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
                 ]
             }
             (None, None) => panic!("Both entries are None"),
@@ -627,39 +634,38 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// Materializes the ra and Val polynomials represented by this `ReadWriteMatrixCycleMajor`.
     /// All cycle variables must be bound at this point, so the materialized ra and Val
     /// have K coefficients each.
+    ///
+    /// After full cycle binding, each entry has `row == 0` and entries have distinct
+    /// `col` values, so parallel writes are disjoint.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::materialize")]
     pub fn materialize(
         self,
         K: usize,
         val_init: &[F],
     ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
-        // Initialize ra and Val to initial values
-        let ra: Vec<Arc<Mutex<F>>> = (0..K)
-            .into_par_iter()
-            .map(|_| Arc::new(Mutex::new(F::zero())))
-            .collect();
-        let val: Vec<Arc<Mutex<F>>> = val_init
-            .par_iter()
-            .map(|&x| Arc::new(Mutex::new(x)))
-            .collect();
-        // Update some of the ra and Val coefficients based on
-        // matrix entries.
+        // Initialize ra to zero and val to val_init
+        let mut ra: Vec<F> = unsafe_allocate_zero_vec(K);
+        let mut val: Vec<F> = val_init.to_vec();
+
+        // Update ra and val at positions where we have entries.
+        // After full cycle binding, entries have distinct col values (row == 0),
+        // so parallel writes are disjoint.
+        let ra_ptr = ra.as_mut_ptr() as usize;
+        let val_ptr = val.as_mut_ptr() as usize;
+
         self.entries.into_par_iter().for_each(|entry| {
             debug_assert_eq!(entry.row, 0);
             let k = entry.col;
-            *ra[k].lock().unwrap() = entry.ra_coeff;
-            *val[k].lock().unwrap() = entry.val_coeff;
+            // SAFETY: After full cycle binding, each entry has a unique col,
+            // so writes to ra[col] and val[col] are disjoint across parallel iterations.
+            unsafe {
+                let ra_p = ra_ptr as *mut F;
+                let val_p = val_ptr as *mut F;
+                *ra_p.add(k) = entry.ra_coeff;
+                *val_p.add(k) = entry.val_coeff;
+            }
         });
-        // Unwrap Arc<Mutex<F>> back into F
-        let ra: Vec<F> = ra
-            .into_par_iter()
-            .map(|arc_mutex| *arc_mutex.lock().unwrap())
-            .collect();
-        let val: Vec<F> = val
-            .into_par_iter()
-            .map(|arc_mutex| *arc_mutex.lock().unwrap())
-            .collect();
-        // Convert Vec<F> to MultilinearPolynomial<F>
+
         (ra.into(), val.into())
     }
 }
@@ -1185,8 +1191,9 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
                 rows_out[k] = MaybeUninit::new(row_o);
                 cols_out[k] = MaybeUninit::new(new_col);
                 ras_out[k] = MaybeUninit::new(r.mul_1_optimized(ra_odd));
-                vals_out[k] =
-                    MaybeUninit::new(even_checkpoint + r.mul_0_optimized(val_odd - even_checkpoint));
+                vals_out[k] = MaybeUninit::new(
+                    even_checkpoint + r.mul_0_optimized(val_odd - even_checkpoint),
+                );
             }
             j += 1;
             k += 1;
@@ -1556,25 +1563,31 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
     /// Materializes the ra and Val polynomials.
     /// Some number of cycle and address variables have already been bound, so at this point
     /// there are `K_prime` columns and `T_prime` rows left in the matrix.
+    ///
+    /// This expands the sparse representation to dense polynomials of size `K_prime * T_prime`.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixAddressMajor::materialize")]
     pub fn materialize(
         self,
         K_prime: usize,
         T_prime: usize,
     ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
-        // Initialize ra and Val to initial values
-        let ra: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
-            .into_par_iter()
-            .map(|_| Arc::new(Mutex::new(F::zero())))
-            .collect();
-        let val: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
-            .into_par_iter()
-            .map(|_| Arc::new(Mutex::new(F::zero())))
-            .collect();
+        let len = K_prime * T_prime;
+
+        // Initialize ra to zero, val will be filled column by column
+        let mut ra: Vec<F> = unsafe_allocate_zero_vec(len);
+        let mut val: Vec<F> = unsafe_allocate_zero_vec(len);
 
         let n = self.nnz();
 
-        // Process column by column using SoA data
+        // Build a set of columns that have explicit entries
+        let mut col_seen = vec![false; K_prime];
+        for t in 0..n {
+            if self.cols[t] < K_prime {
+                col_seen[self.cols[t]] = true;
+            }
+        }
+
+        // Process columns with explicit entries
         let mut i = 0;
         while i < n {
             let col = self.cols[i];
@@ -1593,46 +1606,30 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
 
                 if ptr < j && self.rows[ptr] == row {
                     // Explicit entry at (col, row)
-                    *ra[idx_flat].lock().unwrap() = self.ras[ptr];
-                    *val[idx_flat].lock().unwrap() = self.vals[ptr];
+                    ra[idx_flat] = self.ras[ptr];
+                    val[idx_flat] = self.vals[ptr];
                     current_val = self.get_next_val(ptr);
                     ptr += 1;
                 } else {
-                    // Implicit entry: ra=0, Val is carried forward
-                    *val[idx_flat].lock().unwrap() = current_val;
+                    // Implicit entry: ra=0 (already zero), Val is carried forward
+                    val[idx_flat] = current_val;
                 }
             }
 
             i = j;
         }
 
-        // Handle columns with no explicit entries
-        let mut col_seen = vec![false; K_prime];
-        for t in 0..n {
-            if self.cols[t] < K_prime {
-                col_seen[self.cols[t]] = true;
-            }
-        }
-
+        // Handle columns with no explicit entries - val is constant (init_val)
         for col in 0..K_prime {
             if !col_seen[col] {
                 let init_val = self.val_init.get_bound_coeff(col);
                 for row in 0..T_prime {
                     let idx_flat = col * T_prime + row;
-                    *val[idx_flat].lock().unwrap() = init_val;
+                    // ra is already zero
+                    val[idx_flat] = init_val;
                 }
             }
         }
-
-        // Unwrap Arc<Mutex<F>> back into F
-        let ra: Vec<F> = ra
-            .into_par_iter()
-            .map(|arc_mutex| *arc_mutex.lock().unwrap())
-            .collect();
-        let val: Vec<F> = val
-            .into_par_iter()
-            .map(|arc_mutex| *arc_mutex.lock().unwrap())
-            .collect();
 
         (ra.into(), val.into())
     }
