@@ -30,7 +30,8 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + CanonicalSerialize
         + CanonicalDeserialize
         + AppendToTranscript
-        + Clone;
+        + Clone
+        + From<Self::CompressedCommitment>;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of

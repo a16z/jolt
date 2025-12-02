@@ -1977,6 +1977,7 @@ dependencies = [
  "derive_more 2.0.1",
  "dirs",
  "dory-pcs",
+ "expect-test",
  "eyre",
  "fixedbitset 0.5.7",
  "iai-callgrind",

@@ -32,6 +32,7 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
+        proof_serialization::JoltProofCommitments,
         ram::populate_memory_states,
         verifier::JoltVerifierPreprocessing,
     },
@@ -85,6 +86,17 @@ use tracer::{
     instruction::{Cycle, Instruction},
     ChunksIterator, JoltDevice, LazyTraceIterator,
 };
+
+pub enum JoltProofCompressionFlag {
+    Uncompressed,
+    TorusCompression,
+}
+
+impl Default for JoltProofCompressionFlag {
+    fn default() -> Self {
+        Self::Uncompressed
+    }
+}
 
 /// Jolt CPU prover for RV64IMAC.
 pub struct JoltCpuProver<
@@ -263,7 +275,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
     #[allow(clippy::type_complexity)]
     pub fn prove(
+        self,
+    ) -> (
+        JoltProof<F, PCS, ProofTranscript>,
+        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+    ) {
+        self.prove_with_mode(JoltProofCompressionFlag::Uncompressed)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn prove_with_mode(
         mut self,
+        compression_flag: JoltProofCompressionFlag,
     ) -> (
         JoltProof<F, PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
@@ -280,7 +303,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         tracing::info!("bytecode size: {}", self.preprocessing.bytecode.code_size);
 
-        let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
+        let (commitments, opening_proof_hints) =
+            self.generate_and_commit_witness_polynomials(compression_flag);
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
@@ -350,8 +374,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials")]
     fn generate_and_commit_witness_polynomials(
         &mut self,
+        compression_flag: JoltProofCompressionFlag,
     ) -> (
-        Vec<PCS::Commitment>,
+        JoltProofCommitments<PCS>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) {
         let _guard = (
@@ -409,14 +434,38 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .collect();
 
         // Tier 2: Compute final commitments from tier1 commitments
-        let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
-            .into_par_iter()
-            .zip(polys)
-            .map(|(tier1_commitments, poly)| {
-                let onehot_k = poly.get_onehot_k(&self.one_hot_params);
-                PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
-            })
-            .unzip();
+        let (commitments, hints) = match compression_flag {
+            JoltProofCompressionFlag::Uncompressed => {
+                let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
+                    .into_par_iter()
+                    .zip(polys)
+                    .map(|(tier1_commitments, poly)| {
+                        let onehot_k = poly.get_onehot_k(&self.one_hot_params);
+                        PCS::aggregate_chunks(
+                            &self.preprocessing.generators,
+                            onehot_k,
+                            &tier1_commitments,
+                        )
+                    })
+                    .unzip();
+                (JoltProofCommitments::Uncompressed(commitments), hints)
+            }
+            JoltProofCompressionFlag::TorusCompression => {
+                let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
+                    .into_par_iter()
+                    .zip(polys)
+                    .map(|(tier1_commitments, poly)| {
+                        let onehot_k = poly.get_onehot_k(&self.one_hot_params);
+                        PCS::aggregate_chunks_compressed(
+                            &self.preprocessing.generators,
+                            onehot_k,
+                            &tier1_commitments,
+                        )
+                    })
+                    .unzip();
+                (JoltProofCommitments::Compressed(commitments), hints)
+            }
+        };
 
         let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
         for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
@@ -424,9 +473,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         }
 
         // Append commitments to transcript
-        for commitment in &commitments {
-            self.transcript.append_serializable(commitment);
-        }
+        match &commitments {
+            JoltProofCommitments::Compressed(compressed_commitments) => {
+                for commitment in compressed_commitments {
+                    self.transcript.append_serializable(commitment);
+                }
+            }
+            JoltProofCommitments::Uncompressed(uncompressed_commitments) => {
+                for commitment in uncompressed_commitments {
+                    self.transcript.append_serializable(commitment);
+                }
+            }
+        };
 
         (commitments, hint_map)
     }
@@ -1037,16 +1095,117 @@ fn write_instance_flamegraph_svg(
 mod tests {
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
-    use crate::zkvm::prover::JoltProverPreprocessing;
+    use crate::zkvm::proof_serialization::{JoltProofCommitments, serialize_and_print_size};
+    use crate::zkvm::prover::{JoltProofCompressionFlag, JoltProverPreprocessing};
     use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
-    use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
+    use crate::zkvm::{RV64IMACProver, RV64IMACVerifier, Serializable};
     use ark_bn254::Fr;
+    use ark_serialize::CanonicalSerialize;
+    use dory::backends::ArkGT;
+    use expect_test::expect;
     use serial_test::serial;
 
     #[test]
     #[serial]
     fn fib_e2e_dory_compression() {
-        todo!()
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&100u32).unwrap();
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover1 =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+
+        let prover2 =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+
+        let io_device = prover1.program_io.clone();
+        let (jolt_proof_compressed, debug_info_compressed) =
+            prover1.prove_with_mode(JoltProofCompressionFlag::TorusCompression);
+        let (jolt_proof_uncompressed, debug_info_uncompressed) = prover2.prove();
+
+        let mut uncompressed_proof_bin: Vec<u8> = Vec::new();
+        jolt_proof_uncompressed
+            .commitments
+            .serialize_compressed(&mut uncompressed_proof_bin)
+            .unwrap();
+        let uncompressed_proof_size = uncompressed_proof_bin.len();
+        expect!["11145"].assert_eq(&uncompressed_proof_size.to_string());
+
+        let mut compressed_proof_bin: Vec<u8> = Vec::new();
+        jolt_proof_compressed
+            .commitments
+            .serialize_compressed(&mut compressed_proof_bin)
+            .unwrap();
+        let compressed_proof_size = compressed_proof_bin.len();
+        expect!["3721"].assert_eq(&compressed_proof_size.to_string());
+
+        // let uncompressed_proof_bin = jolt_proof_uncompressed.serialize_to_bytes().unwrap();
+        // let compressed_proof_bin = jolt_proof_compressed.serialize_to_bytes().unwrap();
+        // let uncompressed_proof_size = uncompressed_proof_bin.len();
+        // let compressed_proof_size = compressed_proof_bin.len();
+        // expect![""].assert_eq(&uncompressed_proof_size.to_string());
+        // expect![""].assert_eq(&compressed_proof_size.to_string());
+        // assert!(compressed_proof_size < uncompressed_proof_size);
+
+        serialize_and_print_size(
+            "Uncompressed proof",
+            "/tmp/uncompressed_proof.bin",
+            &jolt_proof_uncompressed,
+        )
+        .expect("Failed to serialize uncompressed proof");
+        panic!("Stop here");
+
+        let mut uncompressed_proof_buf: Vec<u8> = Vec::new();
+        jolt_proof_uncompressed
+            .serialize_compressed(&mut uncompressed_proof_buf)
+            .expect("Failed to serialize uncompressed proof");
+
+        let mut compressed_proof_buf: Vec<u8> = Vec::new();
+        jolt_proof_compressed
+            .serialize_compressed(&mut compressed_proof_buf)
+            .expect("Failed to serialize compressed proof");
+
+        expect!["11145"].assert_eq(&uncompressed_proof_buf.len().to_string());
+        expect!["3721"].assert_eq(&compressed_proof_buf.len().to_string());
+        assert!(compressed_proof_buf.len() < uncompressed_proof_buf.len());
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        // let mut verifier = RV64IMACVerifier::new(
+        //     &verifier_preprocessing,
+        //     jolt_proof_compressed,
+        //     io_device,
+        //     None,
+        //     debug_info_compressed,
+        // )
+        // .expect("Failed to create verifier");
+
+        let commitments_uncompressed_vec = match jolt_proof_uncompressed.commitments {
+            JoltProofCommitments::Compressed(_commitments) => {
+                panic!("Compressed commitments should not be present");
+            }
+            JoltProofCommitments::Uncompressed(commitments) => commitments,
+        };
+        let original_commitments_vec: Vec<ArkGT> = match jolt_proof_compressed.commitments {
+            JoltProofCommitments::Compressed(commitments) => commitments
+                .into_iter()
+                .map(|commitment| commitment.into())
+                .collect(),
+            JoltProofCommitments::Uncompressed(_commitments) => {
+                panic!("Uncompressed commitments should be present");
+            }
+        };
+        assert_eq!(original_commitments_vec, commitments_uncompressed_vec,);
+
+        // verifier.verify().expect("Failed to verify proof");
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
+use crate::zkvm::proof_serialization::JoltProofCommitments;
 use crate::zkvm::{
     bytecode::{
         self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
@@ -136,8 +137,26 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         })
     }
 
+    pub fn uncompressed_commitments(mut self) -> Self {
+        match self.proof.commitments {
+            JoltProofCommitments::Compressed(commitments) => {
+                let uncompressed_commitments = commitments
+                    .into_iter()
+                    .map(|commitment| commitment.into())
+                    .collect();
+                self.proof.commitments =
+                    JoltProofCommitments::Uncompressed(uncompressed_commitments);
+                self
+            }
+            JoltProofCommitments::Uncompressed(_) => self,
+        }
+    }
+
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
+        // Uncompress commitments if they are compressed
+        self = self.uncompressed_commitments();
+
         let _pprof_verify = pprof_scope!("verify");
         // Parameters are computed from trace length as needed
 
@@ -157,9 +176,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
 
         // Append commitments to transcript
-        for commitment in &self.proof.commitments {
-            self.transcript.append_serializable(commitment);
-        }
+        match &self.proof.commitments {
+            JoltProofCommitments::Compressed(_commitments) => {
+                panic!("Commitments should have been uncompressed by now");
+            }
+            JoltProofCommitments::Uncompressed(commitments) => {
+                for commitment in commitments {
+                    self.transcript.append_serializable(commitment);
+                }
+            }
+        };
+
         // Append untrusted advice commitment to transcript
         if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
             self.transcript
@@ -458,11 +485,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
         // Batch-prove all openings (Stage 7)
         let mut commitments_map = HashMap::new();
-        for (polynomial, commitment) in
-            AllCommittedPolynomials::iter().zip_eq(&self.proof.commitments)
-        {
-            commitments_map.insert(*polynomial, commitment.clone());
-        }
+        match &self.proof.commitments {
+            JoltProofCommitments::Compressed(_commitments) => {
+                panic!("Commitments should have been uncompressed by now");
+            }
+            JoltProofCommitments::Uncompressed(commitments) => {
+                for (polynomial, commitment) in AllCommittedPolynomials::iter().zip_eq(commitments)
+                {
+                    commitments_map.insert(*polynomial, commitment.clone());
+                }
+            }
+        };
 
         self.opening_accumulator
             .reduce_and_verify(
