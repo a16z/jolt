@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1764703842394,
+  "lastUpdate": 1764719061741,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -36838,6 +36838,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 353500,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "972d9a25d187525728b53fc64098788a8a6d9e25",
+          "message": "minor: more compact serialization of opening claims (#1142)\n\n* perf: use u16 instead of usize for polynomial indices in opening claims\n\nReduces proof size by ~600 bytes (~6 bytes per claim × ~100 claims).\nThe polynomial index was being serialized as usize (8 bytes) but there\nare fewer than 256 polynomials, so u16 (2 bytes) is more than sufficient.\n\n* fix: add debug assertions for polynomial index u16 overflow\n\nPrevents silent truncation if polynomial count ever exceeds 65535.\nThe assertions only run in debug builds, so no runtime cost in release.\n\n* perf: compact OpeningId encoding - 2 bytes per claim\n\nFuse variant + sumcheck_id into 1 byte:\n- 0 = UntrustedAdvice\n- 1 = TrustedAdvice\n- 2-25 = Committed + sumcheck_id\n- 26-49 = Virtual + sumcheck_id\n\nUse u8 for polynomial index (both Committed and Virtual fit in 256).\n\nPrevious: 4 bytes per Committed/Virtual claim (1 variant + 1 sumcheck + 2 poly)\nNow: 2 bytes per claim (1 fused + 1 poly)\n\nSavings: ~2 bytes × ~86 claims = ~172 bytes\n\n* fix: derive OPENING_ID_VIRTUAL_BASE from SumcheckId::COUNT\n\nAdd EnumCount derive to SumcheckId so we can compute the virtual base\ndynamically: OPENING_ID_COMMITTED_BASE + SumcheckId::COUNT\n\nThis avoids hardcoding the number of sumcheck IDs.",
+          "timestamp": "2025-12-02T18:03:18-05:00",
+          "tree_id": "35eeda97cc78b95393cc13aa29d07c275c04a013",
+          "url": "https://github.com/a16z/jolt/commit/972d9a25d187525728b53fc64098788a8a6d9e25"
+        },
+        "date": 1764719060971,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 350340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 1469172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 354272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 347284,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 350932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 352720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 355056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 346892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 346432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2409960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 349368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 345304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 337156,
             "unit": "KB",
             "extra": ""
           }
