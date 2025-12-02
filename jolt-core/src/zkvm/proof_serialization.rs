@@ -8,16 +8,19 @@ use ark_serialize::{
 };
 use num::FromPrimitive;
 
-use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
     },
-    subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
+    subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+};
+use crate::{
+    subprotocols::univariate_skip::UniSkipFirstRoundProof,
+    zkvm::{config::OneHotParams, witness::AllCommittedPolynomials},
 };
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {

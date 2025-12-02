@@ -25,8 +25,9 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        sumcheck::{BatchedSumcheck, SumcheckInstanceProof, UniSkipFirstRoundProof},
+        sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
+        univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProof},
     },
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
@@ -52,7 +53,15 @@ use crate::{
             read_write_checking::RegistersReadWriteCheckingParams,
             val_evaluation::RegistersValEvaluationSumcheckParams,
         },
-        spartan::{instruction_input::InstructionInputParams, shift::ShiftSumcheckParams},
+        spartan::{
+            instruction_input::InstructionInputParams,
+            outer::{OuterRemainingSumcheckParams, OuterUniSkipParams, OuterUniSkipProver},
+            product::{
+                ProductVirtualRemainderParams, ProductVirtualUniSkipParams,
+                ProductVirtualUniSkipProver,
+            },
+            shift::ShiftSumcheckParams,
+        },
         verifier::JoltVerifierPreprocessing,
     },
 };
@@ -83,8 +92,7 @@ use crate::{
         },
         spartan::{
             instruction_input::InstructionInputSumcheckProver, outer::OuterRemainingSumcheckProver,
-            product::ProductVirtualRemainderProver, prove_stage1_uni_skip, prove_stage2_uni_skip,
-            shift::ShiftSumcheckProver,
+            product::ProductVirtualRemainderProver, shift::ShiftSumcheckProver,
         },
         witness::{AllCommittedPolynomials, CommittedPolynomial},
         ProverDebugInfo, Serializable,
@@ -509,17 +517,27 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 1 baseline");
 
         tracing::info!("Stage 1 proving");
-        let (uni_skip_state, first_round_proof) = prove_stage1_uni_skip(
+        let uni_skip_params = OuterUniSkipParams::new(&self.spartan_key, &mut self.transcript);
+        let mut uni_skip = OuterUniSkipProver::initialize(
+            uni_skip_params.clone(),
             &self.trace,
             &self.preprocessing.bytecode,
-            &self.spartan_key,
+        );
+        let first_round_proof = prove_uniskip_round(
+            &mut uni_skip,
+            &mut self.opening_accumulator,
             &mut self.transcript,
         );
 
-        let mut spartan_outer_remaining = OuterRemainingSumcheckProver::gen(
+        let spartan_outer_remaining_params = OuterRemainingSumcheckParams::new(
+            self.trace.len(),
+            uni_skip_params,
+            &self.opening_accumulator,
+        );
+        let mut spartan_outer_remaining = OuterRemainingSumcheckProver::initialize(
+            spartan_outer_remaining_params,
             Arc::clone(&self.trace),
             &self.preprocessing.bytecode,
-            &uni_skip_state,
         );
 
         let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
@@ -542,16 +560,22 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 2 baseline");
 
         // Stage 2a: Prove univariate-skip first round for product virtualization
-        let (uni_skip_state, first_round_proof) = prove_stage2_uni_skip(
-            &self.trace,
-            &self.opening_accumulator,
-            &self.spartan_key,
+        let uni_skip_params =
+            ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript);
+        let mut uni_skip =
+            ProductVirtualUniSkipProver::initialize(uni_skip_params.clone(), &self.trace);
+        let first_round_proof = prove_uniskip_round(
+            &mut uni_skip,
+            &mut self.opening_accumulator,
             &mut self.transcript,
         );
-        let spartan_product_virtual_remainder =
-            ProductVirtualRemainderProver::gen(Arc::clone(&self.trace), &uni_skip_state);
 
         // Initialization params
+        let spartan_product_virtual_remainder_params = ProductVirtualRemainderParams::new(
+            self.trace.len(),
+            uni_skip_params,
+            &self.opening_accumulator,
+        );
         let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
             &self.one_hot_params,
@@ -570,6 +594,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // Initialization
+        let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
+            spartan_product_virtual_remainder_params,
+            Arc::clone(&self.trace),
+        );
         let ram_raf_evaluation = RamRafEvaluationSumcheckProver::initialize(
             ram_raf_evaluation_params,
             &self.trace,

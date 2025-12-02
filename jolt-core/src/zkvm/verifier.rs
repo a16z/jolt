@@ -186,18 +186,19 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage1(&mut self) -> Result<(), anyhow::Error> {
-        let spartan_outer_uni_skip_state = verify_stage1_uni_skip(
+        let uni_skip_params = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
+            &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 1 univariate skip first round")?;
 
-        let n_cycle_vars = self.proof.trace_length.log_2();
         let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
-            n_cycle_vars,
-            &spartan_outer_uni_skip_state,
             self.spartan_key,
+            self.proof.trace_length,
+            uni_skip_params,
+            &self.opening_accumulator,
         );
 
         let _r_stage1 = BatchedSumcheck::verify(
@@ -212,17 +213,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage2(&mut self) -> Result<(), anyhow::Error> {
-        let product_virtual_uni_skip_state = verify_stage2_uni_skip(
+        let uni_skip_params = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
-            &self.spartan_key,
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 2 univariate skip first round")?;
 
         let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
-            self.proof.trace_length.log_2(),
-            &product_virtual_uni_skip_state,
+            self.proof.trace_length,
+            uni_skip_params,
+            &self.opening_accumulator,
         );
         let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
             &self.program_io.memory_layout,
