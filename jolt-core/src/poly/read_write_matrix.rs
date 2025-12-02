@@ -1,3 +1,21 @@
+//! Sparse matrix representations for read/write checking sumchecks.
+//!
+//! This module provides efficient data structures for representing the `ra(k, j)` and
+//! `Val(k, j)` polynomials used in memory read/write checking sumchecks. These polynomials
+//! are conceptually K×T matrices (addresses × cycles) but are far too large to store
+//! explicitly. Instead, we use sparse representations that store only non-zero entries.
+//!
+//! # Two Representations
+//!
+//! - [`ReadWriteMatrixCycleMajor`]: Entries sorted by `(row, col)` i.e. cycle-major order.
+//!   Uses Array-of-Structs layout. Used when binding *cycle variables* first.
+//!
+//! - [`ReadWriteMatrixAddressMajor`]: Entries sorted by `(col, row)` i.e. address-major order.
+//!   Uses Struct-of-Arrays layout with dense `val_init`/`val_final` arrays.
+//!   Used when binding *address variables* first.
+//!
+//! The choice of representation affects cache performance during sumcheck operations.
+
 use std::cmp::Ordering;
 use std::mem::MaybeUninit;
 
@@ -42,7 +60,7 @@ pub struct ReadWriteEntry<F: JoltField> {
     /// which is some combination of Val(k, j', 00...0), ...
     /// Val(k, j', 11...1).
     /// `prev_val` contains the unbound coefficient before
-    /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
+    /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
     /// Val(k, j'-1, 11...1)
     prev_val: F,
     /// In round i, each ReadWriteEntry represents a coefficient
@@ -50,7 +68,7 @@ pub struct ReadWriteEntry<F: JoltField> {
     /// which is some combination of Val(k, j', 00...0), ...
     /// Val(k, j', 11...1).
     /// `next_val` contains the unbound coefficient after
-    /// Val(k, j', 00...0) –– abusing notation, `next_val` is
+    /// Val(k, j', 00...0) –– abusing notation, `next_val` is
     /// Val(k, j'+1, 00...0)
     next_val: F,
     /// The Val coefficient for this matrix entry.
@@ -1657,3 +1675,4 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         (ra.into(), val.into())
     }
 }
+

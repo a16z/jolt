@@ -34,7 +34,6 @@ pub mod output_check;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
-pub mod sparse_matrix_poly;
 pub mod val_evaluation;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]

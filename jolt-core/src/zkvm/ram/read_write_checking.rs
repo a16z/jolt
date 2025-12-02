@@ -11,7 +11,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::ram::sparse_matrix_poly::{
+use crate::poly::read_write_matrix::{
     ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
 };
 use crate::{

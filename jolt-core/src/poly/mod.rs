@@ -13,6 +13,7 @@ pub mod prefix_suffix;
 pub mod program_io_polynomial;
 pub mod ra_poly;
 pub mod range_mask_polynomial;
+pub mod read_write_matrix;
 pub mod rlc_polynomial;
 pub mod split_eq_poly;
 pub mod unipoly;
