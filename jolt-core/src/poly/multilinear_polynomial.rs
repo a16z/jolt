@@ -54,7 +54,8 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
         _writer: W,
         _compress: ark_serialize::Compress,
     ) -> Result<(), ark_serialize::SerializationError> {
-        unimplemented!("Only here to satisfy trait bounds")
+        // Only used for testing
+        Ok(())
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {

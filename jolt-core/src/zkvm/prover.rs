@@ -1093,17 +1093,355 @@ fn write_instance_flamegraph_svg(
 
 #[cfg(test)]
 mod tests {
+    use crate::field::JoltField;
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
-    use crate::zkvm::proof_serialization::{JoltProofCommitments, serialize_and_print_size};
     use crate::zkvm::prover::{JoltProofCompressionFlag, JoltProverPreprocessing};
     use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
-    use crate::zkvm::{RV64IMACProver, RV64IMACVerifier, Serializable};
+    use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
     use ark_bn254::Fr;
     use ark_serialize::CanonicalSerialize;
-    use dory::backends::ArkGT;
     use expect_test::expect;
     use serial_test::serial;
+
+    /// A struct to track serialized sizes (in bytes) of the entire JoltProof
+    /// and all of its individual fields as flat `usize` values.
+    ///
+    /// For fields that are arrays or vectors, the size is the total
+    /// serialized size of the entire field (not individual elements).
+    #[derive(Default)]
+    struct JoltProofFieldSizeTracker {
+        // Sizes for whole proof serialization
+        all_proof_size: usize,
+
+        // Sizes for individual fields
+        opening_claims_size: usize,
+        commitments_size: usize,
+        stage1_uni_skip_first_round_proof_size: usize,
+        stage1_sumcheck_proof_size: usize,
+        stage2_uni_skip_first_round_proof_size: usize,
+        stage2_sumcheck_proof_size: usize,
+        stage3_sumcheck_proof_size: usize,
+        stage4_sumcheck_proof_size: usize,
+        stage5_sumcheck_proof_size: usize,
+        stage6_sumcheck_proof_size: usize,
+        trusted_advice_proof_size: usize,
+        untrusted_advice_proof_size: usize,
+        reduced_opening_proof_size: usize,
+        untrusted_advice_commitment_size: usize,
+        // Simple integer fields
+        trace_length_size: usize,
+        ram_k_size: usize,
+        bytecode_k_size: usize,
+        log_k_chunk_size: usize,
+        twist_sumcheck_switch_index_size: usize,
+    }
+
+    impl std::fmt::Debug for JoltProofFieldSizeTracker {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            writeln!(f, "JoltProofFieldSizeTracker {{")?;
+            writeln!(f, "    all_proof_size: {},", self.all_proof_size)?;
+            writeln!(f, "    opening_claims_size: {},", self.opening_claims_size)?;
+            writeln!(f, "    commitments_size: {},", self.commitments_size)?;
+            writeln!(
+                f,
+                "    stage1_uni_skip_first_round_proof_size: {},",
+                self.stage1_uni_skip_first_round_proof_size
+            )?;
+            writeln!(
+                f,
+                "    stage1_sumcheck_proof_size: {},",
+                self.stage1_sumcheck_proof_size
+            )?;
+            writeln!(
+                f,
+                "    stage2_uni_skip_first_round_proof_size: {},",
+                self.stage2_uni_skip_first_round_proof_size
+            )?;
+            writeln!(
+                f,
+                "    stage2_sumcheck_proof_size: {},",
+                self.stage2_sumcheck_proof_size
+            )?;
+            writeln!(
+                f,
+                "    stage3_sumcheck_proof_size: {},",
+                self.stage3_sumcheck_proof_size
+            )?;
+            writeln!(
+                f,
+                "    stage4_sumcheck_proof_size: {},",
+                self.stage4_sumcheck_proof_size
+            )?;
+            writeln!(
+                f,
+                "    stage5_sumcheck_proof_size: {},",
+                self.stage5_sumcheck_proof_size
+            )?;
+            writeln!(
+                f,
+                "    stage6_sumcheck_proof_size: {},",
+                self.stage6_sumcheck_proof_size
+            )?;
+            writeln!(
+                f,
+                "    trusted_advice_proof_size: {},",
+                self.trusted_advice_proof_size
+            )?;
+            writeln!(
+                f,
+                "    untrusted_advice_proof_size: {},",
+                self.untrusted_advice_proof_size
+            )?;
+            writeln!(
+                f,
+                "    reduced_opening_proof_size: {},",
+                self.reduced_opening_proof_size
+            )?;
+            writeln!(
+                f,
+                "    untrusted_advice_commitment_size: {},",
+                self.untrusted_advice_commitment_size
+            )?;
+            writeln!(f, "    trace_length_size: {},", self.trace_length_size)?;
+            writeln!(f, "    ram_k_size: {},", self.ram_k_size)?;
+            writeln!(f, "    bytecode_k_size: {},", self.bytecode_k_size)?;
+            writeln!(f, "    log_k_chunk_size: {},", self.log_k_chunk_size)?;
+            writeln!(
+                f,
+                "    twist_sumcheck_switch_index_size: {}",
+                self.twist_sumcheck_switch_index_size
+            )?;
+            write!(f, "}}")
+        }
+    }
+
+    impl JoltProofFieldSizeTracker {
+        /// Records the serialized size (in bytes) of an entire JoltProof and all its fields.
+        fn record<F, PCS, FS>(
+            &mut self,
+            proof: &crate::zkvm::proof_serialization::JoltProof<F, PCS, FS>,
+        ) where
+            F: JoltField,
+            PCS: crate::poly::commitment::commitment_scheme::CommitmentScheme<Field = F>,
+            FS: crate::transcripts::Transcript,
+        {
+            // Full proof
+            let mut buf = Vec::new();
+            proof
+                .serialize_compressed(&mut buf)
+                .expect("failed to serialize proof");
+            self.all_proof_size = buf.len();
+
+            // Field: opening_claims
+            let mut buf = Vec::new();
+            proof.opening_claims.serialize_compressed(&mut buf).unwrap();
+            self.opening_claims_size = buf.len();
+
+            // Field: commitments
+            let mut buf = Vec::new();
+            proof.commitments.serialize_compressed(&mut buf).unwrap();
+            self.commitments_size = buf.len();
+
+            // Field: stage1_uni_skip_first_round_proof
+            let mut buf = Vec::new();
+            proof
+                .stage1_uni_skip_first_round_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage1_uni_skip_first_round_proof_size = buf.len();
+
+            // Field: stage1_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage1_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage1_sumcheck_proof_size = buf.len();
+
+            // Field: stage2_uni_skip_first_round_proof
+            let mut buf = Vec::new();
+            proof
+                .stage2_uni_skip_first_round_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage2_uni_skip_first_round_proof_size = buf.len();
+
+            // Field: stage2_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage2_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage2_sumcheck_proof_size = buf.len();
+
+            // Field: stage3_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage3_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage3_sumcheck_proof_size = buf.len();
+
+            // Field: stage4_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage4_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage4_sumcheck_proof_size = buf.len();
+
+            // Field: stage5_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage5_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage5_sumcheck_proof_size = buf.len();
+
+            // Field: stage6_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage6_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage6_sumcheck_proof_size = buf.len();
+
+            // Field: trusted_advice_proof
+            let mut buf = Vec::new();
+            proof
+                .trusted_advice_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.trusted_advice_proof_size = buf.len();
+
+            // Field: untrusted_advice_proof
+            let mut buf = Vec::new();
+            proof
+                .untrusted_advice_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.untrusted_advice_proof_size = buf.len();
+
+            // Field: reduced_opening_proof
+            let mut buf = Vec::new();
+            proof
+                .reduced_opening_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.reduced_opening_proof_size = buf.len();
+
+            // Field: untrusted_advice_commitment
+            let mut buf = Vec::new();
+            proof
+                .untrusted_advice_commitment
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.untrusted_advice_commitment_size = buf.len();
+
+            // Simple integer fields (record serialized size of the integer value)
+            let mut buf = Vec::new();
+            proof.trace_length.serialize_compressed(&mut buf).unwrap();
+            self.trace_length_size = buf.len();
+
+            let mut buf = Vec::new();
+            proof.ram_K.serialize_compressed(&mut buf).unwrap();
+            self.ram_k_size = buf.len();
+
+            let mut buf = Vec::new();
+            proof.bytecode_K.serialize_compressed(&mut buf).unwrap();
+            self.bytecode_k_size = buf.len();
+
+            let mut buf = Vec::new();
+            proof.log_k_chunk.serialize_compressed(&mut buf).unwrap();
+            self.log_k_chunk_size = buf.len();
+
+            let mut buf = Vec::new();
+            proof
+                .twist_sumcheck_switch_index
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.twist_sumcheck_switch_index_size = buf.len();
+        }
+    }
+
+    /// Returns a string containing a formatted comparison table between
+    /// an uncompressed and compressed JoltProofFieldSizeTracker,
+    /// including field sizes and compression ratios.
+    ///
+    /// All reported sizes are in bytes.
+    fn jolt_proof_size_comparison_table(
+        uncompressed: &JoltProofFieldSizeTracker,
+        compressed: &JoltProofFieldSizeTracker,
+    ) -> String {
+        macro_rules! row {
+            ($label:expr, $field:ident) => {{
+                let unc = uncompressed.$field;
+                let comp = compressed.$field;
+                let ratio = if comp == 0 {
+                    if unc == 0 {
+                        "-".into()
+                    } else {
+                        "inf".into()
+                    }
+                } else {
+                    format!("{:.2}x", unc as f64 / comp as f64)
+                };
+                format!(
+                    "{:<40} | {:>14} | {:>14} | {:>10}",
+                    $label, unc, comp, ratio
+                )
+            }};
+        }
+
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "{:<40} | {:>12} B | {:>12} B | {:>10}",
+            "Field", "Uncompressed", "Compressed", "Ratio"
+        ));
+        lines.push(format!(
+            "{:-<40}-+-{:-<14}-+-{:-<14}-+-{:-<10}",
+            "", "", "", "",
+        ));
+        // Field sizes (all in bytes)
+        lines.push(row!("All proof", all_proof_size));
+        lines.push(row!("opening_claims", opening_claims_size));
+        lines.push(row!("commitments", commitments_size));
+        lines.push(row!(
+            "stage1_uni_skip_first_round_proof",
+            stage1_uni_skip_first_round_proof_size
+        ));
+        lines.push(row!("stage1_sumcheck_proof", stage1_sumcheck_proof_size));
+        lines.push(row!(
+            "stage2_uni_skip_first_round_proof",
+            stage2_uni_skip_first_round_proof_size
+        ));
+        lines.push(row!("stage2_sumcheck_proof", stage2_sumcheck_proof_size));
+        lines.push(row!("stage3_sumcheck_proof", stage3_sumcheck_proof_size));
+        lines.push(row!("stage4_sumcheck_proof", stage4_sumcheck_proof_size));
+        lines.push(row!("stage5_sumcheck_proof", stage5_sumcheck_proof_size));
+        lines.push(row!("stage6_sumcheck_proof", stage6_sumcheck_proof_size));
+        lines.push(row!("trusted_advice_proof", trusted_advice_proof_size));
+        lines.push(row!("untrusted_advice_proof", untrusted_advice_proof_size));
+        lines.push(row!("reduced_opening_proof", reduced_opening_proof_size));
+        lines.push(row!(
+            "untrusted_advice_commitment",
+            untrusted_advice_commitment_size
+        ));
+        lines.push(row!("trace_length", trace_length_size));
+        lines.push(row!("ram_K", ram_k_size));
+        lines.push(row!("bytecode_K", bytecode_k_size));
+        lines.push(row!("log_k_chunk", log_k_chunk_size));
+        lines.push(row!(
+            "twist_sumcheck_switch_index",
+            twist_sumcheck_switch_index_size
+        ));
+
+        lines.push("The table above gives a breakdown, in bytes, of the serialized size for each field of the Jolt proof, comparing the uncompressed and compressed.".to_string());
+        lines.push("The ratio column quantifies the compression effect.".to_string());
+
+        lines.join("\n")
+    }
 
     #[test]
     #[serial]
@@ -1127,85 +1465,46 @@ mod tests {
         let prover2 =
             RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
-        let io_device = prover1.program_io.clone();
-        let (jolt_proof_compressed, debug_info_compressed) =
+        let _io_device = prover1.program_io.clone();
+        let (jolt_proof_compressed, _debug_info_compressed) =
             prover1.prove_with_mode(JoltProofCompressionFlag::TorusCompression);
-        let (jolt_proof_uncompressed, debug_info_uncompressed) = prover2.prove();
+        let (jolt_proof_uncompressed, _debug_info_uncompressed) = prover2.prove();
 
-        let mut uncompressed_proof_bin: Vec<u8> = Vec::new();
-        jolt_proof_uncompressed
-            .commitments
-            .serialize_compressed(&mut uncompressed_proof_bin)
-            .unwrap();
-        let uncompressed_proof_size = uncompressed_proof_bin.len();
-        expect!["11145"].assert_eq(&uncompressed_proof_size.to_string());
+        let mut uncompressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
+        let mut compressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
 
-        let mut compressed_proof_bin: Vec<u8> = Vec::new();
-        jolt_proof_compressed
-            .commitments
-            .serialize_compressed(&mut compressed_proof_bin)
-            .unwrap();
-        let compressed_proof_size = compressed_proof_bin.len();
-        expect!["3721"].assert_eq(&compressed_proof_size.to_string());
+        uncompressed_proof_field_size_tracker.record(&jolt_proof_uncompressed);
+        compressed_proof_field_size_tracker.record(&jolt_proof_compressed);
 
-        // let uncompressed_proof_bin = jolt_proof_uncompressed.serialize_to_bytes().unwrap();
-        // let compressed_proof_bin = jolt_proof_compressed.serialize_to_bytes().unwrap();
-        // let uncompressed_proof_size = uncompressed_proof_bin.len();
-        // let compressed_proof_size = compressed_proof_bin.len();
-        // expect![""].assert_eq(&uncompressed_proof_size.to_string());
-        // expect![""].assert_eq(&compressed_proof_size.to_string());
-        // assert!(compressed_proof_size < uncompressed_proof_size);
-
-        serialize_and_print_size(
-            "Uncompressed proof",
-            "/tmp/uncompressed_proof.bin",
-            &jolt_proof_uncompressed,
-        )
-        .expect("Failed to serialize uncompressed proof");
-        panic!("Stop here");
-
-        let mut uncompressed_proof_buf: Vec<u8> = Vec::new();
-        jolt_proof_uncompressed
-            .serialize_compressed(&mut uncompressed_proof_buf)
-            .expect("Failed to serialize uncompressed proof");
-
-        let mut compressed_proof_buf: Vec<u8> = Vec::new();
-        jolt_proof_compressed
-            .serialize_compressed(&mut compressed_proof_buf)
-            .expect("Failed to serialize compressed proof");
-
-        expect!["11145"].assert_eq(&uncompressed_proof_buf.len().to_string());
-        expect!["3721"].assert_eq(&compressed_proof_buf.len().to_string());
-        assert!(compressed_proof_buf.len() < uncompressed_proof_buf.len());
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        // let mut verifier = RV64IMACVerifier::new(
-        //     &verifier_preprocessing,
-        //     jolt_proof_compressed,
-        //     io_device,
-        //     None,
-        //     debug_info_compressed,
-        // )
-        // .expect("Failed to create verifier");
-
-        let commitments_uncompressed_vec = match jolt_proof_uncompressed.commitments {
-            JoltProofCommitments::Compressed(_commitments) => {
-                panic!("Compressed commitments should not be present");
-            }
-            JoltProofCommitments::Uncompressed(commitments) => commitments,
-        };
-        let original_commitments_vec: Vec<ArkGT> = match jolt_proof_compressed.commitments {
-            JoltProofCommitments::Compressed(commitments) => commitments
-                .into_iter()
-                .map(|commitment| commitment.into())
-                .collect(),
-            JoltProofCommitments::Uncompressed(_commitments) => {
-                panic!("Uncompressed commitments should be present");
-            }
-        };
-        assert_eq!(original_commitments_vec, commitments_uncompressed_vec,);
-
-        // verifier.verify().expect("Failed to verify proof");
+        expect![[r#"
+            Field                                    | Uncompressed B |   Compressed B |      Ratio
+            -----------------------------------------+----------------+----------------+-----------
+            All proof                                |          76182 |          68758 |      1.11x
+            opening_claims                           |           8366 |           8366 |      1.00x
+            commitments                              |          11145 |           3721 |      3.00x
+            stage1_uni_skip_first_round_proof        |            904 |            904 |      1.00x
+            stage1_sumcheck_proof                    |           1256 |           1256 |      1.00x
+            stage2_uni_skip_first_round_proof        |            424 |            424 |      1.00x
+            stage2_sumcheck_proof                    |           2504 |           2504 |      1.00x
+            stage3_sumcheck_proof                    |           1152 |           1152 |      1.00x
+            stage4_sumcheck_proof                    |           1880 |           1880 |      1.00x
+            stage5_sumcheck_proof                    |          10720 |          10720 |      1.00x
+            stage6_sumcheck_proof                    |           9176 |           9176 |      1.00x
+            trusted_advice_proof                     |              1 |              1 |      1.00x
+            untrusted_advice_proof                   |              1 |              1 |      1.00x
+            reduced_opening_proof                    |          28612 |          28612 |      1.00x
+            untrusted_advice_commitment              |              1 |              1 |      1.00x
+            trace_length                             |              8 |              8 |      1.00x
+            ram_K                                    |              8 |              8 |      1.00x
+            bytecode_K                               |              8 |              8 |      1.00x
+            log_k_chunk                              |              8 |              8 |      1.00x
+            twist_sumcheck_switch_index              |              8 |              8 |      1.00x
+            The table above gives a breakdown, in bytes, of the serialized size for each field of the Jolt proof, comparing the uncompressed and compressed.
+            The ratio column quantifies the compression effect."#]]
+        .assert_eq(&jolt_proof_size_comparison_table(
+            &uncompressed_proof_field_size_tracker,
+            &compressed_proof_field_size_tracker,
+        ));
     }
 
     #[test]
@@ -1331,6 +1630,75 @@ mod tests {
             0x44, 0x72, 0x4, 0x66,
         ];
         assert_eq!(io_device.outputs, expected_output, "Outputs mismatch",);
+    }
+
+    #[test]
+    #[serial]
+    fn sha3_e2e_dory_compression() {
+        #[cfg(feature = "host")]
+        use jolt_inlines_keccak256 as _;
+        // SHA3 inlines are automatically registered via #[ctor::ctor]
+        // when the jolt-inlines-keccak256 crate is linked (see lib.rs)
+
+        let mut program = host::Program::new("sha3-guest");
+        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover1 =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+
+        let prover2 =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+
+        let _io_device = prover1.program_io.clone();
+        let (jolt_proof_compressed, _debug_info_compressed) =
+            prover1.prove_with_mode(JoltProofCompressionFlag::TorusCompression);
+        let (jolt_proof_uncompressed, _debug_info_uncompressed) = prover2.prove();
+
+        let mut uncompressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
+        let mut compressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
+
+        uncompressed_proof_field_size_tracker.record(&jolt_proof_uncompressed);
+        compressed_proof_field_size_tracker.record(&jolt_proof_compressed);
+
+        expect![[r#"
+            Field                                    | Uncompressed B |   Compressed B |      Ratio
+            -----------------------------------------+----------------+----------------+-----------
+            All proof                                |          82260 |          74580 |      1.10x
+            opening_claims                           |           8492 |           8492 |      1.00x
+            commitments                              |          11529 |           3849 |      3.00x
+            stage1_uni_skip_first_round_proof        |            904 |            904 |      1.00x
+            stage1_sumcheck_proof                    |           1464 |           1464 |      1.00x
+            stage2_uni_skip_first_round_proof        |            424 |            424 |      1.00x
+            stage2_sumcheck_proof                    |           2712 |           2712 |      1.00x
+            stage3_sumcheck_proof                    |           1360 |           1360 |      1.00x
+            stage4_sumcheck_proof                    |           2088 |           2088 |      1.00x
+            stage5_sumcheck_proof                    |          10992 |          10992 |      1.00x
+            stage6_sumcheck_proof                    |          10808 |          10808 |      1.00x
+            trusted_advice_proof                     |              1 |              1 |      1.00x
+            untrusted_advice_proof                   |              1 |              1 |      1.00x
+            reduced_opening_proof                    |          31444 |          31444 |      1.00x
+            untrusted_advice_commitment              |              1 |              1 |      1.00x
+            trace_length                             |              8 |              8 |      1.00x
+            ram_K                                    |              8 |              8 |      1.00x
+            bytecode_K                               |              8 |              8 |      1.00x
+            log_k_chunk                              |              8 |              8 |      1.00x
+            twist_sumcheck_switch_index              |              8 |              8 |      1.00x
+            The table above gives a breakdown, in bytes, of the serialized size for each field of the Jolt proof, comparing the uncompressed and compressed.
+            The ratio column quantifies the compression effect."#]]
+        .assert_eq(&jolt_proof_size_comparison_table(
+            &uncompressed_proof_field_size_tracker,
+            &compressed_proof_field_size_tracker,
+        ));
     }
 
     #[test]
@@ -1505,6 +1873,70 @@ mod tests {
         )
         .expect("Failed to create verifier");
         verifier.verify().expect("Failed to verify proof");
+    }
+
+    #[test]
+    #[serial]
+    fn memory_ops_e2e_dory_compression() {
+        let mut program = host::Program::new("memory-ops-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&[], &[], &[]);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+
+        // Prover for uncompressed proof
+        let prover_uncompressed =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[], &[], &[], None);
+        // Prover for compressed proof
+        let prover_compressed =
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[], &[], &[], None);
+
+        let (jolt_proof_uncompressed, _debug_info_uncompressed) = prover_uncompressed.prove();
+        let (jolt_proof_compressed, _debug_info_compressed) =
+            prover_compressed.prove_with_mode(JoltProofCompressionFlag::TorusCompression);
+
+        let mut uncompressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
+        let mut compressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
+
+        uncompressed_proof_field_size_tracker.record(&jolt_proof_uncompressed);
+        compressed_proof_field_size_tracker.record(&jolt_proof_compressed);
+
+        expect![[r#"
+            Field                                    | Uncompressed B |   Compressed B |      Ratio
+            -----------------------------------------+----------------+----------------+-----------
+            All proof                                |          72222 |          64798 |      1.11x
+            opening_claims                           |           8366 |           8366 |      1.00x
+            commitments                              |          11145 |           3721 |      3.00x
+            stage1_uni_skip_first_round_proof        |            904 |            904 |      1.00x
+            stage1_sumcheck_proof                    |           1152 |           1152 |      1.00x
+            stage2_uni_skip_first_round_proof        |            424 |            424 |      1.00x
+            stage2_sumcheck_proof                    |           2400 |           2400 |      1.00x
+            stage3_sumcheck_proof                    |           1048 |           1048 |      1.00x
+            stage4_sumcheck_proof                    |           1776 |           1776 |      1.00x
+            stage5_sumcheck_proof                    |          10584 |          10584 |      1.00x
+            stage6_sumcheck_proof                    |           8432 |           8432 |      1.00x
+            trusted_advice_proof                     |              1 |              1 |      1.00x
+            untrusted_advice_proof                   |              1 |              1 |      1.00x
+            reduced_opening_proof                    |          25948 |          25948 |      1.00x
+            untrusted_advice_commitment              |              1 |              1 |      1.00x
+            trace_length                             |              8 |              8 |      1.00x
+            ram_K                                    |              8 |              8 |      1.00x
+            bytecode_K                               |              8 |              8 |      1.00x
+            log_k_chunk                              |              8 |              8 |      1.00x
+            twist_sumcheck_switch_index              |              8 |              8 |      1.00x
+            The table above gives a breakdown, in bytes, of the serialized size for each field of the Jolt proof, comparing the uncompressed and compressed.
+            The ratio column quantifies the compression effect."#]]
+            .assert_eq(&jolt_proof_size_comparison_table(
+                &uncompressed_proof_field_size_tracker,
+                &compressed_proof_field_size_tracker,
+            ));
     }
 
     #[test]

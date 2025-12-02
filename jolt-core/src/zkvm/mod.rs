@@ -159,7 +159,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
     /// Serializes the data to a byte vector
     fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
-        let mut buffer = Vec::new();
+        let mut buffer: Vec<u8> = Vec::new();
         self.serialize_compressed(&mut buffer)?;
         Ok(buffer)
     }
