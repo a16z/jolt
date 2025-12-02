@@ -7,6 +7,7 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use num::FromPrimitive;
+use strum::EnumCount;
 
 use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
@@ -261,11 +262,11 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
 // - 0 = UntrustedAdvice (1 byte total)
 // - 1 = TrustedAdvice (1 byte total)
 // - 2 + sumcheck_id = Committed (2 bytes: fused byte + poly index)
-// - 26 + sumcheck_id = Virtual (2 bytes: fused byte + poly index)
+// - (2 + NUM_SUMCHECKS) + sumcheck_id = Virtual (2 bytes: fused byte + poly index)
 const OPENING_ID_UNTRUSTED_ADVICE: u8 = 0;
 const OPENING_ID_TRUSTED_ADVICE: u8 = 1;
 const OPENING_ID_COMMITTED_BASE: u8 = 2;
-const OPENING_ID_VIRTUAL_BASE: u8 = 26; // 2 + 24 sumcheck IDs
+const OPENING_ID_VIRTUAL_BASE: u8 = OPENING_ID_COMMITTED_BASE + SumcheckId::COUNT as u8;
 
 impl CanonicalSerialize for OpeningId {
     fn serialize_with_mode<W: Write>(
@@ -325,7 +326,7 @@ impl CanonicalDeserialize for OpeningId {
         match fused {
             OPENING_ID_UNTRUSTED_ADVICE => Ok(OpeningId::UntrustedAdvice),
             OPENING_ID_TRUSTED_ADVICE => Ok(OpeningId::TrustedAdvice),
-            _ if fused >= OPENING_ID_COMMITTED_BASE && fused < OPENING_ID_VIRTUAL_BASE => {
+            _ if (OPENING_ID_COMMITTED_BASE..OPENING_ID_VIRTUAL_BASE).contains(&fused) => {
                 let sumcheck_id = fused - OPENING_ID_COMMITTED_BASE;
                 let polynomial =
                     CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
