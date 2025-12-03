@@ -549,12 +549,17 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
 
         let n_memory_vars = ram_K.log_2();
 
-        // Note: r_address from RamValFinal/RamOutputCheck may differ from r_address from
-        // RamVal/RamReadWriteChecking depending on the phase configuration in read_write_checking.rs.
-        // We use the *_output_check advice openings which are opened at r_address_raf.
+        // When needs_single_advice_opening(T) is true, advice is only opened at RamValEvaluation
+        // (the two points are identical). Otherwise, we use RamValFinalEvaluation.
+        let advice_sumcheck_id =
+            if super::read_write_checking::needs_single_advice_opening(trace_len) {
+                SumcheckId::RamValEvaluation
+            } else {
+                SumcheckId::RamValFinalEvaluation
+            };
 
         let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation),
+            opening_accumulator.get_untrusted_advice_opening(advice_sumcheck_id),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -565,7 +570,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         );
 
         let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation),
+            opening_accumulator.get_trusted_advice_opening(advice_sumcheck_id),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),

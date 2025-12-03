@@ -38,14 +38,14 @@ use rayon::prelude::*;
 // RAM value evaluation sumcheck
 //
 // Proves the relation:
-//   Val(r) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
+//   Val(r) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(j) ⋅ wa(r_address, j) ⋅ LT(j, r_cycle)
 // where:
 // - r = (r_address, r_cycle) is the evaluation point from the read-write checking sumcheck.
 // - Val(r) is the claimed value of memory at address r_address and time r_cycle.
 // - Val_init(r_address) is the initial value of memory at address r_address.
 // - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
 // - wa is the MLE of the write-indicator (1 on matching {0,1}-points).
-// - LT is the MLE of strict less-than on bitstrings; evaluated at (r_cycle, j) as field points.
+// - LT is the MLE of strict less-than on bitstrings; LT(j, k) = 1 iff j < k for bitstrings j, k.
 //
 // This sumcheck ensures that the claimed final value of a memory cell is consistent
 // with its initial value and all the writes that occurred to it over time.

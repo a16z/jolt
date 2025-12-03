@@ -174,11 +174,12 @@ pub fn populate_memory_states(
 
 /// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
 ///
-/// Opens advice at TWO points:
+/// When `single_opening` is true (all cycle vars bound in phase 1):
+/// - Only opens at `r_address_rw` (the two points are identical)
+///
+/// Otherwise opens at TWO points:
 /// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
 /// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
-///
-/// These two points may differ depending on the phase configuration in `read_write_checking.rs`.
 pub fn prover_accumulate_advice<F: JoltField>(
     untrusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     trusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
@@ -186,6 +187,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
     one_hot_params: &OneHotParams,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
+    single_opening: bool,
 ) {
     let total_variables = one_hot_params.ram_k.log_2();
 
@@ -195,11 +197,6 @@ pub fn prover_accumulate_advice<F: JoltField>(
         SumcheckId::RamReadWriteChecking,
     );
     let (r_address_rw, _) = r_rw.split_at(total_variables);
-
-    // Get r_address_raf from RamValFinal/RamOutputCheck (used by ValFinal)
-    let (r_raf, _) = opening_accumulator
-        .get_virtual_polynomial_opening(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
-    let r_address_raf = &r_raf;
 
     let compute_advice_opening = |advice_poly: &MultilinearPolynomial<F>,
                                   r_address: &OpeningPoint<BIG_ENDIAN, F>,
@@ -224,15 +221,21 @@ pub fn prover_accumulate_advice<F: JoltField>(
             eval_rw,
         );
 
-        // Opening at r_address_raf (for ValFinalEvaluation)
-        let (point_raf, eval_raf) =
-            compute_advice_opening(untrusted_advice_poly, r_address_raf, max_size);
-        opening_accumulator.append_untrusted_advice(
-            transcript,
-            SumcheckId::RamValFinalEvaluation,
-            point_raf,
-            eval_raf,
-        );
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let (point_raf, eval_raf) =
+                compute_advice_opening(untrusted_advice_poly, &r_raf, max_size);
+            opening_accumulator.append_untrusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+                eval_raf,
+            );
+        }
     }
 
     if let Some(ref trusted_advice_poly) = trusted_advice_polynomial {
@@ -248,25 +251,32 @@ pub fn prover_accumulate_advice<F: JoltField>(
             eval_rw,
         );
 
-        // Opening at r_address_raf (for ValFinalEvaluation)
-        let (point_raf, eval_raf) =
-            compute_advice_opening(trusted_advice_poly, r_address_raf, max_size);
-        opening_accumulator.append_trusted_advice(
-            transcript,
-            SumcheckId::RamValFinalEvaluation,
-            point_raf,
-            eval_raf,
-        );
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let (point_raf, eval_raf) =
+                compute_advice_opening(trusted_advice_poly, &r_raf, max_size);
+            opening_accumulator.append_trusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+                eval_raf,
+            );
+        }
     }
 }
 
 /// Accumulates advice commitments into the verifier's accumulator.
 ///
-/// Opens advice at TWO points:
+/// When `single_opening` is true (all cycle vars bound in phase 1):
+/// - Only opens at `r_address_rw` (the two points are identical)
+///
+/// Otherwise opens at TWO points:
 /// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
 /// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
-///
-/// These two points may differ depending on the phase configuration in `read_write_checking.rs`.
 pub fn verifier_accumulate_advice<F: JoltField>(
     ram_K: usize,
     program_io: &JoltDevice,
@@ -274,6 +284,7 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     has_trusted_advice_commitment: bool,
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
+    single_opening: bool,
 ) {
     let total_vars = ram_K.log_2();
 
@@ -283,11 +294,6 @@ pub fn verifier_accumulate_advice<F: JoltField>(
         SumcheckId::RamReadWriteChecking,
     );
     let (r_address_rw, _) = r_rw.split_at(total_vars);
-
-    // Get r_address_raf from RamValFinal/RamOutputCheck (used by ValFinal)
-    let (r_raf, _) = opening_accumulator
-        .get_virtual_polynomial_opening(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
-    let r_address_raf = &r_raf;
 
     let compute_advice_point = |r_address: &OpeningPoint<BIG_ENDIAN, F>, max_advice_size: usize| {
         let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
@@ -307,13 +313,19 @@ pub fn verifier_accumulate_advice<F: JoltField>(
             point_rw,
         );
 
-        // Opening at r_address_raf (for ValFinalEvaluation)
-        let point_raf = compute_advice_point(r_address_raf, max_size);
-        opening_accumulator.append_untrusted_advice(
-            transcript,
-            SumcheckId::RamValFinalEvaluation,
-            point_raf,
-        );
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let point_raf = compute_advice_point(&r_raf, max_size);
+            opening_accumulator.append_untrusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+            );
+        }
     }
 
     if has_trusted_advice_commitment {
@@ -327,13 +339,19 @@ pub fn verifier_accumulate_advice<F: JoltField>(
             point_rw,
         );
 
-        // Opening at r_address_raf (for ValFinalEvaluation)
-        let point_raf = compute_advice_point(r_address_raf, max_size);
-        opening_accumulator.append_trusted_advice(
-            transcript,
-            SumcheckId::RamValFinalEvaluation,
-            point_raf,
-        );
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let point_raf = compute_advice_point(&r_raf, max_size);
+            opening_accumulator.append_trusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+            );
+        }
     }
 }
 
