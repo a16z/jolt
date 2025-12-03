@@ -136,7 +136,6 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, usize> {
 }
 
 impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
-
     /// Binds two adjacent rows in the sparse matrix together with the randomness `r`.
     /// This is a parallel, recursive function (similar to a parallel merge of two
     /// sorted lists) that assumes `even_row` and `odd_row` are sorted by column

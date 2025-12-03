@@ -300,9 +300,9 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixAddressMajor<F, I> {
         // First pass: collect column-pair info with bound lengths.
         // Group entries by col/2; within each group, even column entries come first.
         struct ColPairInfo {
-            input_start: usize, // Start index in input arrays
-            input_end: usize,   // End index in input arrays
-            even_end: usize,    // Boundary between even and odd entries
+            input_start: usize,  // Start index in input arrays
+            input_end: usize,    // End index in input arrays
+            even_end: usize,     // Boundary between even and odd entries
             even_col_idx: usize, // As usize for indexing val_init
             bound_len: usize,
         }
