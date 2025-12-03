@@ -36,6 +36,15 @@ use super::ColIndex;
 /// Additionally, `prev_val` and `next_val` must be stored explicitly because entries
 /// are sorted by row (cycle), so the next entry in the same *column* could be anywhere.
 ///
+/// # Memory Optimization: `prev_val`/`next_val` as `u64`
+///
+/// These fields store raw memory values (not bound coefficients) because:
+/// - Phase 1 (cycle binding) always starts from initial memory state
+/// - We never switch to cycle-major after binding address variables
+/// - They're only converted to `F` when needed in arithmetic
+///
+/// This saves 48 bytes per entry (~35% reduction).
+///
 /// # Type Parameters
 ///
 /// - `F`: The field type for coefficients.
@@ -53,7 +62,7 @@ pub struct ReadWriteEntry<F: JoltField, I: ColIndex> {
     /// `prev_val` contains the unbound coefficient before
     /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
     /// Val(k, j'-1, 11...1)
-    pub(crate) prev_val: F,
+    pub(crate) prev_val: u64,
     /// In round i, each ReadWriteEntry represents a coefficient
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
@@ -61,7 +70,7 @@ pub struct ReadWriteEntry<F: JoltField, I: ColIndex> {
     /// `next_val` contains the unbound coefficient after
     /// Val(k, j', 00...0) –– abusing notation, `next_val` is
     /// Val(k, j'+1, 00...0)
-    pub(crate) next_val: F,
+    pub(crate) next_val: u64,
     /// The Val coefficient for this matrix entry.
     pub val_coeff: F,
     /// The ra coefficient for this matrix entry. Note that for RAM,
@@ -101,24 +110,24 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, usize> {
                 let ram_op = cycle.ram_access();
                 match ram_op {
                     RAMAccess::Write(write) => {
-                        let pre_value = F::from_u64(write.pre_value);
-                        let post_value = F::from_u64(write.post_value);
+                        let pre_value = write.pre_value;
+                        let post_value = write.post_value;
                         Some(ReadWriteEntry {
                             row: j,
                             col: remap_address(write.address, memory_layout).unwrap() as usize,
                             ra_coeff: F::one(),
-                            val_coeff: pre_value,
+                            val_coeff: F::from_u64(pre_value),
                             prev_val: pre_value,
                             next_val: post_value,
                         })
                     }
                     RAMAccess::Read(read) => {
-                        let read_value = F::from_u64(read.value);
+                        let read_value = read.value;
                         Some(ReadWriteEntry {
                             row: j,
                             col: remap_address(read.address, memory_layout).unwrap() as usize,
                             ra_coeff: F::one(),
-                            val_coeff: read_value,
+                            val_coeff: F::from_u64(read_value),
                             prev_val: read_value,
                             next_val: read_value,
                         })
@@ -332,9 +341,9 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
                 // For ReadWriteMatrixCycleMajor, the absence of a matrix entry implies
                 // that its coeff has not been bound yet.
                 // The absence of an odd-row entry in the same column as even
-                // means that its implicit Val coeff is even.next, and its implicit
+                // means that its implicit Val coeff is even.next_val, and its implicit
                 // ra coeff is 0.
-                let odd_val_coeff = even.next_val;
+                let odd_val_coeff = F::from_u64(even.next_val);
                 ReadWriteEntry {
                     row: even.row / 2,
                     col: even.col,
@@ -348,9 +357,9 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
                 // For ReadWriteMatrixCycleMajor, the absence of a matrix entry implies
                 // that its coeff has not been bound yet.
                 // The absence of an even-row entry in the same column as odd
-                // means that its implicit Val coeff is odd.prev, and its implicit
+                // means that its implicit Val coeff is odd.prev_val, and its implicit
                 // ra coeff is 0.
-                let even_val_coeff = odd.prev_val;
+                let even_val_coeff = F::from_u64(odd.prev_val);
                 ReadWriteEntry {
                     row: odd.row / 2,
                     col: odd.col,
@@ -557,7 +566,7 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
                 ]
             }
             (Some(even), None) => {
-                let odd_val_coeff = even.next_val;
+                let odd_val_coeff = F::from_u64(even.next_val);
                 let ra_evals = [even.ra_coeff, -even.ra_coeff];
                 let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
                 [
@@ -566,7 +575,7 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
                 ]
             }
             (None, Some(odd)) => {
-                let even_val_coeff = odd.prev_val;
+                let even_val_coeff = F::from_u64(odd.prev_val);
                 let ra_evals = [F::zero(), odd.ra_coeff];
                 let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
                 [

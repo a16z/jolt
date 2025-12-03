@@ -240,7 +240,8 @@ impl<F: JoltField, I: ColIndex> From<ReadWriteMatrixCycleMajor<F, I>>
             .par_chunk_by(|a, b| a.col == b.col)
             .for_each(|column_entries| {
                 let col = column_entries[0].col.to_usize();
-                let last_next_val = column_entries.last().unwrap().next_val;
+                // Convert u64 to F (cycle-major stores prev_val/next_val as u64 for memory efficiency)
+                let last_next_val = F::from_u64(column_entries.last().unwrap().next_val);
                 // SAFETY: Each column appears in exactly one chunk (entries sorted by col),
                 // so writes to val_final_vec[col] are disjoint across parallel iterations.
                 // The pointer is valid for the lifetime of this closure.
