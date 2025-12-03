@@ -438,6 +438,10 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
     // returns the grid of evaluations on {0,1,inf}^window_size
     // touches each cycle of the trace exactly once and in order!
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_trace"
+    )]
     fn compute_evaluation_grid_from_trace(&mut self, window_size: usize) {
         // semantics in one place (see `split_eq_poly::E_out_in_for_window`).
         let split_eq = &self.split_eq_poly;
@@ -550,6 +554,130 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, res));
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_poly_parallel"
+    )]
+    pub fn compute_evaluation_grid_from_polynomials_parallel(&mut self, num_vars: usize) {
+        let eq_poly = &self.split_eq_poly;
+
+        let n = self.az.as_ref().expect("az should be initialized").len();
+        let az = self.az.as_ref().expect("az should be initialized");
+        let bz = self.bz.as_ref().expect("bz should be initialized");
+        debug_assert_eq!(n, bz.len());
+
+        let three_pow_dim = 3_usize.pow(num_vars as u32);
+        let grid_size = 1 << num_vars;
+        let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
+        let ans: Vec<F> = if E_in.len() == 1 {
+            // Parallel version with reduction
+            (0..E_out.len())
+                .into_par_iter()
+                .with_min_len(4096)
+                .map(|i| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    // Fill grids
+                    for j in 0..grid_size {
+                        let index = grid_size * i + j;
+                        az_grid[j] = az[index];
+                        bz_grid[j] = bz[index];
+                    }
+
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &az_grid,
+                        &mut buff_a,
+                        &mut tmp,
+                        num_vars,
+                    );
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &bz_grid,
+                        &mut buff_b,
+                        &mut tmp,
+                        num_vars,
+                    );
+
+                    for idx in 0..three_pow_dim {
+                        local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        } else {
+            let num_xin_bits = E_in.len().log_2();
+            (0..E_out.len())
+                .into_par_iter()
+                .with_min_len(4096)
+                .map(|x_out| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    for x_in in 0..E_in.len() {
+                        let i = (x_out << num_xin_bits) | x_in;
+
+                        //az_grid.fill(F::zero());
+                        //bz_grid.fill(F::zero());
+                        for j in 0..grid_size {
+                            az_grid[j] = az[grid_size * i + j];
+                            bz_grid[j] = bz[grid_size * i + j];
+                        }
+
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &az_grid,
+                            &mut buff_a,
+                            &mut tmp,
+                            num_vars,
+                        );
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &bz_grid,
+                            &mut buff_b,
+                            &mut tmp,
+                            num_vars,
+                        );
+
+                        let e_product = E_out[x_out] * E_in[x_in];
+                        for idx in 0..three_pow_dim {
+                            local_ans[idx] += buff_a[idx] * buff_b[idx] * e_product;
+                        }
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        };
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_poly_serial"
+    )]
     pub fn compute_evaluation_grid_from_polynomials_serial(&mut self, num_vars: usize) {
         let eq_poly = &self.split_eq_poly;
 
@@ -635,6 +763,10 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
     // TODO: No small value optimisation in this function currently.
     // TODO: Put meaningful doc strings
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_parallel"
+    )]
     fn materialise_sumcheck_polynomials_from_trace_parallel(&mut self, _window_size: usize) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
@@ -993,10 +1125,13 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         skip_all,
         name = "OuterRemainingSumcheckProver::stream_to_linear_time_helper"
     )]
-
     // If the first round of the sumcheck is the switchover point
     // then materialisng Az and Bz is significantly simpler.
     // We do not need to deal with challenges.
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_round_zero"
+    )]
     fn materialise_sumcheck_polynomials_from_trace_round_zero(&mut self, _window_size: usize) {
         // FIXME: This is not generalised -- only works for window_size
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
@@ -1066,7 +1201,10 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         //self.t_inf = Some(F::from_montgomery_reduce::<9>(t_inf_acc_unr))
     }
 
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::stream_to_linear_time")]
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace"
+    )]
     fn materialise_sumcheck_polynomials_from_trace(&mut self, window_size: usize) {
         let split_eq_poly = &self.split_eq_poly;
         if split_eq_poly.num_challenges() > 0 {
@@ -1214,13 +1352,13 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
         if self.schedule.is_switch_over_point(round) {
             self.materialise_sumcheck_polynomials_from_trace(num_unbound_vars);
             // TODO: This will be merged into stream_to_linear_time
-            self.compute_evaluation_grid_from_polynomials_serial(num_unbound_vars);
+            self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
         } else if self.schedule.is_window_start(round) {
             if self.schedule.before_switch_over_point(round) {
                 self.compute_evaluation_grid_from_trace(num_unbound_vars);
             } else {
                 //TODO: This must be parallel
-                self.compute_evaluation_grid_from_polynomials_serial(num_unbound_vars);
+                self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
             }
         }
         let (t_prime_0, t_prime_inf) = self.compute_t_evals(num_unbound_vars);
