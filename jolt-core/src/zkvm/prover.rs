@@ -1,4 +1,4 @@
-use crate::subprotocols::streaming_schedule::LinearOnlySchedule;
+use crate::subprotocols::streaming_schedule::{HalfSplitSchedule, LinearOnlySchedule};
 use std::{
     collections::HashMap,
     fs::File,

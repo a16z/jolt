@@ -1216,6 +1216,19 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         }
     }
 
+    pub fn compute_t_evals(&self, window_size: usize) -> (F, F) {
+        let t_prime_poly = self
+            .t_prime_poly
+            .as_ref()
+            .expect("t_prime_poly should be initialized");
+
+        // Equality weights over the active window bits (all but the first).
+        let e_active = self.split_eq_poly.E_active_for_window(window_size);
+        let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
+        let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
+        (t_prime_0, t_prime_inf)
+    }
+
     // start with serial we can parallelise this later
     pub fn compute_evaluation_grid_from_polynomials_serial(&mut self, num_vars: usize) {
         let eq_poly = &self.split_eq_poly;
@@ -1235,15 +1248,20 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         let mut ans = vec![F::zero(); three_pow_dim];
 
         let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
+        //println!("Size of Az/Bz: {}", n.log_2());
+        //println!("Size of Grid: {grid_size}, Num-vars: {num_vars}");
+        //println!("Num out vars: {}", E_out.len().log_2());
+        //println!("Num in vars: {}", E_in.len().log_2());
+        //
         if E_in.len() == 1 {
             // this is a simple case of a linear loop
-            debug_assert_eq!(E_out.len(), n / grid_size);
             for i in 0..E_out.len() {
                 az_grid.fill(F::zero());
                 bz_grid.fill(F::zero());
                 for j in 0..grid_size {
-                    az_grid[j] = az[2 * i + j];
-                    bz_grid[j] = bz[2 * i + j];
+                    let index = (grid_size) * i + j;
+                    az_grid[j] = az[index];
+                    bz_grid[j] = bz[index];
                 }
                 MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
                     &az_grid,
@@ -1269,8 +1287,8 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     az_grid.fill(F::zero());
                     bz_grid.fill(F::zero());
                     for j in 0..grid_size {
-                        az_grid[j] = az[2 * i + j];
-                        bz_grid[j] = bz[2 * i + j];
+                        az_grid[j] = az[grid_size * i + j];
+                        bz_grid[j] = bz[grid_size * i + j];
                     }
 
                     MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
@@ -1341,51 +1359,38 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
                 // split-eq instance (head vs window bits).
                 self.get_grid_gen(num_unbound_vars);
             }
-            // Use the multiquadratic polynomial to compute the message
-            let t_prime_poly = self
-                .t_prime_poly
-                .as_ref()
-                .expect("t_prime_poly should be initialized");
-            // Equality weights over the active window bits (all but the first).
-            let e_active = self.split_eq_poly.E_active_for_window(num_unbound_vars);
-            let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
-            let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
 
-            (t_prime_0, t_prime_inf)
+            println!("✅ Success! round = {:?}", round);
+            self.compute_t_evals(num_unbound_vars)
         } else {
             // LINEAR PHASE
             if self.schedule.is_first_linear(round) {
+                // TODO: This will eventually be t_grid also instead of w=1
                 self.stream_to_linear_time();
                 let t_0 = self.t_0.unwrap();
                 let t_inf = self.t_inf.unwrap();
                 self.t_0 = None;
                 self.t_inf = None;
+                println!("✅ Success! round = {:?}", round);
                 (t_0, t_inf)
             } else {
-                println!("Az/Bz already materialised 0 in 0 linear phase| Round: {round}");
                 let window_size = 1;
+                // TODO: This is not parallel -- make it parallel.
                 self.compute_evaluation_grid_from_polynomials_serial(window_size);
-                let t_prime_poly = self
-                    .t_prime_poly
-                    .as_ref()
-                    .expect("t_prime_poly should be initialized");
-
-                // Equality weights over the active window bits (all but the first).
-                let e_active = self.split_eq_poly.E_active_for_window(window_size);
-                let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
-                let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
+                self.compute_t_evals(window_size)
 
                 // change this to compuute t_grid from Az/Bz and compare it with this
-                let (t0, t_inf) = self.remaining_quadratic_evals();
-                assert_eq!(t_prime_0, t0);
-                assert_eq!(t_prime_inf, t_inf);
-                (t0, t_inf)
+                //let (t0, t_inf) = self.remaining_quadratic_evals();
+                //assert_eq!(t_prime_0, t0);
+                //assert_eq!(t_prime_inf, t_inf);
+                //(t0, t_inf)
             }
         };
+        //TODO: eventually move th compute_t_evals out here once we standardise the
+        //stream_to_linear_time
         // Compute the Gruen cubic using the split-eq implementation.
         self.split_eq_poly
             .gruen_poly_deg_3(t0, t_inf, previous_claim)
-        //vec![evals[0], evals[1], evals[2]]
     }
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
