@@ -1,133 +1,23 @@
-//! RAM RA claim reduction sumcheck
+//! RAM RA claim reduction sumcheck.
 //!
-//! This sumcheck consolidates the four different RAM RA claims into a single claim.
-//! The single claim is then fed into the RA virtualization sumcheck, which decomposes
-//! it into claims about the individual `ra_i` polynomials.
+//! Consolidates the four RAM RA claims (from RafEvaluation, ReadWriteChecking, ValEvaluation,
+//! ValFinal) into a single claim for the RA virtualization sumcheck. See `mod.rs` for claim
+//! coincidence constraints.
 //!
-//! ## The Four RA Claims
+//! ## Sumcheck Identity
 //!
-//! The following sumchecks emit RA claims that need to be consolidated:
-//!
-//! | Sumcheck | Opening Point | Stage |
-//! |----------|---------------|-------|
-//! | RamReadWriteChecking | `ra(r_address_rw, r_cycle_rw)` | Stage 2 |
-//! | RamRafEvaluation | `ra(r_address_raf, r_cycle_raf)` | Stage 2 |
-//! | RamValEvaluation | `ra(r_address_rw, r_cycle_val)` | Stage 4 |
-//! | RamValFinal | `ra(r_address_raf, r_cycle_val)` | Stage 4 |
-//!
-//! ## Confirmed Coincidences
-//!
-//! The following equalities hold due to the stage structure:
-//!
-//! - `r_address_raf = r_address_val_final` — Both derive from first `log_K` challenges of Stage 2.
-//!   OutputCheck and RafEvaluation are in the same batched sumcheck.
-//! - `r_address_val_eval = r_address_rw` — ValEvaluation inherits `r_address` from RamReadWriteChecking.
-//! - `r_cycle_val_eval = r_cycle_val_final` — Both are in Stage 4 with `log_T` rounds each.
-//!
-//! ## Constraints for Coincidences to Hold
-//!
-//! 1. OutputCheck and RafEvaluation MUST be in the same batched sumcheck (Stage 2),
-//!    and both must use challenges `[0 .. log_K]` for `r_address`.
-//! 2. ValEvaluation and ValFinal MUST be in the same batched sumcheck (Stage 4),
-//!    and have the same `num_rounds = log_T`.
-//! 3. ValEvaluation MUST read `r_address` from RamReadWriteChecking's opening.
-//! 4. ValFinal MUST read `r_address` from OutputCheck's opening.
-//!
-//! ## Address Groups
-//!
-//! The four claims naturally group into two address groups:
-//!
-//! - **Group A** (`r_address_1 = r_address_raf`):
-//!   - `ra(r_address_1, r_cycle_raf) = claim_raf`
-//!   - `ra(r_address_1, r_cycle_val) = claim_val_final`
-//!
-//! - **Group B** (`r_address_2 = r_address_rw`):
-//!   - `ra(r_address_2, r_cycle_rw) = claim_rw`
-//!   - `ra(r_address_2, r_cycle_val) = claim_val_eval`
-//!
-//! ## The Reduction Sumcheck
-//!
-//! We prove the following identity via sumcheck over `(k, c) ∈ {0,1}^{log_K} × {0,1}^{log_T}`:
+//! Proves over `(k, c) ∈ {0,1}^{log_K} × {0,1}^{log_T}`:
 //!
 //! ```text
 //! Σ_{k,c} eq_combined(k, c) · ra(k, c) = input_claim
 //! ```
 //!
-//! where:
-//!
+//! where `eq_combined` batches the four claims with γ-powers:
 //! ```text
-//! eq_combined(k, c) =
-//!     eq(r_address_1, k) · (eq(r_cycle_raf, c) + γ · eq(r_cycle_val, c))
-//!   + γ² · eq(r_address_2, k) · (eq(r_cycle_rw, c) + γ · eq(r_cycle_val, c))
+//! eq_combined(k, c) = eq(r_addr_1, k)·(eq_raf(c) + γ·eq_val(c))
+//!                   + γ²·eq(r_addr_2, k)·(eq_rw(c) + γ·eq_val(c))
+//! input_claim = claim_raf + γ·claim_val_final + γ²·claim_rw + γ³·claim_val_eval
 //! ```
-//!
-//! and:
-//!
-//! ```text
-//! input_claim = claim_raf + γ · claim_val_final + γ² · claim_rw + γ³ · claim_val_eval
-//! ```
-//!
-//! After binding `k → r_address_reduced` and `c → r_cycle_reduced`, the expected output is:
-//!
-//! ```text
-//! eq_combined(r_address_reduced, r_cycle_reduced) · ra(r_address_reduced, r_cycle_reduced)
-//! ```
-//!
-//! This yields the single reduced claim:
-//!
-//! ```text
-//! ra(r_address_reduced, r_cycle_reduced) = ra_claim_reduced
-//! ```
-//!
-//! ## Binding Order
-//!
-//! The sumcheck binds variables in the order: **address variables first** (low-to-high),
-//! then **cycle variables** (low-to-high). This matches the polynomial layout `ra(address, cycle)`
-//! and the structure used in `OneHotPolynomialProverOpening`.
-//!
-//! ## Implementation Structure (Two Phases)
-//!
-//! ### Phase 1: Address Rounds (log_K rounds)
-//!
-//! During these rounds, we bind address variables while maintaining:
-//! - `B_1`: eq(r_address_1, k) polynomial, bound during address rounds
-//! - `B_2`: eq(r_address_2, k) polynomial, bound during address rounds
-//! - `F`: expanding table tracking eq(r_addr_reduced, k) where r_addr_reduced is the sumcheck challenges
-//! - `G_A[k] = Σ_{c: address[c]=k} eq_cycle_A(c)` where `eq_cycle_A = eq(r_cycle_raf, ·) + γ·eq(r_cycle_val, ·)`
-//! - `G_B[k] = Σ_{c: address[c]=k} eq_cycle_B(c)` where `eq_cycle_B = eq(r_cycle_rw, ·) + γ·eq(r_cycle_val, ·)`
-//!
-//! The round polynomial sums contributions from both address groups:
-//! ```text
-//! inner_sum = Σ_k B_1[k] · G_A[k] + γ² · Σ_k B_2[k] · G_B[k]
-//! ```
-//!
-//! After all address rounds:
-//! - `α_1 = B_1.final_sumcheck_claim() = eq(r_address_1, r_addr_reduced)`
-//! - `α_2 = B_2.final_sumcheck_claim() = eq(r_address_2, r_addr_reduced)`
-//! - `F[k] = eq(r_addr_reduced, k)` for all k
-//!
-//! ### Phase 2: Cycle Rounds (log_T rounds)
-//!
-//! Initialize `H[c] = F[address[c]] = eq(r_addr_reduced, address[c]) = ra(r_addr_reduced, c)`.
-//!
-//! The cycle round sum is:
-//! ```text
-//! Σ_c H[c] · [α_1·eq_cycle_A(c) + γ²·α_2·eq_cycle_B(c)]
-//! = α_1 · Σ_c H[c]·eq_raf(c) + γ²·α_2 · Σ_c H[c]·eq_rw(c) + (γ·α_1 + γ³·α_2) · Σ_c H[c]·eq_val(c)
-//! ```
-//!
-//! This uses Gruen's optimization on `eq_raf`, `eq_rw`, and `eq_val` separately.
-//!
-//! ## Output
-//!
-//! After this sumcheck, the RA virtualization sumcheck proves:
-//!
-//! ```text
-//! Σ_c eq(r_cycle_reduced, c) · Π_{i=0}^{d−1} ra_i(r_address_reduced_i, c) = ra_claim_reduced
-//! ```
-//!
-//! where `r_address_reduced` is split into chunks `r_address_reduced_i` according to the
-//! one-hot decomposition parameters.
 
 use std::sync::Arc;
 
@@ -456,6 +346,10 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
         (G_A, G_B)
     }
 
+    /// Minimum number of k iterations to parallelize the inner loop.
+    /// Below this threshold, sequential iteration is faster due to parallel overhead.
+    const MIN_INNER_PARALLEL_LEN: usize = 1 << 12; // 4096
+
     /// Compute the round polynomial for address rounds (phase 1).
     ///
     /// The identity during address rounds is:
@@ -465,8 +359,11 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
     fn address_round_compute_message(&self, round: usize, previous_claim: F) -> UniPoly<F> {
         let m = round + 1;
         let half_len = self.B_1.len() / 2;
+        let inner_len = 1 << m; // Number of k values per k_prime
 
         // For each k' in {0,1}^{log_K - m}, compute contribution to round polynomial
+        // Use unreduced arithmetic for accumulation, but track positive contributions only.
+        // The c2 coefficient is computed as 2*sum_1 - sum_0 after reduction.
         let evals = (0..half_len)
             .into_par_iter()
             .map(|k_prime| {
@@ -480,47 +377,123 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
 
                 // Sum over all k that share prefix k'
                 // k ranges from k' << m to (k' + 1) << m
-                let mut inner_A = [F::zero(); 2];
-                let mut inner_B = [F::zero(); 2];
+                // Track sums for k_m=0 and k_m=1 separately using unreduced arithmetic
+                let k_start = k_prime << m;
+                let k_end = k_start + inner_len;
 
-                for k in (k_prime << m)..((k_prime + 1) << m) {
-                    // Extract the m-th bit (the variable being bound in this round)
-                    // k is a global index, so we need to mask to get just bit (m-1)
-                    let k_m = (k >> (m - 1)) & 1;
-                    let F_k = self.F[k % (1 << (m - 1))];
-                    let G_A_k = self.G_A[k];
-                    let G_B_k = self.G_B[k];
+                // Parallelize inner loop when it's large enough
+                let (sum_A_0, sum_A_1, sum_B_0, sum_B_1) = if inner_len >= Self::MIN_INNER_PARALLEL_LEN
+                {
+                    (k_start..k_end)
+                        .into_par_iter()
+                        .fold(
+                            || {
+                                (
+                                    F::Unreduced::<9>::zero(),
+                                    F::Unreduced::<9>::zero(),
+                                    F::Unreduced::<9>::zero(),
+                                    F::Unreduced::<9>::zero(),
+                                )
+                            },
+                            |mut acc, k| {
+                                let k_m = (k >> (m - 1)) & 1;
+                                let F_k = self.F[k % (1 << (m - 1))];
+                                let G_A_k = self.G_A[k];
+                                let G_B_k = self.G_B[k];
 
-                    let contrib_A = G_A_k * F_k;
-                    let contrib_B = G_B_k * F_k;
+                                let contrib_A = G_A_k.mul_unreduced::<9>(F_k);
+                                let contrib_B = G_B_k.mul_unreduced::<9>(F_k);
 
-                    // For eval at 0: only k_m = 0 contributes
-                    // For eval at 2: linear extrapolation from 0 and 1
-                    if k_m == 0 {
-                        inner_A[0] += contrib_A;
-                        inner_A[1] += -contrib_A; // c2 term
-                        inner_B[0] += contrib_B;
-                        inner_B[1] += -contrib_B;
-                    } else {
-                        inner_A[1] += contrib_A + contrib_A; // c2 term
-                        inner_B[1] += contrib_B + contrib_B;
+                                if k_m == 0 {
+                                    acc.0 += contrib_A;
+                                    acc.2 += contrib_B;
+                                } else {
+                                    acc.1 += contrib_A;
+                                    acc.3 += contrib_B;
+                                }
+                                acc
+                            },
+                        )
+                        .reduce(
+                            || {
+                                (
+                                    F::Unreduced::<9>::zero(),
+                                    F::Unreduced::<9>::zero(),
+                                    F::Unreduced::<9>::zero(),
+                                    F::Unreduced::<9>::zero(),
+                                )
+                            },
+                            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3),
+                        )
+                } else {
+                    // Sequential path for small inner loops
+                    let mut sum_A_0 = F::Unreduced::<9>::zero();
+                    let mut sum_A_1 = F::Unreduced::<9>::zero();
+                    let mut sum_B_0 = F::Unreduced::<9>::zero();
+                    let mut sum_B_1 = F::Unreduced::<9>::zero();
+
+                    for k in k_start..k_end {
+                        let k_m = (k >> (m - 1)) & 1;
+                        let F_k = self.F[k % (1 << (m - 1))];
+                        let G_A_k = self.G_A[k];
+                        let G_B_k = self.G_B[k];
+
+                        let contrib_A = G_A_k.mul_unreduced::<9>(F_k);
+                        let contrib_B = G_B_k.mul_unreduced::<9>(F_k);
+
+                        if k_m == 0 {
+                            sum_A_0 += contrib_A;
+                            sum_B_0 += contrib_B;
+                        } else {
+                            sum_A_1 += contrib_A;
+                            sum_B_1 += contrib_B;
+                        }
                     }
-                }
+                    (sum_A_0, sum_A_1, sum_B_0, sum_B_1)
+                };
+
+                // Reduce to field elements
+                let sum_A_0 = F::from_montgomery_reduce::<9>(sum_A_0);
+                let sum_A_1 = F::from_montgomery_reduce::<9>(sum_A_1);
+                let sum_B_0 = F::from_montgomery_reduce::<9>(sum_B_0);
+                let sum_B_1 = F::from_montgomery_reduce::<9>(sum_B_1);
+
+                // Compute inner_A[0] = sum_0 (eval at X=0)
+                // Compute inner_A[1] = 2*sum_1 - sum_0 (c2 coefficient for quadratic interpolation)
+                let inner_A_0 = sum_A_0;
+                let inner_A_c2 = sum_A_1 + sum_A_1 - sum_A_0;
+                let inner_B_0 = sum_B_0;
+                let inner_B_c2 = sum_B_1 + sum_B_1 - sum_B_0;
 
                 // Combine with B evals: B[k'] · inner[k'] + γ² · B2[k'] · inner_B[k']
                 [
-                    B_1_evals[0] * inner_A[0]
-                        + self.params.gamma_squared * B_2_evals[0] * inner_B[0],
-                    B_1_evals[1] * inner_A[1]
-                        + self.params.gamma_squared * B_2_evals[1] * inner_B[1],
+                    B_1_evals[0] * inner_A_0
+                        + self.params.gamma_squared * B_2_evals[0] * inner_B_0,
+                    B_1_evals[1] * inner_A_c2
+                        + self.params.gamma_squared * B_2_evals[1] * inner_B_c2,
                 ]
             })
+            .fold_with(
+                [F::Unreduced::<5>::zero(), F::Unreduced::<5>::zero()],
+                |running, new| {
+                    [
+                        running[0] + *new[0].as_unreduced_ref(),
+                        running[1] + *new[1].as_unreduced_ref(),
+                    ]
+                },
+            )
             .reduce(
-                || [F::zero(); 2],
+                || [F::Unreduced::<5>::zero(), F::Unreduced::<5>::zero()],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             );
 
-        UniPoly::from_evals_and_hint(previous_claim, evals.as_ref())
+        // Final reduction before constructing the polynomial
+        let evals_reduced = [
+            F::from_montgomery_reduce::<5>(evals[0]),
+            F::from_montgomery_reduce::<5>(evals[1]),
+        ];
+
+        UniPoly::from_evals_and_hint(previous_claim, evals_reduced.as_ref())
     }
 
     /// Compute the round polynomial for cycle rounds (phase 2).
