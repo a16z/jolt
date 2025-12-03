@@ -6,7 +6,9 @@ use super::wrappers::{
     jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkGTCompressed, JoltBn254,
     JoltToDoryTranscript,
 };
-use crate::poly::commitment::commitment_scheme::CompressedCommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{
+    CompressedCommitmentScheme, CompressedStreamingCommitmentScheme,
+};
 use crate::poly::commitment::dory::setup::{DoryProverSetup, DoryVerifierSetup};
 use crate::poly::commitment::dory::wrappers::CompressedArkDoryProof;
 use crate::{
@@ -33,7 +35,70 @@ use tracing::trace_span;
 pub struct DoryCommitmentScheme {}
 
 impl CompressedCommitmentScheme for DoryCommitmentScheme {
+    type CompressedCommitment = ArkGTCompressed;
     type CompressedProof = CompressedArkDoryProof;
+
+    fn commit_compressed(
+        poly: &MultilinearPolynomial<ark_bn254::Fr>,
+        setup: &Self::ProverSetup,
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
+        let _span = trace_span!("DoryCommitmentScheme::commit").entered();
+
+        let num_cols = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_max_num_rows();
+        let sigma = num_cols.log_2();
+        let nu = num_rows.log_2();
+
+        let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
+            ArkFr,
+        >>::commit_compressed::<JoltBn254, JoltG1Routines>(
+            poly, nu, sigma, setup
+        )
+        .expect("commitment should succeed");
+
+        (tier_2, row_commitments)
+    }
+}
+
+impl CompressedStreamingCommitmentScheme for DoryCommitmentScheme {
+    type ChunkState = Vec<ArkG1>;
+
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::aggregate_chunks_compressed")]
+    fn aggregate_chunks_compressed(
+        setup: &Self::ProverSetup,
+        onehot_k: Option<usize>,
+        chunks: &[Self::ChunkState],
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
+        if let Some(K) = onehot_k {
+            let row_len = DoryGlobals::get_num_columns();
+            let T = DoryGlobals::get_T();
+            let rows_per_k = T / row_len;
+            let num_rows = K * T / row_len;
+
+            let mut row_commitments = vec![ArkG1(G1Projective::zero()); num_rows];
+            for (chunk_index, commitments) in chunks.iter().enumerate() {
+                row_commitments
+                    .par_iter_mut()
+                    .skip(chunk_index)
+                    .step_by(rows_per_k)
+                    .zip(commitments.par_iter())
+                    .for_each(|(dest, src)| *dest = *src);
+            }
+
+            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier_2 = multi_pair_g2_setup_optimized_compressed(&row_commitments, g2_bases);
+
+            (tier_2, row_commitments)
+        } else {
+            let row_commitments: Vec<ArkG1> =
+                chunks.iter().flat_map(|chunk| chunk.clone()).collect();
+
+            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier_2 = multi_pair_g2_setup_optimized_compressed(&row_commitments, g2_bases);
+
+            (tier_2, row_commitments)
+        }
+    }
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {
@@ -44,7 +109,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type MyProof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
     type OpeningProofHint = Vec<ArkG1>;
-    type CompressedCommitment = ArkGTCompressed;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
@@ -74,27 +138,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
             ArkFr,
         >>::commit::<JoltBn254, JoltG1Routines>(
-            poly, nu, sigma, setup
-        )
-        .expect("commitment should succeed");
-
-        (tier_2, row_commitments)
-    }
-
-    fn commit_compressed(
-        poly: &MultilinearPolynomial<ark_bn254::Fr>,
-        setup: &Self::ProverSetup,
-    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
-        let _span = trace_span!("DoryCommitmentScheme::commit").entered();
-
-        let num_cols = DoryGlobals::get_num_columns();
-        let num_rows = DoryGlobals::get_max_num_rows();
-        let sigma = num_cols.log_2();
-        let nu = num_rows.log_2();
-
-        let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
-            ArkFr,
-        >>::commit_compressed::<JoltBn254, JoltG1Routines>(
             poly, nu, sigma, setup
         )
         .expect("commitment should succeed");
@@ -354,46 +397,6 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
             let tier_2 = JoltBn254::multi_pair_g2_setup(&row_commitments, g2_bases);
-
-            (tier_2, row_commitments)
-        }
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "DoryCommitmentScheme::compute_tier2_commitment_compressed"
-    )]
-    fn aggregate_chunks_compressed(
-        setup: &Self::ProverSetup,
-        onehot_k: Option<usize>,
-        chunks: &[Self::ChunkState],
-    ) -> (Self::CompressedCommitment, Self::OpeningProofHint) {
-        if let Some(K) = onehot_k {
-            let row_len = DoryGlobals::get_num_columns();
-            let T = DoryGlobals::get_T();
-            let rows_per_k = T / row_len;
-            let num_rows = K * T / row_len;
-
-            let mut row_commitments = vec![ArkG1(G1Projective::zero()); num_rows];
-            for (chunk_index, commitments) in chunks.iter().enumerate() {
-                row_commitments
-                    .par_iter_mut()
-                    .skip(chunk_index)
-                    .step_by(rows_per_k)
-                    .zip(commitments.par_iter())
-                    .for_each(|(dest, src)| *dest = *src);
-            }
-
-            let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = multi_pair_g2_setup_optimized_compressed(&row_commitments, g2_bases);
-
-            (tier_2, row_commitments)
-        } else {
-            let row_commitments: Vec<ArkG1> =
-                chunks.iter().flat_map(|chunk| chunk.clone()).collect();
-
-            let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = multi_pair_g2_setup_optimized_compressed(&row_commitments, g2_bases);
 
             (tier_2, row_commitments)
         }

@@ -44,7 +44,6 @@ where
     type MyProof = MockProof<F>;
     type BatchedProof = MockProof<F>;
     type OpeningProofHint = ();
-    type CompressedCommitment = Self::Commitment;
 
     fn setup_prover(_num_vars: usize) -> Self::ProverSetup {}
 

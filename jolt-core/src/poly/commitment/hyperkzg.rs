@@ -423,7 +423,6 @@ where
     type MyProof = HyperKZGProof<P>;
     type BatchedProof = HyperKZGProof<P>;
     type OpeningProofHint = ();
-    type CompressedCommitment = Self::Commitment;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         HyperKZGSRS(Arc::new(SRS::setup(
