@@ -603,7 +603,11 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         let val_ptr = val.as_mut_ptr() as usize;
 
         self.entries.into_par_iter().for_each(|entry| {
-            debug_assert!(entry.row < T_prime, "row {} >= T_prime {}", entry.row, T_prime);
+            debug_assert!(
+                entry.row < T_prime,
+                "row {} >= T_prime {T_prime}",
+                entry.row
+            );
             let idx = entry.col * T_prime + entry.row;
             // SAFETY: Each entry has a unique (row, col) pair,
             // so writes to ra[idx] and val[idx] are disjoint across parallel iterations.
