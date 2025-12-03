@@ -12,7 +12,7 @@ use crate::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
-use proof_serialization::JoltProof;
+use proof_serialization::JoltUncompressedProof;
 use prover::JoltCpuProver;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -134,7 +134,7 @@ pub fn fiat_shamir_preamble(
 
 pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
-pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACProof = JoltUncompressedProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
 pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Gets the byte size of the serialized data

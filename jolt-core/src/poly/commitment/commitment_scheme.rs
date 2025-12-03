@@ -36,9 +36,9 @@ pub trait CompressedCommitmentScheme: CommitmentScheme {
     ) -> (Self::CompressedCommitment, Self::OpeningProofHint);
 }
 
-pub trait CompressedStreamingCommitmentScheme: CompressedCommitmentScheme {
-    type ChunkState: Send + Sync + Clone + PartialEq + Debug;
-
+pub trait CompressedStreamingCommitmentScheme:
+    CompressedCommitmentScheme + StreamingCommitmentScheme
+{
     /// Compute tier 2 commitment from accumulated tier 1 commitments, where the output commitment is compressed.
     fn aggregate_chunks_compressed(
         setup: &Self::ProverSetup,

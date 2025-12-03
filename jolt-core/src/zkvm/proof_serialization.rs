@@ -23,24 +23,9 @@ use crate::{
 const COMPRESSED_SERIALIZATION_FLAG: u8 = 1;
 const UNCOMPRESSED_SERIALIZATION_FLAG: u8 = 0;
 
-#[derive(Debug, Clone)]
-pub enum JoltProofCommitments<PCS: CommitmentScheme> {
-    Compressed(Vec<PCS::CompressedCommitment>),
-    Uncompressed(Vec<PCS::Commitment>),
-}
-
-impl<PCS: CommitmentScheme> JoltProofCommitments<PCS> {
-    pub fn len(&self) -> usize {
-        match self {
-            JoltProofCommitments::Compressed(commitments) => commitments.len(),
-            JoltProofCommitments::Uncompressed(commitments) => commitments.len(),
-        }
-    }
-}
-
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltUncompressedProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
-    pub commitments: JoltProofCommitments<PCS>,
+    pub commitments: Vec<PCS::Commitment>,
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
     pub stage1_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
@@ -60,75 +45,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub twist_sumcheck_switch_index: usize,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CanonicalSerialize
-    for JoltProofCommitments<PCS>
-{
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        match self {
-            JoltProofCommitments::Compressed(commitments) => {
-                COMPRESSED_SERIALIZATION_FLAG.serialize_with_mode(&mut writer, compress)?;
-                commitments.serialize_with_mode(&mut writer, compress)?;
-                Ok(())
-            }
-            JoltProofCommitments::Uncompressed(items) => {
-                UNCOMPRESSED_SERIALIZATION_FLAG.serialize_with_mode(&mut writer, compress)?;
-                items.serialize_with_mode(&mut writer, compress)?;
-                Ok(())
-            }
-        }
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        let flag_size = COMPRESSED_SERIALIZATION_FLAG.serialized_size(compress);
-        let data_size = match self {
-            JoltProofCommitments::Compressed(commitments) => commitments.serialized_size(compress),
-            JoltProofCommitments::Uncompressed(items) => items.serialized_size(compress),
-        };
-        data_size + flag_size
-    }
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CanonicalDeserialize
-    for JoltProofCommitments<PCS>
-{
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-
-        match flag {
-            COMPRESSED_SERIALIZATION_FLAG => {
-                let commitments = Vec::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(JoltProofCommitments::Compressed(commitments))
-            }
-            UNCOMPRESSED_SERIALIZATION_FLAG => {
-                let items = Vec::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(JoltProofCommitments::Uncompressed(items))
-            }
-            _ => Err(SerializationError::InvalidData),
-        }
-    }
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Valid for JoltProofCommitments<PCS> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            JoltProofCommitments::Compressed(compressed_commitments) => {
-                compressed_commitments.check()
-            }
-            JoltProofCommitments::Uncompressed(commitments) => commitments.check(),
-        }
-    }
-}
-
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for JoltProof<F, PCS, FS>
+    for JoltUncompressedProof<F, PCS, FS>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -206,7 +124,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for JoltProof<F, PCS, FS>
+    for JoltUncompressedProof<F, PCS, FS>
 {
     fn check(&self) -> Result<(), SerializationError> {
         self.opening_claims.check()?;
@@ -233,7 +151,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for JoltProof<F, PCS, FS>
+    for JoltUncompressedProof<F, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,

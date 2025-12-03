@@ -61,8 +61,6 @@ impl CompressedCommitmentScheme for DoryCommitmentScheme {
 }
 
 impl CompressedStreamingCommitmentScheme for DoryCommitmentScheme {
-    type ChunkState = Vec<ArkG1>;
-
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::aggregate_chunks_compressed")]
     fn aggregate_chunks_compressed(
         setup: &Self::ProverSetup,

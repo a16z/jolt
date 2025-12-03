@@ -16,7 +16,7 @@ use crate::{
     guest,
     poly::{
         commitment::{
-            commitment_scheme::StreamingCommitmentScheme,
+            commitment_scheme::{CompressedStreamingCommitmentScheme, StreamingCommitmentScheme},
             dory::{DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
@@ -32,7 +32,6 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
-        proof_serialization::JoltProofCommitments,
         ram::populate_memory_states,
         verifier::JoltVerifierPreprocessing,
     },
@@ -49,7 +48,7 @@ use crate::{
             self, ra_virtual::RaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::ReadRafSumcheckProver as LookupsReadRafSumcheckProver,
         },
-        proof_serialization::{Claims, JoltProof},
+        proof_serialization::{Claims, JoltUncompressedProof},
         r1cs::key::UniformSpartanKey,
         ram::{
             self, gen_ram_memory_states,
@@ -277,23 +276,26 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     pub fn prove(
         self,
     ) -> (
-        JoltProof<F, PCS, ProofTranscript>,
+        JoltUncompressedProof<F, PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
         self.prove_with_mode(JoltProofCompressionFlag::Uncompressed)
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn prove_with_mode(
-        mut self,
-        compression_flag: JoltProofCompressionFlag,
+    /// Generates proofs which do not contain GT elements and are therefore not applicable to
+    /// the torus compression implemented for pairing values.
+    fn generate_uni_skip_and_sumcheck_proofs(
+        &mut self,
     ) -> (
-        JoltProof<F, PCS, ProofTranscript>,
-        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+        UniSkipFirstRoundProof<F, ProofTranscript>,
+        UniSkipFirstRoundProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, ProofTranscript>,
     ) {
-        let _pprof_prove = pprof_scope!("prove");
-
-        let start = Instant::now();
         fiat_shamir_preamble(
             &self.program_io,
             self.one_hot_params.ram_k,
@@ -303,9 +305,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         tracing::info!("bytecode size: {}", self.preprocessing.bytecode.code_size);
 
-        let (commitments, opening_proof_hints) =
-            self.generate_and_commit_witness_polynomials(compression_flag);
-        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
         let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof) = self.prove_stage2();
@@ -314,6 +313,47 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
         tracing::info!("Stage 7 proving");
+        (
+            stage1_uni_skip_first_round_proof,
+            stage2_uni_skip_first_round_proof,
+            stage1_sumcheck_proof,
+            stage2_sumcheck_proof,
+            stage3_sumcheck_proof,
+            stage4_sumcheck_proof,
+            stage5_sumcheck_proof,
+            stage6_sumcheck_proof,
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn prove_with_mode(
+        mut self,
+        compression_flag: JoltProofCompressionFlag,
+    ) -> (
+        JoltUncompressedProof<F, PCS, ProofTranscript>,
+        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+    ) {
+        let _pprof_prove = pprof_scope!("prove");
+
+        let start = Instant::now();
+
+        let (
+            stage1_uni_skip_first_round_proof,
+            stage1_sumcheck_proof,
+            stage2_uni_skip_first_round_proof,
+            stage2_sumcheck_proof,
+            stage3_sumcheck_proof,
+            stage4_sumcheck_proof,
+            stage5_sumcheck_proof,
+            stage6_sumcheck_proof,
+        ) = self.generate_uni_skip_and_sumcheck_proofs();
+
+        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
+
+        // Proofs that contain GT elements and are therefore applicable to compression.
+        let (commitments, opening_proof_hints) =
+            self.generate_and_commit_witness_polynomials_uncompressed();
+
         let trusted_advice_proof = self.prove_trusted_advice();
         let untrusted_advice_proof = self.prove_untrusted_advice();
         let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
@@ -337,7 +377,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(test))]
         let debug_info = None;
 
-        let proof = JoltProof {
+        let proof = JoltUncompressedProof {
             opening_claims: Claims(self.opening_accumulator.openings.clone()),
             commitments,
             untrusted_advice_commitment,
@@ -371,14 +411,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         (proof, debug_info)
     }
 
-    #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials")]
-    fn generate_and_commit_witness_polynomials(
+    fn generate_tier1_commitments(
         &mut self,
-        compression_flag: JoltProofCompressionFlag,
-    ) -> (
-        JoltProofCommitments<PCS>,
-        HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) {
+    ) -> (Vec<Vec<PCS::ChunkState>>, Vec<&'static CommittedPolynomial>) {
         let _guard = (
             DoryGlobals::initialize(1 << self.one_hot_params.log_k_chunk, self.padded_trace_len),
             AllCommittedPolynomials::initialize(&self.one_hot_params),
@@ -433,39 +468,32 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             })
             .collect();
 
+        (tier1_per_poly, polys)
+    }
+
+    /// This function generates and commits witness polynomials to the transcript.
+    /// Uncompressed GT elements are appended to the transcript.
+    #[tracing::instrument(
+        skip_all,
+        name = "generate_and_commit_witness_polynomials_uncompressed"
+    )]
+    fn generate_and_commit_witness_polynomials_uncompressed(
+        &mut self,
+    ) -> (
+        Vec<PCS::Commitment>,
+        HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) {
+        let (tier1_per_poly, polys) = self.generate_tier1_commitments();
+
         // Tier 2: Compute final commitments from tier1 commitments
-        let (commitments, hints) = match compression_flag {
-            JoltProofCompressionFlag::Uncompressed => {
-                let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
-                    .into_par_iter()
-                    .zip(polys)
-                    .map(|(tier1_commitments, poly)| {
-                        let onehot_k = poly.get_onehot_k(&self.one_hot_params);
-                        PCS::aggregate_chunks(
-                            &self.preprocessing.generators,
-                            onehot_k,
-                            &tier1_commitments,
-                        )
-                    })
-                    .unzip();
-                (JoltProofCommitments::Uncompressed(commitments), hints)
-            }
-            JoltProofCompressionFlag::TorusCompression => {
-                let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
-                    .into_par_iter()
-                    .zip(polys)
-                    .map(|(tier1_commitments, poly)| {
-                        let onehot_k = poly.get_onehot_k(&self.one_hot_params);
-                        PCS::aggregate_chunks_compressed(
-                            &self.preprocessing.generators,
-                            onehot_k,
-                            &tier1_commitments,
-                        )
-                    })
-                    .unzip();
-                (JoltProofCommitments::Compressed(commitments), hints)
-            }
-        };
+        let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
+            .into_par_iter()
+            .zip(polys)
+            .map(|(tier1_commitments, poly)| {
+                let onehot_k = poly.get_onehot_k(&self.one_hot_params);
+                PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
+            })
+            .unzip();
 
         let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
         for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
@@ -473,18 +501,50 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         }
 
         // Append commitments to transcript
-        match &commitments {
-            JoltProofCommitments::Compressed(compressed_commitments) => {
-                for commitment in compressed_commitments {
-                    self.transcript.append_serializable(commitment);
-                }
-            }
-            JoltProofCommitments::Uncompressed(uncompressed_commitments) => {
-                for commitment in uncompressed_commitments {
-                    self.transcript.append_serializable(commitment);
-                }
-            }
-        };
+        for commitment in &commitments {
+            self.transcript.append_serializable(commitment);
+        }
+
+        (commitments, hint_map)
+    }
+
+    /// This function generates and commits witness polynomials to the transcript.
+    /// Compressed GT elements are appended to the transcript.
+    #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials_compressed")]
+    fn generate_and_commit_witness_polynomials_compressed(
+        &mut self,
+    ) -> (
+        Vec<PCS::CompressedCommitment>,
+        HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    )
+    where
+        PCS: CompressedStreamingCommitmentScheme<Field = F>,
+    {
+        let (tier1_per_poly, polys) = self.generate_tier1_commitments();
+
+        // Tier 2: Compute final commitments from tier1 commitments
+        let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
+            .into_par_iter()
+            .zip(polys)
+            .map(|(tier1_commitments, poly)| {
+                let onehot_k = poly.get_onehot_k(&self.one_hot_params);
+                PCS::aggregate_chunks_compressed(
+                    &self.preprocessing.generators,
+                    onehot_k,
+                    &tier1_commitments,
+                )
+            })
+            .unzip();
+
+        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
+        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+            hint_map.insert(*poly, hint);
+        }
+
+        // Append commitments to transcript
+        for commitment in &commitments {
+            self.transcript.append_serializable(commitment);
+        }
 
         (commitments, hint_map)
     }
@@ -1220,7 +1280,7 @@ mod tests {
         /// Records the serialized size (in bytes) of an entire JoltProof and all its fields.
         fn record<F, PCS, FS>(
             &mut self,
-            proof: &crate::zkvm::proof_serialization::JoltProof<F, PCS, FS>,
+            proof: &crate::zkvm::proof_serialization::JoltUncompressedProof<F, PCS, FS>,
         ) where
             F: JoltField,
             PCS: crate::poly::commitment::commitment_scheme::CommitmentScheme<Field = F>,
