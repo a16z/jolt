@@ -116,11 +116,6 @@ pub struct RecursionSumcheckProver {
     /// Scalar from phase 1 completion: eq(r', x_bound)
     pub eq_r_x: Fq,
 
-    /// Precomputed constraint values C_i(r_x) after Phase 1 completes.
-    /// Used in Phase 2 to avoid m_poly indexing issues after binding.
-    /// Indexed by constraint index (0 to num_constraints-1), padded to num_constraints_padded.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub constraint_values: Vec<Fq>,
 
     /// Current round number
     pub round: usize,
@@ -164,7 +159,6 @@ impl RecursionSumcheckProver {
             r_x,
             r_i,
             eq_r_x: Fq::one(),
-            constraint_values: Vec::new(), // Populated at Phase 1 -> Phase 2 transition
             round: 0,
             params,
         }
@@ -218,14 +212,9 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
             self.m_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             self.g_poly.bound_poly_var_bot_01_optimized(&r_j.into());
 
-            // At phase transition, capture eq(r, x_bound) and precompute constraint values
+            // At phase transition, capture eq(r, x_bound)
             if round == self.params.num_constraint_vars - 1 {
                 self.eq_r_x = self.eq_x.get_bound_coeff(0);
-
-                // Precompute constraint values C_i(r_x) for Phase 2
-                // At this point, m_poly has structure: 4 * num_constraints_padded coefficients
-                // Each row is now a single scalar (all x vars bound)
-                self.constraint_values = self.precompute_constraint_values();
             }
         } else {
             // Phase 2: Bind constraint index variable i
@@ -323,40 +312,50 @@ impl RecursionSumcheckProver {
         result
     }
 
-    /// Precompute constraint values C_i(r_x) at the end of Phase 1.
-    /// At this point, m_poly has all x variables bound, so each row is a single scalar.
-    /// Returns vector of size num_constraints_padded (with zeros for padding).
-    fn precompute_constraint_values(&self) -> Vec<Fq> {
-        let num_constraints_padded = self.params.num_constraints_padded;
-        let g_val = self.g_poly.Z[0]; // g is fully bound to a scalar
-
-        // After Phase 1, m_poly has structure: 4 * num_constraints_padded coefficients
-        // Row formula: row = offset * num_constraints_padded + constraint_index
-        // Access: m_poly.get_bound_coeff(row) gives M(row, r_x)
-
-        let mut values = vec![Fq::zero(); num_constraints_padded];
-
-        for constraint in &self.constraints {
-            let idx = constraint.constraint_index;
-
-            // Get row indices for this constraint
-            let base_row = (RowOffset::Base as usize) * num_constraints_padded + idx;
-            let rho_prev_row = (RowOffset::RhoPrev as usize) * num_constraints_padded + idx;
-            let rho_curr_row = (RowOffset::RhoCurr as usize) * num_constraints_padded + idx;
-            let quotient_row = (RowOffset::Quotient as usize) * num_constraints_padded + idx;
-
-            // Get values from bound m_poly
-            let base = self.m_poly.get_bound_coeff(base_row);
-            let rho_prev = self.m_poly.get_bound_coeff(rho_prev_row);
-            let rho_curr = self.m_poly.get_bound_coeff(rho_curr_row);
-            let quotient = self.m_poly.get_bound_coeff(quotient_row);
-
-            // Compute constraint: ρ_curr - ρ_prev² × base^{b_i} - quotient × g
-            let base_power = if constraint.bit { base } else { Fq::one() };
-            values[idx] = rho_curr - rho_prev.square() * base_power - quotient * g_val;
+    /// Get the bit value for a constraint by its index
+    fn get_constraint_bit(&self, constraint_idx: usize) -> bool {
+        // Padded indices return false (no bit set)
+        if constraint_idx >= self.params.num_constraints {
+            return false;
         }
 
-        values
+        self.constraints
+            .iter()
+            .find(|c| c.constraint_index == constraint_idx)
+            .map(|c| c.bit)
+            .unwrap_or(false)
+    }
+
+    /// Evaluate constraint during Phase 2 using dynamic indexing
+    fn evaluate_constraint_phase2(&self, constraint_idx: usize, phase2_round: usize) -> Fq {
+        // Calculate current stride based on remaining constraint variables
+        let remaining_constraint_vars = self.num_constraint_index_vars() - phase2_round;
+        let stride = 1 << remaining_constraint_vars;
+
+        // Shift out the already-bound low-order bits
+        let idx_in_stride = constraint_idx >> phase2_round;
+
+        // Calculate indices for each row type (offset)
+        let base_idx = (RowOffset::Base as usize) * stride + idx_in_stride;
+        let rho_prev_idx = (RowOffset::RhoPrev as usize) * stride + idx_in_stride;
+        let rho_curr_idx = (RowOffset::RhoCurr as usize) * stride + idx_in_stride;
+        let quotient_idx = (RowOffset::Quotient as usize) * stride + idx_in_stride;
+
+        // Get values from m_poly
+        let base = self.m_poly.get_bound_coeff(base_idx);
+        let rho_prev = self.m_poly.get_bound_coeff(rho_prev_idx);
+        let rho_curr = self.m_poly.get_bound_coeff(rho_curr_idx);
+        let quotient = self.m_poly.get_bound_coeff(quotient_idx);
+        let g_val = self.g_poly.Z[0]; // g is fully bound after Phase 1
+
+        // Compute constraint: ρ_curr - ρ_prev² × base^{b_i} - quotient × g
+        let base_power = if self.get_constraint_bit(constraint_idx) {
+            base
+        } else {
+            Fq::one()
+        };
+
+        rho_curr - rho_prev.square() * base_power - quotient * g_val
     }
 
     /// Phase 1: Compute sumcheck message while binding constraint variables x
@@ -422,31 +421,22 @@ impl RecursionSumcheckProver {
     /// The polynomial being summed is: f(i) = eq_r_x * eq(r_i, i) * C_i(r_x)
     /// Since eq is multilinear, f(i) is multilinear in i (C_i are fixed scalars).
     /// This means f(t) = (1-t)*f(0) + t*f(1) for linear interpolation.
-    fn compute_phase2_message(&self, _phase2_round: usize, previous_claim: Fq) -> UniPoly<Fq> {
+    fn compute_phase2_message(&self, phase2_round: usize, previous_claim: Fq) -> UniPoly<Fq> {
         const DEGREE: usize = 2; // f(i) is linear in each i variable
-
         let eq_i_half = self.eq_i.len() / 2;
 
-        // For each constraint index pair (indices 2*i_idx and 2*i_idx+1 differ in bit 0)
         let evals: [Fq; DEGREE] = (0..eq_i_half)
             .into_par_iter()
             .map(|i_idx| {
-                // Get eq_i evaluations at t=0 and t=1 for the current binding variable
+                // Get eq_i evaluations at t=0 and t=1
                 let eq_i_evals = self
                     .eq_i
                     .sumcheck_evals_array::<DEGREE>(i_idx, BindingOrder::LowToHigh);
 
-                // Get constraint evaluations at fully bound x
-                // c_i_0 = C at index with bit=0, c_i_1 = C at index with bit=1
-                let c_i_0 = self.evaluate_constraint_fully_bound(2 * i_idx);
-                let c_i_1 = self.evaluate_constraint_fully_bound(2 * i_idx + 1);
+                // Dynamically evaluate constraints
+                let c_i_0 = self.evaluate_constraint_phase2(2 * i_idx, phase2_round);
+                let c_i_1 = self.evaluate_constraint_phase2(2 * i_idx + 1, phase2_round);
 
-                // f(t) = eq_r_x * eq_i(t) * C(t) where C(t) is treated as a linear function:
-                // C(0) = c_i_0, C(1) = c_i_1
-                // The combined polynomial f(t) = eq_r_x * eq_i(t) * C(t) is degree 2
-                // But since eq_i is linear and we're multiplying by C values, we need:
-                //   f(0) = eq_r_x * eq_i(0) * c_i_0
-                //   f(1) = eq_r_x * eq_i(1) * c_i_1
                 [
                     self.eq_r_x * eq_i_evals[0] * c_i_0,
                     self.eq_r_x * eq_i_evals[1] * c_i_1,
@@ -560,15 +550,14 @@ impl RecursionSumcheckProver {
 
     /// Evaluate constraint at fully bound x point (used in Phase 2)
     /// constraint_idx is the index into the padded constraint space
-    /// Uses precomputed constraint_values to avoid m_poly indexing issues during Phase 2.
     fn evaluate_constraint_fully_bound(&self, constraint_idx: usize) -> Fq {
         if constraint_idx >= self.params.num_constraints_padded {
-            // Should never happen with proper sumcheck
             return Fq::zero();
         }
 
-        // Use precomputed values (zeros for padding indices)
-        self.constraint_values[constraint_idx]
+        // Calculate current Phase 2 round from total rounds
+        let phase2_round = self.round - self.params.num_constraint_vars;
+        self.evaluate_constraint_phase2(constraint_idx, phase2_round)
     }
 
     /// Extrapolate linear polynomial from values at 0 and 1 to value at t
