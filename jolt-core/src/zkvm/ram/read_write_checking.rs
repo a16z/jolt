@@ -62,7 +62,6 @@ pub struct ReadWriteSumcheckClaims<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct RamReadWriteCheckingProver<F: JoltField> {
-    val_init: Vec<F>,
     sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F>,
     sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
@@ -133,7 +132,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             .par_iter()
             .map(|x| F::from_u64(*x))
             .collect();
-        let sparse_matrix = ReadWriteMatrixCycleMajor::new(trace, val_init.clone(), memory_layout);
+        let sparse_matrix = ReadWriteMatrixCycleMajor::new(trace, val_init, memory_layout);
         let (sparse_matrix_phase1, sparse_matrix_phase2) =
             if phase1_num_rounds(params.K, params.T) > 0 {
                 (sparse_matrix, Default::default())
@@ -144,7 +143,6 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         Self {
             sparse_matrix_phase1,
             sparse_matrix_phase2,
-            val_init,
             gruen_eq,
             merged_eq,
             inc,
@@ -164,60 +162,36 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         } = self;
         let gruen_eq = gruen_eq.as_ref().unwrap();
 
-        // Compute quadratic coefficients using Gruen's optimization
-        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = if gruen_eq.E_in_current_len() == 1 {
-            // E_in is fully bound, use E_out evaluations
-            sparse_matrix
-                .entries
-                .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
-                .map(|entries| {
-                    let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
-                    let (even_row, odd_row) = entries.split_at(odd_row_start_index);
-                    let j_prime = 2 * (entries[0].row / 2);
-                    let eq_eval = gruen_eq.E_out_current()[j_prime / 2];
-                    let inc_evals = {
-                        let inc_0 = inc.get_bound_coeff(j_prime);
-                        let inc_1 = inc.get_bound_coeff(j_prime + 1);
-                        let inc_infty = inc_1 - inc_0;
-                        [inc_0, inc_infty]
-                    };
+        // Compute quadratic coefficients using Gruen's optimization.
+        // When E_in is fully bound (len <= 1), we use E_in_eval = 1 and num_x_in_bits = 0,
+        // which makes the outer chunking degenerate to row pairs and skips the inner sum.
+        let e_in = gruen_eq.E_in_current();
+        let e_in_len = e_in.len();
+        let num_x_in_bits = e_in_len.max(1).log_2(); // max(1) so log_2 of 0 or 1 gives 0
+        let x_bitmask = (1 << num_x_in_bits) - 1;
 
-                    let inner_sum_evals = ReadWriteMatrixCycleMajor::prover_message_contribution(
-                        even_row,
-                        odd_row,
-                        inc_evals,
-                        params.gamma,
-                    );
+        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = sparse_matrix
+            .entries
+            // Chunk by x_out (when E_in is bound, this is just row pairs)
+            .par_chunk_by(|a, b| ((a.row / 2) >> num_x_in_bits) == ((b.row / 2) >> num_x_in_bits))
+            .map(|entries| {
+                let x_out = (entries[0].row / 2) >> num_x_in_bits;
+                let E_out_eval = gruen_eq.E_out_current()[x_out];
 
-                    [
-                        eq_eval.mul_unreduced::<9>(inner_sum_evals[0]),
-                        eq_eval.mul_unreduced::<9>(inner_sum_evals[1]),
-                    ]
-                })
-                .reduce(
-                    || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                )
-                .map(F::from_montgomery_reduce)
-        } else {
-            // E_in is not fully bound, handle both E_in and E_out
-            let num_x_in_bits = gruen_eq.E_in_current_len().log_2();
-            let x_bitmask = (1 << num_x_in_bits) - 1;
-
-            sparse_matrix
-                .entries
-                // Chunk by x_out
-                .par_chunk_by(|a, b| ((a.row / 2) >> num_x_in_bits) == ((b.row / 2) >> num_x_in_bits))
-                .map(|entries| {
-                    let x_out = (entries[0].row / 2) >> num_x_in_bits;
-                    let E_out_eval = gruen_eq.E_out_current()[x_out];
-
-                    let outer_sum_evals = entries.par_chunk_by(|a, b| a.row / 2 == b.row / 2).map(|entries| {
+                let outer_sum_evals = entries
+                    .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
+                    .map(|entries| {
                         let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
                         let (even_row, odd_row) = entries.split_at(odd_row_start_index);
                         let j_prime = 2 * (entries[0].row / 2);
-                        let x_in = (j_prime / 2) & x_bitmask;
-                        let E_in_eval = gruen_eq.E_in_current()[x_in];
+
+                        // When E_in is fully bound, x_in = 0 and E_in_eval = 1
+                        let E_in_eval = if e_in_len <= 1 {
+                            F::one()
+                        } else {
+                            let x_in = (j_prime / 2) & x_bitmask;
+                            e_in[x_in]
+                        };
 
                         let inc_evals = {
                             let inc_0 = inc.get_bound_coeff(j_prime);
@@ -237,23 +211,23 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]),
                             E_in_eval.mul_unreduced::<9>(inner_sum_evals[1]),
                         ]
-                    }).reduce(
+                    })
+                    .reduce(
                         || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
                         |running, new| [running[0] + new[0], running[1] + new[1]],
                     )
                     .map(F::from_montgomery_reduce);
 
-                    [
-                        E_out_eval.mul_unreduced::<9>(outer_sum_evals[0]),
-                        E_out_eval.mul_unreduced::<9>(outer_sum_evals[1]),
-                    ]
-                })
-                .reduce(
-                    || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                )
-                .map(F::from_montgomery_reduce)
-        };
+                [
+                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[0]),
+                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[1]),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            )
+            .map(F::from_montgomery_reduce);
 
         // Convert quadratic coefficients to cubic evaluations
         gruen_eq.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
@@ -409,7 +383,6 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             sparse_matrix_phase1: sparse_matrix,
             inc,
             gruen_eq,
-            val_init,
             params,
             ..
         } = self;
@@ -427,7 +400,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             } else {
                 // Skip to phase 3: all cycle variables bound, no address variables bound yet
                 let T_prime = params.T >> phase1_num_rounds(params.K, params.T);
-                let (ra, val) = sparse_matrix.materialize(params.K, T_prime, val_init);
+                let (ra, val) = sparse_matrix.materialize(params.K, T_prime);
                 self.ra = Some(ra);
                 self.val = Some(val);
             }

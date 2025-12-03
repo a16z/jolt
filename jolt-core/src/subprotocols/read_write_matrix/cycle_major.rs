@@ -603,7 +603,6 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
         self,
         K_prime: usize,
         T_prime: usize,
-        val_init: &[F],
     ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
         let len = K_prime * T_prime;
 
@@ -614,7 +613,12 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
         // Each address k gets val_init[k] replicated across all T_prime cycle positions
         // Layout: address-major, index(k, t) = k * T_prime + t
         let mut val: Vec<F> = unsafe_allocate_zero_vec(len);
-        for (k, &v) in val_init.iter().enumerate() {
+        // Extract the coefficient slice from self.val_init (which is a LargeScalars polynomial)
+        let val_init_coeffs = match &self.val_init {
+            MultilinearPolynomial::LargeScalars(poly) => &poly.Z,
+            _ => panic!("val_init must be LargeScalars"),
+        };
+        for (k, &v) in val_init_coeffs.iter().enumerate() {
             for t in 0..T_prime {
                 val[k * T_prime + t] = v;
             }
