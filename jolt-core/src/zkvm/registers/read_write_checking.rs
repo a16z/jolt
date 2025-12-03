@@ -1602,6 +1602,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         claim_stage_1 + self.gamma_cub * claim_stage_3
     }
 
+    // Invariant: we want big-endian, with address variables being "higher" than cycle variables
     fn get_opening_point(
         &self,
         sumcheck_challenges: &[F::Challenge],
