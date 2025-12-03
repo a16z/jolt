@@ -425,8 +425,9 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             if phase2_num_rounds(params.K, params.T) > 0 {
                 self.sparse_matrix_phase2 = sparse_matrix.into();
             } else {
-                // Skip to phase 3
-                let (ra, val) = sparse_matrix.materialize(params.K, val_init);
+                // Skip to phase 3: all cycle variables bound, no address variables bound yet
+                let T_prime = params.T >> phase1_num_rounds(params.K, params.T);
+                let (ra, val) = sparse_matrix.materialize(params.K, T_prime, val_init);
                 self.ra = Some(ra);
                 self.val = Some(val);
             }

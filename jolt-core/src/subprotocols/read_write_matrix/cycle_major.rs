@@ -565,37 +565,53 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     }
 
     /// Materializes the ra and Val polynomials represented by this `ReadWriteMatrixCycleMajor`.
-    /// All cycle variables must be bound at this point, so the materialized ra and Val
-    /// have K coefficients each.
     ///
-    /// After full cycle binding, each entry has `row == 0` and entries have distinct
-    /// `col` values, so parallel writes are disjoint.
+    /// After partial binding of cycle and address variables, there are `K_prime` columns
+    /// (remaining address positions) and `T_prime` rows (remaining cycle positions) in the matrix.
+    /// This expands the sparse representation to dense polynomials of size `K_prime * T_prime`.
+    ///
+    /// The output layout is address-major: index(addr k, cycle t) = k * T_prime + t.
+    /// This matches the layout expected by `phase3_compute_message`.
+    ///
+    /// When `T_prime == 1` (all cycle variables bound), this is equivalent to the simple case
+    /// where each entry has `row == 0` and entries have distinct `col` values.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::materialize")]
     pub fn materialize(
         self,
-        K: usize,
+        K_prime: usize,
+        T_prime: usize,
         val_init: &[F],
     ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
-        // Initialize ra to zero and val to val_init
-        let mut ra: Vec<F> = unsafe_allocate_zero_vec(K);
-        let mut val: Vec<F> = val_init.to_vec();
+        let len = K_prime * T_prime;
+
+        // Initialize ra to zero
+        let mut ra: Vec<F> = unsafe_allocate_zero_vec(len);
+
+        // Initialize val: expand val_init from size K to size K * T_prime
+        // Each address k gets val_init[k] replicated across all T_prime cycle positions
+        // Layout: address-major, index(k, t) = k * T_prime + t
+        let mut val: Vec<F> = unsafe_allocate_zero_vec(len);
+        for (k, &v) in val_init.iter().enumerate() {
+            for t in 0..T_prime {
+                val[k * T_prime + t] = v;
+            }
+        }
 
         // Update ra and val at positions where we have entries.
-        // After full cycle binding, entries have distinct col values (row == 0),
-        // so parallel writes are disjoint.
+        // Index is col * T_prime + row (address-major layout).
         let ra_ptr = ra.as_mut_ptr() as usize;
         let val_ptr = val.as_mut_ptr() as usize;
 
         self.entries.into_par_iter().for_each(|entry| {
-            debug_assert_eq!(entry.row, 0);
-            let k = entry.col;
-            // SAFETY: After full cycle binding, each entry has a unique col,
-            // so writes to ra[col] and val[col] are disjoint across parallel iterations.
+            debug_assert!(entry.row < T_prime, "row {} >= T_prime {}", entry.row, T_prime);
+            let idx = entry.col * T_prime + entry.row;
+            // SAFETY: Each entry has a unique (row, col) pair,
+            // so writes to ra[idx] and val[idx] are disjoint across parallel iterations.
             unsafe {
                 let ra_p = ra_ptr as *mut F;
                 let val_p = val_ptr as *mut F;
-                *ra_p.add(k) = entry.ra_coeff;
-                *val_p.add(k) = entry.val_coeff;
+                *ra_p.add(idx) = entry.ra_coeff;
+                *val_p.add(idx) = entry.val_coeff;
             }
         });
 

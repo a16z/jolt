@@ -308,7 +308,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
         let (_, r_cycle) = r_val.split_at(self.params.K.log_2());
         let r = get_opening_point::<F>(sumcheck_challenges);
-        // Compute LT(r_cycle', r_cycle)
+
+        // Compute LT(r, r_cycle) using the MLE formula:
+        //   LT(x, y) = Σ_i (1 - x_i) · y_i · eq(x[i+1:], y[i+1:])
+        //
+        // The prover constructs LtPolynomial with r_cycle, giving LT(j, r_cycle) for all j.
+        // After binding j to r (the sumcheck challenges), the prover gets LT(r, r_cycle).
+        // The verifier computes the same value directly using the formula above.
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
         for (x, y) in zip(&r.r, &r_cycle.r) {
