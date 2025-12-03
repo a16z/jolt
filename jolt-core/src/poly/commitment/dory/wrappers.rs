@@ -1,4 +1,5 @@
 //! Type conversions and wrappers between Jolt types and final-dory's arkworks backend
+use std::io::{Read, Write};
 
 use crate::{
     field::JoltField,
@@ -13,10 +14,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::{
     error::DoryError,
     primitives::{
-        arithmetic::{CompressedPairingCurve, DoryRoutines, Group as DoryGroup, PairingCurve},
+        arithmetic::{
+            CompressedPairingCurve, DoryElement, DoryRoutines, Group as DoryGroup, PairingCurve,
+        },
         poly::{MultilinearLagrange, Polynomial as DoryPolynomial},
         transcript::Transcript as DoryTranscript,
-        DorySerialize,
+        Compress, DoryDeserialize, DorySerialize, SerializationError, Valid, Validate,
     },
     setup::ProverSetup,
 };
@@ -54,6 +57,68 @@ pub type JoltFieldWrapper = ArkFr;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ArkGTCompressed(pub CompressedFq12);
+
+impl DoryElement for ArkGTCompressed {}
+
+impl Valid for ArkGTCompressed {
+    fn check(&self) -> Result<(), SerializationError> {
+        use ark_serialize::Valid as ArkValid;
+        self.0
+             .0
+            .check()
+            .map_err(|e| SerializationError::InvalidData(format!("{:?}", e)))?;
+        Ok(())
+    }
+}
+
+impl DorySerialize for ArkGTCompressed {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match compress {
+            Compress::Yes => self
+                .0
+                .serialize_compressed(writer)
+                .map_err(|e| SerializationError::InvalidData(format!("{}", e))),
+            Compress::No => self
+                .0
+                .serialize_uncompressed(writer)
+                .map_err(|e| SerializationError::InvalidData(format!("{}", e))),
+        }
+    }
+
+    fn serialized_size(&self, compress: dory::primitives::Compress) -> usize {
+        match compress {
+            Compress::Yes => self.0.compressed_size(),
+            Compress::No => self.0.uncompressed_size(),
+        }
+    }
+}
+
+impl DoryDeserialize for ArkGTCompressed {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let inner = match compress {
+            Compress::Yes => ark_bn254::CompressedFq12::deserialize_compressed(reader)
+                .map_err(|e| SerializationError::InvalidData(format!("{}", e)))?,
+            Compress::No => ark_bn254::CompressedFq12::deserialize_uncompressed(reader)
+                .map_err(|e| SerializationError::InvalidData(format!("{}", e)))?,
+        };
+
+        let res = Self(inner);
+        if matches!(validate, Validate::Yes) {
+            res.check()
+                .map_err(|e| SerializationError::InvalidData(format!("{:?}", e)))?;
+        }
+
+        Ok(res)
+    }
+}
 
 impl From<ArkGTCompressed> for ArkGT {
     fn from(gt: ArkGTCompressed) -> Self {
