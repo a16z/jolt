@@ -85,70 +85,70 @@ impl StreamingSchedule for HalfSplitSchedule {
 /// Streaming schedule where window sizes increase as 1, 2, 3, ... until the
 /// streaming phase (first half of the rounds) is filled. The final window is
 /// truncated so that the total number of streaming rounds is still roughly half.
-#[derive(Debug, Clone, Allocative)]
-pub struct IncreasingWindowSchedule {
-    pub(crate) num_rounds: usize,
-    pub(crate) linear_start: usize,
-    pub(crate) window_starts: Vec<usize>,
-}
-
-impl IncreasingWindowSchedule {
-    pub fn new(num_rounds: usize) -> Self {
-        let linear_start = num_rounds.div_ceil(2);
-
-        let mut window_starts = Vec::new();
-        let mut round = 0usize;
-        let mut width = 1usize;
-        while round < linear_start {
-            window_starts.push(round);
-            let remaining = linear_start - round;
-            let w = core::cmp::min(width, remaining);
-            round += w;
-            width += 1;
-        }
-
-        Self {
-            num_rounds,
-            linear_start,
-            window_starts,
-        }
-    }
-}
-
-impl StreamingSchedule for IncreasingWindowSchedule {
-    fn is_streaming(&self, round: usize) -> bool {
-        round < self.linear_start
-    }
-
-    fn is_window_start(&self, round: usize) -> bool {
-        self.window_starts.contains(&round)
-    }
-
-    fn is_first_linear(&self, round: usize) -> bool {
-        round == self.linear_start
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn num_unbound_vars(&self, round: usize) -> usize {
-        if round >= self.num_rounds {
-            return 0;
-        }
-        if self.is_streaming(round) {
-            let next_boundary = self
-                .window_starts
-                .iter()
-                .find(|&&start| start > round)
-                .copied()
-                .unwrap_or(self.linear_start);
-            next_boundary - round
-        } else {
-            self.num_rounds - round
-        }
-    }
-}
+//#[derive(Debug, Clone, Allocative)]
+//pub struct IncreasingWindowSchedule {
+//    pub(crate) num_rounds: usize,
+//    pub(crate) linear_start: usize,
+//    pub(crate) window_starts: Vec<usize>,
+//}
+//
+//impl IncreasingWindowSchedule {
+//    pub fn new(num_rounds: usize) -> Self {
+//        let linear_start = num_rounds.div_ceil(2);
+//
+//        let mut window_starts = Vec::new();
+//        let mut round = 0usize;
+//        let mut width = 1usize;
+//        while round < linear_start {
+//            window_starts.push(round);
+//            let remaining = linear_start - round;
+//            let w = core::cmp::min(width, remaining);
+//            round += w;
+//            width += 1;
+//        }
+//
+//        Self {
+//            num_rounds,
+//            linear_start,
+//            window_starts,
+//        }
+//    }
+//}
+//
+//impl StreamingSchedule for IncreasingWindowSchedule {
+//    fn is_streaming(&self, round: usize) -> bool {
+//        round < self.linear_start
+//    }
+//
+//    fn is_window_start(&self, round: usize) -> bool {
+//        self.window_starts.contains(&round)
+//    }
+//
+//    fn is_first_linear(&self, round: usize) -> bool {
+//        round == self.linear_start
+//    }
+//
+//    fn num_rounds(&self) -> usize {
+//        self.num_rounds
+//    }
+//
+//    fn num_unbound_vars(&self, round: usize) -> usize {
+//        if round >= self.num_rounds {
+//            return 0;
+//        }
+//        if self.is_streaming(round) {
+//            let next_boundary = self
+//                .window_starts
+//                .iter()
+//                .find(|&&start| start > round)
+//                .copied()
+//                .unwrap_or(self.linear_start);
+//            next_boundary - round
+//        } else {
+//            self.num_rounds - round
+//        }
+//    }
+//}
 
 /// A schedule that disables streaming and runs all sumcheck rounds in
 /// the linear-time mode.
