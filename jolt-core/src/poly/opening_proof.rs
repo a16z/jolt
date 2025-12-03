@@ -384,6 +384,17 @@ where
             ProverOpening::Dense(opening) => opening.final_sumcheck_claim(),
             ProverOpening::OneHot(opening) => opening.final_sumcheck_claim(),
         };
+        
+        // Log trusted advice final claim
+        if self.polynomial == CommittedPolynomial::TrustedAdvice {
+            tracing::info!("TrustedAdvice FINAL SUMCHECK CLAIM: {:?}", claim);
+        }
+
+        // Log RdInc final claim
+        if self.polynomial == CommittedPolynomial::RdInc {
+            tracing::info!("RdInc FINAL SUMCHECK CLAIM: {:?}", claim);
+        }
+        
         self.sumcheck_claim = Some(claim);
     }
 }
@@ -392,6 +403,10 @@ impl<F, T: Transcript> SumcheckInstanceProver<F, T> for OpeningProofReductionSum
 where
     F: JoltField,
 {
+    fn debug_name(&self) -> String {
+        format!("{:?}", self.polynomial)
+    }
+
     fn degree(&self) -> usize {
         OPENING_SUMCHECK_DEGREE
     }
@@ -405,6 +420,40 @@ where
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        // Log trusted advice polynomial state at the start of each round
+        if self.polynomial == CommittedPolynomial::TrustedAdvice {
+            if let ProverOpening::Dense(opening) = &self.prover_state {
+                if let Some(poly_ref) = &opening.polynomial {
+                    let poly = poly_ref.read().unwrap();
+                    let num_coeffs = poly.poly.len().min(16);
+                    let coeffs: Vec<_> = (0..num_coeffs)
+                        .map(|i| poly.poly.get_bound_coeff(i))
+                        .collect();
+                    tracing::info!(
+                        "TrustedAdvice compute_message round={}, previous_claim={:?}, len={}, coeffs[..{}]={:?}",
+                        round, previous_claim, poly.poly.len(), num_coeffs, coeffs
+                    );
+                }
+            }
+        }
+
+        // Log RdInc polynomial state at the start of each round
+        if self.polynomial == CommittedPolynomial::RdInc {
+            if let ProverOpening::Dense(opening) = &self.prover_state {
+                if let Some(poly_ref) = &opening.polynomial {
+                    let poly = poly_ref.read().unwrap();
+                    let num_coeffs = poly.poly.len().min(16);
+                    let coeffs: Vec<_> = (0..num_coeffs)
+                        .map(|i| poly.poly.get_bound_coeff(i))
+                        .collect();
+                    tracing::info!(
+                        "RdInc compute_message round={}, previous_claim={:?}, len={}, coeffs[..{}]={:?}",
+                        round, previous_claim, poly.poly.len(), num_coeffs, coeffs
+                    );
+                }
+            }
+        }
+
         match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.compute_message(round, previous_claim),
             ProverOpening::OneHot(opening) => opening.compute_message(round, previous_claim),
@@ -412,9 +461,77 @@ where
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
+        // Log trusted advice polynomial coefficients before binding
+        if self.polynomial == CommittedPolynomial::TrustedAdvice {
+            if let ProverOpening::Dense(opening) = &self.prover_state {
+                if let Some(poly_ref) = &opening.polynomial {
+                    let poly = poly_ref.read().unwrap();
+                    let num_coeffs = poly.poly.len().min(16); // Show at most first 16 coeffs
+                    let coeffs: Vec<_> = (0..num_coeffs)
+                        .map(|i| poly.poly.get_bound_coeff(i))
+                        .collect();
+                    tracing::info!(
+                        "TrustedAdvice BEFORE bind round={}, r_j={:?}, len={}, coeffs[..{}]={:?}",
+                        round, r_j, poly.poly.len(), num_coeffs, coeffs
+                    );
+                }
+            }
+        }
+
+        // Log RdInc polynomial coefficients before binding
+        if self.polynomial == CommittedPolynomial::RdInc {
+            if let ProverOpening::Dense(opening) = &self.prover_state {
+                if let Some(poly_ref) = &opening.polynomial {
+                    let poly = poly_ref.read().unwrap();
+                    let num_coeffs = poly.poly.len().min(16);
+                    let coeffs: Vec<_> = (0..num_coeffs)
+                        .map(|i| poly.poly.get_bound_coeff(i))
+                        .collect();
+                    tracing::info!(
+                        "RdInc BEFORE bind round={}, r_j={:?}, len={}, coeffs[..{}]={:?}",
+                        round, r_j, poly.poly.len(), num_coeffs, coeffs
+                    );
+                }
+            }
+        }
+
         match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.bind(r_j, round),
             ProverOpening::OneHot(opening) => opening.bind(r_j, round),
+        }
+
+        // Log trusted advice polynomial coefficients after binding
+        if self.polynomial == CommittedPolynomial::TrustedAdvice {
+            if let ProverOpening::Dense(opening) = &self.prover_state {
+                if let Some(poly_ref) = &opening.polynomial {
+                    let poly = poly_ref.read().unwrap();
+                    let num_coeffs = poly.poly.len().min(16); // Show at most first 16 coeffs
+                    let coeffs: Vec<_> = (0..num_coeffs)
+                        .map(|i| poly.poly.get_bound_coeff(i))
+                        .collect();
+                    tracing::info!(
+                        "TrustedAdvice AFTER bind round={}, len={}, coeffs[..{}]={:?}",
+                        round, poly.poly.len(), num_coeffs, coeffs
+                    );
+                }
+            }
+        }
+
+        // Log RdInc polynomial coefficients after binding
+        if self.polynomial == CommittedPolynomial::RdInc {
+            if let ProverOpening::Dense(opening) = &self.prover_state {
+                if let Some(poly_ref) = &opening.polynomial {
+                    let poly = poly_ref.read().unwrap();
+                    let num_coeffs = poly.poly.len().min(16);
+                    let coeffs: Vec<_> = (0..num_coeffs)
+                        .map(|i| poly.poly.get_bound_coeff(i))
+                        .collect();
+                    tracing::info!(
+                        "RdInc AFTER bind round={}, len={}, coeffs[..{}]={:?}",
+                        round, poly.poly.len(), num_coeffs, coeffs
+                    );
+                }
+            }
         }
     }
 
@@ -484,24 +601,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         let mut r = sumcheck_challenges.to_vec();
         match self.polynomial {
-            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc 
-            // | CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice 
-            => r.reverse(),
+            CommittedPolynomial::RdInc
+            | CommittedPolynomial::RamInc
+            | CommittedPolynomial::TrustedAdvice
+            | CommittedPolynomial::UntrustedAdvice => r.reverse(),
             CommittedPolynomial::InstructionRa(_)
             | CommittedPolynomial::BytecodeRa(_)
-            | CommittedPolynomial::RamRa(_) | CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+            | CommittedPolynomial::RamRa(_) => {
                 let log_K = r.len() - self.log_T;
                 // reverse log_T rounds since they are bounded LowToHigh
                 r[log_K..].reverse();
             }
-            // CommittedPolynomial::TrustedAdvice => {
-            //     // Trusted advice is evaluated at a different point than the main polynomials
-            //     // No reversal needed - the opening_point for trusted advice is already properly constructed
-            //     // (It's constructed in the prover from the relevant portions of r_sumcheck)
-            // }
-            // CommittedPolynomial::UntrustedAdvice => {
-            //     // Untrusted advice - no reversal needed
-            // }
         }
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);
         eq_eval * self.sumcheck_claim.unwrap()
@@ -866,6 +976,7 @@ where
 
 
 
+        let original_r_sumcheck = r_sumcheck.clone();
         let log_K = r_sumcheck.len() - self.log_T;
         // reverse log_T rounds since they are bounded LowToHigh
         r_sumcheck[log_K..].reverse();
@@ -877,7 +988,10 @@ where
         let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(num_gammas);
 
         let mut rlc_map = BTreeMap::new();
-
+        let mut contribution: F = F::zero();
+        let mut trusted_advice_coeff: F= F::zero();
+        // Clone trusted advice poly for verification in joint_eval computation
+        let trusted_advice_poly_for_verification = trusted_advice_poly.clone();
         // Combines the individual polynomials into the RLC that will be used for the
         // batched opening proof.
         let (joint_poly, hint) = {
@@ -925,11 +1039,14 @@ where
                     .chain(&r_sumcheck[main_columns..main_columns + trusted_advice_rows])
                     .copied()
                     .collect();
-                tracing::info!("Evaluating trusted advice: poly_num_vars={}, eval_point.len()={}, log_K={}", 
-                    poly_num_vars, eval_point.len(), log_K);
-                let trusted_advice_contribution = poly.evaluate(&eval_point) * r_eval;
-                tracing::info!("Trusted advice contribution={:?}, gamma={:?}, r_eval={:?}", 
-                    trusted_advice_contribution, trusted_advice_gamma, r_eval);                
+                tracing::info!("Evaluating trusted advice: poly_num_vars={}, eval_point={:?}, log_K={}", 
+                    poly_num_vars, eval_point, log_K);
+                let claim = poly.evaluate(&eval_point);
+                let trusted_advice_contribution = claim * r_eval;
+                tracing::info!("Trusted advice contribution={:?}, gamma={:?}, r_eval={:?}, claim={:?}", 
+                    trusted_advice_contribution, trusted_advice_gamma, r_eval, claim);   
+                trusted_advice_coeff = trusted_advice_gamma;
+                contribution = trusted_advice_contribution;
             }
 
             let (poly_ids, coeffs, polys): (
@@ -938,6 +1055,7 @@ where
                 Vec<MultilinearPolynomial<F>>,
             ) = rlc_map.clone()
                 .iter()
+                // .filter(|(k, _)| **k != CommittedPolynomial::TrustedAdvice)
                 .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
                 .multiunzip();
 
@@ -958,6 +1076,7 @@ where
 
             let hints: Vec<PCS::OpeningProofHint> = rlc_map.clone()
                 .into_keys()
+                // .filter(|k| k != &CommittedPolynomial::TrustedAdvice)
                 .map(|k| {
                     tracing::info!("DEBUGG: Adding hint for polynomial {:?}", k);
                     opening_hints.remove(&k).unwrap_or_else(|| {
@@ -1020,7 +1139,46 @@ where
                     opening.polynomial, opening.opening_point.len(), num_sumcheck_rounds - opening.opening_point.len(), 
                     lagrange_eval, claim, *claim*lagrange_eval);
                 tracing::info!("  multiplying r_slice from {} to {} and len={:?}", 0, r_slice.len(), opening.opening_point.len());
-                portion
+                
+                // Verify trusted advice claim by evaluating the polynomial on r_slice
+                if opening.polynomial == CommittedPolynomial::TrustedAdvice {
+                    if let Some(ref ta_poly) = trusted_advice_poly_for_verification {
+                        // let correct_eval_point = vec![12215240489130386785146875531304565986374779368616421384453107997780899528704,
+                        // 4031811192352002943471388141010192289181085509742350381404407450085669994496,
+                        //                                 3403109164255547268791480835368882410992864725263787890479298871115896586240,
+                        //                                 13296127364058459148604751289776420565195313926765966784191667655415015931904];
+                        // r_slice is the unused variables portion; evaluate at opening_point for the actual claim
+                        // let mut x = r_sumcheck.clone();
+                        // x.reverse();
+                        // let eval_point = &x[5..9];
+                        let r_slice = &original_r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                        let eval_point = &original_r_sumcheck[num_sumcheck_rounds - opening.opening_point.len()..];
+                        let evaluated_at_opening_point = ta_poly.evaluate(&eval_point);
+                        let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                        tracing::info!("  TrustedAdvice verification: poly.evaluate(opening_point)={:?}, claim={:?}, match={}, eval_point={:?}", 
+                            evaluated_at_opening_point, claim, evaluated_at_opening_point == *claim, eval_point);
+                        tracing::info!("  rsumcheck={:?}", r_sumcheck);
+                        tracing::info!("  is it contribution?={:?}, coeff={:?}", lagrange_eval * claim, coeff);
+                        // evaluated_at_opening_point * coeff * lagrange_eval
+                        contribution * coeff
+                        // F::zero()
+                        // Also try evaluating at r_slice for debugging (r_slice = unused vars with lagrange contribution)
+                        // if !r_slice.is_empty() && r_slice.len() <= ta_poly.get_num_vars() {
+                        //     let evaluated_at_r_slice = ta_poly.evaluate(r_slice);
+                        //     tracing::info!("  TrustedAdvice at r_slice: poly.evaluate(r_slice)={:?}", evaluated_at_r_slice);
+                        // }
+                    } else {
+                    portion
+                    }
+                } else {
+                
+                // if opening.polynomial != CommittedPolynomial::TrustedAdvice {
+                    portion
+                }
+                // } else {
+                    // tracing::info!("Trusted advice contribution after multiplication={:?}", contribution * coeff);
+                    // contribution * coeff
+                // }
             })
             .sum();
         
@@ -1428,6 +1586,7 @@ where
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
         tracing::info!("DEBUGG: Verified batch opening reduction, r_sumcheck.len={}", r_sumcheck.len());
         
+        let original_r_sumcheck = r_sumcheck.clone();
         let log_K = r_sumcheck.len() - self.log_T;
         r_sumcheck[log_K..].reverse();
         tracing::info!("DEBUGG: Reversed r_sumcheck");
@@ -1475,13 +1634,37 @@ where
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .zip(self.sumchecks.iter())
             .map(|((coeff, claim), opening)| {
-                let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
-                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
-                let portion = *coeff * claim * lagrange_eval;
-                tracing::info!("  Poly {:?}: opening_point.len={}, unused_vars={}, lagrange={:?}, claim={:?}, portion={:?}", 
-                    opening.polynomial, opening.opening_point.len(), num_sumcheck_rounds - opening.opening_point.len(), 
-                    lagrange_eval, claim, portion);
-                portion
+                if opening.polynomial == CommittedPolynomial::TrustedAdvice {
+                    let previous_context = DoryGlobals::current_context();
+            
+                    let _ctx = DoryGlobals::with_context(DoryContext::Main);
+                    let main_columns = log2(DoryGlobals::get_num_columns()) as usize;
+                    let main_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
+                    let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+                    let trusted_advice_columns = log2(DoryGlobals::get_num_columns()) as usize;
+                    let trusted_advice_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
+                    let _ctx = DoryGlobals::with_context(previous_context);
+    
+                    let r_columns = &r_sumcheck[..main_columns];
+                    let r_rows = &r_sumcheck[main_columns..];
+
+                    let r_eval: &F = &original_r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()].iter().map(|r| F::one() - r).product();
+                    // let mut r_eval: F = r_rows[trusted_advice_rows..].iter().map(|r| F::one() - r).product();
+                    // r_eval *= r_columns[trusted_advice_columns..].iter().map(|r| F::one() - r).product::<F>();
+                    tracing::info!("multiplying r_rows from {} to {} and r_columns from {} to {}", trusted_advice_rows, r_rows.len(), trusted_advice_columns, r_columns.len());
+                    tracing::info!("then it means, from {} to {} and from {} to {}", trusted_advice_rows + main_columns, r_sumcheck.len(), trusted_advice_columns, r_columns.len());
+                    tracing::info!("Verifier: coeff={:?}, claim={:?}, r_eval={:?}", *coeff, claim, r_eval);
+                    tracing::info!("Verifier: Trusted advice contribution after multiplication={:?}", *coeff * claim * r_eval);
+                    *coeff * claim * r_eval
+                } else {
+                    let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                    let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                    let portion = *coeff * claim * lagrange_eval;
+                    tracing::info!("  Poly {:?}: opening_point.len={}, unused_vars={}, lagrange={:?}, claim={:?}, portion={:?}", 
+                        opening.polynomial, opening.opening_point.len(), num_sumcheck_rounds - opening.opening_point.len(), 
+                        lagrange_eval, claim, portion);
+                    portion
+                }
             })
             .sum();
         
