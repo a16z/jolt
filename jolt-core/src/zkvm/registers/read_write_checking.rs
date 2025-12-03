@@ -825,120 +825,107 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
 
         // Phase 2 uses LowToHigh binding: cycle bits are in low positions, address bits in high positions
         let n_cycle_pairs = eq_r_cycle_stage_1.len() / 2;
-        let [
-            eval_at_0_for_stage_1,
-            eval_at_2_for_stage_1,
-            eval_at_3_for_stage_1,
-            eval_at_0_for_stage_3,
-            eval_at_2_for_stage_3,
-            eval_at_3_for_stage_3,
-        ] = (0..n_cycle_pairs)
-            .into_par_iter()
-            .map(|j| {
-                let eq_r_cycle_stage_1_evals =
-                    eq_r_cycle_stage_1.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                let eq_r_cycle_stage_3_evals =
-                    eq_r_cycle_stage_3.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                let inc_evals =
-                    inc_cycle.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+        let [eval_at_0_for_stage_1, eval_at_2_for_stage_1, eval_at_3_for_stage_1, eval_at_0_for_stage_3, eval_at_2_for_stage_3, eval_at_3_for_stage_3] =
+            (0..K)
+                .into_par_iter()
+                .map(|k| {
+                    let base_index = k * n_cycle_pairs;
 
-                let [
-                    eval_at_0_for_stage_1,
-                    eval_at_2_for_stage_1,
-                    eval_at_3_for_stage_1,
-                    eval_at_0_for_stage_3,
-                    eval_at_2_for_stage_3,
-                    eval_at_3_for_stage_3,
-                ] = (0..K)
-                    .into_par_iter()
-                    .map(|k| {
-                        // index = k * n_cycle_pairs + j: address bits (k) high, cycle bits (j) low
-                        let index = k * n_cycle_pairs + j;
-                        let rs1_ra_evals =
-                            rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-                        let rs2_ra_evals =
-                            rs2_ra.sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-                        let wa_evals =
-                            rd_wa.sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-                        let val_evals =
-                            val.sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
+                    (0..n_cycle_pairs)
+                        .map(|j| {
+                            // index = k * n_cycle_pairs + j: address bits (k) high, cycle bits (j) low
+                            // With k fixed and j varying, this accesses contiguous memory
+                            let index = base_index + j;
 
-                        // Eval RdWriteValue(x) at (r', {0, 2, 3}, j, k).
-                        let rd_write_value_at_0_j_k =
-                            wa_evals[0].mul_0_optimized(inc_evals[0] + val_evals[0]);
-                        let rd_write_value_at_2_j_k =
-                            wa_evals[1].mul_0_optimized(inc_evals[1] + val_evals[1]);
-                        let rd_write_value_at_3_j_k =
-                            wa_evals[2].mul_0_optimized(inc_evals[2] + val_evals[2]);
+                            let eq_r_cycle_stage_1_evals = eq_r_cycle_stage_1
+                                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                            let eq_r_cycle_stage_3_evals = eq_r_cycle_stage_3
+                                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                            let inc_evals = inc_cycle
+                                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
-                        // Eval Rs1Value(x) at (r', {0, 2, 3}, j, k).
-                        let rs1_value_at_0_j_k = rs1_ra_evals[0].mul_0_optimized(val_evals[0]);
-                        let rs1_value_at_2_j_k = rs1_ra_evals[1].mul_0_optimized(val_evals[1]);
-                        let rs1_value_at_3_j_k = rs1_ra_evals[2].mul_0_optimized(val_evals[2]);
+                            let rs1_ra_evals = rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(
+                                index,
+                                BindingOrder::LowToHigh,
+                            );
+                            let rs2_ra_evals = rs2_ra.sumcheck_evals_array::<DEGREE_BOUND>(
+                                index,
+                                BindingOrder::LowToHigh,
+                            );
+                            let wa_evals = rd_wa.sumcheck_evals_array::<DEGREE_BOUND>(
+                                index,
+                                BindingOrder::LowToHigh,
+                            );
+                            let val_evals = val.sumcheck_evals_array::<DEGREE_BOUND>(
+                                index,
+                                BindingOrder::LowToHigh,
+                            );
 
-                        // Eval Rs2Value(x) at (r', {0, 2, 3}, j, k).
-                        let rs2_value_at_0_j_k = rs2_ra_evals[0].mul_0_optimized(val_evals[0]);
-                        let rs2_value_at_2_j_k = rs2_ra_evals[1].mul_0_optimized(val_evals[1]);
-                        let rs2_value_at_3_j_k = rs2_ra_evals[2].mul_0_optimized(val_evals[2]);
+                            // Eval RdWriteValue(x) at (r', {0, 2, 3}, j, k).
+                            let rd_write_value_at_0_j_k =
+                                wa_evals[0].mul_0_optimized(inc_evals[0] + val_evals[0]);
+                            let rd_write_value_at_2_j_k =
+                                wa_evals[1].mul_0_optimized(inc_evals[1] + val_evals[1]);
+                            let rd_write_value_at_3_j_k =
+                                wa_evals[2].mul_0_optimized(inc_evals[2] + val_evals[2]);
 
-                        // Eval ReadVals(x) = Rs1Value(x) + gamma * Rs2Value(x) at (r', {0, 2, 3}, j, k).
-                        let read_vals_at_0_j_k =
-                            rs1_value_at_0_j_k + params.gamma * rs2_value_at_0_j_k;
-                        let read_vals_at_2_j_k =
-                            rs1_value_at_2_j_k + params.gamma * rs2_value_at_2_j_k;
-                        let read_vals_at_3_j_k =
-                            rs1_value_at_3_j_k + params.gamma * rs2_value_at_3_j_k;
+                            // Eval Rs1Value(x) at (r', {0, 2, 3}, j, k).
+                            let rs1_value_at_0_j_k = rs1_ra_evals[0].mul_0_optimized(val_evals[0]);
+                            let rs1_value_at_2_j_k = rs1_ra_evals[1].mul_0_optimized(val_evals[1]);
+                            let rs1_value_at_3_j_k = rs1_ra_evals[2].mul_0_optimized(val_evals[2]);
 
-                        let eval_at_0_j_k_for_stage_1 =
-                            rd_write_value_at_0_j_k + params.gamma * read_vals_at_0_j_k;
-                        let eval_at_2_j_k_for_stage_1 =
-                            rd_write_value_at_2_j_k + params.gamma * read_vals_at_2_j_k;
-                        let eval_at_3_j_k_for_stage_1 =
-                            rd_write_value_at_3_j_k + params.gamma * read_vals_at_3_j_k;
+                            // Eval Rs2Value(x) at (r', {0, 2, 3}, j, k).
+                            let rs2_value_at_0_j_k = rs2_ra_evals[0].mul_0_optimized(val_evals[0]);
+                            let rs2_value_at_2_j_k = rs2_ra_evals[1].mul_0_optimized(val_evals[1]);
+                            let rs2_value_at_3_j_k = rs2_ra_evals[2].mul_0_optimized(val_evals[2]);
 
-                        let eval_at_0_j_k_for_stage_3 = read_vals_at_0_j_k;
-                        let eval_at_2_j_k_for_stage_3 = read_vals_at_2_j_k;
-                        let eval_at_3_j_k_for_stage_3 = read_vals_at_3_j_k;
+                            // Eval ReadVals(x) = Rs1Value(x) + gamma * Rs2Value(x) at (r', {0, 2, 3}, j, k).
+                            let read_vals_at_0_j_k =
+                                rs1_value_at_0_j_k + params.gamma * rs2_value_at_0_j_k;
+                            let read_vals_at_2_j_k =
+                                rs1_value_at_2_j_k + params.gamma * rs2_value_at_2_j_k;
+                            let read_vals_at_3_j_k =
+                                rs1_value_at_3_j_k + params.gamma * rs2_value_at_3_j_k;
 
-                        [
-                            eval_at_0_j_k_for_stage_1,
-                            eval_at_2_j_k_for_stage_1,
-                            eval_at_3_j_k_for_stage_1,
-                            eval_at_0_j_k_for_stage_3,
-                            eval_at_2_j_k_for_stage_3,
-                            eval_at_3_j_k_for_stage_3,
-                        ]
-                    })
-                    .fold_with([F::Unreduced::<5>::zero(); BATCH_SIZE * DEGREE_BOUND], |running, new| {
-                        array::from_fn(|i| running[i] + new[i].as_unreduced_ref())
-                    })
-                    .reduce(
-                        || [F::Unreduced::<5>::zero(); BATCH_SIZE * DEGREE_BOUND],
-                        |a, b| array::from_fn(|i| a[i] + b[i]),
-                    );
+                            let eval_at_0_j_k_for_stage_1 =
+                                rd_write_value_at_0_j_k + params.gamma * read_vals_at_0_j_k;
+                            let eval_at_2_j_k_for_stage_1 =
+                                rd_write_value_at_2_j_k + params.gamma * read_vals_at_2_j_k;
+                            let eval_at_3_j_k_for_stage_1 =
+                                rd_write_value_at_3_j_k + params.gamma * read_vals_at_3_j_k;
 
-                let eq_at_0_for_stage_1 = eq_r_cycle_stage_1_evals[0];
-                let eq_at_2_for_stage_1 = eq_r_cycle_stage_1_evals[1];
-                let eq_at_3_for_stage_1 = eq_r_cycle_stage_1_evals[2];
+                            let eval_at_0_j_k_for_stage_3 = read_vals_at_0_j_k;
+                            let eval_at_2_j_k_for_stage_3 = read_vals_at_2_j_k;
+                            let eval_at_3_j_k_for_stage_3 = read_vals_at_3_j_k;
 
-                let eq_at_0_for_stage_3 = eq_r_cycle_stage_3_evals[0];
-                let eq_at_2_for_stage_3 = eq_r_cycle_stage_3_evals[1];
-                let eq_at_3_for_stage_3 = eq_r_cycle_stage_3_evals[2];
+                            let eq_at_0_for_stage_1 = eq_r_cycle_stage_1_evals[0];
+                            let eq_at_2_for_stage_1 = eq_r_cycle_stage_1_evals[1];
+                            let eq_at_3_for_stage_1 = eq_r_cycle_stage_1_evals[2];
 
-                [
-                    eq_at_0_for_stage_1.mul_unreduced::<9>(F::from_barrett_reduce(eval_at_0_for_stage_1)),
-                    eq_at_2_for_stage_1.mul_unreduced::<9>(F::from_barrett_reduce(eval_at_2_for_stage_1)),
-                    eq_at_3_for_stage_1.mul_unreduced::<9>(F::from_barrett_reduce(eval_at_3_for_stage_1)),
-                    eq_at_0_for_stage_3.mul_unreduced::<9>(F::from_barrett_reduce(eval_at_0_for_stage_3)),
-                    eq_at_2_for_stage_3.mul_unreduced::<9>(F::from_barrett_reduce(eval_at_2_for_stage_3)),
-                    eq_at_3_for_stage_3.mul_unreduced::<9>(F::from_barrett_reduce(eval_at_3_for_stage_3)),
-                ]
-            })
-            .reduce(
-                || [F::Unreduced::<9>::zero(); BATCH_SIZE * DEGREE_BOUND],
-                |a, b| array::from_fn(|i| a[i] + b[i]),
-            )
-            .map(F::from_montgomery_reduce);
+                            let eq_at_0_for_stage_3 = eq_r_cycle_stage_3_evals[0];
+                            let eq_at_2_for_stage_3 = eq_r_cycle_stage_3_evals[1];
+                            let eq_at_3_for_stage_3 = eq_r_cycle_stage_3_evals[2];
+
+                            // Multiply by eq here (per j, k) to enable cache-friendly access pattern
+                            [
+                                eq_at_0_for_stage_1.mul_unreduced::<9>(eval_at_0_j_k_for_stage_1),
+                                eq_at_2_for_stage_1.mul_unreduced::<9>(eval_at_2_j_k_for_stage_1),
+                                eq_at_3_for_stage_1.mul_unreduced::<9>(eval_at_3_j_k_for_stage_1),
+                                eq_at_0_for_stage_3.mul_unreduced::<9>(eval_at_0_j_k_for_stage_3),
+                                eq_at_2_for_stage_3.mul_unreduced::<9>(eval_at_2_j_k_for_stage_3),
+                                eq_at_3_for_stage_3.mul_unreduced::<9>(eval_at_3_j_k_for_stage_3),
+                            ]
+                        })
+                        .fold(
+                            [F::Unreduced::<9>::zero(); BATCH_SIZE * DEGREE_BOUND],
+                            |a, b| array::from_fn(|i| a[i] + b[i]),
+                        )
+                })
+                .reduce(
+                    || [F::Unreduced::<9>::zero(); BATCH_SIZE * DEGREE_BOUND],
+                    |a, b| array::from_fn(|i| a[i] + b[i]),
+                )
+                .map(F::from_montgomery_reduce);
 
         let eval_at_0 = eval_at_0_for_stage_1 + params.gamma_cub * eval_at_0_for_stage_3;
         let eval_at_2 = eval_at_2_for_stage_1 + params.gamma_cub * eval_at_2_for_stage_3;
