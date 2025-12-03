@@ -8,7 +8,6 @@ use std::mem::MaybeUninit;
 use allocative::Allocative;
 use ark_std::Zero;
 use common::jolt_device::MemoryLayout;
-use num::Integer;
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, RAMAccess};
 
@@ -20,6 +19,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::ram::remap_address;
 
 use super::cycle_major::ReadWriteMatrixCycleMajor;
+use super::ColIndex;
 
 /// Represents the ra(k, j) and Val(k, j) polynomials for the RAM
 /// read/write-checking sumcheck in address-major (column-major) order.
@@ -63,12 +63,17 @@ use super::cycle_major::ReadWriteMatrixCycleMajor;
 /// - `rows`, `cols`, `vals`, `ras` all have the same length (`nnz()`)
 /// - `val_init` and `val_final` have the same length (`K` = address space size)
 /// - `val_final[k]` equals `next_val` of the last entry in column `k`
+///
+/// # Type Parameters
+///
+/// - `F`: The field type for coefficients.
+/// - `I`: The column index type (e.g., `usize` for RAM, `u8` for registers).
 #[derive(Allocative, Debug, Default, Clone)]
-pub struct ReadWriteMatrixAddressMajor<F: JoltField> {
+pub struct ReadWriteMatrixAddressMajor<F: JoltField, I: ColIndex = usize> {
     /// Row indices (cycle indices) for each sparse entry.
     pub rows: Vec<usize>,
     /// Column indices (address indices) for each sparse entry.
-    pub cols: Vec<usize>,
+    pub cols: Vec<I>,
     /// Val(k, j) coefficients: the value read/written at each access.
     pub vals: Vec<F>,
     /// ra(k, j) coefficients: always 1 for explicit accesses, used for sumcheck.
@@ -82,7 +87,7 @@ pub struct ReadWriteMatrixAddressMajor<F: JoltField> {
     val_final: MultilinearPolynomial<F>,
 }
 
-impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
+impl<F: JoltField, I: ColIndex> ReadWriteMatrixAddressMajor<F, I> {
     /// Number of non-zero sparse entries.
     #[inline]
     pub fn nnz(&self) -> usize {
@@ -97,10 +102,12 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         if i + 1 < self.nnz() && self.cols[i + 1] == self.cols[i] {
             self.vals[i + 1]
         } else {
-            self.val_final.get_bound_coeff(self.cols[i])
+            self.val_final.get_bound_coeff(self.cols[i].to_usize())
         }
     }
+}
 
+impl<F: JoltField> ReadWriteMatrixAddressMajor<F, usize> {
     /// Creates a new `ReadWriteMatrixAddressMajor` directly from the execution trace.
     ///
     /// This is the primary constructor for **address-first sumcheck** where we bind
@@ -190,9 +197,11 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
     }
 }
 
-impl<F: JoltField> From<ReadWriteMatrixCycleMajor<F>> for ReadWriteMatrixAddressMajor<F> {
+impl<F: JoltField, I: ColIndex> From<ReadWriteMatrixCycleMajor<F, I>>
+    for ReadWriteMatrixAddressMajor<F, I>
+{
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixAddressMajor::from")]
-    fn from(mut cycle_major: ReadWriteMatrixCycleMajor<F>) -> Self {
+    fn from(mut cycle_major: ReadWriteMatrixCycleMajor<F, I>) -> Self {
         let mut entries = std::mem::take(&mut cycle_major.entries);
         let val_init = std::mem::take(&mut cycle_major.val_init);
 
@@ -208,7 +217,7 @@ impl<F: JoltField> From<ReadWriteMatrixCycleMajor<F>> for ReadWriteMatrixAddress
         // Build SoA arrays in parallel - each array built independently
         // This iterates entries 4 times but each pass is fully parallel and cache-friendly.
         let rows: Vec<usize> = entries.par_iter().map(|e| e.row).collect();
-        let cols: Vec<usize> = entries.par_iter().map(|e| e.col).collect();
+        let cols: Vec<I> = entries.par_iter().map(|e| e.col).collect();
         let vals: Vec<F> = entries.par_iter().map(|e| e.val_coeff).collect();
         let ras: Vec<F> = entries.par_iter().map(|e| e.ra_coeff).collect();
 
@@ -230,7 +239,7 @@ impl<F: JoltField> From<ReadWriteMatrixCycleMajor<F>> for ReadWriteMatrixAddress
         entries
             .par_chunk_by(|a, b| a.col == b.col)
             .for_each(|column_entries| {
-                let col = column_entries[0].col;
+                let col = column_entries[0].col.to_usize();
                 let last_next_val = column_entries.last().unwrap().next_val;
                 // SAFETY: Each column appears in exactly one chunk (entries sorted by col),
                 // so writes to val_final_vec[col] are disjoint across parallel iterations.
@@ -252,7 +261,7 @@ impl<F: JoltField> From<ReadWriteMatrixCycleMajor<F>> for ReadWriteMatrixAddress
     }
 }
 
-impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
+impl<F: JoltField, I: ColIndex> ReadWriteMatrixAddressMajor<F, I> {
     /// Binds an address variable of the ra and Val polynomials represented by
     /// this matrix to the random challenge `r`.
     ///
@@ -294,7 +303,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
             input_start: usize, // Start index in input arrays
             input_end: usize,   // End index in input arrays
             even_end: usize,    // Boundary between even and odd entries
-            even_col_idx: usize,
+            even_col_idx: usize, // As usize for indexing val_init
             bound_len: usize,
         }
 
@@ -303,9 +312,9 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
             let mut ranges = Vec::new();
             let mut idx = 0;
             while idx < n {
-                let col_pair = self.cols[idx] / 2;
+                let col_pair = self.cols[idx].to_usize() / 2;
                 let mut j = idx + 1;
-                while j < n && self.cols[j] / 2 == col_pair {
+                while j < n && self.cols[j].to_usize() / 2 == col_pair {
                     j += 1;
                 }
                 ranges.push((idx, j));
@@ -318,11 +327,11 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         let pairs: Vec<ColPairInfo> = pair_ranges
             .par_iter()
             .map(|&(start, end)| {
-                let col_pair = self.cols[start] / 2;
+                let col_pair = self.cols[start].to_usize() / 2;
 
                 // Find boundary between even and odd column entries
                 let mut mid = start;
-                while mid < end && self.cols[mid] % 2 == 0 {
+                while mid < end && self.cols[mid].is_even() {
                     mid += 1;
                 }
 
@@ -357,7 +366,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
 
         // Allocate new SoA arrays using MaybeUninit for safe parallel writes
         let mut rows_new: Vec<MaybeUninit<usize>> = Vec::with_capacity(total_bound);
-        let mut cols_new: Vec<MaybeUninit<usize>> = Vec::with_capacity(total_bound);
+        let mut cols_new: Vec<MaybeUninit<I>> = Vec::with_capacity(total_bound);
         let mut vals_new: Vec<MaybeUninit<F>> = Vec::with_capacity(total_bound);
         let mut ras_new: Vec<MaybeUninit<F>> = Vec::with_capacity(total_bound);
 
@@ -372,7 +381,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         // Pre-split output buffers into disjoint slices for each column pair.
         // This is the key pattern that avoids unsafe raw pointer arithmetic.
         let mut rows_slices: Vec<&mut [MaybeUninit<usize>]> = Vec::with_capacity(pairs.len());
-        let mut cols_slices: Vec<&mut [MaybeUninit<usize>]> = Vec::with_capacity(pairs.len());
+        let mut cols_slices: Vec<&mut [MaybeUninit<I>]> = Vec::with_capacity(pairs.len());
         let mut vals_slices: Vec<&mut [MaybeUninit<F>]> = Vec::with_capacity(pairs.len());
         let mut ras_slices: Vec<&mut [MaybeUninit<F>]> = Vec::with_capacity(pairs.len());
 
@@ -430,7 +439,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         // Convert MaybeUninit to initialized values
         // SAFETY: All positions were written by bind_cols
         self.rows = unsafe { std::mem::transmute::<Vec<MaybeUninit<usize>>, Vec<usize>>(rows_new) };
-        self.cols = unsafe { std::mem::transmute::<Vec<MaybeUninit<usize>>, Vec<usize>>(cols_new) };
+        self.cols = unsafe { std::mem::transmute::<Vec<MaybeUninit<I>>, Vec<I>>(cols_new) };
         self.vals = unsafe { std::mem::transmute::<Vec<MaybeUninit<F>>, Vec<F>>(vals_new) };
         self.ras = unsafe { std::mem::transmute::<Vec<MaybeUninit<F>>, Vec<F>>(ras_new) };
 
@@ -460,7 +469,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         odd_checkpoint: F,
         r: F::Challenge,
         rows_out: &mut [MaybeUninit<usize>],
-        cols_out: &mut [MaybeUninit<usize>],
+        cols_out: &mut [MaybeUninit<I>],
         vals_out: &mut [MaybeUninit<F>],
         ras_out: &mut [MaybeUninit<F>],
         dry_run: bool,
@@ -614,7 +623,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         mut odd_checkpoint: F,
         r: F::Challenge,
         rows_out: &mut [MaybeUninit<usize>],
-        cols_out: &mut [MaybeUninit<usize>],
+        cols_out: &mut [MaybeUninit<I>],
         vals_out: &mut [MaybeUninit<F>],
         ras_out: &mut [MaybeUninit<F>],
         dry_run: bool,
@@ -631,7 +640,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
 
             if row_e == row_o {
                 if !dry_run {
-                    let new_col = self.cols[i] / 2;
+                    let new_col = I::from_usize(self.cols[i].to_usize() / 2);
                     let ra_even = self.ras[i];
                     let ra_odd = self.ras[j];
                     let val_even = self.vals[i];
@@ -650,7 +659,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
                 k += 1;
             } else if row_e < row_o {
                 if !dry_run {
-                    let new_col = self.cols[i] / 2;
+                    let new_col = I::from_usize(self.cols[i].to_usize() / 2);
                     let ra_even = self.ras[i];
                     let val_even = self.vals[i];
 
@@ -665,7 +674,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
                 k += 1;
             } else {
                 if !dry_run {
-                    let new_col = self.cols[j] / 2;
+                    let new_col = I::from_usize(self.cols[j].to_usize() / 2);
                     let ra_odd = self.ras[j];
                     let val_odd = self.vals[j];
 
@@ -686,7 +695,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         while i < e1 {
             if !dry_run {
                 let row_e = self.rows[i];
-                let new_col = self.cols[i] / 2;
+                let new_col = I::from_usize(self.cols[i].to_usize() / 2);
                 let ra_even = self.ras[i];
                 let val_even = self.vals[i];
 
@@ -704,7 +713,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         while j < o1 {
             if !dry_run {
                 let row_o = self.rows[j];
-                let new_col = self.cols[j] / 2;
+                let new_col = I::from_usize(self.cols[j].to_usize() / 2);
                 let ra_odd = self.ras[j];
                 let val_odd = self.vals[j];
 
@@ -758,9 +767,9 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
             let mut ranges = Vec::new();
             let mut idx = 0;
             while idx < n {
-                let col_pair = self.cols[idx] / 2;
+                let col_pair = self.cols[idx].to_usize() / 2;
                 let mut j = idx + 1;
-                while j < n && self.cols[j] / 2 == col_pair {
+                while j < n && self.cols[j].to_usize() / 2 == col_pair {
                     j += 1;
                 }
                 ranges.push((idx, j));
@@ -773,11 +782,11 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         let evals = pair_ranges
             .par_iter()
             .map(|&(start, end)| {
-                let col_pair = self.cols[start] / 2;
+                let col_pair = self.cols[start].to_usize() / 2;
 
                 // Find boundary between even and odd column entries
                 let mut mid = start;
-                while mid < end && self.cols[mid] % 2 == 0 {
+                while mid < end && self.cols[mid].is_even() {
                     mid += 1;
                 }
 
@@ -1112,8 +1121,9 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         // Build a set of columns that have explicit entries
         let mut col_seen = vec![false; K_prime];
         for t in 0..n {
-            if self.cols[t] < K_prime {
-                col_seen[self.cols[t]] = true;
+            let col_usize = self.cols[t].to_usize();
+            if col_usize < K_prime {
+                col_seen[col_usize] = true;
             }
         }
 
@@ -1121,6 +1131,7 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
         let mut i = 0;
         while i < n {
             let col = self.cols[i];
+            let col_usize = col.to_usize();
 
             // Find end of this column's entries
             let mut j = i + 1;
@@ -1128,11 +1139,11 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F> {
                 j += 1;
             }
 
-            let mut current_val = self.val_init.get_bound_coeff(col);
+            let mut current_val = self.val_init.get_bound_coeff(col_usize);
             let mut ptr = i;
 
             for row in 0..T_prime {
-                let idx_flat = col * T_prime + row;
+                let idx_flat = col_usize * T_prime + row;
 
                 if ptr < j && self.rows[ptr] == row {
                     // Explicit entry at (col, row)
