@@ -154,9 +154,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
-        // Uncompress commitments if they are compressed
-        self = self.uncompressed_commitments();
-
         let _pprof_verify = pprof_scope!("verify");
         // Parameters are computed from trace length as needed
 
@@ -177,8 +174,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Append commitments to transcript
         match &self.proof.commitments {
-            JoltProofCommitments::Compressed(_commitments) => {
-                panic!("Commitments should have been uncompressed by now");
+            JoltProofCommitments::Compressed(commitments) => {
+                for commitment in commitments {
+                    self.transcript.append_serializable(commitment);
+                }
             }
             JoltProofCommitments::Uncompressed(commitments) => {
                 for commitment in commitments {
@@ -186,6 +185,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 }
             }
         };
+
+        // Uncompress commitments if they are compressed
+        // NOTE: this needs to happen after the transcript is appended to, because the prover appends the compressed commitments to the transcript.
+        self = self.uncompressed_commitments();
 
         // Append untrusted advice commitment to transcript
         if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {

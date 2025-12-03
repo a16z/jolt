@@ -1505,6 +1505,14 @@ mod tests {
             &uncompressed_proof_field_size_tracker,
             &compressed_proof_field_size_tracker,
         ));
+
+        let binding = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier =
+            RV64IMACVerifier::new(&binding, jolt_proof_compressed, io_device, None, None)
+                .expect("Failed to create verifier for compressed proof");
+        verifier
+            .verify()
+            .expect("Failed to verify compressed proof");
     }
 
     #[test]
@@ -1699,6 +1707,14 @@ mod tests {
             &uncompressed_proof_field_size_tracker,
             &compressed_proof_field_size_tracker,
         ));
+
+        let binding = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier =
+            RV64IMACVerifier::new(&binding, jolt_proof_compressed, io_device, None, None)
+                .expect("Failed to create verifier for compressed proof");
+        verifier
+            .verify()
+            .expect("Failed to verify compressed proof");
     }
 
     #[test]
@@ -1937,6 +1953,14 @@ mod tests {
                 &uncompressed_proof_field_size_tracker,
                 &compressed_proof_field_size_tracker,
             ));
+
+        let binding = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier =
+            RV64IMACVerifier::new(&binding, jolt_proof_compressed, io_device, None, None)
+                .expect("Failed to create verifier for compressed proof");
+        verifier
+            .verify()
+            .expect("Failed to verify compressed proof");
     }
 
     #[test]
