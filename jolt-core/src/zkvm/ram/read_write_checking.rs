@@ -75,13 +75,12 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     params: ReadWriteCheckingParams<F>,
 }
 
-/// Number of cycle variables to bind in Phase 1 (using GruenSplitEqPolynomial).
+/// Number of cycle variables to bind in Phase 1 (using CycleMajor sparse matrix).
 ///
 /// # Supported configurations
 /// The following (phase1, phase2) configurations are supported:
 /// - `(T.log_2(), any)` - All cycle vars bound in phase 1
-/// - `(T.log_2() - 1, any)` - Leave 1 cycle var for phase 3
-/// - `(0, any >= 0)` - Skip phase 1 entirely
+/// - `(0, any)` - Skip phase 1 entirely, start binding address vars
 ///
 /// Other configurations (e.g., leaving 2+ cycle vars for phase 3 while binding
 /// all address vars in phase 2) may cause verification failures due to index
