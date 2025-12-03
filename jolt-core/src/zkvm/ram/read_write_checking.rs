@@ -95,6 +95,14 @@ fn phase2_num_rounds(K: usize, _T: usize) -> usize {
     K.log_2()
 }
 
+/// Returns true if all cycle variables are bound in phase 1.
+///
+/// When this returns true, the advice opening points for `RamValEvaluation` and
+/// `RamValFinalEvaluation` are identical, so we only need one advice opening.
+pub fn needs_single_advice_opening(T: usize) -> bool {
+    phase1_num_rounds(0, T) == T.log_2()
+}
+
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::gen")]
     pub fn gen(

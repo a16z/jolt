@@ -651,6 +651,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.opening_accumulator,
             &mut self.transcript,
+            ram::read_write_checking::needs_single_advice_opening(self.trace.len()),
         );
         let ram_ra_booleanity = ram::gen_ra_booleanity_prover(
             &self.trace,
@@ -886,20 +887,25 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // Prove at RamValFinalEvaluation point
-        let (point_val_final, _) = self
-            .opening_accumulator
-            .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-            .unwrap();
-        let proof_val_final = PCS::prove(
-            &self.preprocessing.generators,
-            poly,
-            &point_val_final.r,
-            None,
-            &mut self.transcript,
-        );
+        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
+        let proof_val_final =
+            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
+                None
+            } else {
+                let (point_val_final, _) = self
+                    .opening_accumulator
+                    .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                    .unwrap();
+                Some(PCS::prove(
+                    &self.preprocessing.generators,
+                    poly,
+                    &point_val_final.r,
+                    None,
+                    &mut self.transcript,
+                ))
+            };
 
-        (Some(proof_val), Some(proof_val_final))
+        (Some(proof_val), proof_val_final)
     }
 
     #[tracing::instrument(skip_all)]
@@ -924,20 +930,25 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // Prove at RamValFinalEvaluation point
-        let (point_val_final, _) = self
-            .opening_accumulator
-            .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-            .unwrap();
-        let proof_val_final = PCS::prove(
-            &self.preprocessing.generators,
-            poly,
-            &point_val_final.r,
-            None,
-            &mut self.transcript,
-        );
+        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
+        let proof_val_final =
+            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
+                None
+            } else {
+                let (point_val_final, _) = self
+                    .opening_accumulator
+                    .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                    .unwrap();
+                Some(PCS::prove(
+                    &self.preprocessing.generators,
+                    poly,
+                    &point_val_final.r,
+                    None,
+                    &mut self.transcript,
+                ))
+            };
 
-        (Some(proof_val), Some(proof_val_final))
+        (Some(proof_val), proof_val_final)
     }
 
     #[tracing::instrument(skip_all)]
