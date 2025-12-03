@@ -53,30 +53,6 @@ use tracer::instruction::Cycle;
 /// Degree bound of the sumcheck round polynomials in [`RamReadWriteCheckingVerifier`].
 const DEGREE_BOUND: usize = 3;
 
-/// A collection of vectors that are used in each of the first log(T / num_chunks)
-/// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
-/// across all log(T / num_chunks) rounds.
-#[derive(Allocative)]
-struct DataBuffers<F: JoltField> {
-    /// Contains
-    ///     Val(k, j', 0, ..., 0)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_0: Vec<u64>,
-    /// `val_j_r[0]` contains
-    ///     Val(k, j'', 0, r_i, ..., r_1)
-    /// `val_j_r[1]` contains
-    ///     Val(k, j'', 1, r_i, ..., r_1)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_r: [Vec<F>; 2],
-    /// `ra[0]` contains
-    ///     ra(k, j'', 0, r_i, ..., r_1)
-    /// `ra[1]` contains
-    ///     ra(k, j'', 1, r_i, ..., r_1)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-    ra: [Vec<F>; 2],
-    dirty_indices: Vec<usize>,
-}
-
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 pub struct ReadWriteSumcheckClaims<F: JoltField> {
     pub val_claim: F,
