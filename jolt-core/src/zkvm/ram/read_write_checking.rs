@@ -75,10 +75,22 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     params: ReadWriteCheckingParams<F>,
 }
 
+/// Number of cycle variables to bind in Phase 1 (using GruenSplitEqPolynomial).
+///
+/// # Supported configurations
+/// The following (phase1, phase2) configurations are supported:
+/// - `(T.log_2(), any)` - All cycle vars bound in phase 1
+/// - `(T.log_2() - 1, any)` - Leave 1 cycle var for phase 3
+/// - `(0, any >= 0)` - Skip phase 1 entirely
+///
+/// Other configurations (e.g., leaving 2+ cycle vars for phase 3 while binding
+/// all address vars in phase 2) may cause verification failures due to index
+/// ordering mismatches.
 fn phase1_num_rounds(_K: usize, T: usize) -> usize {
     T.log_2()
 }
 
+/// Number of address variables to bind in Phase 2 (using AddressMajor sparse matrix).
 fn phase2_num_rounds(K: usize, _T: usize) -> usize {
     K.log_2()
 }
@@ -133,12 +145,19 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             .map(|x| F::from_u64(*x))
             .collect();
         let sparse_matrix = ReadWriteMatrixCycleMajor::new(trace, val_init, memory_layout);
-        let (sparse_matrix_phase1, sparse_matrix_phase2) =
-            if phase1_num_rounds(params.K, params.T) > 0 {
-                (sparse_matrix, Default::default())
-            } else {
-                (Default::default(), sparse_matrix.into())
-            };
+        let phase1_rounds = phase1_num_rounds(params.K, params.T);
+        let phase2_rounds = phase2_num_rounds(params.K, params.T);
+
+        let (sparse_matrix_phase1, sparse_matrix_phase2, ra, val) = if phase1_rounds > 0 {
+            (sparse_matrix, Default::default(), None, None)
+        } else if phase2_rounds > 0 {
+            (Default::default(), sparse_matrix.into(), None, None)
+        } else {
+            // Both phase1 and phase2 are 0: materialize directly
+            let (ra, val) = Into::<ReadWriteMatrixAddressMajor<_, _>>::into(sparse_matrix)
+                .materialize(params.K, params.T);
+            (Default::default(), Default::default(), Some(ra), Some(val))
+        };
 
         Self {
             sparse_matrix_phase1,
@@ -146,8 +165,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             gruen_eq,
             merged_eq,
             inc,
-            ra: None,
-            val: None,
+            ra,
+            val,
             params,
         }
     }
@@ -585,6 +604,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
         );
+
         eq_eval_cycle * ra_claim * (val_claim + self.params.gamma * (val_claim + inc_claim))
     }
 
@@ -680,6 +700,9 @@ impl<F: JoltField> ReadWriteCheckingParams<F> {
         let (phase3_cycle_challenges, phase3_address_challenges) =
             sumcheck_challenges.split_at(self.T.log_2() - phase1_num_rounds);
 
+        // Both Phase 1/2 (GruenSplitEqPolynomial LowToHigh) and Phase 3 (dense LowToHigh)
+        // bind variables from the "bottom" (last w component) to "top" (first w component).
+        // So all challenges need to be reversed to get big-endian [w[0], w[1], ...] order.
         let r_cycle: Vec<_> = phase3_cycle_challenges
             .iter()
             .rev()
