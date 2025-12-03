@@ -382,75 +382,75 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
                 let k_end = k_start + inner_len;
 
                 // Parallelize inner loop when it's large enough
-                let (sum_A_0, sum_A_1, sum_B_0, sum_B_1) = if inner_len >= Self::MIN_INNER_PARALLEL_LEN
-                {
-                    (k_start..k_end)
-                        .into_par_iter()
-                        .fold(
-                            || {
-                                (
-                                    F::Unreduced::<9>::zero(),
-                                    F::Unreduced::<9>::zero(),
-                                    F::Unreduced::<9>::zero(),
-                                    F::Unreduced::<9>::zero(),
-                                )
-                            },
-                            |mut acc, k| {
-                                let k_m = (k >> (m - 1)) & 1;
-                                let F_k = self.F[k % (1 << (m - 1))];
-                                let G_A_k = self.G_A[k];
-                                let G_B_k = self.G_B[k];
+                let (sum_A_0, sum_A_1, sum_B_0, sum_B_1) =
+                    if inner_len >= Self::MIN_INNER_PARALLEL_LEN {
+                        (k_start..k_end)
+                            .into_par_iter()
+                            .fold(
+                                || {
+                                    (
+                                        F::Unreduced::<9>::zero(),
+                                        F::Unreduced::<9>::zero(),
+                                        F::Unreduced::<9>::zero(),
+                                        F::Unreduced::<9>::zero(),
+                                    )
+                                },
+                                |mut acc, k| {
+                                    let k_m = (k >> (m - 1)) & 1;
+                                    let F_k = self.F[k % (1 << (m - 1))];
+                                    let G_A_k = self.G_A[k];
+                                    let G_B_k = self.G_B[k];
 
-                                let contrib_A = G_A_k.mul_unreduced::<9>(F_k);
-                                let contrib_B = G_B_k.mul_unreduced::<9>(F_k);
+                                    let contrib_A = G_A_k.mul_unreduced::<9>(F_k);
+                                    let contrib_B = G_B_k.mul_unreduced::<9>(F_k);
 
-                                if k_m == 0 {
-                                    acc.0 += contrib_A;
-                                    acc.2 += contrib_B;
-                                } else {
-                                    acc.1 += contrib_A;
-                                    acc.3 += contrib_B;
-                                }
-                                acc
-                            },
-                        )
-                        .reduce(
-                            || {
-                                (
-                                    F::Unreduced::<9>::zero(),
-                                    F::Unreduced::<9>::zero(),
-                                    F::Unreduced::<9>::zero(),
-                                    F::Unreduced::<9>::zero(),
-                                )
-                            },
-                            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3),
-                        )
-                } else {
-                    // Sequential path for small inner loops
-                    let mut sum_A_0 = F::Unreduced::<9>::zero();
-                    let mut sum_A_1 = F::Unreduced::<9>::zero();
-                    let mut sum_B_0 = F::Unreduced::<9>::zero();
-                    let mut sum_B_1 = F::Unreduced::<9>::zero();
+                                    if k_m == 0 {
+                                        acc.0 += contrib_A;
+                                        acc.2 += contrib_B;
+                                    } else {
+                                        acc.1 += contrib_A;
+                                        acc.3 += contrib_B;
+                                    }
+                                    acc
+                                },
+                            )
+                            .reduce(
+                                || {
+                                    (
+                                        F::Unreduced::<9>::zero(),
+                                        F::Unreduced::<9>::zero(),
+                                        F::Unreduced::<9>::zero(),
+                                        F::Unreduced::<9>::zero(),
+                                    )
+                                },
+                                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3),
+                            )
+                    } else {
+                        // Sequential path for small inner loops
+                        let mut sum_A_0 = F::Unreduced::<9>::zero();
+                        let mut sum_A_1 = F::Unreduced::<9>::zero();
+                        let mut sum_B_0 = F::Unreduced::<9>::zero();
+                        let mut sum_B_1 = F::Unreduced::<9>::zero();
 
-                    for k in k_start..k_end {
-                        let k_m = (k >> (m - 1)) & 1;
-                        let F_k = self.F[k % (1 << (m - 1))];
-                        let G_A_k = self.G_A[k];
-                        let G_B_k = self.G_B[k];
+                        for k in k_start..k_end {
+                            let k_m = (k >> (m - 1)) & 1;
+                            let F_k = self.F[k % (1 << (m - 1))];
+                            let G_A_k = self.G_A[k];
+                            let G_B_k = self.G_B[k];
 
-                        let contrib_A = G_A_k.mul_unreduced::<9>(F_k);
-                        let contrib_B = G_B_k.mul_unreduced::<9>(F_k);
+                            let contrib_A = G_A_k.mul_unreduced::<9>(F_k);
+                            let contrib_B = G_B_k.mul_unreduced::<9>(F_k);
 
-                        if k_m == 0 {
-                            sum_A_0 += contrib_A;
-                            sum_B_0 += contrib_B;
-                        } else {
-                            sum_A_1 += contrib_A;
-                            sum_B_1 += contrib_B;
+                            if k_m == 0 {
+                                sum_A_0 += contrib_A;
+                                sum_B_0 += contrib_B;
+                            } else {
+                                sum_A_1 += contrib_A;
+                                sum_B_1 += contrib_B;
+                            }
                         }
-                    }
-                    (sum_A_0, sum_A_1, sum_B_0, sum_B_1)
-                };
+                        (sum_A_0, sum_A_1, sum_B_0, sum_B_1)
+                    };
 
                 // Reduce to field elements
                 let sum_A_0 = F::from_montgomery_reduce::<9>(sum_A_0);
@@ -467,16 +467,12 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
 
                 // Combine with B evals: B[k'] · inner[k'] + γ² · B2[k'] · inner_B[k']
                 [
-                    B_1_evals[0] * inner_A_0
-                        + self.params.gamma_squared * B_2_evals[0] * inner_B_0,
+                    B_1_evals[0] * inner_A_0 + self.params.gamma_squared * B_2_evals[0] * inner_B_0,
                     B_1_evals[1] * inner_A_c2
                         + self.params.gamma_squared * B_2_evals[1] * inner_B_c2,
                 ]
             })
-            .reduce(
-                || [F::zero(), F::zero()],
-                |a, b| [a[0] + b[0], a[1] + b[1]],
-            );
+            .reduce(|| [F::zero(), F::zero()], |a, b| [a[0] + b[0], a[1] + b[1]]);
 
         UniPoly::from_evals_and_hint(previous_claim, &[eval_0, eval_c2])
     }

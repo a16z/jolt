@@ -292,8 +292,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
         tracing::info!("Stage 7 proving");
-        let trusted_advice_proof = self.prove_trusted_advice();
-        let untrusted_advice_proof = self.prove_untrusted_advice();
+        let (trusted_advice_val_evaluation_proof, trusted_advice_val_final_proof) =
+            self.prove_trusted_advice();
+        let (untrusted_advice_val_evaluation_proof, untrusted_advice_val_final_proof) =
+            self.prove_untrusted_advice();
         let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
 
         #[cfg(test)]
@@ -327,8 +329,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
             stage6_sumcheck_proof,
-            trusted_advice_proof,
-            untrusted_advice_proof,
+            trusted_advice_val_evaluation_proof,
+            trusted_advice_val_final_proof,
+            untrusted_advice_val_evaluation_proof,
+            untrusted_advice_val_final_proof,
             reduced_opening_proof,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
@@ -871,45 +875,79 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_trusted_advice(&mut self) -> Option<PCS::Proof> {
-        self.advice
-            .trusted_advice_polynomial
-            .as_ref()
-            .map(|trusted_advice_poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-                let (point, _) = self
-                    .opening_accumulator
-                    .get_trusted_advice_opening()
-                    .unwrap();
-                PCS::prove(
-                    &self.preprocessing.generators,
-                    trusted_advice_poly,
-                    &point.r,
-                    None,
-                    &mut self.transcript,
-                )
-            })
+    fn prove_trusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
+        use crate::poly::opening_proof::SumcheckId;
+        let poly = match &self.advice.trusted_advice_polynomial {
+            Some(p) => p,
+            None => return (None, None),
+        };
+        let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+
+        // Prove at RamValEvaluation point
+        let (point_val, _) = self
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
+            .unwrap();
+        let proof_val = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val.r,
+            None,
+            &mut self.transcript,
+        );
+
+        // Prove at RamValFinalEvaluation point
+        let (point_val_final, _) = self
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+            .unwrap();
+        let proof_val_final = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val_final.r,
+            None,
+            &mut self.transcript,
+        );
+
+        (Some(proof_val), Some(proof_val_final))
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_untrusted_advice(&mut self) -> Option<PCS::Proof> {
-        self.advice
-            .untrusted_advice_polynomial
-            .as_ref()
-            .map(|untrusted_advice_poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
-                let (point, _) = self
-                    .opening_accumulator
-                    .get_untrusted_advice_opening()
-                    .unwrap();
-                PCS::prove(
-                    &self.preprocessing.generators,
-                    untrusted_advice_poly,
-                    &point.r,
-                    None,
-                    &mut self.transcript,
-                )
-            })
+    fn prove_untrusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
+        use crate::poly::opening_proof::SumcheckId;
+        let poly = match &self.advice.untrusted_advice_polynomial {
+            Some(p) => p,
+            None => return (None, None),
+        };
+        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
+
+        // Prove at RamValEvaluation point
+        let (point_val, _) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
+            .unwrap();
+        let proof_val = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val.r,
+            None,
+            &mut self.transcript,
+        );
+
+        // Prove at RamValFinalEvaluation point
+        let (point_val_final, _) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+            .unwrap();
+        let proof_val_final = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val_final.r,
+            None,
+            &mut self.transcript,
+        );
+
+        (Some(proof_val), Some(proof_val_final))
     }
 
     #[tracing::instrument(skip_all)]
