@@ -362,9 +362,9 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
         let inner_len = 1 << m; // Number of k values per k_prime
 
         // For each k' in {0,1}^{log_K - m}, compute contribution to round polynomial
-        // Use unreduced arithmetic for accumulation, but track positive contributions only.
+        // Use unreduced arithmetic for inner loop accumulation only.
         // The c2 coefficient is computed as 2*sum_1 - sum_0 after reduction.
-        let evals = (0..half_len)
+        let [eval_0, eval_c2] = (0..half_len)
             .into_par_iter()
             .map(|k_prime| {
                 // Get sumcheck evals for B_1 and B_2 at position k'
@@ -473,27 +473,12 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
                         + self.params.gamma_squared * B_2_evals[1] * inner_B_c2,
                 ]
             })
-            .fold_with(
-                [F::Unreduced::<5>::zero(), F::Unreduced::<5>::zero()],
-                |running, new| {
-                    [
-                        running[0] + *new[0].as_unreduced_ref(),
-                        running[1] + *new[1].as_unreduced_ref(),
-                    ]
-                },
-            )
             .reduce(
-                || [F::Unreduced::<5>::zero(), F::Unreduced::<5>::zero()],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
+                || [F::zero(), F::zero()],
+                |a, b| [a[0] + b[0], a[1] + b[1]],
             );
 
-        // Final reduction before constructing the polynomial
-        let evals_reduced = [
-            F::from_montgomery_reduce::<5>(evals[0]),
-            F::from_montgomery_reduce::<5>(evals[1]),
-        ];
-
-        UniPoly::from_evals_and_hint(previous_claim, evals_reduced.as_ref())
+        UniPoly::from_evals_and_hint(previous_claim, &[eval_0, eval_c2])
     }
 
     /// Compute the round polynomial for cycle rounds (phase 2).
