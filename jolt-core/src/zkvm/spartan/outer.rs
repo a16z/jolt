@@ -329,8 +329,8 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         scaled_w: &[[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]],
     ) {
         let preprocess = &self.bytecode_preprocessing;
-        let checkpoints = &self.checkpoints;
-        let checkpoint_interval = self.checkpoint_interval;
+        let _checkpoints = &self.checkpoints;
+        let _checkpoint_interval = self.checkpoint_interval;
         let trace = &self.trace;
         debug_assert_eq!(scaled_w.len(), klen);
         debug_assert_eq!(grid_az.len(), jlen);
@@ -353,15 +353,15 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
                     // TODO: use the lazy trace iterator here instead of indexing directly into the
                     // trace that is all that needs to change for now
-                    let row_inputs_prime = R1CSCycleInputs::from_checkpoints::<F>(
-                        preprocess,
-                        checkpoints,
-                        checkpoint_interval,
-                        current_step_idx,
-                    );
-                    let _row_inputs =
+                    //let row_inputs_prime = R1CSCycleInputs::from_checkpoints::<F>(
+                    //    preprocess,
+                    //    checkpoints,
+                    //    checkpoint_interval,
+                    //    current_step_idx,
+                    //);
+                    let row_inputs =
                         R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs_prime);
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
                     let w_k = &scaled_w[k];
 
                     if !selector {
@@ -439,8 +439,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     // returns the grid of evaluations on {0,1,inf}^window_size
     // touches each cycle of the trace exactly once and in order!
     fn get_grid_gen(&mut self, window_size: usize) {
-        // Use the split-eq instance to derive the current window
-        // factorisation of Eq over the unbound cycle bits. This keeps the
         // semantics in one place (see `split_eq_poly::E_out_in_for_window`).
         let split_eq = &self.split_eq_poly;
 
@@ -1147,13 +1145,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     /// (ordering of indices is MSB to LSB, so x_out is the MSB and x_in is the LSB)
     #[inline]
     fn remaining_quadratic_evals(&mut self) -> (F, F) {
-        if self.t_0.is_some() {
-            let t_0 = self.t_0.unwrap();
-            let t_inf = self.t_inf.unwrap();
-            self.t_0 = None;
-            self.t_inf = None;
-            return (t_0, t_inf);
-        }
         let eq_poly = &self.split_eq_poly;
 
         let n = self.az.as_ref().expect("az should be initialized").len();
@@ -1225,6 +1216,85 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         }
     }
 
+    // start with serial we can parallelise this later
+    pub fn compute_evaluation_grid_from_polynomials_serial(&mut self, num_vars: usize) {
+        let eq_poly = &self.split_eq_poly;
+
+        let n = self.az.as_ref().expect("az should be initialized").len();
+        let az = self.az.as_ref().expect("az should be initialized");
+        let bz = self.bz.as_ref().expect("bz should be initialized");
+        debug_assert_eq!(n, bz.len());
+
+        let three_pow_dim = 3_usize.pow(num_vars as u32);
+        let grid_size = 1 << num_vars;
+        let mut az_grid = vec![F::zero(); grid_size];
+        let mut bz_grid = vec![F::zero(); grid_size];
+        let mut buff_a: Vec<F> = vec![F::zero(); three_pow_dim];
+        let mut buff_b = vec![F::zero(); three_pow_dim];
+        let mut tmp = vec![F::zero(); three_pow_dim];
+        let mut ans = vec![F::zero(); three_pow_dim];
+
+        let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
+        if E_in.len() == 1 {
+            // this is a simple case of a linear loop
+            debug_assert_eq!(E_out.len(), n / grid_size);
+            for i in 0..E_out.len() {
+                az_grid.fill(F::zero());
+                bz_grid.fill(F::zero());
+                for j in 0..grid_size {
+                    az_grid[j] = az[2 * i + j];
+                    bz_grid[j] = bz[2 * i + j];
+                }
+                MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                    &az_grid,
+                    &mut buff_a,
+                    &mut tmp,
+                    num_vars,
+                );
+                MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                    &bz_grid,
+                    &mut buff_b,
+                    &mut tmp,
+                    num_vars,
+                );
+                for idx in 0..three_pow_dim {
+                    ans[idx] += buff_a[idx] * buff_b[idx] * E_out[i];
+                }
+            }
+        } else {
+            let num_xin_bits = E_in.len().log_2();
+            for x_out in 0..E_out.len() {
+                for x_in in 0..E_in.len() {
+                    let i = (x_out << num_xin_bits) | x_in;
+                    az_grid.fill(F::zero());
+                    bz_grid.fill(F::zero());
+                    for j in 0..grid_size {
+                        az_grid[j] = az[2 * i + j];
+                        bz_grid[j] = bz[2 * i + j];
+                    }
+
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &az_grid,
+                        &mut buff_a,
+                        &mut tmp,
+                        num_vars,
+                    );
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &bz_grid,
+                        &mut buff_b,
+                        &mut tmp,
+                        num_vars,
+                    );
+                    for idx in 0..three_pow_dim {
+                        ans[idx] += buff_a[idx] * buff_b[idx] * E_out[x_out] * E_in[x_in];
+                    }
+                }
+            }
+        }
+
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
+    }
+
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
         let az = self.az.as_ref().expect("az should be initialized");
         let bz = self.bz.as_ref().expect("bz should be initialized");
@@ -1284,13 +1354,33 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
             (t_prime_0, t_prime_inf)
         } else {
             // LINEAR PHASE
-            //println!("In Linear phase| Round: {:?}", round);
             if self.schedule.is_first_linear(round) {
                 self.stream_to_linear_time();
+                let t_0 = self.t_0.unwrap();
+                let t_inf = self.t_inf.unwrap();
+                self.t_0 = None;
+                self.t_inf = None;
+                (t_0, t_inf)
+            } else {
+                println!("Az/Bz already materialised 0 in 0 linear phase| Round: {round}");
+                let window_size = 1;
+                self.compute_evaluation_grid_from_polynomials_serial(window_size);
+                let t_prime_poly = self
+                    .t_prime_poly
+                    .as_ref()
+                    .expect("t_prime_poly should be initialized");
+
+                // Equality weights over the active window bits (all but the first).
+                let e_active = self.split_eq_poly.E_active_for_window(window_size);
+                let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
+                let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
+
+                // change this to compuute t_grid from Az/Bz and compare it with this
+                let (t0, t_inf) = self.remaining_quadratic_evals();
+                assert_eq!(t_prime_0, t0);
+                assert_eq!(t_prime_inf, t_inf);
+                (t0, t_inf)
             }
-            // For now, just use quadratic evals
-            let (t0, t_inf) = self.remaining_quadratic_evals();
-            (t0, t_inf)
         };
         // Compute the Gruen cubic using the split-eq implementation.
         self.split_eq_poly

@@ -41,58 +41,6 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_with_scaling")]
-    //pub fn new_with_scaling(
-    //    w: &[F::Challenge],
-    //    binding_order: BindingOrder,
-    //    scaling_factor: Option<F>,
-    //) -> Self {
-    //    match binding_order {
-    //        BindingOrder::LowToHigh => {
-    //            let m = w.len() / 2;
-    //            //   w = [w_out, w_in, w_last]
-    //            //         ↑      ↑      ↑
-    //            //         |      |      |
-    //            //         |      |      last element
-    //            //         |      second half of remaining elements (for E_in)
-    //            //         first half of remaining elements (for E_out)
-    //            let (_, wprime) = w.split_last().unwrap();
-    //            let (w_out, w_in) = wprime.split_at(m);
-    //            let (E_out_vec, E_in_vec) = rayon::join(
-    //                || EqPolynomial::evals_cached(w_out),
-    //                || EqPolynomial::evals_cached(w_in),
-    //            );
-    //            Self {
-    //                current_index: w.len(),
-    //                current_scalar: scaling_factor.unwrap_or(F::one()),
-    //                w: w.to_vec(),
-    //                E_in_vec,
-    //                E_out_vec,
-    //                binding_order,
-    //            }
-    //        }
-    //        BindingOrder::HighToLow => {
-    //            // For high-to-low binding, we bind from MSB (index 0) to LSB (index n-1).
-    //            // The split should be: w_in = first half, w_out = second half
-    //            // [w_first, w_in, w_out]
-    //            let (_, wprime) = w.split_first().unwrap();
-    //            let m = w.len() / 2;
-    //            let (w_in, w_out) = wprime.split_at(m);
-    //            let (E_in_vec, E_out_vec) = rayon::join(
-    //                || EqPolynomial::evals_cached_rev(w_in),
-    //                || EqPolynomial::evals_cached_rev(w_out),
-    //            );
-    //
-    //            Self {
-    //                current_index: 0, // Start from 0 for high-to-low up to w.len() - 1
-    //                current_scalar: scaling_factor.unwrap_or(F::one()),
-    //                w: w.to_vec(),
-    //                E_in_vec,
-    //                E_out_vec,
-    //                binding_order,
-    //            }
-    //        }
-    //    }
-    //}
     pub fn new_with_scaling(
         w: &[F::Challenge],
         binding_order: BindingOrder,
@@ -107,7 +55,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 //         |      |      last element
                 //         |      second half of remaining elements (for E_in)
                 //         first half of remaining elements (for E_out)
-                let (_, wprime) = w.split_last().unwrap();
+                let (_w_last, wprime) = w.split_last().unwrap();
                 let (w_out, w_in) = wprime.split_at(m);
                 let (E_out_vec, E_in_vec) = rayon::join(
                     || EqPolynomial::evals_cached(w_out),
@@ -616,6 +564,21 @@ mod tests {
     use ark_bn254::Fr;
     use ark_std::test_rng;
 
+    #[test]
+    fn window_out_in() {
+        const NUM_VARS: usize = 17;
+        let mut rng = test_rng();
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(NUM_VARS)
+                .collect();
+
+        let split_eq = GruenSplitEqPolynomial::<Fr>::new(&w, BindingOrder::LowToHigh);
+        let (e_prime_out, e_prime_in) = split_eq.E_out_in_for_window(1);
+        assert_eq!(split_eq.E_out_current_len(), 1 << 8);
+        assert_eq!(e_prime_out.len(), split_eq.E_out_current().len());
+        assert_eq!(e_prime_in.len(), split_eq.E_in_current().len());
+    }
     #[test]
     fn bind_low_high() {
         const NUM_VARS: usize = 10;
