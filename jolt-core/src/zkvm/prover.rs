@@ -63,7 +63,8 @@ use crate::{
             RAMPreprocessing,
         },
         registers::{
-            read_write_checking::RegistersReadWriteCheckingProver,
+            // OLD: read_write_checking::RegistersReadWriteCheckingProver,
+            read_write_checking_new::RegistersReadWriteCheckingProverNew,
             val_evaluation::ValEvaluationSumcheckProver as RegistersValEvaluationSumcheckProver,
         },
         spartan::{
@@ -637,13 +638,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        let registers_read_write_checking = RegistersReadWriteCheckingProver::gen(
+        // NEW: Use the new register read-write checking prover
+        let registers_read_write_checking = RegistersReadWriteCheckingProverNew::gen(
             &self.trace,
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
             &self.advice.trusted_advice_polynomial,
@@ -677,7 +680,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage(
-                "RegistersReadWriteCheckingProver",
+                "RegistersReadWriteCheckingProverNew",
                 &registers_read_write_checking,
             );
             print_data_structure_heap_usage("ram BooleanitySumcheckProver", &ram_ra_booleanity);

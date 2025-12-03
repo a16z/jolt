@@ -26,10 +26,14 @@ use num::Integer;
 use std::fmt::Debug;
 
 mod address_major;
+mod address_major_registers;
 mod cycle_major;
+mod cycle_major_registers;
 
 pub use address_major::ReadWriteMatrixAddressMajor;
+pub use address_major_registers::RegisterMatrixAddressMajor;
 pub use cycle_major::{ReadWriteEntry, ReadWriteMatrixCycleMajor};
+pub use cycle_major_registers::{RegisterEntry, RegisterMatrixCycleMajor};
 
 /// Trait for column index types used in sparse read-write matrices.
 ///

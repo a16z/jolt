@@ -111,15 +111,16 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
     ///
     /// Merges entries at adjacent columns (2k and 2k+1) with the same row.
     /// After binding, `num_col_bits()` decreases by 1.
+    ///
+    /// Uses the **checkpoint pattern** from RAM: tracks the running value in each column
+    /// to correctly compute implicit values when only one column has an entry.
     #[tracing::instrument(skip_all, name = "RegisterMatrixAddressMajor::bind")]
     pub fn bind(&mut self, r: F::Challenge) {
-        // Update val_init and val_final
-        self.val_init.bind_parallel(r, BindingOrder::LowToHigh);
-        self.val_final.bind_parallel(r, BindingOrder::LowToHigh);
-
         // Group entries by column/2 (adjacent column pairs)
         // Since entries are sorted by (col, row), we can process column pairs
-        
+        // NOTE: We process entries BEFORE binding val_init/val_final because
+        // we need the original (unbound) checkpoint values.
+
         let mut new_rows = Vec::with_capacity(self.rows.len());
         let mut new_cols = Vec::with_capacity(self.rows.len());
         let mut new_vals = Vec::with_capacity(self.rows.len());
@@ -130,7 +131,8 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
         let mut i = 0;
         while i < self.rows.len() {
             let col_pair = self.cols[i] / 2;
-            
+            let even_col_idx = (2 * col_pair) as usize;
+
             // Find all entries in this column pair
             let pair_start = i;
             while i < self.rows.len() && self.cols[i] / 2 == col_pair {
@@ -146,78 +148,104 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
             let even_range = pair_start..pivot;
             let odd_range = pivot..pair_end;
 
-            // Two-pointer merge by row
+            // Initialize checkpoints from val_init (BEFORE any binding)
+            let mut even_checkpoint = self.val_init.get_bound_coeff(even_col_idx);
+            let mut odd_checkpoint = self.val_init.get_bound_coeff(even_col_idx + 1);
+
+            // Two-pointer merge by row with checkpoint tracking
             let mut ei = even_range.start;
             let mut oi = odd_range.start;
 
-            while ei < even_range.end || oi < odd_range.end {
-                let even_row = (ei < even_range.end).then(|| self.rows[ei]);
-                let odd_row = (oi < odd_range.end).then(|| self.rows[oi]);
+            while ei < even_range.end && oi < odd_range.end {
+                let row_e = self.rows[ei];
+                let row_o = self.rows[oi];
 
-                match (even_row, odd_row) {
-                    (Some(er), Some(or)) if er == or => {
-                        // Both columns have this row - merge
-                        Self::bind_entry_pair(
-                            Some(ei), Some(oi), r, col_pair,
-                            &self.rows, &self.cols, &self.vals,
-                            &self.rs1_ras, &self.rs2_ras, &self.rd_was,
-                            &self.val_init,
-                            &mut new_rows, &mut new_cols, &mut new_vals,
-                            &mut new_rs1_ras, &mut new_rs2_ras, &mut new_rd_was,
-                        );
-                        ei += 1;
-                        oi += 1;
-                    }
-                    (Some(er), Some(or)) if er < or => {
-                        // Only even column has this row
-                        Self::bind_entry_pair(
-                            Some(ei), None, r, col_pair,
-                            &self.rows, &self.cols, &self.vals,
-                            &self.rs1_ras, &self.rs2_ras, &self.rd_was,
-                            &self.val_init,
-                            &mut new_rows, &mut new_cols, &mut new_vals,
-                            &mut new_rs1_ras, &mut new_rs2_ras, &mut new_rd_was,
-                        );
-                        ei += 1;
-                    }
-                    (Some(_), Some(_)) => {
-                        // Only odd column has this row
-                        Self::bind_entry_pair(
-                            None, Some(oi), r, col_pair,
-                            &self.rows, &self.cols, &self.vals,
-                            &self.rs1_ras, &self.rs2_ras, &self.rd_was,
-                            &self.val_init,
-                            &mut new_rows, &mut new_cols, &mut new_vals,
-                            &mut new_rs1_ras, &mut new_rs2_ras, &mut new_rd_was,
-                        );
-                        oi += 1;
-                    }
-                    (Some(_), None) => {
-                        Self::bind_entry_pair(
-                            Some(ei), None, r, col_pair,
-                            &self.rows, &self.cols, &self.vals,
-                            &self.rs1_ras, &self.rs2_ras, &self.rd_was,
-                            &self.val_init,
-                            &mut new_rows, &mut new_cols, &mut new_vals,
-                            &mut new_rs1_ras, &mut new_rs2_ras, &mut new_rd_was,
-                        );
-                        ei += 1;
-                    }
-                    (None, Some(_)) => {
-                        Self::bind_entry_pair(
-                            None, Some(oi), r, col_pair,
-                            &self.rows, &self.cols, &self.vals,
-                            &self.rs1_ras, &self.rs2_ras, &self.rd_was,
-                            &self.val_init,
-                            &mut new_rows, &mut new_cols, &mut new_vals,
-                            &mut new_rs1_ras, &mut new_rs2_ras, &mut new_rd_was,
-                        );
-                        oi += 1;
-                    }
-                    (None, None) => break,
+                if row_e == row_o {
+                    // Both columns have this row - merge
+                    let new_val = self.vals[ei] + r.mul_0_optimized(self.vals[oi] - self.vals[ei]);
+                    new_rows.push(row_e);
+                    new_cols.push(col_pair);
+                    new_vals.push(new_val);
+                    new_rs1_ras.push(Self::bind_optional_ra(
+                        self.rs1_ras[ei],
+                        self.rs1_ras[oi],
+                        r,
+                    ));
+                    new_rs2_ras.push(Self::bind_optional_ra(
+                        self.rs2_ras[ei],
+                        self.rs2_ras[oi],
+                        r,
+                    ));
+                    new_rd_was.push(Self::bind_optional_ra(self.rd_was[ei], self.rd_was[oi], r));
+
+                    // Update checkpoints
+                    even_checkpoint = self.get_next_val(ei);
+                    odd_checkpoint = self.get_next_val(oi);
+                    ei += 1;
+                    oi += 1;
+                } else if row_e < row_o {
+                    // Only even column has this row - use odd_checkpoint for implicit odd value
+                    let val_even = self.vals[ei];
+                    let new_val = val_even + r.mul_0_optimized(odd_checkpoint - val_even);
+                    new_rows.push(row_e);
+                    new_cols.push(col_pair);
+                    new_vals.push(new_val);
+                    new_rs1_ras.push(self.rs1_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
+                    new_rs2_ras.push(self.rs2_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
+                    new_rd_was.push(self.rd_was[ei].map(|wa| (F::one() - r).mul_1_optimized(wa)));
+
+                    // Update even checkpoint
+                    even_checkpoint = self.get_next_val(ei);
+                    ei += 1;
+                } else {
+                    // Only odd column has this row - use even_checkpoint for implicit even value
+                    let val_odd = self.vals[oi];
+                    let new_val = even_checkpoint + r.mul_0_optimized(val_odd - even_checkpoint);
+                    new_rows.push(row_o);
+                    new_cols.push(col_pair);
+                    new_vals.push(new_val);
+                    new_rs1_ras.push(self.rs1_ras[oi].map(|ra| r.mul_1_optimized(ra)));
+                    new_rs2_ras.push(self.rs2_ras[oi].map(|ra| r.mul_1_optimized(ra)));
+                    new_rd_was.push(self.rd_was[oi].map(|wa| r.mul_1_optimized(wa)));
+
+                    // Update odd checkpoint
+                    odd_checkpoint = self.get_next_val(oi);
+                    oi += 1;
                 }
             }
+
+            // Remaining even-only entries
+            while ei < even_range.end {
+                let row_e = self.rows[ei];
+                let val_even = self.vals[ei];
+                let new_val = val_even + r.mul_0_optimized(odd_checkpoint - val_even);
+                new_rows.push(row_e);
+                new_cols.push(col_pair);
+                new_vals.push(new_val);
+                new_rs1_ras.push(self.rs1_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
+                new_rs2_ras.push(self.rs2_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
+                new_rd_was.push(self.rd_was[ei].map(|wa| (F::one() - r).mul_1_optimized(wa)));
+                ei += 1;
+            }
+
+            // Remaining odd-only entries
+            while oi < odd_range.end {
+                let row_o = self.rows[oi];
+                let val_odd = self.vals[oi];
+                let new_val = even_checkpoint + r.mul_0_optimized(val_odd - even_checkpoint);
+                new_rows.push(row_o);
+                new_cols.push(col_pair);
+                new_vals.push(new_val);
+                new_rs1_ras.push(self.rs1_ras[oi].map(|ra| r.mul_1_optimized(ra)));
+                new_rs2_ras.push(self.rs2_ras[oi].map(|ra| r.mul_1_optimized(ra)));
+                new_rd_was.push(self.rd_was[oi].map(|wa| r.mul_1_optimized(wa)));
+                oi += 1;
+            }
         }
+
+        // Now bind val_init and val_final AFTER processing entries
+        self.val_init.bind_parallel(r, BindingOrder::LowToHigh);
+        self.val_final.bind_parallel(r, BindingOrder::LowToHigh);
 
         self.rows = new_rows;
         self.cols = new_cols;
@@ -226,82 +254,6 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
         self.rs2_ras = new_rs2_ras;
         self.rd_was = new_rd_was;
         self.num_col_bits -= 1;
-    }
-
-    /// Bind a pair of entries at the same row from adjacent columns.
-    #[allow(clippy::too_many_arguments)]
-    fn bind_entry_pair(
-        even_idx: Option<usize>,
-        odd_idx: Option<usize>,
-        r: F::Challenge,
-        new_col: u8,
-        rows: &[usize],
-        cols: &[u8],
-        vals: &[F],
-        rs1_ras: &[Option<F>],
-        rs2_ras: &[Option<F>],
-        rd_was: &[Option<F>],
-        val_init: &MultilinearPolynomial<F>,
-        out_rows: &mut Vec<usize>,
-        out_cols: &mut Vec<u8>,
-        out_vals: &mut Vec<F>,
-        out_rs1_ras: &mut Vec<Option<F>>,
-        out_rs2_ras: &mut Vec<Option<F>>,
-        out_rd_was: &mut Vec<Option<F>>,
-    ) {
-        match (even_idx, odd_idx) {
-            (Some(ei), Some(oi)) => {
-                // Both columns have this row
-                let row = rows[ei];
-                let even_val = vals[ei];
-                let odd_val = vals[oi];
-                let new_val = even_val + r.mul_0_optimized(odd_val - even_val);
-
-                out_rows.push(row);
-                out_cols.push(new_col);
-                out_vals.push(new_val);
-                out_rs1_ras.push(Self::bind_optional_ra(rs1_ras[ei], rs1_ras[oi], r));
-                out_rs2_ras.push(Self::bind_optional_ra(rs2_ras[ei], rs2_ras[oi], r));
-                out_rd_was.push(Self::bind_optional_ra(rd_was[ei], rd_was[oi], r));
-            }
-            (Some(ei), None) => {
-                // Only even column has this row
-                // Implicit odd entry: val = val_init[odd_col], all RAs = None
-                let row = rows[ei];
-                let even_col = cols[ei];
-                let odd_col = even_col + 1;
-                let even_val = vals[ei];
-                let implicit_odd_val = val_init.get_bound_coeff(odd_col as usize);
-                let new_val = even_val + r.mul_0_optimized(implicit_odd_val - even_val);
-
-                out_rows.push(row);
-                out_cols.push(new_col);
-                out_vals.push(new_val);
-                out_rs1_ras.push(rs1_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
-                out_rs2_ras.push(rs2_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
-                out_rd_was.push(rd_was[ei].map(|wa| (F::one() - r).mul_1_optimized(wa)));
-            }
-            (None, Some(oi)) => {
-                // Only odd column has this row
-                // Implicit even entry: val = val_init[even_col], all RAs = None
-                let row = rows[oi];
-                let odd_col = cols[oi];
-                let even_col = odd_col - 1;
-                let odd_val = vals[oi];
-                let implicit_even_val = val_init.get_bound_coeff(even_col as usize);
-                let new_val = implicit_even_val + r.mul_0_optimized(odd_val - implicit_even_val);
-
-                out_rows.push(row);
-                out_cols.push(new_col);
-                out_vals.push(new_val);
-                out_rs1_ras.push(rs1_ras[oi].map(|ra| r.mul_1_optimized(ra)));
-                out_rs2_ras.push(rs2_ras[oi].map(|ra| r.mul_1_optimized(ra)));
-                out_rd_was.push(rd_was[oi].map(|wa| r.mul_1_optimized(wa)));
-            }
-            (None, None) => {
-                panic!("bind_entry_pair called with both indices None")
-            }
-        }
     }
 
     /// Bind optional RA coefficients.
@@ -320,11 +272,18 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
     /// Polynomial indexing: `index = k * T' + j` where:
     /// - `k` is the address (register) index (high-order bits)
     /// - `j` is the cycle index (low-order bits)
-    pub fn materialize(self) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>, MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
+    pub fn materialize(
+        self,
+    ) -> (
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+    ) {
         let k_size = 1 << self.num_col_bits;
         let t_size = 1 << self.num_row_bits;
         let total_size = k_size * t_size;
-        
+
         let mut rs1_ra = vec![F::zero(); total_size];
         let mut rs2_ra = vec![F::zero(); total_size];
         let mut rd_wa = vec![F::zero(); total_size];
@@ -346,7 +305,7 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
             let col = self.cols[i] as usize;
             // Index = k * t_size + j (address bits high, cycle bits low)
             let idx = col * t_size + row;
-            
+
             if let Some(ra) = self.rs1_ras[i] {
                 rs1_ra[idx] = ra;
             }
@@ -378,15 +337,13 @@ impl<F: JoltField> From<RegisterMatrixCycleMajor<F>> for RegisterMatrixAddressMa
         let num_col_bits = cycle_major.num_col_bits;
 
         // Sort by (col, row) - address-major order
-        entries.par_sort_by(|a, b| {
-            a.col.cmp(&b.col).then(a.row.cmp(&b.row))
-        });
+        entries.par_sort_by(|a, b| a.col.cmp(&b.col).then(a.row.cmp(&b.row)));
 
         // Build SoA arrays
         let rows: Vec<usize> = entries.iter().map(|e| e.row).collect();
         let cols: Vec<u8> = entries.iter().map(|e| e.col).collect();
         let vals: Vec<F> = entries.iter().map(|e| e.val_coeff).collect();
-        
+
         // Keep Option<F> for RAs - do NOT convert to F::zero()!
         let rs1_ras: Vec<Option<F>> = entries.iter().map(|e| e.rs1_ra).collect();
         let rs2_ras: Vec<Option<F>> = entries.iter().map(|e| e.rs2_ra).collect();
@@ -395,13 +352,13 @@ impl<F: JoltField> From<RegisterMatrixCycleMajor<F>> for RegisterMatrixAddressMa
         // Compute val_final for each column
         let k_size = 1 << num_col_bits;
         let mut val_final_vec = vec![F::zero(); k_size];
-        
+
         // val_final[k] = value of register k after all cycles
         // This is the last entry's next_val for each column, or val_init if no entries
         for k in 0..k_size {
             val_final_vec[k] = val_init.get_bound_coeff(k);
         }
-        
+
         // Find last entry for each column and use its implied final value
         // Since sorted by (col, row), we can find the last entry per column
         let mut i = 0;
@@ -434,5 +391,173 @@ impl<F: JoltField> From<RegisterMatrixCycleMajor<F>> for RegisterMatrixAddressMa
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add tests for conversion and address binding
+    use super::*;
+    use crate::field::JoltField;
+    use ark_bn254::Fr;
+    use ark_std::{One, Zero};
+
+    type F = Fr;
+
+    /// Helper to create a RegisterMatrixCycleMajor for testing conversion.
+    fn make_cycle_major_for_conversion() -> RegisterMatrixCycleMajor<F> {
+        use super::super::cycle_major_registers::RegisterEntry;
+
+        // Create entries sorted by (row, col)
+        let entries = vec![
+            RegisterEntry {
+                row: 0,
+                col: 2,
+                prev_val: 0,
+                next_val: 100,
+                val_coeff: F::from(100u64),
+                rs1_ra: Some(F::one()),
+                rs2_ra: None,
+                rd_wa: None,
+            },
+            RegisterEntry {
+                row: 0,
+                col: 5,
+                prev_val: 0,
+                next_val: 200,
+                val_coeff: F::from(200u64),
+                rs1_ra: None,
+                rs2_ra: Some(F::one()),
+                rd_wa: None,
+            },
+            RegisterEntry {
+                row: 1,
+                col: 2,
+                prev_val: 100,
+                next_val: 150,
+                val_coeff: F::from(150u64),
+                rs1_ra: None,
+                rs2_ra: None,
+                rd_wa: Some(F::one()),
+            },
+        ];
+
+        RegisterMatrixCycleMajor {
+            entries,
+            val_init: vec![F::zero(); K].into(),
+            num_row_bits: 1, // 2 rows
+            num_col_bits: LOG_K,
+        }
+    }
+
+    #[test]
+    fn test_conversion_from_cycle_major() {
+        let cycle_major = make_cycle_major_for_conversion();
+        let address_major: RegisterMatrixAddressMajor<F> = cycle_major.into();
+
+        // After conversion, entries should be sorted by (col, row)
+        // Original entries: (0,2), (0,5), (1,2)
+        // Sorted by (col, row): (0,2), (1,2), (0,5)
+        assert_eq!(address_major.len(), 3);
+
+        // First entry: col=2, row=0
+        assert_eq!(address_major.cols[0], 2);
+        assert_eq!(address_major.rows[0], 0);
+        assert_eq!(address_major.rs1_ras[0], Some(F::one()));
+
+        // Second entry: col=2, row=1
+        assert_eq!(address_major.cols[1], 2);
+        assert_eq!(address_major.rows[1], 1);
+        assert_eq!(address_major.rd_was[1], Some(F::one()));
+
+        // Third entry: col=5, row=0
+        assert_eq!(address_major.cols[2], 5);
+        assert_eq!(address_major.rows[2], 0);
+        assert_eq!(address_major.rs2_ras[2], Some(F::one()));
+    }
+
+    #[test]
+    fn test_get_next_val_same_column() {
+        let cycle_major = make_cycle_major_for_conversion();
+        let address_major: RegisterMatrixAddressMajor<F> = cycle_major.into();
+
+        // Entry 0 (col=2, row=0) should have next_val = entry 1's val (same column)
+        let next_val_0 = address_major.get_next_val(0);
+        assert_eq!(next_val_0, address_major.vals[1]);
+    }
+
+    #[test]
+    fn test_get_next_val_different_column() {
+        let cycle_major = make_cycle_major_for_conversion();
+        let address_major: RegisterMatrixAddressMajor<F> = cycle_major.into();
+
+        // Entry 1 (col=2, row=1) is last in column 2, should return val_final[2]
+        let next_val_1 = address_major.get_next_val(1);
+        assert_eq!(next_val_1, address_major.val_final.get_bound_coeff(2));
+    }
+
+    #[test]
+    fn test_bind_optional_ra_function() {
+        // Test the helper function independently using the proper challenge type
+        let even = Some(F::from(10u64));
+        let odd = Some(F::from(20u64));
+        let r: <F as JoltField>::Challenge = 3u128.into();
+
+        let result = RegisterMatrixAddressMajor::<F>::bind_optional_ra(even, odd, r);
+        // e + r*(o - e) = 10 + r*(20-10)
+        let expected = F::from(10u64) + r * (F::from(20u64) - F::from(10u64));
+        assert_eq!(result, Some(expected));
+
+        // Even only: (1-r)*e
+        let result_even = RegisterMatrixAddressMajor::<F>::bind_optional_ra(even, None, r);
+        let expected_even = (F::one() - r) * F::from(10u64);
+        assert_eq!(result_even, Some(expected_even));
+
+        // Odd only: r*o
+        let result_odd = RegisterMatrixAddressMajor::<F>::bind_optional_ra(None, odd, r);
+        let expected_odd = r * F::from(20u64);
+        assert_eq!(result_odd, Some(expected_odd));
+
+        // Both None
+        let result_none = RegisterMatrixAddressMajor::<F>::bind_optional_ra(None, None, r);
+        assert_eq!(result_none, None);
+    }
+
+    #[test]
+    fn test_bind_reduces_col_bits() {
+        // Create a matrix and verify binding reduces column bits
+        let cycle_major = make_cycle_major_for_conversion();
+        let mut address_major: RegisterMatrixAddressMajor<F> = cycle_major.into();
+
+        assert_eq!(address_major.num_col_bits(), LOG_K);
+
+        let r: <F as JoltField>::Challenge = 5u128.into();
+        address_major.bind(r);
+
+        assert_eq!(address_major.num_col_bits(), LOG_K - 1);
+        // val_init and val_final should also be halved
+        assert_eq!(address_major.val_init.len(), K / 2);
+        assert_eq!(address_major.val_final.len(), K / 2);
+    }
+
+    #[test]
+    fn test_materialize() {
+        // Test materialization produces correct dense polynomials
+        let cycle_major = make_cycle_major_for_conversion();
+        let address_major: RegisterMatrixAddressMajor<F> = cycle_major.into();
+
+        let (rs1_ra, rs2_ra, rd_wa, val) = address_major.materialize();
+
+        let k_size = 1 << LOG_K;
+        let t_size = 2; // 2 rows
+
+        assert_eq!(rs1_ra.len(), k_size * t_size);
+        assert_eq!(rs2_ra.len(), k_size * t_size);
+        assert_eq!(rd_wa.len(), k_size * t_size);
+        assert_eq!(val.len(), k_size * t_size);
+
+        // Check specific entries
+        // Entry at (row=0, col=2): idx = 2*2 + 0 = 4
+        assert_eq!(rs1_ra.get_bound_coeff(4), F::one());
+
+        // Entry at (row=0, col=5): idx = 5*2 + 0 = 10
+        assert_eq!(rs2_ra.get_bound_coeff(10), F::one());
+
+        // Entry at (row=1, col=2): idx = 2*2 + 1 = 5
+        assert_eq!(rd_wa.get_bound_coeff(5), F::one());
+    }
 }

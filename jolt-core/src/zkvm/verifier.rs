@@ -28,7 +28,8 @@ use crate::zkvm::{
         verifier_accumulate_advice, RAMPreprocessing,
     },
     registers::{
-        read_write_checking::RegistersReadWriteCheckingVerifier,
+        // OLD: read_write_checking::RegistersReadWriteCheckingVerifier,
+        read_write_checking_new::RegistersReadWriteCheckingVerifierNew,
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
@@ -277,8 +278,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
-        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
-            self.proof.trace_length.log_2(),
+        // NEW: Use the new register read-write checking verifier
+        let n_cycle_vars = self.proof.trace_length.log_2();
+        let registers_read_write_checking = RegistersReadWriteCheckingVerifierNew::new(
+            n_cycle_vars,
             &self.opening_accumulator,
             &mut self.transcript,
         );

@@ -99,27 +99,37 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
 
                 // Collect unique registers accessed in this cycle
                 // Format: (reg, rs1_ra, rs2_ra, rd_wa, prev_val, next_val)
-                let mut regs: Vec<(u8, Option<F>, Option<F>, Option<F>, u64, u64)> = Vec::with_capacity(3);
+                type RegAccess<F> = (u8, Option<F>, Option<F>, Option<F>, u64, u64);
+                let mut regs: Vec<RegAccess<F>> = Vec::with_capacity(3);
 
                 // Helper to add or merge access
-                let mut add_access = |reg: u8, is_rs1: bool, is_rs2: bool, is_rd: bool, val: u64, next: u64| {
-                    if let Some(entry) = regs.iter_mut().find(|(r, _, _, _, _, _)| *r == reg) {
-                        if is_rs1 { entry.1 = Some(F::one()); }
-                        if is_rs2 { entry.2 = Some(F::one()); }
-                        if is_rd { entry.3 = Some(F::one()); }
-                        // Update next_val if this is a write
-                        if is_rd { entry.5 = next; }
-                    } else {
-                        regs.push((
-                            reg,
-                            if is_rs1 { Some(F::one()) } else { None },
-                            if is_rs2 { Some(F::one()) } else { None },
-                            if is_rd { Some(F::one()) } else { None },
-                            val,  // prev_val (value before this cycle)
-                            next, // next_val (value after this cycle)
-                        ));
-                    }
-                };
+                let mut add_access =
+                    |reg: u8, is_rs1: bool, is_rs2: bool, is_rd: bool, val: u64, next: u64| {
+                        if let Some(entry) = regs.iter_mut().find(|(r, _, _, _, _, _)| *r == reg) {
+                            if is_rs1 {
+                                entry.1 = Some(F::one());
+                            }
+                            if is_rs2 {
+                                entry.2 = Some(F::one());
+                            }
+                            if is_rd {
+                                entry.3 = Some(F::one());
+                            }
+                            // Update next_val if this is a write
+                            if is_rd {
+                                entry.5 = next;
+                            }
+                        } else {
+                            regs.push((
+                                reg,
+                                if is_rs1 { Some(F::one()) } else { None },
+                                if is_rs2 { Some(F::one()) } else { None },
+                                if is_rd { Some(F::one()) } else { None },
+                                val,  // prev_val (value before this cycle)
+                                next, // next_val (value after this cycle)
+                            ));
+                        }
+                    };
 
                 // Add rs1 access
                 add_access(rs1_reg, true, false, false, rs1_val, rs1_val);
@@ -128,25 +138,24 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                 // Add rd access (write)
                 add_access(rd_reg, false, false, true, rd_pre_val, rd_post_val);
 
-                regs.into_iter().map(move |(reg, rs1_ra, rs2_ra, rd_wa, prev, next)| {
-                    RegisterEntry {
-                        row: j,
-                        col: reg,
-                        prev_val: prev,
-                        next_val: next,
-                        val_coeff: F::from_u64(prev),
-                        rs1_ra,
-                        rs2_ra,
-                        rd_wa,
-                    }
-                })
+                regs.into_iter()
+                    .map(
+                        move |(reg, rs1_ra, rs2_ra, rd_wa, prev, next)| RegisterEntry {
+                            row: j,
+                            col: reg,
+                            prev_val: prev,
+                            next_val: next,
+                            val_coeff: F::from_u64(prev),
+                            rs1_ra,
+                            rs2_ra,
+                            rd_wa,
+                        },
+                    )
             })
             .collect();
 
         // Sort by (row, col)
-        entries.par_sort_by(|a, b| {
-            a.row.cmp(&b.row).then(a.col.cmp(&b.col))
-        });
+        entries.par_sort_by(|a, b| a.row.cmp(&b.row).then(a.col.cmp(&b.col)));
 
         // Now we need to fix prev_val and next_val to point to the correct
         // adjacent entries in the same column. This requires a second pass.
@@ -171,17 +180,15 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
     fn fix_prev_next_vals(entries: &mut [RegisterEntry<F>], _t_size: usize) {
         // Group entries by column, then fix prev/next within each group
         // For now, use a simpler approach: sort by (col, row), fix, then re-sort by (row, col)
-        
-        entries.par_sort_by(|a, b| {
-            a.col.cmp(&b.col).then(a.row.cmp(&b.row))
-        });
+
+        entries.par_sort_by(|a, b| a.col.cmp(&b.col).then(a.row.cmp(&b.row)));
 
         // Process each column group
         let mut i = 0;
         while i < entries.len() {
             let col = entries[i].col;
             let group_start = i;
-            
+
             // Find end of this column group
             while i < entries.len() && entries[i].col == col {
                 i += 1;
@@ -191,7 +198,7 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
             // Fix prev/next within this group
             // First entry's prev_val should be 0 (initial register value)
             entries[group_start].prev_val = 0;
-            
+
             for idx in group_start..group_end - 1 {
                 // Current entry's next_val = next entry's prev_val (before its cycle)
                 // But we actually want the value AFTER current cycle
@@ -200,14 +207,12 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                 let current_next = entries[idx].next_val; // Already set to post-write value
                 entries[idx + 1].prev_val = current_next;
             }
-            
+
             // Last entry's next_val stays as the post-write value (already correct)
         }
 
         // Re-sort by (row, col) for cycle-major order
-        entries.par_sort_by(|a, b| {
-            a.row.cmp(&b.row).then(a.col.cmp(&b.col))
-        });
+        entries.par_sort_by(|a, b| a.row.cmp(&b.row).then(a.col.cmp(&b.col)));
     }
 
     /// Bind a cycle variable using the random challenge `r`.
@@ -218,7 +223,8 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
     pub fn bind(&mut self, r: F::Challenge) {
         // Group entries by row/2 (adjacent row pairs)
         // Then bind each pair
-        let row_pairs: Vec<_> = self.entries
+        let row_pairs: Vec<_> = self
+            .entries
             .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
             .map(|pair| {
                 let pivot = pair.partition_point(|e| e.row.is_even());
@@ -254,15 +260,24 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
 
         while ei < even.len() || oi < odd.len() {
             match (even.get(ei), odd.get(oi)) {
-                (Some(e), Some(o)) => {
-                    match e.col.cmp(&o.col) {
-                        Ordering::Equal => { ei += 1; oi += 1; }
-                        Ordering::Less => { ei += 1; }
-                        Ordering::Greater => { oi += 1; }
+                (Some(e), Some(o)) => match e.col.cmp(&o.col) {
+                    Ordering::Equal => {
+                        ei += 1;
+                        oi += 1;
                     }
+                    Ordering::Less => {
+                        ei += 1;
+                    }
+                    Ordering::Greater => {
+                        oi += 1;
+                    }
+                },
+                (Some(_), None) => {
+                    ei += 1;
                 }
-                (Some(_), None) => { ei += 1; }
-                (None, Some(_)) => { oi += 1; }
+                (None, Some(_)) => {
+                    oi += 1;
+                }
                 (None, None) => break,
             }
             count += 1;
@@ -277,7 +292,9 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
         r: F::Challenge,
         out: &mut Vec<RegisterEntry<F>>,
     ) {
-        let new_row = even.first().map(|e| e.row / 2)
+        let new_row = even
+            .first()
+            .map(|e| e.row / 2)
             .or_else(|| odd.first().map(|o| o.row / 2))
             .unwrap_or(0);
 
@@ -358,7 +375,8 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                     col: o.col,
                     prev_val: o.prev_val,
                     next_val: o.next_val,
-                    val_coeff: implicit_even_val + r.mul_0_optimized(o.val_coeff - implicit_even_val),
+                    val_coeff: implicit_even_val
+                        + r.mul_0_optimized(o.val_coeff - implicit_even_val),
                     rs1_ra: o.rs1_ra.map(|ra| r.mul_1_optimized(ra)),
                     rs2_ra: o.rs2_ra.map(|ra| r.mul_1_optimized(ra)),
                     rd_wa: o.rd_wa.map(|ra| r.mul_1_optimized(ra)),
@@ -421,12 +439,20 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
     /// Polynomial indexing: `index = k * T' + j` where:
     /// - `k` is the address (register) index (high-order bits)
     /// - `j` is the cycle index (low-order bits)
+    ///
     /// This layout enables LowToHigh binding to bind cycle variables first.
-    pub fn materialize(self) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>, MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
+    pub fn materialize(
+        self,
+    ) -> (
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+    ) {
         let k_size = 1 << self.num_col_bits;
         let t_size = 1 << self.num_row_bits;
         let total_size = k_size * t_size;
-        
+
         let mut rs1_ra = vec![F::zero(); total_size];
         let mut rs2_ra = vec![F::zero(); total_size];
         let mut rd_wa = vec![F::zero(); total_size];
@@ -445,7 +471,7 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
         for entry in &self.entries {
             // Index = k * t_size + j (address bits high, cycle bits low)
             let idx = (entry.col as usize) * t_size + entry.row;
-            
+
             if let Some(ra) = entry.rs1_ra {
                 rs1_ra[idx] = ra;
             }
@@ -469,5 +495,224 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add tests for from_trace, binding, and materialize
+    use super::*;
+    use crate::field::JoltField;
+    use ark_bn254::Fr;
+    use ark_std::{One, Zero};
+
+    type F = Fr;
+
+    /// Helper to create a test entry with specified values.
+    fn make_entry(
+        row: usize,
+        col: u8,
+        prev_val: u64,
+        next_val: u64,
+        val_coeff: F,
+        rs1_ra: Option<F>,
+        rs2_ra: Option<F>,
+        rd_wa: Option<F>,
+    ) -> RegisterEntry<F> {
+        RegisterEntry {
+            row,
+            col,
+            prev_val,
+            next_val,
+            val_coeff,
+            rs1_ra,
+            rs2_ra,
+            rd_wa,
+        }
+    }
+
+    #[test]
+    fn test_bind_optional_ra_both_present() {
+        // When both even and odd are present, interpolate: e + r*(o - e)
+        let even = Some(F::from(3u64));
+        let odd = Some(F::from(7u64));
+        let r: <F as JoltField>::Challenge = 2u128.into(); // r = 2
+
+        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
+        // Expected: e + r*(o - e) = 3 + 2*(7-3) using field ops
+        let expected = F::from(3u64) + r * (F::from(7u64) - F::from(3u64));
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn test_bind_optional_ra_even_only() {
+        // When only even is present, implicit odd = 0, so (1-r)*e
+        let even = Some(F::from(5u64));
+        let odd = None;
+        let r: <F as JoltField>::Challenge = 3u128.into(); // r = 3
+
+        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
+        // Expected: (1-r)*e
+        let expected = (F::one() - r) * F::from(5u64);
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn test_bind_optional_ra_odd_only() {
+        // When only odd is present, implicit even = 0, so r*o
+        let even = None;
+        let odd = Some(F::from(4u64));
+        let r: <F as JoltField>::Challenge = 2u128.into(); // r = 2
+
+        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
+        // Expected: r*o
+        let expected = r * F::from(4u64);
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn test_bind_optional_ra_both_none() {
+        // When both are None, result is None
+        let even: Option<F> = None;
+        let odd: Option<F> = None;
+        let r: <F as JoltField>::Challenge = 5u128.into();
+
+        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_bind_entry_pair_both_present() {
+        // Test binding when both even and odd entries exist at the same column
+        let even = make_entry(
+            0,
+            5,
+            10,
+            20,
+            F::from(10u64),
+            Some(F::one()),
+            None,
+            Some(F::one()),
+        );
+        let odd = make_entry(1, 5, 20, 30, F::from(20u64), None, Some(F::one()), None);
+        let r: <F as JoltField>::Challenge = 2u128.into();
+
+        let result = RegisterMatrixCycleMajor::bind_entry_pair(Some(&even), Some(&odd), r, 0);
+
+        assert_eq!(result.row, 0);
+        assert_eq!(result.col, 5);
+        assert_eq!(result.prev_val, 10);
+        assert_eq!(result.next_val, 30);
+        // val_coeff: e + r*(o - e) = 10 + r*(20-10)
+        let expected_val = F::from(10u64) + r * (F::from(20u64) - F::from(10u64));
+        assert_eq!(result.val_coeff, expected_val);
+    }
+
+    #[test]
+    fn test_bind_entry_pair_even_only() {
+        // Test binding when only even entry exists
+        let even = make_entry(0, 5, 10, 20, F::from(10u64), Some(F::one()), None, None);
+        let r: <F as JoltField>::Challenge = 2u128.into();
+
+        let result = RegisterMatrixCycleMajor::bind_entry_pair(Some(&even), None, r, 0);
+
+        assert_eq!(result.row, 0);
+        assert_eq!(result.col, 5);
+        // implicit odd val = next_val = 20
+        // val_coeff: e + r*(implicit_odd - e) = 10 + r*(20-10)
+        let expected_val = F::from(10u64) + r * (F::from(20u64) - F::from(10u64));
+        assert_eq!(result.val_coeff, expected_val);
+        // rs1_ra: (1-r)*1
+        assert!(result.rs1_ra.is_some());
+    }
+
+    #[test]
+    fn test_bind_entry_pair_odd_only() {
+        // Test binding when only odd entry exists
+        let odd = make_entry(1, 5, 10, 20, F::from(20u64), None, Some(F::one()), None);
+        let r: <F as JoltField>::Challenge = 2u128.into();
+
+        let result = RegisterMatrixCycleMajor::bind_entry_pair(None, Some(&odd), r, 0);
+
+        assert_eq!(result.row, 0);
+        assert_eq!(result.col, 5);
+        // implicit even val = prev_val = 10
+        // val_coeff: implicit_even + r*(o - implicit_even) = 10 + r*(20-10)
+        let expected_val = F::from(10u64) + r * (F::from(20u64) - F::from(10u64));
+        assert_eq!(result.val_coeff, expected_val);
+        // rs2_ra: r*1
+        let expected_rs2 = r * F::one();
+        assert_eq!(result.rs2_ra, Some(expected_rs2));
+    }
+
+    #[test]
+    fn test_bind_rows_dry_run() {
+        // Test counting merged entries
+        let even = vec![
+            make_entry(0, 3, 0, 0, F::one(), Some(F::one()), None, None),
+            make_entry(0, 5, 0, 0, F::one(), None, Some(F::one()), None),
+        ];
+        let odd = vec![
+            make_entry(1, 4, 0, 0, F::one(), None, None, Some(F::one())),
+            make_entry(1, 5, 0, 0, F::one(), Some(F::one()), None, None),
+        ];
+
+        // Columns: 3 (even only), 4 (odd only), 5 (both) = 3 entries
+        let count = RegisterMatrixCycleMajor::<F>::bind_rows_dry_run(&even, &odd);
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_materialize_simple() {
+        // Create a simple matrix with known entries and verify materialization
+        let entries = vec![
+            make_entry(0, 1, 0, 100, F::from(100u64), Some(F::one()), None, None),
+            make_entry(1, 2, 0, 200, F::from(200u64), None, Some(F::one()), None),
+        ];
+
+        let matrix = RegisterMatrixCycleMajor {
+            entries,
+            val_init: vec![F::zero(); K].into(),
+            num_row_bits: 1, // 2 rows
+            num_col_bits: LOG_K,
+        };
+
+        let (rs1_ra, rs2_ra, rd_wa, val) = matrix.materialize();
+
+        // Index = k * t_size + j (address bits high, cycle bits low)
+        // t_size = 2
+        // For entry at (row=0, col=1): idx = 1*2 + 0 = 2
+        assert_eq!(rs1_ra.get_bound_coeff(2), F::one());
+        assert_eq!(val.get_bound_coeff(2), F::from(100u64));
+
+        // For entry at (row=1, col=2): idx = 2*2 + 1 = 5
+        assert_eq!(rs2_ra.get_bound_coeff(5), F::one());
+        assert_eq!(val.get_bound_coeff(5), F::from(200u64));
+
+        // rd_wa should be zero for these entries
+        assert_eq!(rd_wa.get_bound_coeff(2), F::zero());
+        assert_eq!(rd_wa.get_bound_coeff(5), F::zero());
+    }
+
+    #[test]
+    fn test_bind_reduces_row_bits() {
+        // Create a matrix with 4 rows (2 bits) and verify binding reduces to 2 rows (1 bit)
+        let entries = vec![
+            make_entry(0, 1, 0, 10, F::from(10u64), Some(F::one()), None, None),
+            make_entry(2, 1, 10, 20, F::from(20u64), None, Some(F::one()), None),
+        ];
+
+        let mut matrix = RegisterMatrixCycleMajor {
+            entries,
+            val_init: vec![F::zero(); K].into(),
+            num_row_bits: 2, // 4 rows
+            num_col_bits: LOG_K,
+        };
+
+        assert_eq!(matrix.num_row_bits(), 2);
+
+        let r: <F as JoltField>::Challenge = 3u128.into();
+        matrix.bind(r);
+
+        assert_eq!(matrix.num_row_bits(), 1);
+        // After binding, rows 0,1 -> row 0 and rows 2,3 -> row 1
+        // Original entries at rows 0 and 2 become entries at rows 0 and 1
+        assert_eq!(matrix.entries.len(), 2);
+        assert_eq!(matrix.entries[0].row, 0);
+        assert_eq!(matrix.entries[1].row, 1);
+    }
 }
