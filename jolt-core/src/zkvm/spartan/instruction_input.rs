@@ -440,7 +440,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = self.input_output_claims().input_claim(accumulator);
+        let claims = Self::input_output_claims();
+        let gamma_pows: Vec<F> =
+            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                .take(claims.claims.len())
+                .collect();
+        let result = claims.input_claim(&gamma_pows, accumulator);
 
         #[cfg(test)]
         {
@@ -456,10 +461,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
+        let claims = Self::input_output_claims();
+        let gamma_pows: Vec<F> =
+            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                .take(claims.claims.len())
+                .collect();
         let r = get_opening_point(sumcheck_challenges);
-        let result = self
-            .input_output_claims()
-            .expected_output_claim(&r, accumulator);
+        let result = claims.expected_output_claim(&r, &gamma_pows, accumulator);
 
         #[cfg(test)]
         {
@@ -577,7 +585,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 }
 
 impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
-    fn input_output_claims(&self) -> InputOutputClaims<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
         let right_instruction_input: ClaimExpr<F> = VirtualPolynomial::RightInstructionInput.into();
         let left_instruction_input: ClaimExpr<F> = VirtualPolynomial::LeftInstructionInput.into();
 
@@ -597,8 +605,8 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
         let left_instruction_input_eval = left_is_rs1 * rs1_value + left_is_pc * unexpanded_pc;
         let right_instruction_input_eval = right_is_rs2 * rs2_value + right_is_imm * imm;
 
-        InputOutputClaims::new_from_gamma(
-            vec![
+        InputOutputClaims {
+            claims: vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: right_instruction_input.clone(),
@@ -624,9 +632,8 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
                     is_offset: false,
                 },
             ],
-            SumcheckId::InstructionInputVirtualization,
-            self.params.gamma,
-        )
+            output_sumcheck_id: SumcheckId::InstructionInputVirtualization,
+        }
     }
 }
 

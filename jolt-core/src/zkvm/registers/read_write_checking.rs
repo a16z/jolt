@@ -1454,7 +1454,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = self.input_output_claims().input_claim(accumulator);
+        let claims = Self::input_output_claims();
+        let gamma_pows: Vec<F> =
+            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                .take(claims.claims.len())
+                .collect();
+        let result = claims.input_claim(&gamma_pows, accumulator);
 
         #[cfg(test)]
         {
@@ -1473,9 +1478,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r = self.params.get_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(LOG_K);
 
-        let result = self
-            .input_output_claims()
-            .expected_output_claim(&r_cycle, accumulator);
+        let claims = Self::input_output_claims();
+        let gamma_pows: Vec<F> =
+            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                .take(claims.claims.len())
+                .collect();
+        let result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
 
         #[cfg(test)]
         {
@@ -1562,7 +1570,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 }
 
 impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F> {
-    fn input_output_claims(&self) -> InputOutputClaims<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
         let rs1_value: ClaimExpr<F> = VirtualPolynomial::Rs1Value.into();
         let rs2_value: ClaimExpr<F> = VirtualPolynomial::Rs2Value.into();
         let rd_write_value: ClaimExpr<F> = VirtualPolynomial::RdWriteValue.into();
@@ -1573,8 +1581,8 @@ impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F>
         let rd_wa: ClaimExpr<F> = VirtualPolynomial::RdWa.into();
         let rd_inc: ClaimExpr<F> = CommittedPolynomial::RdInc.into();
 
-        InputOutputClaims::new_from_gamma(
-            vec![
+        InputOutputClaims {
+            claims: vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: rd_write_value,
@@ -1606,9 +1614,8 @@ impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F>
                     is_offset: false,
                 },
             ],
-            SumcheckId::RegistersReadWriteChecking,
-            self.params.gamma,
-        )
+            output_sumcheck_id: SumcheckId::RegistersReadWriteChecking,
+        }
     }
 }
 

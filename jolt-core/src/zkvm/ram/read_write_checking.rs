@@ -438,7 +438,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = self.input_output_claims().input_claim(accumulator);
+        let claims = Self::input_output_claims();
+        let gamma_pows: Vec<F> =
+            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                .take(claims.claims.len())
+                .collect();
+        let result = Self::input_output_claims().input_claim(&gamma_pows, accumulator);
 
         #[cfg(test)]
         {
@@ -457,9 +462,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r = self.params.get_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(self.params.K.log_2());
 
-        let result = self
-            .input_output_claims()
-            .expected_output_claim(&r_cycle, accumulator);
+        let claims = Self::input_output_claims();
+        let gamma_pows: Vec<F> =
+            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                .take(claims.claims.len())
+                .collect();
+        let result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
 
         #[cfg(test)]
         {
@@ -523,7 +531,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 }
 
 impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
-    fn input_output_claims(&self) -> InputOutputClaims<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
         let ram_read_value = VirtualPolynomial::RamReadValue.into();
         let ram_write_value = VirtualPolynomial::RamWriteValue.into();
 
@@ -531,8 +539,8 @@ impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
         let ram_val: ClaimExpr<F> = VirtualPolynomial::RamVal.into();
         let ram_inc: ClaimExpr<F> = CommittedPolynomial::RamInc.into();
 
-        InputOutputClaims::new_from_gamma(
-            vec![
+        InputOutputClaims {
+            claims: vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: ram_read_value,
@@ -546,9 +554,8 @@ impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
                     is_offset: false,
                 },
             ],
-            SumcheckId::RamReadWriteChecking,
-            self.params.gamma,
-        )
+            output_sumcheck_id: SumcheckId::RamReadWriteChecking,
+        }
     }
 }
 

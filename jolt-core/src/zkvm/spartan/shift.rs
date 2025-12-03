@@ -201,7 +201,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
     }
 
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = self.input_output_claims().input_claim(accumulator);
+        let result =
+            Self::input_output_claims().input_claim(&self.params.gamma_powers, accumulator);
 
         #[cfg(test)]
         {
@@ -218,9 +219,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r = get_opening_point::<F>(sumcheck_challenges);
-        let result = self
-            .input_output_claims()
-            .expected_output_claim(&r, accumulator);
+        let result = Self::input_output_claims().expected_output_claim(
+            &r,
+            &self.params.gamma_powers,
+            accumulator,
+        );
 
         #[cfg(test)]
         {
@@ -313,7 +316,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
 }
 
 impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
-    fn input_output_claims(&self) -> InputOutputClaims<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
         let next_unexpanded_pc: ClaimExpr<F> = VirtualPolynomial::NextUnexpandedPC.into();
         let next_pc: ClaimExpr<F> = VirtualPolynomial::NextPC.into();
         let next_is_virtual: ClaimExpr<F> = VirtualPolynomial::NextIsVirtual.into();
@@ -364,7 +367,6 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
                 },
             ],
             output_sumcheck_id: SumcheckId::SpartanShift,
-            gamma_pows: self.params.gamma_powers.to_vec(),
         }
     }
 }
