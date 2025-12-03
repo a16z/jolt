@@ -40,7 +40,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub ram_K: usize,
     pub bytecode_K: usize,
     pub log_k_chunk: usize,
-    pub twist_sumcheck_switch_index: usize,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
@@ -90,8 +89,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
-        self.twist_sumcheck_switch_index
-            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -117,7 +114,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.ram_K.serialized_size(compress)
             + self.bytecode_K.serialized_size(compress)
             + self.log_k_chunk.serialized_size(compress)
-            + self.twist_sumcheck_switch_index.serialized_size(compress)
     }
 }
 
@@ -143,7 +139,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
         self.ram_K.check()?;
         self.bytecode_K.check()?;
         self.log_k_chunk.check()?;
-        self.twist_sumcheck_switch_index.check()?;
         Ok(())
     }
 }
@@ -180,8 +175,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let untrusted_advice_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let reduced_opening_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let twist_sumcheck_switch_index =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         // drop(guard);
 
         Ok(Self {
@@ -203,7 +196,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             ram_K,
             bytecode_K,
             log_k_chunk: log_chunk,
-            twist_sumcheck_switch_index,
         })
     }
 }
