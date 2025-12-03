@@ -824,9 +824,6 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eq_r_cycle_stage_3 = eq_r_cycle_stage_3.as_ref().unwrap();
 
         // Phase 2 uses LowToHigh binding: cycle bits are in low positions, address bits in high positions
-        // Loop structure: outer loop over k (addresses), inner loop over j (cycles)
-        // This gives contiguous memory access for rs1_ra, rs2_ra, rd_wa, val since
-        // index = k * n_cycle_pairs + j is contiguous as j varies with k fixed
         let n_cycle_pairs = eq_r_cycle_stage_1.len() / 2;
         let [eval_at_0_for_stage_1, eval_at_2_for_stage_1, eval_at_3_for_stage_1, eval_at_0_for_stage_3, eval_at_2_for_stage_3, eval_at_3_for_stage_3] =
             (0..K)
