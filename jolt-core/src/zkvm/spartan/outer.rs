@@ -1026,7 +1026,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
 
         // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
-        let (t0_acc_unr, t_inf_acc_unr) = az_bound
+        let (_t0_acc_unr, _t_inf_acc_unr) = az_bound
             .par_chunks_exact_mut(2 * num_x_in_vals)
             .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
             .enumerate()
@@ -1143,7 +1143,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     ///
     /// (ordering of indices is MSB to LSB, so x_out is the MSB and x_in is the LSB)
     #[inline]
-    fn remaining_quadratic_evals(&mut self) -> (F, F) {
+    fn _remaining_quadratic_evals(&mut self) -> (F, F) {
         let eq_poly = &self.split_eq_poly;
 
         let n = self.az.as_ref().expect("az should be initialized").len();
@@ -1228,7 +1228,10 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         (t_prime_0, t_prime_inf)
     }
 
-    // start with serial we can parallelise this later
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_polynomials_serial"
+    )]
     pub fn compute_evaluation_grid_from_polynomials_serial(&mut self, num_vars: usize) {
         let eq_poly = &self.split_eq_poly;
 
@@ -1337,54 +1340,33 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
         self.params.input_claim
     }
 
-    //#[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
-    //fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-    //    let (t0, t_inf) = if round == 0 {
-    //        self.first_round_evals
-    //    } else {
-    //        self.remaining_quadratic_evals()
-    //    };
-    //    self.split_eq_poly
-    //        .gruen_poly_deg_3(t0, t_inf, previous_claim)
-    //}
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        let window_size = 1; // FIXME: WE CAN GET THIS VIA SCHEDULE
-        if self.schedule.is_streaming(round) {
-            let num_unbound_vars = self.schedule.num_unbound_vars(round);
-            if self.schedule.is_window_start(round) {
-                // Build the multiquadratic t'(z) for this window using the
-                // slice-based Eq factorisation provided by the simple
-                // split-eq instance (head vs window bits).
+        let num_unbound_vars = self.schedule.num_unbound_vars(round);
+        if self.schedule.is_switch_over_point(round) {
+            println!("Round: {round} is the switch-over point");
+            self.stream_to_linear_time();
+            // TODO: This will be merged into stream_to_linear_time
+            self.compute_evaluation_grid_from_polynomials_serial(num_unbound_vars);
+        } else if self.schedule.is_window_start(round) {
+            println!("Round: {round} is a window start");
+            if self.schedule.before_switch_over_point(round) {
                 self.get_grid_gen(num_unbound_vars);
+            } else {
+                //TODO: This must be parallel
+                self.compute_evaluation_grid_from_polynomials_serial(num_unbound_vars);
             }
         }
-        // LINEAR PHASE
-        else if self.schedule.is_first_linear(round) {
-            // TODO: This will eventually be t_grid also instead of w=1
-            self.stream_to_linear_time();
-        };
-        //let (t0, t_inf) = self.remaining_quadratic_evals();
-        //assert_eq!(t_prime_0, t0);
-        //assert_eq!(t_prime_inf, t_inf);
-        //(t0, t_inf)
-
-        // TODO: This is not parallel -- make it parallel.
-        self.compute_evaluation_grid_from_polynomials_serial(window_size);
-        println!("✅ Success! round = {:?}", round);
-        let (t_prime_0, t_prime_inf) = self.compute_t_evals(window_size);
-        //TODO: eventually move th compute_t_evals out here once we standardise the
-        //stream_to_linear_time
-        // Compute the Gruen cubic using the split-eq implementation.
+        let (t_prime_0, t_prime_inf) = self.compute_t_evals(num_unbound_vars);
         self.split_eq_poly
             .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
     }
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.split_eq_poly.bind(r_j);
 
-        if self.schedule.is_streaming(round) {
+        if self.az.is_none() {
             let t_prime_poly = self
                 .t_prime_poly
                 .as_mut()
