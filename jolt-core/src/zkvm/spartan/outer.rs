@@ -1052,6 +1052,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                 let mut bz1_sum = F::zero(); // For X=1
 
                 // Iterate over X bit and r values
+                // NOTE: THIS WILL BECOME GRID SIZE
                 for x_bit in 0..2 {
                     for r_idx in 0..num_r_vals {
                         // Build the full index: x_out || x_in || X || x_r
@@ -1121,10 +1122,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.bz = Some(DensePolynomial::new(bz_bound));
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterRemainingSumcheckProver::stream_to_linear_time_helper"
-    )]
     // If the first round of the sumcheck is the switchover point
     // then materialisng Az and Bz is significantly simpler.
     // We do not need to deal with challenges.
@@ -1133,7 +1130,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_round_zero"
     )]
     fn materialise_sumcheck_polynomials_from_trace_round_zero(&mut self, _window_size: usize) {
-        // FIXME: This is not generalised -- only works for window_size
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
@@ -1161,6 +1157,8 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     let mut inner_sum_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+
+                        // Possibly re-design this
                         let row_inputs = R1CSCycleInputs::from_trace::<F>(
                             &self.bytecode_preprocessing,
                             &self.trace,
@@ -1200,6 +1198,314 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         //self.t_0 = Some(F::from_montgomery_reduce::<9>(t0_acc_unr));
         //self.t_inf = Some(F::from_montgomery_reduce::<9>(t_inf_acc_unr))
     }
+    fn fused_materialise_polynomials_general_with_multiquadratic(&mut self, window_size: usize) {
+        let (E_out, E_in) = self.split_eq_poly.E_out_in_for_window(window_size);
+        let num_x_out_vals = E_out.len();
+        let num_x_in_vals = E_in.len();
+        let r_grid = &self.r_grid;
+        let num_r_vals = r_grid.len();
+
+        let three_pow_dim = 3_usize.pow(window_size as u32);
+        let grid_size = 1 << window_size;
+        let num_evals_az = E_out.len() * E_in.len() * grid_size;
+
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+
+        let num_r_bits = num_r_vals.log_2();
+        let num_x_in_bits = num_x_in_vals.log_2();
+
+        let output_size = num_x_out_vals * num_x_in_vals;
+
+        // Dynamic chunking for parallelization
+        let num_threads = rayon::current_num_threads();
+        let target_chunks = num_threads * 4;
+        let min_chunk_pairs = 16;
+        let pairs_per_chunk = output_size.div_ceil(target_chunks).max(min_chunk_pairs);
+        let chunk_size = pairs_per_chunk * grid_size;
+
+        // Parallel computation with reduction
+        let ans = az_bound
+            .par_chunks_mut(chunk_size)
+            .zip(bz_bound.par_chunks_mut(chunk_size))
+            .enumerate()
+            .fold(
+                || vec![F::zero(); three_pow_dim],
+                |mut local_ans, (chunk_idx, (az_chunk, bz_chunk))| {
+                    let start_pair = chunk_idx * pairs_per_chunk;
+                    let end_pair = (start_pair + pairs_per_chunk).min(output_size);
+
+                    // Thread-local buffers for multiquadratic expansion
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+
+                    for pair_idx in start_pair..end_pair {
+                        let x_in_val = pair_idx % num_x_in_vals;
+                        let x_out_val = pair_idx / num_x_in_vals;
+
+                        // Initialize grid accumulator for this (x_out, x_in) pair
+                        az_grid.fill(F::zero());
+                        bz_grid.fill(F::zero());
+
+                        // Loop over r values and accumulate for each grid point
+                        for r_idx in 0..num_r_vals {
+                            let r_eval = r_grid[r_idx];
+
+                            let base_idx = (x_out_val
+                                << (num_x_in_bits + window_size + num_r_bits))
+                                | (x_in_val << (window_size + num_r_bits));
+
+                            // Process all grid_size points
+                            for x_val in 0..grid_size {
+                                let full_idx = base_idx | (x_val << num_r_bits) | r_idx;
+
+                                let step_idx = full_idx >> 1;
+                                let selector = (full_idx & 1) == 1;
+
+                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                    &self.bytecode_preprocessing,
+                                    &self.trace,
+                                    step_idx,
+                                );
+                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                                let (az_val, bz_val) = if !selector {
+                                    (
+                                        eval.az_at_r_first_group(&self.lagrange_evals_r0),
+                                        eval.bz_at_r_first_group(&self.lagrange_evals_r0),
+                                    )
+                                } else {
+                                    (
+                                        eval.az_at_r_second_group(&self.lagrange_evals_r0),
+                                        eval.bz_at_r_second_group(&self.lagrange_evals_r0),
+                                    )
+                                };
+
+                                // Accumulate with r_eval weight
+                                az_grid[x_val] += az_val * r_eval;
+                                bz_grid[x_val] += bz_val * r_eval;
+                            }
+                        }
+
+                        // Store the accumulated grid in chunk-relative position
+                        let buffer_offset = grid_size * (pair_idx - start_pair);
+                        for j in 0..grid_size {
+                            az_chunk[buffer_offset + j] = az_grid[j];
+                            bz_chunk[buffer_offset + j] = bz_grid[j];
+                        }
+
+                        // Expand to multiquadratic
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &az_grid,
+                            &mut buff_a,
+                            &mut tmp,
+                            window_size,
+                        );
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &bz_grid,
+                            &mut buff_b,
+                            &mut tmp,
+                            window_size,
+                        );
+
+                        // Accumulate into local ans with E_out * E_in weight
+                        let e_in = E_in[x_in_val];
+                        let e_out = E_out[x_out_val];
+                        let e_product = e_out * e_in;
+
+                        for idx in 0..three_pow_dim {
+                            local_ans[idx] += buff_a[idx] * buff_b[idx] * e_product;
+                        }
+                    }
+
+                    local_ans
+                },
+            )
+            .reduce(
+                || vec![F::zero(); three_pow_dim],
+                |mut acc, local_ans| {
+                    for idx in 0..three_pow_dim {
+                        acc[idx] += local_ans[idx];
+                    }
+                    acc
+                },
+            );
+
+        self.az = Some(DensePolynomial::new(az_bound));
+        self.bz = Some(DensePolynomial::new(bz_bound));
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, ans));
+    }
+    fn fused_materialise_polynomials_round_zero(&mut self, num_vars: usize) {
+        // Note: this is the simplest materialise as there are no challenges to deal with
+        let eq_poly = &self.split_eq_poly;
+
+        let three_pow_dim = 3_usize.pow(num_vars as u32);
+        let grid_size = 1 << num_vars;
+        let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
+
+        let num_evals_az = E_out.len() * E_in.len() * grid_size;
+        let mut az: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+        let mut bz: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+
+        let ans: Vec<F> = if E_in.len() == 1 {
+            // Parallel version with reduction (E_in has only one element)
+            az.par_chunks_exact_mut(grid_size)
+                .zip(bz.par_chunks_exact_mut(grid_size))
+                .enumerate()
+                .map(|(i, (az_chunk, bz_chunk))| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    for j in 0..grid_size {
+                        let full_idx = grid_size * i + j;
+                        // Extract time_step_idx and selector from full_idx
+                        let time_step_idx = full_idx >> 1;
+                        let selector = (full_idx & 1) == 1;
+
+                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                            &self.bytecode_preprocessing,
+                            &self.trace,
+                            time_step_idx,
+                        );
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                        let (az_at_full_idx, bz_at_full_idx) = if !selector {
+                            (
+                                eval.az_at_r_first_group(&self.lagrange_evals_r0),
+                                eval.bz_at_r_first_group(&self.lagrange_evals_r0),
+                            )
+                        } else {
+                            (
+                                eval.az_at_r_second_group(&self.lagrange_evals_r0),
+                                eval.bz_at_r_second_group(&self.lagrange_evals_r0),
+                            )
+                        };
+
+                        az_chunk[j] = az_at_full_idx;
+                        bz_chunk[j] = bz_at_full_idx;
+                        az_grid[j] = az_at_full_idx;
+                        bz_grid[j] = bz_at_full_idx;
+                    }
+
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &az_grid,
+                        &mut buff_a,
+                        &mut tmp,
+                        num_vars,
+                    );
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &bz_grid,
+                        &mut buff_b,
+                        &mut tmp,
+                        num_vars,
+                    );
+
+                    for idx in 0..three_pow_dim {
+                        local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        } else {
+            // Handle case where E_in has multiple elements
+            let num_xin_bits = E_in.len().log_2();
+            az.par_chunks_exact_mut(grid_size * E_in.len())
+                .zip(bz.par_chunks_exact_mut(grid_size * E_in.len()))
+                .enumerate()
+                .map(|(x_out, (az_outer_chunk, bz_outer_chunk))| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    for x_in in 0..E_in.len() {
+                        let i = (x_out << num_xin_bits) | x_in;
+
+                        // Fill grids for this (x_out, x_in) pair
+                        for j in 0..grid_size {
+                            let full_idx = grid_size * i + j;
+                            let time_step_idx = full_idx >> 1;
+                            let selector = (full_idx & 1) == 1;
+
+                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                &self.bytecode_preprocessing,
+                                &self.trace,
+                                time_step_idx,
+                            );
+                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                            let (az_at_full_idx, bz_at_full_idx) = if !selector {
+                                (
+                                    eval.az_at_r_first_group(&self.lagrange_evals_r0),
+                                    eval.bz_at_r_first_group(&self.lagrange_evals_r0),
+                                )
+                            } else {
+                                (
+                                    eval.az_at_r_second_group(&self.lagrange_evals_r0),
+                                    eval.bz_at_r_second_group(&self.lagrange_evals_r0),
+                                )
+                            };
+
+                            let offset_in_chunk = x_in * grid_size + j;
+                            az_outer_chunk[offset_in_chunk] = az_at_full_idx;
+                            bz_outer_chunk[offset_in_chunk] = bz_at_full_idx;
+                            az_grid[j] = az_at_full_idx;
+                            bz_grid[j] = bz_at_full_idx;
+                        }
+
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &az_grid,
+                            &mut buff_a,
+                            &mut tmp,
+                            num_vars,
+                        );
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &bz_grid,
+                            &mut buff_b,
+                            &mut tmp,
+                            num_vars,
+                        );
+
+                        let e_product = E_out[x_out] * E_in[x_in];
+                        for idx in 0..three_pow_dim {
+                            local_ans[idx] += buff_a[idx] * buff_b[idx] * e_product;
+                        }
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        };
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
+        self.az = Some(DensePolynomial::new(az));
+        self.bz = Some(DensePolynomial::new(bz));
+    }
 
     #[tracing::instrument(
         skip_all,
@@ -1209,9 +1515,11 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         let split_eq_poly = &self.split_eq_poly;
         if split_eq_poly.num_challenges() > 0 {
             // NOTE: review this
-            self.materialise_sumcheck_polynomials_from_trace_parallel(window_size);
+            //self.materialise_sumcheck_polynomials_from_trace_parallel(window_size);
+            self.fused_materialise_polynomials_general_with_multiquadratic(window_size);
         } else {
-            self.materialise_sumcheck_polynomials_from_trace_round_zero(window_size);
+            //self.materialise_sumcheck_polynomials_from_trace_round_zero(window_size);
+            self.fused_materialise_polynomials_round_zero(window_size);
         }
     }
 
