@@ -220,11 +220,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             )
             .next_power_of_two() as usize;
 
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(trace.len());
-        let _chunk_size = trace.len() / num_chunks;
-
         let transcript = ProofTranscript::new(b"Jolt");
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
 

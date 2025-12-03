@@ -823,7 +823,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eq_r_cycle_stage_1 = eq_r_cycle_stage_1.as_ref().unwrap();
         let eq_r_cycle_stage_3 = eq_r_cycle_stage_3.as_ref().unwrap();
 
-        // Phase 2 now uses LowToHigh binding (cycle bits are in low positions after reindexing)
+        // Phase 2 uses LowToHigh binding: cycle bits are in low positions, address bits in high positions
         let n_cycle_pairs = eq_r_cycle_stage_1.len() / 2;
         let [
             eval_at_0_for_stage_1,
@@ -852,7 +852,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                 ] = (0..K)
                     .into_par_iter()
                     .map(|k| {
-                        // NEW INDEX: k * n_cycle_pairs + j (address high, cycle low)
+                        // index = k * n_cycle_pairs + j: address bits (k) high, cycle bits (j) low
                         let index = k * n_cycle_pairs + j;
                         let rs1_ra_evals =
                             rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
@@ -1136,24 +1136,31 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize rs1_ra polynomial");
             let _guard = span.enter();
 
-            // REINDEXED: Use k * num_chunks + chunk_index (address high, cycle low)
-            // This allows LowToHigh binding to bind cycle bits first in phase 2
-            //
-            //   OLD: index = chunk_index * K + k  →  [cycle_high | addr_low]
-            //   NEW: index = k * num_chunks + chunk_index  →  [addr_high | cycle_low]
-            //
+            // Polynomial indexing: index = k * num_chunks + chunk_index
+            //   - Address bits (k) in high-order positions
+            //   - Cycle bits (chunk_index) in low-order positions
+            // This layout enables LowToHigh binding to bind cycle variables first in Phase 2,
+            // which is required for compatibility with downstream sumchecks.
             let num_chunks = addresses.len() / *chunk_size;
-            let mut rs1_ra_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            for chunk_index in 0..num_chunks {
-                for (j_bound, (k, _, _)) in addresses
-                    [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
-                    .iter()
-                    .enumerate()
-                {
-                    let new_index = (*k as usize) * num_chunks + chunk_index;
-                    rs1_ra_evals[new_index] += A[j_bound];
-                }
-            }
+            let rs1_ra_evals: Vec<F> = addresses
+                .par_chunks(*chunk_size)
+                .enumerate()
+                .fold(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut acc, (chunk_idx, chunk)| {
+                        for (j_bound, (k, _, _)) in chunk.iter().enumerate() {
+                            acc[(*k as usize) * num_chunks + chunk_idx] += A[j_bound];
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut a, b| {
+                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
+                        a
+                    },
+                );
             *rs1_ra = Some(MultilinearPolynomial::from(rs1_ra_evals));
 
             drop(_guard);
@@ -1163,17 +1170,25 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             let _guard = span.enter();
 
             let num_chunks = addresses.len() / *chunk_size;
-            let mut rs2_ra_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            for chunk_index in 0..num_chunks {
-                for (j_bound, (_, k, _)) in addresses
-                    [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
-                    .iter()
-                    .enumerate()
-                {
-                    let new_index = (*k as usize) * num_chunks + chunk_index;
-                    rs2_ra_evals[new_index] += A[j_bound];
-                }
-            }
+            let rs2_ra_evals: Vec<F> = addresses
+                .par_chunks(*chunk_size)
+                .enumerate()
+                .fold(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut acc, (chunk_idx, chunk)| {
+                        for (j_bound, (_, k, _)) in chunk.iter().enumerate() {
+                            acc[(*k as usize) * num_chunks + chunk_idx] += A[j_bound];
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut a, b| {
+                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
+                        a
+                    },
+                );
             *rs2_ra = Some(MultilinearPolynomial::from(rs2_ra_evals));
 
             drop(_guard);
@@ -1183,17 +1198,25 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             let _guard = span.enter();
 
             let num_chunks = addresses.len() / *chunk_size;
-            let mut rd_wa_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            for chunk_index in 0..num_chunks {
-                for (j_bound, (_, _, k)) in addresses
-                    [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
-                    .iter()
-                    .enumerate()
-                {
-                    let new_index = (*k as usize) * num_chunks + chunk_index;
-                    rd_wa_evals[new_index] += A[j_bound];
-                }
-            }
+            let rd_wa_evals: Vec<F> = addresses
+                .par_chunks(*chunk_size)
+                .enumerate()
+                .fold(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut acc, (chunk_idx, chunk)| {
+                        for (j_bound, (_, _, k)) in chunk.iter().enumerate() {
+                            acc[(*k as usize) * num_chunks + chunk_idx] += A[j_bound];
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut a, b| {
+                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
+                        a
+                    },
+                );
             *rd_wa = Some(MultilinearPolynomial::from(rd_wa_evals));
 
             drop(_guard);
@@ -1202,25 +1225,31 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize Val polynomial");
             let _guard = span.enter();
 
-            // val_checkpoints is indexed as [chunk_index * K + k]
-            // We need to reindex to [k * num_chunks + chunk_index]
-            let mut val_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            for chunk_index in 0..num_chunks {
-                for k in 0..K {
-                    let old_index = chunk_index * K + k;
-                    let new_index = k * num_chunks + chunk_index;
-                    val_evals[new_index] = F::from_u64(val_checkpoints[old_index]);
-                }
-            }
-            // Add inc_lt contributions with new indexing
-            for chunk_index in 0..num_chunks {
-                let I_chunk = &I[chunk_index];
-                for (j, k, inc_lt, _inc) in I_chunk.iter() {
-                    debug_assert_eq!(*j, chunk_index);
-                    let new_index = (*k as usize) * num_chunks + chunk_index;
-                    val_evals[new_index] += *inc_lt;
-                }
-            }
+            // val_checkpoints is stored row-major (cycle-major), convert to column-major (address-major)
+            let val_evals: Vec<F> = val_checkpoints
+                .par_chunks(K)
+                .zip(I.into_par_iter())
+                .enumerate()
+                .fold(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut acc, (chunk_idx, (checkpoint_chunk, I_chunk))| {
+                        for (k, &v) in checkpoint_chunk.iter().enumerate() {
+                            acc[k * num_chunks + chunk_idx] = F::from_u64(v);
+                        }
+                        for (j, k, inc_lt, _inc) in I_chunk.iter() {
+                            debug_assert_eq!(*j, chunk_idx);
+                            acc[(*k as usize) * num_chunks + chunk_idx] += *inc_lt;
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || unsafe_allocate_zero_vec(K * num_chunks),
+                    |mut a, b| {
+                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
+                        a
+                    },
+                );
             *val = Some(MultilinearPolynomial::from(val_evals));
 
             drop(_guard);
@@ -1265,7 +1294,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let eq_r_cycle_stage_1 = eq_r_cycle_stage_1.as_mut().unwrap();
         let eq_r_cycle_stage_3 = eq_r_cycle_stage_3.as_mut().unwrap();
 
-        // Phase 2 now uses LowToHigh (cycle bits are in low positions after reindexing)
+        // Phase 2 uses LowToHigh: binds cycle variables (low positions) first
         rs1_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
         rs2_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
         rd_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
@@ -1590,14 +1619,8 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        // With uniform LowToHigh binding for ALL phases:
-        //   sumcheck_challenges = [c_0, c_1, ..., c_{n-1}, a_0, a_1, ..., a_{k-1}]
-        //                         └─── LITTLE_ENDIAN ───┘ └── LITTLE_ENDIAN ──┘
-        //
-        // To get BIG_ENDIAN opening point, just reverse each part:
-        //   r_cycle = [c_{n-1}, ..., c_1, c_0]
-        //   r_address = [a_{k-1}, ..., a_1, a_0]
-        //
+        // All phases use LowToHigh binding, so sumcheck challenges arrive in LITTLE_ENDIAN order.
+        // Reverse each part to convert to BIG_ENDIAN for the opening point.
         let n_cycle_vars = self.n_cycle_vars;
         let r_cycle: Vec<_> = sumcheck_challenges[..n_cycle_vars]
             .iter()
