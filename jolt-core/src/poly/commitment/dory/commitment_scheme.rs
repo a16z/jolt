@@ -6,7 +6,9 @@ use super::wrappers::{
     jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkGTCompressed, JoltBn254,
     JoltToDoryTranscript,
 };
+use crate::poly::commitment::commitment_scheme::CompressedCommitmentScheme;
 use crate::poly::commitment::dory::setup::{DoryProverSetup, DoryVerifierSetup};
+use crate::poly::commitment::dory::wrappers::CompressedArkDoryProof;
 use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
@@ -30,12 +32,16 @@ use tracing::trace_span;
 #[derive(Clone)]
 pub struct DoryCommitmentScheme {}
 
+impl CompressedCommitmentScheme for DoryCommitmentScheme {
+    type CompressedProof = CompressedArkDoryProof;
+}
+
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
     type Commitment = ArkGT;
-    type Proof = ArkDoryProof;
+    type MyProof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
     type OpeningProofHint = Vec<ArkG1>;
     type CompressedCommitment = ArkGTCompressed;
@@ -117,7 +123,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> Self::MyProof {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
         let row_commitments = hint.unwrap_or_else(|| {
@@ -155,7 +161,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 
     fn verify<ProofTranscript: Transcript>(
-        proof: &Self::Proof,
+        proof: &Self::MyProof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],

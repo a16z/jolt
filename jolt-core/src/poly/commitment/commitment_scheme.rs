@@ -9,19 +9,14 @@ use crate::{
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
+pub trait CompressedCommitmentScheme: CommitmentScheme {
+    type CompressedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
+}
+
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type ProverSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
     type VerifierSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
-    type CompressedCommitment: Default
-        + Debug
-        + Sync
-        + Send
-        + PartialEq
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + AppendToTranscript
-        + Clone;
     type Commitment: Default
         + Debug
         + Sync
@@ -32,7 +27,17 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + AppendToTranscript
         + Clone
         + From<Self::CompressedCommitment>;
-    type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
+    type CompressedCommitment: Default
+        + Debug
+        + Sync
+        + Send
+        + PartialEq
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + AppendToTranscript
+        + Clone;
+
+    type MyProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of
     /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
@@ -127,7 +132,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         opening_point: &[<Self::Field as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof;
+    ) -> Self::MyProof;
 
     /// Verifies a proof of polynomial evaluation at a specific point.
     ///
@@ -142,7 +147,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// # Returns
     /// Ok(()) if the proof is valid, otherwise a ProofVerifyError
     fn verify<ProofTranscript: Transcript>(
-        proof: &Self::Proof,
+        proof: &Self::MyProof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
         opening_point: &[<Self::Field as JoltField>::Challenge],

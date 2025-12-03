@@ -41,7 +41,7 @@ where
     type ProverSetup = ();
     type VerifierSetup = ();
     type Commitment = MockCommitment<F>;
-    type Proof = MockProof<F>;
+    type MyProof = MockProof<F>;
     type BatchedProof = MockProof<F>;
     type OpeningProofHint = ();
     type CompressedCommitment = Self::Commitment;
@@ -89,14 +89,14 @@ where
         opening_point: &[<Self::Field as JoltField>::Challenge],
         _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> Self::MyProof {
         MockProof {
             opening_point: opening_point.to_owned(),
         }
     }
 
     fn verify<ProofTranscript: Transcript>(
-        proof: &Self::Proof,
+        proof: &Self::MyProof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
         opening_point: &[<Self::Field as JoltField>::Challenge],

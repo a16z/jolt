@@ -918,7 +918,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_trusted_advice(&mut self) -> Option<PCS::Proof> {
+    fn prove_trusted_advice(&mut self) -> Option<PCS::MyProof> {
         self.advice
             .trusted_advice_polynomial
             .as_ref()
@@ -939,7 +939,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_untrusted_advice(&mut self) -> Option<PCS::Proof> {
+    fn prove_untrusted_advice(&mut self) -> Option<PCS::MyProof> {
         self.advice
             .untrusted_advice_polynomial
             .as_ref()

@@ -49,8 +49,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub trusted_advice_proof: Option<PCS::Proof>,
-    pub untrusted_advice_proof: Option<PCS::Proof>,
+    pub trusted_advice_proof: Option<PCS::MyProof>,
+    pub untrusted_advice_proof: Option<PCS::MyProof>,
     pub reduced_opening_proof: ReducedOpeningProof<F, PCS, FS>, // Stage 7
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,

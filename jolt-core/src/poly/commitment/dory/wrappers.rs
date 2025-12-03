@@ -10,7 +10,10 @@ use crate::{
 use ark_bn254::{Bn254, CompressedFq12, Fr, G1Affine};
 use ark_ec::{pairing::CompressedPairing, CurveGroup};
 use ark_ff::Zero;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress as ArkCompress,
+    SerializationError as ArkSerializationError, Valid as ArkValid,
+};
 use dory::{
     error::DoryError,
     primitives::{
@@ -22,6 +25,7 @@ use dory::{
         Compress, DoryDeserialize, DorySerialize, SerializationError, Valid, Validate,
     },
     setup::ProverSetup,
+    DoryProof, FirstReduceMessage, ScalarProductMessage, SecondReduceMessage, VMVMessage,
 };
 use num_traits::One;
 use rayon::prelude::*;
@@ -54,6 +58,197 @@ impl CompressedPairingCurve for JoltBn254 {
 }
 
 pub type JoltFieldWrapper = ArkFr;
+
+#[derive(Clone, Debug)]
+pub struct CompressedArkDoryProof(pub DoryProof<ArkG1, ArkG2, ArkGTCompressed>);
+
+// Adapted from similar implementation in ark_serde.rs in the Dory crate for ArkDoryProof.
+// This is a workaround to allow the use of the CompressedArkDoryProof type in the JoltProof struct.
+// For future work: consider cleaning up the implementation in Dory by making it more generic.
+impl ArkValid for CompressedArkDoryProof {
+    fn check(&self) -> Result<(), ArkSerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalSerialize for CompressedArkDoryProof {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: ArkCompress,
+    ) -> Result<(), ArkSerializationError> {
+        // Serialize VMV message
+        CanonicalSerialize::serialize_with_mode(&self.0.vmv_message.c, &mut writer, compress)?;
+        CanonicalSerialize::serialize_with_mode(&self.0.vmv_message.d2, &mut writer, compress)?;
+        CanonicalSerialize::serialize_with_mode(&self.0.vmv_message.e1, &mut writer, compress)?;
+
+        // Serialize number of rounds
+        let num_rounds = self.0.first_messages.len() as u32;
+        CanonicalSerialize::serialize_with_mode(&num_rounds, &mut writer, compress)?;
+
+        // Serialize first messages
+        for msg in &self.0.first_messages {
+            CanonicalSerialize::serialize_with_mode(&msg.d1_left, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.d1_right, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.d2_left, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.d2_right, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.e1_beta, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.e2_beta, &mut writer, compress)?;
+        }
+
+        // Serialize second messages
+        for msg in &self.0.second_messages {
+            CanonicalSerialize::serialize_with_mode(&msg.c_plus, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.c_minus, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.e1_plus, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.e1_minus, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.e2_plus, &mut writer, compress)?;
+            CanonicalSerialize::serialize_with_mode(&msg.e2_minus, &mut writer, compress)?;
+        }
+
+        // Serialize final message
+        CanonicalSerialize::serialize_with_mode(&self.0.final_message.e1, &mut writer, compress)?;
+        CanonicalSerialize::serialize_with_mode(&self.0.final_message.e2, &mut writer, compress)?;
+
+        // Serialize nu and sigma
+        CanonicalSerialize::serialize_with_mode(&(self.0.nu as u32), &mut writer, compress)?;
+        CanonicalSerialize::serialize_with_mode(&(self.0.sigma as u32), &mut writer, compress)?;
+
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ArkCompress) -> usize {
+        let mut size = 0;
+
+        // VMV message
+        size += CanonicalSerialize::serialized_size(&self.0.vmv_message.c, compress);
+        size += CanonicalSerialize::serialized_size(&self.0.vmv_message.d2, compress);
+        size += CanonicalSerialize::serialized_size(&self.0.vmv_message.e1, compress);
+
+        // Number of rounds
+        size += 4; // u32
+
+        // First messages
+        for msg in &self.0.first_messages {
+            size += CanonicalSerialize::serialized_size(&msg.d1_left, compress);
+            size += CanonicalSerialize::serialized_size(&msg.d1_right, compress);
+            size += CanonicalSerialize::serialized_size(&msg.d2_left, compress);
+            size += CanonicalSerialize::serialized_size(&msg.d2_right, compress);
+            size += CanonicalSerialize::serialized_size(&msg.e1_beta, compress);
+            size += CanonicalSerialize::serialized_size(&msg.e2_beta, compress);
+        }
+
+        // Second messages
+        for msg in &self.0.second_messages {
+            size += CanonicalSerialize::serialized_size(&msg.c_plus, compress);
+            size += CanonicalSerialize::serialized_size(&msg.c_minus, compress);
+            size += CanonicalSerialize::serialized_size(&msg.e1_plus, compress);
+            size += CanonicalSerialize::serialized_size(&msg.e1_minus, compress);
+            size += CanonicalSerialize::serialized_size(&msg.e2_plus, compress);
+            size += CanonicalSerialize::serialized_size(&msg.e2_minus, compress);
+        }
+
+        // Final message
+        size += CanonicalSerialize::serialized_size(&self.0.final_message.e1, compress);
+        size += CanonicalSerialize::serialized_size(&self.0.final_message.e2, compress);
+
+        // nu and sigma
+        size += 8; // 2 * u32
+
+        size
+    }
+}
+
+impl CanonicalDeserialize for CompressedArkDoryProof {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: ArkCompress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ArkSerializationError> {
+        // Deserialize VMV message
+        let c = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let d2 = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let e1 = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let vmv_message = VMVMessage { c, d2, e1 };
+
+        // Deserialize number of rounds
+        let num_rounds =
+            <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)?
+                as usize;
+
+        // Deserialize first messages
+        let mut first_messages = Vec::with_capacity(num_rounds);
+        for _ in 0..num_rounds {
+            let d1_left =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let d1_right =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let d2_left =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let d2_right =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e1_beta =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e2_beta =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            first_messages.push(FirstReduceMessage {
+                d1_left,
+                d1_right,
+                d2_left,
+                d2_right,
+                e1_beta,
+                e2_beta,
+            });
+        }
+
+        // Deserialize second messages
+        let mut second_messages = Vec::with_capacity(num_rounds);
+        for _ in 0..num_rounds {
+            let c_plus =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let c_minus =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e1_plus =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e1_minus =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e2_plus =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e2_minus =
+                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            second_messages.push(SecondReduceMessage {
+                c_plus,
+                c_minus,
+                e1_plus,
+                e1_minus,
+                e2_plus,
+                e2_minus,
+            });
+        }
+
+        // Deserialize final message
+        let e1 = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let e2 = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let final_message = ScalarProductMessage { e1, e2 };
+
+        // Deserialize nu and sigma
+        let nu =
+            <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)?
+                as usize;
+        let sigma =
+            <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)?
+                as usize;
+
+        Ok(CompressedArkDoryProof(DoryProof {
+            vmv_message,
+            first_messages,
+            second_messages,
+            final_message,
+            nu,
+            sigma,
+        }))
+    }
+}
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ArkGTCompressed(pub CompressedFq12);
@@ -112,8 +307,7 @@ impl DoryDeserialize for ArkGTCompressed {
 
         let res = Self(inner);
         if matches!(validate, Validate::Yes) {
-            res.check()
-                .map_err(|e| SerializationError::InvalidData(format!("{:?}", e)))?;
+            Valid::check(&res).map_err(|e| SerializationError::InvalidData(format!("{:?}", e)))?;
         }
 
         Ok(res)
