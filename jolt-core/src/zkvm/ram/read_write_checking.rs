@@ -84,7 +84,7 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
 ///
 /// Other configurations (e.g., leaving 2+ cycle vars for phase 3 while binding
 /// all address vars in phase 2) may cause verification failures.
-/// 
+///
 /// TODO: make the implementation works for all configurations.
 fn phase1_num_rounds(_K: usize, T: usize) -> usize {
     T.log_2()
