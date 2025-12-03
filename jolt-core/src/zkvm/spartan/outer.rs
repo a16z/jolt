@@ -1659,8 +1659,7 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
         let num_unbound_vars = self.schedule.num_unbound_vars(round);
         if self.schedule.is_switch_over_point(round) {
             self.materialise_sumcheck_polynomials_from_trace(num_unbound_vars);
-            // TODO: This will be merged into stream_to_linear_time
-            self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
+            //self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
         } else if self.schedule.is_window_start(round) {
             if self.schedule.before_switch_over_point(round) {
                 self.compute_evaluation_grid_from_trace(num_unbound_vars);
