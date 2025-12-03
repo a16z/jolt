@@ -71,7 +71,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         let gens = &generators.generators[..R_size];
         let row_commitments = poly
             .Z
-            .par_chunks(R_size)
+            .chunks(R_size)
             .map(|row| PedersenCommitment::commit_vector(row, gens))
             .collect();
 

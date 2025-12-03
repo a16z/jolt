@@ -151,9 +151,9 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
 
 /// Generic extension trait for commitment schemes that adds recursion support
 pub trait RecursionExt<F: JoltField>: CommitmentScheme<Field = F> {
-    /// Full witness data (for proving hints are well-formed)
+    /// verifier computations
     type Witness;
-    /// Lightweight hints for efficient verification
+    /// hints for efficient verification
     type Hint;
 
     /// Generate witnesses and convert them to hints
