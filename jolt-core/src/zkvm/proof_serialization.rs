@@ -120,10 +120,18 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.stage4_sumcheck_proof.serialized_size(compress)
             + self.stage5_sumcheck_proof.serialized_size(compress)
             + self.stage6_sumcheck_proof.serialized_size(compress)
-            + self.trusted_advice_val_evaluation_proof.serialized_size(compress)
-            + self.trusted_advice_val_final_proof.serialized_size(compress)
-            + self.untrusted_advice_val_evaluation_proof.serialized_size(compress)
-            + self.untrusted_advice_val_final_proof.serialized_size(compress)
+            + self
+                .trusted_advice_val_evaluation_proof
+                .serialized_size(compress)
+            + self
+                .trusted_advice_val_final_proof
+                .serialized_size(compress)
+            + self
+                .untrusted_advice_val_evaluation_proof
+                .serialized_size(compress)
+            + self
+                .untrusted_advice_val_final_proof
+                .serialized_size(compress)
             + self.reduced_opening_proof.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)

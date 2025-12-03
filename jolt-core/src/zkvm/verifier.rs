@@ -441,9 +441,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
             // Verify at RamValFinalEvaluation point
             let Some(ref proof_val_final) = self.proof.trusted_advice_val_final_proof else {
-                return Err(anyhow::anyhow!(
-                    "Trusted advice val final proof not found"
-                ));
+                return Err(anyhow::anyhow!("Trusted advice val final proof not found"));
             };
             let Some((point_val_final, eval_val_final)) = self
                 .opening_accumulator
