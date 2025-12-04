@@ -29,7 +29,7 @@ pub const LOG_K: usize = XLEN * 2;
 // pub const LOG_M: usize = LOG_K / PHASES;
 // const M: usize = 1 << LOG_M;
 
-pub fn gen_ra_hamming_weight_params<F: JoltField>(
+pub fn ra_hamming_weight_params<F: JoltField>(
     one_hot_params: &OneHotParams,
     opening_accumulator: &dyn OpeningAccumulator<F>,
     transcript: &mut impl Transcript,
@@ -55,7 +55,7 @@ pub fn gen_ra_hamming_weight_params<F: JoltField>(
     }
 }
 
-pub fn gen_ra_booleanity_params<F: JoltField>(
+pub fn ra_booleanity_params<F: JoltField>(
     trace_len: usize,
     one_hot_params: &OneHotParams,
     opening_accumulator: &dyn OpeningAccumulator<F>,
@@ -108,9 +108,9 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
     BooleanitySumcheckVerifier<F>,
 ) {
     let hamming_weight_params =
-        gen_ra_hamming_weight_params(one_hot_params, opening_accumulator, transcript);
+        ra_hamming_weight_params(one_hot_params, opening_accumulator, transcript);
     let booleanity_params =
-        gen_ra_booleanity_params(trace_len, one_hot_params, opening_accumulator, transcript);
+        ra_booleanity_params(trace_len, one_hot_params, opening_accumulator, transcript);
     (
         HammingWeightSumcheckVerifier::new(hamming_weight_params),
         BooleanitySumcheckVerifier::new(booleanity_params),

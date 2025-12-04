@@ -440,7 +440,7 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
     initial_memory_state
 }
 
-pub fn gen_ra_booleanity_params<F: JoltField>(
+pub fn ra_booleanity_params<F: JoltField>(
     trace_len: usize,
     one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
@@ -478,7 +478,7 @@ pub fn gen_ra_booleanity_prover<F: JoltField>(
     BooleanitySumcheckProver::gen(params, G, H_indices)
 }
 
-pub fn gen_ra_hamming_weight_params<F: JoltField>(
+pub fn ra_hamming_weight_params<F: JoltField>(
     one_hot_params: &OneHotParams,
     opening_accumulator: &dyn OpeningAccumulator<F>,
     transcript: &mut impl Transcript,
@@ -524,7 +524,7 @@ pub fn new_ra_booleanity_verifier<F: JoltField>(
     one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckVerifier<F> {
-    let params = gen_ra_booleanity_params(trace_len, one_hot_params, transcript);
+    let params = ra_booleanity_params(trace_len, one_hot_params, transcript);
     BooleanitySumcheckVerifier::new(params)
 }
 
@@ -533,7 +533,7 @@ pub fn new_ra_hamming_weight_verifier<F: JoltField>(
     opening_accumulator: &dyn OpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) -> HammingWeightSumcheckVerifier<F> {
-    let params = gen_ra_hamming_weight_params(one_hot_params, opening_accumulator, transcript);
+    let params = ra_hamming_weight_params(one_hot_params, opening_accumulator, transcript);
     HammingWeightSumcheckVerifier::new(params)
 }
 

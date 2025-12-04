@@ -32,9 +32,11 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
+        bytecode::read_raf_checking::ReadRafSumcheckParams as BytecodeReadRafParams,
         config::{get_log_k_chunk, OneHotParams},
         instruction_lookups::{
-            ra_virtual::InstructionRaSumcheckParams, read_raf_checking::ReadRafSumcheckParams,
+            ra_virtual::InstructionRaSumcheckParams,
+            read_raf_checking::ReadRafSumcheckParams as InstructionReadRafParams,
         },
         ram::{
             hamming_booleanity::HammingBooleanityParams,
@@ -713,11 +715,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_ra_booleanity_params = ram::gen_ra_booleanity_params(
-            self.trace.len(),
-            &self.one_hot_params,
-            &mut self.transcript,
-        );
+        let ram_ra_booleanity_params =
+            ram::ra_booleanity_params(self.trace.len(), &self.one_hot_params, &mut self.transcript);
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -798,7 +797,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_read_raf_params = ReadRafSumcheckParams::new(
+        let lookups_read_raf_params = InstructionReadRafParams::new(
             self.trace.len().log_2(),
             &self.opening_accumulator,
             &mut self.transcript,
@@ -862,43 +861,48 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6 baseline");
 
-        let bytecode_read_raf = BytecodeReadRafSumcheckProver::gen(
-            &self.trace,
+        let bytecode_read_raf_params = BytecodeReadRafParams::gen(
             &self.preprocessing.bytecode,
+            self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let bytecode_hamming_weight_params = bytecode::gen_ra_hamming_weight_params(
+        let bytecode_hamming_weight_params = bytecode::ra_hamming_weight_params(
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let bytecode_booleanity_params = bytecode::gen_ra_booleanity_params(
+        let bytecode_booleanity_params = bytecode::ra_booleanity_params(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_hamming_weight_params = ram::gen_ra_hamming_weight_params(
+        let ram_hamming_weight_params = ram::ra_hamming_weight_params(
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
         let lookups_ra_virtual_params =
             InstructionRaSumcheckParams::new(&self.one_hot_params, &self.opening_accumulator);
-        let lookups_hamming_weight_params = instruction_lookups::gen_ra_hamming_weight_params(
+        let lookups_hamming_weight_params = instruction_lookups::ra_hamming_weight_params(
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_booleanity_params = instruction_lookups::gen_ra_booleanity_params(
+        let lookups_booleanity_params = instruction_lookups::ra_booleanity_params(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
 
+        let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
+            bytecode_read_raf_params,
+            &self.trace,
+            &self.preprocessing.bytecode,
+        );
         let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::gen_ra_one_hot_provers(
             bytecode_hamming_weight_params,
             bytecode_booleanity_params,
