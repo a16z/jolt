@@ -16,7 +16,7 @@ pub const DEFAULT_MEMORY_SIZE: u64 = EMULATOR_MEMORY_CAPACITY;
 pub const DEFAULT_STACK_SIZE: u64 = 4096;
 // 64 byte stack canary. 4 word protection for 32-bit and 2 word for 64-bit
 pub const STACK_CANARY_SIZE: u64 = 128;
-pub const DEFAULT_MAX_TRUSTED_ADVICE_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_TRUSTED_ADVICE_SIZE: u64 = 2048;
 pub const DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
