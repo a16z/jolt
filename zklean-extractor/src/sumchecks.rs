@@ -143,8 +143,8 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                         write!(f, " == ")?;
                         pretty_print_claim_expr(
                             f,
-                            claim.input_sumcheck_id,
-                            &claim.input_claim_expr,
+                            claims.output_sumcheck_id,
+                            &claim.expected_output_claim_expr,
                         )?;
                         writeln!(f, "")?;
                     }
