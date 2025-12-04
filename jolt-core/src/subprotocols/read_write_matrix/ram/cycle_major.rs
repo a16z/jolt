@@ -1,4 +1,4 @@
-//! Cycle-major (row-major) sparse matrix representation.
+//! Cycle-major (row-major) sparse matrix representation for RAM.
 //!
 //! Entries are sorted by `(row, col)` - optimal for binding cycle variables first.
 
@@ -17,7 +17,7 @@ use crate::zkvm::ram::remap_address;
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, RAMAccess};
 
-use super::ColIndex;
+use super::super::ColIndex;
 
 /// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
 /// Conceptually, both ra and Val can be seen as K x T matrices.
@@ -650,3 +650,4 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
         (ra.into(), val.into())
     }
 }
+

@@ -25,7 +25,7 @@
 //! Typically constructed by converting from [`super::RegisterMatrixCycleMajor`]
 //! after binding some/all cycle variables.
 
-use super::cycle_major_registers::RegisterMatrixCycleMajor;
+use super::cycle_major::RegisterMatrixCycleMajor;
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use allocative::Allocative;
@@ -400,7 +400,7 @@ mod tests {
 
     /// Helper to create a RegisterMatrixCycleMajor for testing conversion.
     fn make_cycle_major_for_conversion() -> RegisterMatrixCycleMajor<F> {
-        use super::super::cycle_major_registers::RegisterEntry;
+        use crate::subprotocols::read_write_matrix::RegisterEntry;
 
         // Create entries sorted by (row, col)
         let entries = vec![

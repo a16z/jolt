@@ -1,4 +1,4 @@
-//! Address-major (column-major) sparse matrix representation.
+//! Address-major (column-major) sparse matrix representation for RAM.
 //!
 //! Entries are sorted by `(col, row)` - optimal for binding address variables first.
 
@@ -19,7 +19,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::ram::remap_address;
 
 use super::cycle_major::ReadWriteMatrixCycleMajor;
-use super::ColIndex;
+use super::super::ColIndex;
 
 /// Represents the ra(k, j) and Val(k, j) polynomials for the RAM
 /// read/write-checking sumcheck in address-major (column-major) order.
@@ -1176,3 +1176,4 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixAddressMajor<F, I> {
         (ra.into(), val.into())
     }
 }
+

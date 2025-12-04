@@ -62,6 +62,20 @@ pub struct RegisterEntry<F: JoltField> {
     pub rd_wa: Option<F>,
 }
 
+impl<F: JoltField> RegisterEntry<F> {
+    /// Convert the raw `next_val` to a field element.
+    #[inline]
+    pub fn next_val_as_field(&self) -> F {
+        F::from_u64(self.next_val)
+    }
+
+    /// Convert the raw `prev_val` to a field element.
+    #[inline]
+    pub fn prev_val_as_field(&self) -> F {
+        F::from_u64(self.prev_val)
+    }
+}
+
 /// Cycle-major sparse matrix for register read/write checking.
 ///
 /// Entries are sorted by `(row, col)` where row = cycle index, col = register index.

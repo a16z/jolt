@@ -48,7 +48,7 @@ use crate::poly::opening_proof::{
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::read_write_matrix::{
-    RegisterMatrixAddressMajor, RegisterMatrixCycleMajor,
+    RegisterMatrixAddressMajor, RegisterMatrixAddressMajorOptimized, RegisterMatrixCycleMajor,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
@@ -91,8 +91,8 @@ enum Phase {
 /// all address vars in phase 2) may cause verification failures.
 ///
 /// TODO: make the implementation work for all configurations.
-fn phase1_num_rounds(t: usize) -> usize {
-    t.log_2() // Default: bind all cycle variables
+fn phase1_num_rounds(_t: usize) -> usize {
+    0 // Address-first: skip Phase 1, bind address variables first
 }
 
 /// Number of address variables to bind in Phase 2 (using AddressMajor sparse matrix).
@@ -118,6 +118,9 @@ pub struct RegistersReadWriteCheckingProverNew<F: JoltField> {
     // Data structures for Phase 2 (address binding)
     /// Sparse address-major matrix (used in Phase 2).
     address_major: Option<RegisterMatrixAddressMajor<F>>,
+    /// Optimized sparse address-major matrix (used in Phase 2 when phase1=0).
+    /// Uses compact access flags + expanding tables for memory efficiency.
+    address_major_optimized: Option<RegisterMatrixAddressMajorOptimized<F>>,
 
     // Data structures for Phase 3 (materialized)
     /// Materialized rs1_ra polynomial.
@@ -247,9 +250,12 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
         };
 
         // If skipping Phase 1, convert to address-major for Phase 2
-        let (cycle_major, address_major) = if phase1_rounds == 0 {
+        // Use the optimized representation that stores original register indices
+        // and uses an ExpandingTable for eq evaluations.
+        let (cycle_major, address_major, address_major_optimized) = if phase1_rounds == 0 {
             if phase2_rounds > 0 {
-                (None, Some(cycle_major.into_address_major()))
+                // Use the optimized representation
+                (None, None, Some(cycle_major.into()))
             } else {
                 // Skip both phases, materialize immediately
                 let (rs1_ra, rs2_ra, rd_wa, val) = cycle_major.materialize();
@@ -259,6 +265,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
                     gruen_eq_stage_1,
                     gruen_eq_stage_3,
                     address_major: None,
+                    address_major_optimized: None,
                     rs1_ra: Some(rs1_ra),
                     rs2_ra: Some(rs2_ra),
                     rd_wa: Some(rd_wa),
@@ -278,7 +285,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
                 };
             }
         } else {
-            (Some(cycle_major), None)
+            (Some(cycle_major), None, None)
         };
 
         Self {
@@ -287,6 +294,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
             gruen_eq_stage_1,
             gruen_eq_stage_3,
             address_major,
+            address_major_optimized,
             rs1_ra: None,
             rs2_ra: None,
             rd_wa: None,
@@ -596,6 +604,11 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
     /// - Stage 3: `eq_3(j) * read_vals`
     /// - Where `read_vals = rs1_ra*val + γ*rs2_ra*val`
     fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
+        // Handle optimized representation
+        if self.address_major_optimized.is_some() {
+            return self.phase2_compute_message_optimized(previous_claim);
+        }
+
         let address_major = self.address_major.as_ref().unwrap();
         let eq_stage_1 = self.eq_stage_1.as_ref().unwrap();
         let eq_stage_3 = self.eq_stage_3.as_ref().unwrap();
@@ -653,6 +666,280 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
                     gamma,
                     gamma_cub,
                 )
+            })
+            .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
+    }
+
+    /// Phase 2 compute message using the optimized address-major representation.
+    ///
+    /// This is a simplified implementation that converts to dense values for computation.
+    /// TODO: Optimize this to leverage the compact representation more directly.
+    fn phase2_compute_message_optimized(&self, previous_claim: F) -> UniPoly<F> {
+        let matrix = self.address_major_optimized.as_ref().unwrap();
+        let eq_stage_1 = self.eq_stage_1.as_ref().unwrap();
+        let eq_stage_3 = self.eq_stage_3.as_ref().unwrap();
+        let gamma = self.gamma;
+        let gamma_cub = self.gamma_cub;
+
+        let n = matrix.nnz();
+        if n == 0 {
+            return UniPoly::from_evals_and_hint(previous_claim, &[F::zero(), F::zero()]);
+        }
+
+        // Find column-pair boundaries
+        let pair_ranges: Vec<(usize, usize)> = {
+            let mut ranges = Vec::new();
+            let mut idx = 0;
+            while idx < n {
+                let col_pair = matrix.cols[idx] / 2;
+                let mut j = idx + 1;
+                while j < n && matrix.cols[j] / 2 == col_pair {
+                    j += 1;
+                }
+                ranges.push((idx, j));
+                idx = j;
+            }
+            ranges
+        };
+
+        // Parallel computation across column pairs
+        let evals: [F; 2] = pair_ranges
+            .par_iter()
+            .map(|&(start, end)| {
+                let col_pair = matrix.cols[start] / 2;
+
+                // Find boundary between even and odd column entries
+                let mut mid = start;
+                while mid < end && matrix.cols[mid] % 2 == 0 {
+                    mid += 1;
+                }
+
+                let even_col_idx = (2 * col_pair) as usize;
+                let mut _even_checkpoint = matrix.val_init.get_bound_coeff(even_col_idx);
+                let mut _odd_checkpoint = matrix.val_init.get_bound_coeff(even_col_idx + 1);
+
+                let mut accum = [F::zero(); 2];
+                let mut ei = start;
+                let mut oi = mid;
+
+                // Merge even/odd entries by row
+                // Compute evaluations at x=0 and x=2 (for degree-2 polynomial)
+                while ei < mid || oi < end {
+                    let even_row = if ei < mid { Some(matrix.rows[ei]) } else { None };
+                    let odd_row = if oi < end { Some(matrix.rows[oi]) } else { None };
+
+                    match (even_row, odd_row) {
+                        (Some(er), Some(or)) if er == or => {
+                            // Both columns have entry at same row
+                            let row = er;
+                            let eq1 = eq_stage_1.get_bound_coeff(row);
+                            let eq3 = eq_stage_3.get_bound_coeff(row);
+                            let inc = self.inc_cycle.get_bound_coeff(row); // Same inc for both!
+
+                            let rs1_e = matrix.get_rs1_ra(ei);
+                            let rs2_e = matrix.get_rs2_ra(ei);
+                            let rd_e = matrix.get_rd_wa(ei);
+                            let val_e = matrix.vals[ei];
+                            let rs1_o = matrix.get_rs1_ra(oi);
+                            let rs2_o = matrix.get_rs2_ra(oi);
+                            let rd_o = matrix.get_rd_wa(oi);
+                            let val_o = matrix.vals[oi];
+
+                            // Evaluations at x=0 and x=2
+                            let val_at_0 = val_e;
+                            let val_at_2 = val_o + val_o - val_e;
+                            let rs1_at_0 = rs1_e;
+                            let rs1_at_2 = rs1_o + rs1_o - rs1_e;
+                            let rs2_at_0 = rs2_e;
+                            let rs2_at_2 = rs2_o + rs2_o - rs2_e;
+                            let rd_at_0 = rd_e;
+                            let rd_at_2 = rd_o + rd_o - rd_e;
+
+                            // Contribution at x=0
+                            let read_vals_0 = rs1_at_0 * val_at_0 + gamma * rs2_at_0 * val_at_0;
+                            let rd_write_0 = rd_at_0 * (inc + val_at_0);
+                            let stage1_0 = eq1 * (rd_write_0 + gamma * read_vals_0);
+                            let stage3_0 = eq3 * read_vals_0;
+
+                            // Contribution at x=2
+                            let read_vals_2 = rs1_at_2 * val_at_2 + gamma * rs2_at_2 * val_at_2;
+                            let rd_write_2 = rd_at_2 * (inc + val_at_2);
+                            let stage1_2 = eq1 * (rd_write_2 + gamma * read_vals_2);
+                            let stage3_2 = eq3 * read_vals_2;
+
+                            accum[0] += stage1_0 + gamma_cub * stage3_0;
+                            accum[1] += stage1_2 + gamma_cub * stage3_2;
+
+                            _even_checkpoint = matrix.get_next_val(ei);
+                            _odd_checkpoint = matrix.get_next_val(oi);
+                            ei += 1;
+                            oi += 1;
+                        }
+                        (Some(er), Some(or)) if er < or => {
+                            // Even only (odd is implicit with checkpoint value)
+                            let row = er;
+                            let eq1 = eq_stage_1.get_bound_coeff(row);
+                            let eq3 = eq_stage_3.get_bound_coeff(row);
+                            let inc = self.inc_cycle.get_bound_coeff(row);
+
+                            let rs1_e = matrix.get_rs1_ra(ei);
+                            let rs2_e = matrix.get_rs2_ra(ei);
+                            let rd_e = matrix.get_rd_wa(ei);
+                            let val_e = matrix.vals[ei];
+                            // Implicit odd: no RA, val = checkpoint
+                            let val_o = _odd_checkpoint;
+
+                            // Evaluations at x=0 and x=2
+                            let val_at_0 = val_e;
+                            let val_at_2 = val_o + val_o - val_e;
+                            // RA is 0 at x=1 (odd), so at x=2: 2*0 - ra_e = -ra_e
+                            let rs1_at_0 = rs1_e;
+                            let rs1_at_2 = -rs1_e;
+                            let rs2_at_0 = rs2_e;
+                            let rs2_at_2 = -rs2_e;
+                            let rd_at_0 = rd_e;
+                            let rd_at_2 = -rd_e;
+
+                            let read_vals_0 = rs1_at_0 * val_at_0 + gamma * rs2_at_0 * val_at_0;
+                            let rd_write_0 = rd_at_0 * (inc + val_at_0);
+                            let stage1_0 = eq1 * (rd_write_0 + gamma * read_vals_0);
+                            let stage3_0 = eq3 * read_vals_0;
+
+                            let read_vals_2 = rs1_at_2 * val_at_2 + gamma * rs2_at_2 * val_at_2;
+                            let rd_write_2 = rd_at_2 * (inc + val_at_2);
+                            let stage1_2 = eq1 * (rd_write_2 + gamma * read_vals_2);
+                            let stage3_2 = eq3 * read_vals_2;
+
+                            accum[0] += stage1_0 + gamma_cub * stage3_0;
+                            accum[1] += stage1_2 + gamma_cub * stage3_2;
+
+                            _even_checkpoint = matrix.get_next_val(ei);
+                            ei += 1;
+                        }
+                        (Some(_er), Some(or)) => {
+                            // Odd only (even is implicit with checkpoint value)
+                            let row = or;
+                            let eq1 = eq_stage_1.get_bound_coeff(row);
+                            let eq3 = eq_stage_3.get_bound_coeff(row);
+                            let inc = self.inc_cycle.get_bound_coeff(row);
+
+                            // Implicit even: no RA, val = checkpoint
+                            let val_e = _even_checkpoint;
+                            let rs1_o = matrix.get_rs1_ra(oi);
+                            let rs2_o = matrix.get_rs2_ra(oi);
+                            let rd_o = matrix.get_rd_wa(oi);
+                            let val_o = matrix.vals[oi];
+
+                            // Evaluations at x=0 and x=2
+                            let val_at_0 = val_e;
+                            let val_at_2 = val_o + val_o - val_e;
+                            // RA is 0 at x=0 (even), so at x=2: 2*ra_o - 0 = 2*ra_o
+                            let rs1_at_0 = F::zero();
+                            let rs1_at_2 = rs1_o + rs1_o;
+                            let rs2_at_0 = F::zero();
+                            let rs2_at_2 = rs2_o + rs2_o;
+                            let rd_at_0 = F::zero();
+                            let rd_at_2 = rd_o + rd_o;
+
+                            let read_vals_0 = rs1_at_0 * val_at_0 + gamma * rs2_at_0 * val_at_0;
+                            let rd_write_0 = rd_at_0 * (inc + val_at_0);
+                            let stage1_0 = eq1 * (rd_write_0 + gamma * read_vals_0);
+                            let stage3_0 = eq3 * read_vals_0;
+
+                            let read_vals_2 = rs1_at_2 * val_at_2 + gamma * rs2_at_2 * val_at_2;
+                            let rd_write_2 = rd_at_2 * (inc + val_at_2);
+                            let stage1_2 = eq1 * (rd_write_2 + gamma * read_vals_2);
+                            let stage3_2 = eq3 * read_vals_2;
+
+                            accum[0] += stage1_0 + gamma_cub * stage3_0;
+                            accum[1] += stage1_2 + gamma_cub * stage3_2;
+
+                            _odd_checkpoint = matrix.get_next_val(oi);
+                            oi += 1;
+                        }
+                        (Some(er), None) => {
+                            // Even only (no more odd entries)
+                            let row = er;
+                            let eq1 = eq_stage_1.get_bound_coeff(row);
+                            let eq3 = eq_stage_3.get_bound_coeff(row);
+                            let inc = self.inc_cycle.get_bound_coeff(row);
+
+                            let rs1_e = matrix.get_rs1_ra(ei);
+                            let rs2_e = matrix.get_rs2_ra(ei);
+                            let rd_e = matrix.get_rd_wa(ei);
+                            let val_e = matrix.vals[ei];
+                            let val_o = _odd_checkpoint;
+
+                            let val_at_0 = val_e;
+                            let val_at_2 = val_o + val_o - val_e;
+                            let rs1_at_0 = rs1_e;
+                            let rs1_at_2 = -rs1_e;
+                            let rs2_at_0 = rs2_e;
+                            let rs2_at_2 = -rs2_e;
+                            let rd_at_0 = rd_e;
+                            let rd_at_2 = -rd_e;
+
+                            let read_vals_0 = rs1_at_0 * val_at_0 + gamma * rs2_at_0 * val_at_0;
+                            let rd_write_0 = rd_at_0 * (inc + val_at_0);
+                            let stage1_0 = eq1 * (rd_write_0 + gamma * read_vals_0);
+                            let stage3_0 = eq3 * read_vals_0;
+
+                            let read_vals_2 = rs1_at_2 * val_at_2 + gamma * rs2_at_2 * val_at_2;
+                            let rd_write_2 = rd_at_2 * (inc + val_at_2);
+                            let stage1_2 = eq1 * (rd_write_2 + gamma * read_vals_2);
+                            let stage3_2 = eq3 * read_vals_2;
+
+                            accum[0] += stage1_0 + gamma_cub * stage3_0;
+                            accum[1] += stage1_2 + gamma_cub * stage3_2;
+
+                            _even_checkpoint = matrix.get_next_val(ei);
+                            ei += 1;
+                        }
+                        (None, Some(or)) => {
+                            // Odd only (no more even entries)
+                            let row = or;
+                            let eq1 = eq_stage_1.get_bound_coeff(row);
+                            let eq3 = eq_stage_3.get_bound_coeff(row);
+                            let inc = self.inc_cycle.get_bound_coeff(row);
+
+                            let val_e = _even_checkpoint;
+                            let rs1_o = matrix.get_rs1_ra(oi);
+                            let rs2_o = matrix.get_rs2_ra(oi);
+                            let rd_o = matrix.get_rd_wa(oi);
+                            let val_o = matrix.vals[oi];
+
+                            let val_at_0 = val_e;
+                            let val_at_2 = val_o + val_o - val_e;
+                            let rs1_at_0 = F::zero();
+                            let rs1_at_2 = rs1_o + rs1_o;
+                            let rs2_at_0 = F::zero();
+                            let rs2_at_2 = rs2_o + rs2_o;
+                            let rd_at_0 = F::zero();
+                            let rd_at_2 = rd_o + rd_o;
+
+                            let read_vals_0 = rs1_at_0 * val_at_0 + gamma * rs2_at_0 * val_at_0;
+                            let rd_write_0 = rd_at_0 * (inc + val_at_0);
+                            let stage1_0 = eq1 * (rd_write_0 + gamma * read_vals_0);
+                            let stage3_0 = eq3 * read_vals_0;
+
+                            let read_vals_2 = rs1_at_2 * val_at_2 + gamma * rs2_at_2 * val_at_2;
+                            let rd_write_2 = rd_at_2 * (inc + val_at_2);
+                            let stage1_2 = eq1 * (rd_write_2 + gamma * read_vals_2);
+                            let stage3_2 = eq3 * read_vals_2;
+
+                            accum[0] += stage1_0 + gamma_cub * stage3_0;
+                            accum[1] += stage1_2 + gamma_cub * stage3_2;
+
+                            _odd_checkpoint = matrix.get_next_val(oi);
+                            oi += 1;
+                        }
+                        (None, None) => break,
+                    }
+                }
+
+                accum
             })
             .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
 
@@ -887,8 +1174,11 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
 
     /// Bind variables in Phase 2 (address binding).
     fn phase2_bind(&mut self, r: F::Challenge, round: usize) {
-        // Bind the address-major matrix
+        // Bind the address-major matrix (either standard or optimized)
         if let Some(ref mut matrix) = self.address_major {
+            matrix.bind(r);
+        }
+        if let Some(ref mut matrix) = self.address_major_optimized {
             matrix.bind(r);
         }
 
@@ -919,13 +1209,24 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
 
     /// Materialize from address-major representation.
     fn materialize_from_address_major(&mut self) {
-        let address_major = self.address_major.take().unwrap();
-        let (rs1_ra, rs2_ra, rd_wa, val) = address_major.materialize();
-
-        self.rs1_ra = Some(rs1_ra);
-        self.rs2_ra = Some(rs2_ra);
-        self.rd_wa = Some(rd_wa);
-        self.val = Some(val);
+        // Check which representation we're using
+        if let Some(address_major) = self.address_major.take() {
+            let (rs1_ra, rs2_ra, rd_wa, val) = address_major.materialize();
+            self.rs1_ra = Some(rs1_ra);
+            self.rs2_ra = Some(rs2_ra);
+            self.rd_wa = Some(rd_wa);
+            self.val = Some(val);
+        } else if let Some(address_major_optimized) = self.address_major_optimized.take() {
+            // Use the optimized representation
+            let t_size = 1 << self.n_cycle_vars;
+            let (rs1_ra, rs2_ra, rd_wa, val) = address_major_optimized.materialize(t_size);
+            self.rs1_ra = Some(rs1_ra);
+            self.rs2_ra = Some(rs2_ra);
+            self.rd_wa = Some(rd_wa);
+            self.val = Some(val);
+        } else {
+            panic!("No address-major representation available");
+        }
     }
 
     /// Materialize eq polynomials from Gruen representation.
