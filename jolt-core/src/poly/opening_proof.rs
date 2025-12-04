@@ -403,9 +403,6 @@ impl<F, T: Transcript> SumcheckInstanceProver<F, T> for OpeningProofReductionSum
 where
     F: JoltField,
 {
-    fn debug_name(&self) -> String {
-        format!("{:?}", self.polynomial)
-    }
 
     fn degree(&self) -> usize {
         OPENING_SUMCHECK_DEGREE
@@ -994,7 +991,7 @@ where
         let trusted_advice_poly_for_verification = trusted_advice_poly.clone();
         // Combines the individual polynomials into the RLC that will be used for the
         // batched opening proof.
-        let (joint_poly, hint) = {
+        let result = {
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
                 if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
                     *value += *gamma;
@@ -1070,9 +1067,18 @@ where
                 poly_ids.clone(),
                 poly_arcs.clone(),
                 &coeffs,
-                trusted_advice_poly,
-                streaming_context,
+                trusted_advice_poly.clone(),
+                streaming_context.clone(),
             ));
+
+            // Save hints for test before hints are consumed
+            let test_ram_ra_hint: Option<PCS::OpeningProofHint> = self.sumchecks.get(2)
+                .and_then(|s| opening_hints.get(&s.polynomial).cloned());
+            let test_trusted_advice_hint: Option<PCS::OpeningProofHint> = 
+                opening_hints.get(&CommittedPolynomial::TrustedAdvice).cloned();
+            
+            // Get the third sumcheck's polynomial ID for the test
+            let test_ram_ra_poly_id = self.sumchecks.get(2).map(|s| s.polynomial);
 
             let hints: Vec<PCS::OpeningProofHint> = rlc_map.clone()
                 .into_keys()
@@ -1094,10 +1100,11 @@ where
             let hint = PCS::combine_hints(hints, &coeffs);
 
             #[cfg(test)]
-            let joint_poly = (joint_poly, poly_ids, poly_arcs, coeffs);
+            let joint_poly = (joint_poly, poly_ids.clone(), poly_arcs.clone(), coeffs.clone());
 
-            (joint_poly, hint)
+            (joint_poly, hint, test_ram_ra_hint, test_trusted_advice_hint, poly_ids, coeffs)
         };
+        let (joint_poly, hint, test_ram_ra_hint, test_trusted_advice_hint, test_poly_ids, test_coeffs) = result;
 
         #[cfg(test)]
         let joint_commitment = {
@@ -1135,9 +1142,9 @@ where
                 let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
                 let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
                 let portion = *coeff * claim * lagrange_eval;
-                tracing::info!("  Poly {:?}: opening_point.len={}, unused_vars={}, lagrange={:?}, claim={:?}, portion={:?}", 
+                tracing::info!("  Poly {:?}: opening_point.len={}, unused_vars={}, lagrange={:?}, claim={:?}, portion={:?}, coeff={:?}", 
                     opening.polynomial, opening.opening_point.len(), num_sumcheck_rounds - opening.opening_point.len(), 
-                    lagrange_eval, claim, *claim*lagrange_eval);
+                    lagrange_eval, claim, *claim*lagrange_eval, coeff);
                 tracing::info!("  multiplying r_slice from {} to {} and len={:?}", 0, r_slice.len(), opening.opening_point.len());
                 
                 // Verify trusted advice claim by evaluating the polynomial on r_slice
@@ -1161,6 +1168,7 @@ where
                         tracing::info!("  is it contribution?={:?}, coeff={:?}", lagrange_eval * claim, coeff);
                         // evaluated_at_opening_point * coeff * lagrange_eval
                         contribution * coeff
+                        // F::zero()
                         // F::zero()
                         // Also try evaluating at r_slice for debugging (r_slice = unused vars with lagrange contribution)
                         // if !r_slice.is_empty() && r_slice.len() <= ta_poly.get_num_vars() {
@@ -1189,6 +1197,189 @@ where
         // }
         
         tracing::info!("Joint polynomial expected evaluation at r_sumcheck: {:?}", joint_eval);
+
+        // ==================== TEST: RLC(TrustedAdvice + RamRa(0)) prove at point 1 ====================
+        {
+            tracing::info!("========== TEST: RLC(TrustedAdvice + RamRa(0)) at point 1 ==========");
+            
+            // Build commitments map for lookup
+            let test_commitments_map: HashMap<CommittedPolynomial, PCS::Commitment> =
+                AllCommittedPolynomials::iter()
+                    .zip(commitments.iter())
+                    .map(|(poly, comm)| (*poly, comm.clone()))
+                    .collect();
+            
+            // Get TrustedAdvice
+            let ta_poly = trusted_advice_poly_for_verification.clone();
+            
+            // Get RamRa(0) from third sumcheck
+            let ram_ra_0_poly: Option<Arc<MultilinearPolynomial<F>>> = self.sumchecks.get(2)
+                .and_then(|s| {
+                    match &s.prover_state {
+                        ProverOpening::OneHot(opening) => {
+                            Some(Arc::new(MultilinearPolynomial::OneHot(opening.polynomial.clone())))
+                        },
+                        _ => None,
+                    }
+                });
+            
+            // Get the polynomial ID for the third sumcheck
+            let ram_ra_poly_id = self.sumchecks.get(2).map(|s| s.polynomial);
+            
+            if let (Some(ta), Some(ram_ra), Some(poly_id), Some(ram_ra_hint), Some(ta_hint)) = 
+                (ta_poly, ram_ra_0_poly, ram_ra_poly_id, test_ram_ra_hint, test_trusted_advice_hint) {
+                tracing::info!("TEST: Got TrustedAdvice and RamRa(0)");
+                
+                let test_coeffs = vec![F::one(), F::one()];  // gamma1, gamma2
+
+
+            // let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
+            //     polys.into_iter().map(Arc::new).collect();
+
+            let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
+                vec![CommittedPolynomial::TrustedAdvice, poly_id],
+                vec![Arc::new(MultilinearPolynomial::from(ta.clone())), ram_ra.clone()],
+                &test_coeffs,
+                trusted_advice_poly,
+                streaming_context,
+            ));
+
+
+
+                // // Build poly_ids, poly_arcs, and coeffs like linear_combination approach
+                // let test_poly_ids = vec![CommittedPolynomial::TrustedAdvice, poly_id];
+                // let test_poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> = vec![
+                //     Arc::new(MultilinearPolynomial::from(ta.clone())),
+                //     ram_ra.clone(),
+                // ];
+                
+                // Evaluation point: all ones (use same type as r_sumcheck)
+                let point_ones: Vec<F::Challenge> = (0..15).map(|i| i.into()).collect();
+                tracing::info!("TEST: point_ones len = {}", point_ones.len());
+                
+                
+                // Get commitments for both polynomials
+                let ram_ra_commitment = test_commitments_map.get(&poly_id).cloned().unwrap();
+                let ta_commitment = trusted_advice_commitment.clone().unwrap();
+                
+                // Combine commitments and hints for both polynomials
+                let test_commitment = PCS::combine_commitments(
+                    &[ta_commitment, ram_ra_commitment],
+                    &test_coeffs
+                );
+                let test_hint = PCS::combine_hints(
+                    vec![ta_hint, ram_ra_hint],
+                    &test_coeffs
+                );
+                tracing::info!("TEST: Combined commitments and hints for TrustedAdvice + RamRa");
+                
+                let mut test_transcript = transcript.clone();
+                let test_proof = PCS::prove(
+                    pcs_setup,
+                    &joint_poly,
+                    &point_ones,
+                    Some(test_hint),
+                    &mut test_transcript,
+                );
+                tracing::info!("TEST: Created proof");
+                let e2 = ram_ra.evaluate(&point_ones);
+                tracing::info!("TESTT: e2={:?}", e2);
+
+
+
+
+
+                let previous_context = DoryGlobals::current_context();
+            
+                let _ctx = DoryGlobals::with_context(DoryContext::Main);
+                let main_columns = log2(DoryGlobals::get_num_columns()) as usize;
+                let main_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
+                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+                let trusted_advice_columns = log2(DoryGlobals::get_num_columns()) as usize;
+                let trusted_advice_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
+
+                tracing::info!("DEBUGGG:main_columns={}, trusted_advice_columns={}", main_columns, trusted_advice_columns);
+                tracing::info!("DEBUGGG:main_rows={}, trusted_advice_rows={}", main_rows, trusted_advice_rows);
+                let _ctx = DoryGlobals::with_context(previous_context);
+
+                let r_columns = &point_ones[..main_columns];
+                let r_rows = &point_ones[main_columns..];
+
+                let mut r_eval: F = r_rows[trusted_advice_rows..].iter().map(|r| F::one() - r).product();
+                r_eval *= r_columns[trusted_advice_columns..].iter().map(|r| F::one() - r).product::<F>();
+                tracing::info!("multiplying r_rows from {} to {} and r_columns from {} to {}", trusted_advice_rows, r_rows.len(), trusted_advice_columns, r_columns.len());
+                tracing::info!("then it means, from {} to {} and from {} to {}", trusted_advice_rows + main_columns, point_ones.len(), trusted_advice_columns, r_columns.len());
+                
+                // Trusted advice only has log_T variables, so use only the r_cycle portion
+                // r_sumcheck = [columns (main_columns), rows (remaining)]
+                // For trusted advice, we need: [trusted_advice_columns, trusted_advice_rows]
+                let eval_point: Vec<_> = point_ones[..trusted_advice_columns]
+                    .iter()
+                    .chain(&point_ones[main_columns..main_columns + trusted_advice_rows])
+                    .copied()
+                    .collect();
+                tracing::info!("Evaluating trusted advice: eval_point={:?}, log_K={}", 
+                    eval_point, log_K);
+
+                
+                tracing::info!("TEST: trusted_advice_poly={:?}", (0..ta.get_num_vars()).map(|index| ta.get_coeff(index)).collect::<Vec<_>>());
+
+                // // Print first two rows of ram_ra poly coefficients
+                // if let MultilinearPolynomial::OneHot(one_hot) = ram_ra.as_ref() {
+                //     let num_columns = DoryGlobals::get_num_columns();
+                //     let T = one_hot.nonzero_indices.len();
+                //     let K = one_hot.K;
+                //     // Compute first two rows of coefficients (each row has num_columns elements)
+                //     let mut row0: Vec<F> = vec![F::zero(); num_columns];
+                //     let mut row1: Vec<F> = vec![F::zero(); num_columns];
+                //     let rows_per_k = T / num_columns;
+                //     for (t, k_opt) in one_hot.nonzero_indices.iter().enumerate() {
+                //         if let Some(k) = k_opt {
+                //             let global_idx = (*k as usize) * T + t;
+                //             let row_idx = global_idx / num_columns;
+                //             let col_idx = global_idx % num_columns;
+                //             if row_idx == 0 {
+                //                 row0[col_idx] = F::one();
+                //             } else if row_idx == 1 {
+                //                 row1[col_idx] = F::one();
+                //             }
+                //         }
+                //     }
+                //     tracing::info!("TEST: ram_ra row0 (nonzero indices): {:?}", row0.iter().enumerate().filter(|(_, v)| !v.is_zero()).map(|(i, _)| i).collect::<Vec<_>>());
+                //     tracing::info!("TEST: ram_ra row1 (nonzero indices): {:?}", row1.iter().enumerate().filter(|(_, v)| !v.is_zero()).map(|(i, _)| i).collect::<Vec<_>>());
+                //     tracing::info!("TEST: ram_ra K={}, T={}, num_columns={}, rows_per_k={}", K, T, num_columns, rows_per_k);
+                // }
+
+                
+
+
+
+                let e1 = ta.evaluate(&eval_point) * r_eval;
+                let rlc_eval = e1 * test_coeffs[0] + e2 * test_coeffs[1];
+
+                tracing::info!("TEST: rlc_eval={:?}", rlc_eval);
+                tracing::info!("TEST: test_coeffs={:?}", test_coeffs);
+                tracing::info!("TEST: e1={:?}", e1);
+                tracing::info!("TEST: e2={:?}", e2);
+                
+                // Verify
+                let verifier_setup = PCS::setup_verifier(pcs_setup);
+                let mut verify_transcript = transcript.clone();
+                let verify_result = PCS::verify(
+                    &test_proof,
+                    &verifier_setup,
+                    &mut verify_transcript,
+                    &point_ones,
+                    &rlc_eval,
+                    &test_commitment,
+                );
+                tracing::info!("TEST: Verification result = {:?}", verify_result);
+                
+            } else {
+                tracing::info!("TEST: Could not find TrustedAdvice or RamRa(0) or saved hints");
+            }
+            tracing::info!("========== END TEST ==========");
+        }
 
 
 
@@ -1232,6 +1423,7 @@ where
 
             let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
                 .into_iter()
+                // .filter(|(k, _)| *k != CommittedPolynomial::TrustedAdvice)
                 .map(|(k, v)| (v, commitments_map.remove(&k).unwrap()))
                 .unzip();
             debug_assert!(commitments_map.is_empty(), "Every commitment should be used");

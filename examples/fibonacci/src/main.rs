@@ -1,4 +1,4 @@
-use jolt_sdk::{TrustedAdvice, UntrustedAdvice, serialize_and_print_size};
+use jolt_sdk::{serialize_and_print_size, TrustedAdvice};
 use std::time::Instant;
 use tracing::info;
 
@@ -25,13 +25,11 @@ pub fn main() {
 
     let prove_fib = guest::build_prover_fib2(program, prover_preprocessing.clone());
     let verify_fib = guest::build_verifier_fib2(verifier_preprocessing);
-
-
+    let advice_data = [53u8, 100, 112, 56, 57, 230, 59, 54, 73];
     let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_fib2(
-        TrustedAdvice::new(10),
+        TrustedAdvice::new(advice_data),
         &prover_preprocessing,
     );
-
 
     // let program_summary = guest::analyze_fib(10);
     // program_summary
@@ -39,11 +37,11 @@ pub fn main() {
     //     .expect("should write");
 
     let trace_file = "/tmp/fib_trace.bin";
-    guest::trace_fib2_to_file(trace_file, 10, TrustedAdvice::new(10), UntrustedAdvice::new(20));
+    guest::trace_fib2_to_file(trace_file, 10, TrustedAdvice::new(advice_data));
     info!("Trace file written to: {trace_file}.");
 
     let now = Instant::now();
-    let (output, proof, io_device) = prove_fib(10, TrustedAdvice::new(10), UntrustedAdvice::new(20), trusted_advice_commitment);
+    let (output, proof, io_device) = prove_fib(10, TrustedAdvice::new(advice_data), trusted_advice_commitment);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     if save_to_disk {

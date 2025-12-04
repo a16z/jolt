@@ -1,10 +1,11 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
+use crate::zkvm::ram::read_write_checking::RamReadWriteCheckingProver;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
 use allocative::Allocative;
@@ -421,21 +422,31 @@ impl<F: JoltField> RLCPolynomial<F> {
                         for (poly_id, coeff) in &ctx.dense_polys {
                             let dense_val = match poly_id {
                                 CommittedPolynomial::TrustedAdvice => {
-                                    // Global coefficient index: row_idx * num_columns + col_idx
-                                    // Trusted advice poly is indexed by cycle position, not extracted from cycle data
-                                    let global_idx = row_idx * num_columns + col_idx;
+                                    tracing::info!("val: {}, row_index: {}, col_index: {}", left_vec[row_idx], row_idx, col_idx);
+                                    // TrustedAdvice has different dimensions than main polynomials
+                                    // Get trusted advice dimensions from DoryGlobals
+                                    let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+                                    let ta_columns = DoryGlobals::get_num_columns();
+                                    let ta_rows = DoryGlobals::get_max_num_rows();
+                                    drop(_ctx);
+                                    
                                     let trusted_poly = ctx.trusted_advice_poly.as_ref().unwrap();
                                     
-                                    if row_idx == 0 && col_idx == 0 {
-                                        tracing::info!("TrustedAdvice: poly_len={}, T={}, num_columns={}", 
-                                            trusted_poly.original_len(), T, num_columns);
-                                    }
-                                    
-                                    // Check bounds: if index is beyond polynomial size, treat as zero
-                                    if global_idx < trusted_poly.original_len() {
-                                        trusted_poly.get_coeff(global_idx)
-                                    } else {
+                                    // If row is beyond trusted advice rows, coefficient is zero
+                                    if row_idx >= ta_rows {
                                         F::zero()
+                                    // If column is beyond trusted advice columns, coefficient is zero
+                                    } else if col_idx >= ta_columns {
+                                        F::zero()
+                                    } else {
+                                        // Trusted advice coefficients are stored row by row with ta_columns per row
+                                        let ta_idx = row_idx * ta_columns + col_idx;
+                                        if ta_idx < trusted_poly.original_len() {
+                                            tracing::info!("TEST: getting multiplied by trusted_poly.get_coeff(ta_idx)={:?}", trusted_poly.get_coeff(ta_idx));
+                                            trusted_poly.get_coeff(ta_idx)
+                                        } else {
+                                            panic!("Trusted advice index out of bounds: ta_idx={}, len={}", ta_idx, trusted_poly.original_len());
+                                        }
                                     }
                                 }
                                 _ => Self::extract_dense_value(poly_id, cycle),

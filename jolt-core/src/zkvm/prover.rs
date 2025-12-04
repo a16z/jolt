@@ -19,8 +19,8 @@ use crate::{
             commitment_scheme::StreamingCommitmentScheme,
             dory::{DoryContext, DoryGlobals},
         },
-        multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{ProverOpeningAccumulator, ReducedOpeningProof},
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        opening_proof::{OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof},
         rlc_polynomial::RLCStreamingData,
     },
     pprof_scope,
@@ -31,7 +31,7 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
-        config::{get_log_k_chunk, OneHotParams},
+        config::{OneHotParams, get_log_k_chunk},
         ram::populate_memory_states,
         verifier::JoltVerifierPreprocessing,
     },
@@ -951,6 +951,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         tracing::info!("Calling opening_accumulator.reduce_and_prove to batch prove all polynomial openings (will invoke PCS::prove, PCS::combine_commitments, PCS::combine_hints)");
         let trusted_advice_poly = self.advice.trusted_advice_polynomial.as_ref().cloned();
         let trusted_advice_point = self.opening_accumulator.get_trusted_advice_opening();
+
 
         self.opening_accumulator.reduce_and_prove(
             polynomials_map,
