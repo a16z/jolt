@@ -104,7 +104,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
     type Commitment = ArkGT;
-    type MyProof = ArkDoryProof;
+    type Proof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
     type OpeningProofHint = Vec<ArkG1>;
 
@@ -164,7 +164,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::MyProof {
+    ) -> Self::Proof {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
         let row_commitments = hint.unwrap_or_else(|| {
@@ -202,7 +202,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 
     fn verify<ProofTranscript: Transcript>(
-        proof: &Self::MyProof,
+        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],

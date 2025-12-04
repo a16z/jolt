@@ -420,7 +420,7 @@ where
     type VerifierSetup = HyperKZGVerifierKey<P>;
 
     type Commitment = HyperKZGCommitment<P>;
-    type MyProof = HyperKZGProof<P>;
+    type Proof = HyperKZGProof<P>;
     type BatchedProof = HyperKZGProof<P>;
     type OpeningProofHint = ();
 
@@ -489,13 +489,13 @@ where
         opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated
         _hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::MyProof {
+    ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
         HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
     }
 
     fn verify<ProofTranscript: Transcript>(
-        proof: &Self::MyProof,
+        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
         opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated

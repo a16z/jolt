@@ -16,7 +16,10 @@ use crate::{
     guest,
     poly::{
         commitment::{
-            commitment_scheme::{CompressedStreamingCommitmentScheme, StreamingCommitmentScheme},
+            commitment_scheme::{
+                CompressedCommitmentScheme, CompressedStreamingCommitmentScheme,
+                StreamingCommitmentScheme,
+            },
             dory::{DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
@@ -32,6 +35,7 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
+        proof_serialization::JoltCompressedProof,
         ram::populate_memory_states,
         verifier::JoltVerifierPreprocessing,
     },
@@ -274,28 +278,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
     #[allow(clippy::type_complexity)]
     pub fn prove(
-        self,
+        mut self,
     ) -> (
         JoltUncompressedProof<F, PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
-        self.prove_with_mode(JoltProofCompressionFlag::Uncompressed)
-    }
+        let _pprof_prove = pprof_scope!("prove");
+        let start = Instant::now();
 
-    /// Generates proofs which do not contain GT elements and are therefore not applicable to
-    /// the torus compression implemented for pairing values.
-    fn generate_uni_skip_and_sumcheck_proofs(
-        &mut self,
-    ) -> (
-        UniSkipFirstRoundProof<F, ProofTranscript>,
-        UniSkipFirstRoundProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
-    ) {
         fiat_shamir_preamble(
             &self.program_io,
             self.one_hot_params.ram_k,
@@ -313,47 +303,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
         tracing::info!("Stage 7 proving");
-        (
-            stage1_uni_skip_first_round_proof,
-            stage2_uni_skip_first_round_proof,
-            stage1_sumcheck_proof,
-            stage2_sumcheck_proof,
-            stage3_sumcheck_proof,
-            stage4_sumcheck_proof,
-            stage5_sumcheck_proof,
-            stage6_sumcheck_proof,
-        )
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn prove_with_mode(
-        mut self,
-        compression_flag: JoltProofCompressionFlag,
-    ) -> (
-        JoltUncompressedProof<F, PCS, ProofTranscript>,
-        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
-    ) {
-        let _pprof_prove = pprof_scope!("prove");
-
-        let start = Instant::now();
-
-        let (
-            stage1_uni_skip_first_round_proof,
-            stage1_sumcheck_proof,
-            stage2_uni_skip_first_round_proof,
-            stage2_sumcheck_proof,
-            stage3_sumcheck_proof,
-            stage4_sumcheck_proof,
-            stage5_sumcheck_proof,
-            stage6_sumcheck_proof,
-        ) = self.generate_uni_skip_and_sumcheck_proofs();
-
-        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
 
         // Proofs that contain GT elements and are therefore applicable to compression.
+
         let (commitments, opening_proof_hints) =
             self.generate_and_commit_witness_polynomials_uncompressed();
 
+        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         let trusted_advice_proof = self.prove_trusted_advice();
         let untrusted_advice_proof = self.prove_untrusted_advice();
         let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
@@ -378,6 +334,100 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let debug_info = None;
 
         let proof = JoltUncompressedProof {
+            opening_claims: Claims(self.opening_accumulator.openings.clone()),
+            commitments,
+            untrusted_advice_commitment,
+            stage1_uni_skip_first_round_proof,
+            stage1_sumcheck_proof,
+            stage2_uni_skip_first_round_proof,
+            stage2_sumcheck_proof,
+            stage3_sumcheck_proof,
+            stage4_sumcheck_proof,
+            stage5_sumcheck_proof,
+            stage6_sumcheck_proof,
+            trusted_advice_proof,
+            untrusted_advice_proof,
+            reduced_opening_proof,
+            trace_length: self.trace.len(),
+            ram_K: self.one_hot_params.ram_k,
+            bytecode_K: self.one_hot_params.bytecode_k,
+            log_k_chunk: self.one_hot_params.log_k_chunk,
+            twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
+        };
+
+        let prove_duration = start.elapsed();
+
+        tracing::info!(
+            "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
+            prove_duration.as_secs_f64(),
+            self.unpadded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+            self.padded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+        );
+
+        (proof, debug_info)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn prove_compressed(
+        mut self,
+    ) -> (
+        JoltCompressedProof<F, PCS, ProofTranscript>,
+        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+    )
+    where
+        PCS: CompressedStreamingCommitmentScheme,
+    {
+        let _pprof_prove = pprof_scope!("prove");
+        let start = Instant::now();
+
+        fiat_shamir_preamble(
+            &self.program_io,
+            self.one_hot_params.ram_k,
+            self.trace.len(),
+            &mut self.transcript,
+        );
+
+        tracing::info!("bytecode size: {}", self.preprocessing.bytecode.code_size);
+
+        self.generate_and_commit_trusted_advice();
+        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
+        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof) = self.prove_stage2();
+        let stage3_sumcheck_proof = self.prove_stage3();
+        let stage4_sumcheck_proof = self.prove_stage4();
+        let stage5_sumcheck_proof = self.prove_stage5();
+        let stage6_sumcheck_proof = self.prove_stage6();
+        tracing::info!("Stage 7 proving");
+
+        // Proofs that contain GT elements and are therefore applicable to compression.
+
+        let (commitments, opening_proof_hints) =
+            self.generate_and_commit_witness_polynomials_compressed();
+
+        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
+        let trusted_advice_proof = self.prove_trusted_advice_compressed();
+        let untrusted_advice_proof = self.prove_untrusted_advice_compressed();
+        let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
+
+        #[cfg(test)]
+        assert!(
+            self.opening_accumulator
+                .appended_virtual_openings
+                .borrow()
+                .is_empty(),
+            "Not all virtual openings have been proven, missing: {:?}",
+            self.opening_accumulator.appended_virtual_openings.borrow()
+        );
+
+        #[cfg(test)]
+        let debug_info = Some(ProverDebugInfo {
+            transcript: self.transcript.clone(),
+            opening_accumulator: self.opening_accumulator.clone(),
+            prover_setup: self.preprocessing.generators.clone(),
+        });
+        #[cfg(not(test))]
+        let debug_info = None;
+
+        let proof = JoltCompressedProof {
             opening_claims: Claims(self.opening_accumulator.openings.clone()),
             commitments,
             untrusted_advice_commitment,
@@ -978,7 +1028,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_trusted_advice(&mut self) -> Option<PCS::MyProof> {
+    fn prove_trusted_advice(&mut self) -> Option<PCS::Proof> {
         self.advice
             .trusted_advice_polynomial
             .as_ref()
@@ -999,7 +1049,31 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_untrusted_advice(&mut self) -> Option<PCS::MyProof> {
+    fn prove_trusted_advice_compressed(&mut self) -> Option<PCS::CompressedProof>
+    where
+        PCS: CompressedCommitmentScheme,
+    {
+        self.advice
+            .trusted_advice_polynomial
+            .as_ref()
+            .map(|trusted_advice_poly| {
+                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+                let (point, _) = self
+                    .opening_accumulator
+                    .get_trusted_advice_opening()
+                    .unwrap();
+                PCS::prove_compressed(
+                    &self.preprocessing.generators,
+                    trusted_advice_poly,
+                    &point.r,
+                    None,
+                    &mut self.transcript,
+                )
+            })
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prove_untrusted_advice(&mut self) -> Option<PCS::Proof> {
         self.advice
             .untrusted_advice_polynomial
             .as_ref()
@@ -1020,10 +1094,77 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
+    fn prove_untrusted_advice_compressed(&mut self) -> Option<PCS::CompressedProof>
+    where
+        PCS: CompressedCommitmentScheme,
+    {
+        self.advice
+            .untrusted_advice_polynomial
+            .as_ref()
+            .map(|untrusted_advice_poly| {
+                let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
+                let (point, _) = self
+                    .opening_accumulator
+                    .get_untrusted_advice_opening()
+                    .unwrap();
+                PCS::prove_compressed(
+                    &self.preprocessing.generators,
+                    untrusted_advice_poly,
+                    &point.r,
+                    None,
+                    &mut self.transcript,
+                )
+            })
+    }
+
+    #[tracing::instrument(skip_all)]
     fn prove_stage7(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
+        let _guard = (
+            DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
+            AllCommittedPolynomials::initialize(&self.one_hot_params),
+        );
+
+        let all_polys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+        let polynomials_map = CommittedPolynomial::generate_witness_batch(
+            &all_polys,
+            self.preprocessing,
+            &self.trace,
+            &self.one_hot_params,
+        );
+
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
+
+        let streaming_data = Arc::new(RLCStreamingData {
+            bytecode: self.preprocessing.bytecode.clone(),
+            memory_layout: self.preprocessing.memory_layout.clone(),
+        });
+
+        self.opening_accumulator.reduce_and_prove(
+            polynomials_map,
+            opening_proof_hints,
+            &self.preprocessing.generators,
+            &mut self.transcript,
+            Some((
+                self.lazy_trace.clone(),
+                streaming_data,
+                self.one_hot_params.clone(),
+            )),
+        )
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prove_stage7_compressed(
+        &mut self,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> CompressedReducedOpeningProof<F, PCS, ProofTranscript>
+    where
+        PCS: CompressedCommitmentScheme,
+    {
         let _guard = (
             DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
             AllCommittedPolynomials::initialize(&self.one_hot_params),

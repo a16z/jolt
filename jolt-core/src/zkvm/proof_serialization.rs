@@ -8,16 +8,22 @@ use ark_serialize::{
 };
 use num::FromPrimitive;
 
-use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
+        opening_proof::{
+            CompressedReducedOpeningProof, OpeningId, OpeningPoint, Openings, ReducedOpeningProof,
+            SumcheckId,
+        },
     },
     subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+};
+use crate::{
+    poly::commitment::commitment_scheme::CompressedCommitmentScheme,
+    zkvm::{config::OneHotParams, witness::AllCommittedPolynomials},
 };
 
 const COMPRESSED_SERIALIZATION_FLAG: u8 = 1;
@@ -34,10 +40,36 @@ pub struct JoltUncompressedProof<F: JoltField, PCS: CommitmentScheme<Field = F>,
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub trusted_advice_proof: Option<PCS::MyProof>,
-    pub untrusted_advice_proof: Option<PCS::MyProof>,
+    pub trusted_advice_proof: Option<PCS::Proof>,
+    pub untrusted_advice_proof: Option<PCS::Proof>,
     pub reduced_opening_proof: ReducedOpeningProof<F, PCS, FS>, // Stage 7
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    pub trace_length: usize,
+    pub ram_K: usize,
+    pub bytecode_K: usize,
+    pub log_k_chunk: usize,
+    pub twist_sumcheck_switch_index: usize,
+}
+
+pub struct JoltCompressedProof<
+    F: JoltField,
+    PCS: CompressedCommitmentScheme<Field = F>,
+    FS: Transcript,
+> {
+    pub opening_claims: Claims<F>,
+    pub commitments: Vec<PCS::CompressedCommitment>,
+    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
+    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
+    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub trusted_advice_proof: Option<PCS::CompressedProof>,
+    pub untrusted_advice_proof: Option<PCS::CompressedProof>,
+    pub reduced_opening_proof: CompressedReducedOpeningProof<F, PCS, FS>, // Stage 7
+    pub untrusted_advice_commitment: Option<PCS::CompressedProof>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
