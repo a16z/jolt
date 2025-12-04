@@ -2,6 +2,8 @@ use std::iter::zip;
 use std::sync::Arc;
 
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_std::Zero;
 
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
@@ -283,6 +285,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtua
             opening_point,
             claim,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 
