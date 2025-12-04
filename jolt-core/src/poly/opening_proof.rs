@@ -629,6 +629,28 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
     }
 }
 
+#[cfg(not(test))]
+type ReduceAndProveSumcheckHelperResult<F, ProofTranscript, PCS: CommitmentScheme<Field = F>> = (
+    SumcheckInstanceProof<F, ProofTranscript>,
+    Vec<F>,
+    Vec<<F as JoltField>::Challenge>,
+    MultilinearPolynomial<F>,
+    <PCS as CommitmentScheme>::OpeningProofHint,
+);
+#[cfg(test)]
+type ReduceAndProveSumcheckHelperResult<F, ProofTranscript, PCS: CommitmentScheme<Field = F>> = (
+    SumcheckInstanceProof<F, ProofTranscript>,
+    Vec<F>,
+    Vec<<F as JoltField>::Challenge>,
+    (
+        MultilinearPolynomial<F>,
+        Vec<CommittedPolynomial>,
+        Vec<Arc<MultilinearPolynomial<F>>>,
+        Vec<F>,
+    ),
+    <PCS as CommitmentScheme>::OpeningProofHint,
+);
+
 impl<F> ProverOpeningAccumulator<F>
 where
     F: JoltField,
@@ -803,15 +825,16 @@ where
         skip_all,
         name = "ProverOpeningAccumulator::reduce_and_prove_sumcheck_helper"
     )]
-    pub fn reduce_and_prove_sumcheck_helper<ProofTranscript: Transcript>(
+    pub fn reduce_and_prove_sumcheck_helper<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
         &mut self,
-        polynomials: &mut HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
-        Vec<F>,
-        Vec<<F as JoltField>::Challenge>,
-    ) {
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+    ) -> ReduceAndProveSumcheckHelperResult<F, ProofTranscript, PCS> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
             self.sumchecks.len()
@@ -852,23 +875,6 @@ where
         r_sumcheck[log_K..].reverse();
 
         transcript.append_scalars(&sumcheck_claims);
-
-        (sumcheck_proof, sumcheck_claims, r_sumcheck)
-    }
-
-    /// Reduces the multiple openings accumulated into a single opening proof,
-    /// using a single sumcheck.
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
-    pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        &mut self,
-        mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        pcs_setup: &PCS::ProverSetup,
-        transcript: &mut ProofTranscript,
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
-    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
-        let (sumcheck_proof, sumcheck_claims, r_sumcheck) =
-            Self::reduce_and_prove_sumcheck_helper(self, &mut polynomials, transcript);
 
         let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
 
@@ -921,6 +927,59 @@ where
 
             (joint_poly, hint)
         };
+
+        #[cfg(not(test))]
+        {
+            (
+                sumcheck_proof,
+                sumcheck_claims,
+                r_sumcheck,
+                joint_poly,
+                hint,
+            )
+        }
+
+        #[cfg(test)]
+        {
+            (
+                sumcheck_proof,
+                sumcheck_claims,
+                r_sumcheck,
+                joint_poly,
+                hint,
+            )
+        }
+    }
+
+    /// Reduces the multiple openings accumulated into a single opening proof,
+    /// using a single sumcheck.
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
+    pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        &mut self,
+        polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut ProofTranscript,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
+        #[cfg(not(test))]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
+                streaming_context,
+            );
+        #[cfg(test)]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
+                streaming_context,
+            );
 
         #[cfg(test)]
         let joint_commitment = {
@@ -969,8 +1028,8 @@ where
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
         streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
@@ -978,60 +1037,24 @@ where
     where
         PCS: CompressedCommitmentScheme,
     {
-        let (sumcheck_proof, sumcheck_claims, r_sumcheck) =
-            Self::reduce_and_prove_sumcheck_helper(self, &mut polynomials, transcript);
-
-        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
-
-        // Combines the individual polynomials into the RLC that will be used for the
-        // batched opening proof.
-        let (joint_poly, hint) = {
-            let mut rlc_map = BTreeMap::new();
-            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
-                    *value += *gamma;
-                } else {
-                    rlc_map.insert(sumcheck.polynomial, *gamma);
-                }
-            }
-
-            let (poly_ids, coeffs, polys): (
-                Vec<CommittedPolynomial>,
-                Vec<F>,
-                Vec<MultilinearPolynomial<F>>,
-            ) = rlc_map
-                .iter()
-                .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
-                .multiunzip();
-
-            let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
-                polys.into_iter().map(Arc::new).collect();
-
-            let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-                poly_ids.clone(),
-                poly_arcs.clone(),
-                &coeffs,
+        #[cfg(not(test))]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
                 streaming_context,
-            ));
-
-            let hints: Vec<PCS::OpeningProofHint> = rlc_map
-                .into_keys()
-                .map(|k| opening_hints.remove(&k).unwrap())
-                .collect();
-            debug_assert!(
-                opening_hints.is_empty(),
-                "Commitments to {:?} are not used",
-                opening_hints.keys()
             );
-            // Compute the opening proof hint for the reduced opening by homomorphically combining
-            // the hints for the individual sumchecks.
-            let hint = PCS::combine_hints(hints, &coeffs);
-
-            #[cfg(test)]
-            let joint_poly = (joint_poly, poly_ids, poly_arcs, coeffs);
-
-            (joint_poly, hint)
-        };
+        #[cfg(test)]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
+                streaming_context,
+            );
 
         #[cfg(test)]
         let joint_commitment = {
