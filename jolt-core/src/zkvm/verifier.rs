@@ -383,8 +383,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let ram_hamming_weight =
             ram::new_ra_hamming_weight_verifier(&self.one_hot_params, &mut self.transcript);
-        let lookups_ra_virtual =
-            LookupsRaSumcheckVerifier::new(&self.one_hot_params, &self.opening_accumulator);
+        let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
             instruction_lookups::new_ra_one_hot_verifiers(
                 n_cycle_vars,

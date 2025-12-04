@@ -1,4 +1,4 @@
-use std::array;
+use std::{array, iter::zip};
 
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -29,7 +29,9 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        mles_product_sum::{eval_prod_5_accumulate, finish_mles_product_sum_from_evals},
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
     utils::{
@@ -92,7 +94,7 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
 
 /// Degree bound of the sumcheck round polynomials in [`ReadRafSumcheckVerifier`].
-const DEGREE_BOUND: usize = 3;
+const DEGREE_BOUND: usize = 6;
 
 /// Sumcheck prover for [`ReadRafSumcheckVerifier`].
 ///
@@ -100,9 +102,9 @@ const DEGREE_BOUND: usize = 3;
 ///   Σ_k ra(k, j)·Val_j(k) and Σ_k ra(k, j)·RafVal_j(k),
 #[derive(Allocative)]
 pub struct ReadRafSumcheckProver<F: JoltField> {
-    /// Materialized `ra(k, j)` MLE over (address, cycle) after the first log(K) rounds.
+    /// Materialized `ra_i(k_i, j)` polynomials.
     /// Present only in the last log(T) rounds.
-    ra: Option<MultilinearPolynomial<F>>,
+    ra_polys: Option<[MultilinearPolynomial<F>; 4]>,
     /// Running list of sumcheck challenges r_j (address then cycle) in binding order.
     r: Vec<F::Challenge>,
 
@@ -321,7 +323,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             identity_ps,
 
             // State for last log(T) rounds
-            ra: None,
+            ra_polys: None,
             eq_r_reduction: eq_poly_r_reduction,
             prefix_registry: PrefixRegistry::new(),
             combined_val_polynomial: None,
@@ -477,28 +479,43 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     fn init_log_t_rounds(&mut self, gamma: F, gamma_sqr: F) {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
+        let m_mask = m - 1;
         // Drop stuff that's no longer needed
         drop_in_background_thread((
             std::mem::take(&mut self.u_evals),
             std::mem::take(&mut self.lookup_indices_uninterleave),
         ));
 
-        // Materialize ra polynomial
-        let ra = {
-            let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomial");
+        let ra_polys: [MultilinearPolynomial<F>; 4] = {
+            let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomials");
             let _guard = span.enter();
-            self.lookup_indices
-                .par_iter()
-                .map(|k| {
-                    (0..self.params.phases)
-                        .map(|phase| {
-                            let (prefix, _) = k.split((self.params.phases - 1 - phase) * log_m);
-                            let k_bound: usize = prefix % m;
-                            self.v[phase][k_bound]
+            let mut poly_iter = self
+                .v
+                .chunks_exact(4)
+                .enumerate()
+                .map(|(chunk_i, v_chunk)| {
+                    let phase_offset = chunk_i * 4;
+                    let res = self
+                        .lookup_indices
+                        .par_iter()
+                        .with_min_len(1024)
+                        .map(|i| {
+                            let mut acc = F::one();
+
+                            for (phase, table) in zip(phase_offset.., v_chunk) {
+                                let v: u128 = i.into();
+                                let i_segment = ((v >> ((self.params.phases - 1 - phase) * log_m))
+                                    as usize)
+                                    & m_mask;
+                                acc *= table[i_segment];
+                            }
+
+                            acc
                         })
-                        .product::<F>()
-                })
-                .collect::<Vec<_>>()
+                        .collect::<Vec<F>>();
+                    res.into()
+                });
+            array::from_fn(|_| poly_iter.next().unwrap())
         };
 
         drop_in_background_thread(std::mem::take(&mut self.v));
@@ -550,7 +567,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
         self.combined_raf_val_polynomial = Some(MultilinearPolynomial::from(combined_raf_val_poly));
-        self.ra = Some(ra.into());
+        self.ra_polys = Some(ra_polys);
     }
 }
 
@@ -578,42 +595,52 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             // Phase 1: First log(K) rounds
             self.compute_prefix_suffix_prover_message(round, previous_claim)
         } else {
-            let ra = self.ra.as_ref().unwrap();
+            let ra_polys = self.ra_polys.as_ref().unwrap();
             let val = self.combined_val_polynomial.as_ref().unwrap();
             let raf_val = self.combined_raf_val_polynomial.as_ref().unwrap();
 
-            let [eval_at_0, eval_at_inf] = self
-                .eq_r_reduction
-                .par_fold_out_in(
-                    || [F::Unreduced::<9>::zero(); 2],
-                    |inner, j, _x_in, e_in| {
-                        // Eval ra(x), val(x), raf_val(x) at (r', j, {0, inf})
-                        let ra_at_0_j = ra.get_bound_coeff(2 * j);
-                        let ra_at_inf_j = ra.get_bound_coeff(2 * j + 1) - ra_at_0_j;
+            let mut sum_evals: [F; 5] = self.eq_r_reduction.par_fold_out_in(
+                || [F::Unreduced::<9>::zero(); 5],
+                |inner, j, _x_in, e_in| {
+                    // Eval ra_i(x), val(x), raf_val(x) at (r', j, {0, 1})
+                    let ra0_at_j_0 = ra_polys[0].get_bound_coeff(2 * j);
+                    let ra0_at_j_1 = ra_polys[0].get_bound_coeff(2 * j + 1);
+                    let ra1_at_j_0 = ra_polys[1].get_bound_coeff(2 * j);
+                    let ra1_at_j_1 = ra_polys[1].get_bound_coeff(2 * j + 1);
+                    let ra2_at_j_0 = ra_polys[2].get_bound_coeff(2 * j);
+                    let ra2_at_j_1 = ra_polys[2].get_bound_coeff(2 * j + 1);
+                    let ra3_at_j_0 = ra_polys[3].get_bound_coeff(2 * j);
+                    let ra3_at_j_1 = ra_polys[3].get_bound_coeff(2 * j + 1);
+                    let val_at_j_0 = val.get_bound_coeff(2 * j);
+                    let val_at_j_1 = val.get_bound_coeff(2 * j + 1);
+                    let raf_val_at_j_0 = raf_val.get_bound_coeff(2 * j);
+                    let raf_val_at_j_1 = raf_val.get_bound_coeff(2 * j + 1);
 
-                        let val_at_0_j = val.get_bound_coeff(2 * j);
-                        let val_at_inf_j = val.get_bound_coeff(2 * j + 1) - val_at_0_j;
+                    // v(x) = val(x) + raf_val(x)
+                    let v_at_0 = val_at_j_0 + raf_val_at_j_0;
+                    let v_at_1 = val_at_j_1 + raf_val_at_j_1;
 
-                        let raf_val_at_0_j = raf_val.get_bound_coeff(2 * j);
-                        let raf_val_at_inf_j = raf_val.get_bound_coeff(2 * j + 1) - raf_val_at_0_j;
+                    let pairs = [
+                        (e_in * ra0_at_j_0, e_in * ra0_at_j_1),
+                        (ra1_at_j_0, ra1_at_j_1),
+                        (ra2_at_j_0, ra2_at_j_1),
+                        (ra3_at_j_0, ra3_at_j_1),
+                        (v_at_0, v_at_1),
+                    ];
 
-                        inner[0] +=
-                            e_in.mul_unreduced::<9>(ra_at_0_j * (val_at_0_j + raf_val_at_0_j));
-                        inner[1] += e_in
-                            .mul_unreduced::<9>(ra_at_inf_j * (val_at_inf_j + raf_val_at_inf_j));
-                    },
-                    |_x_out, e_out, inner| {
-                        array::from_fn(|i| {
-                            let reduced = F::from_montgomery_reduce(inner[i]);
-                            e_out.mul_unreduced::<9>(reduced)
-                        })
-                    },
-                    |a, b| array::from_fn(|i| a[i] + b[i]),
-                )
-                .map(F::from_montgomery_reduce);
-
-            self.eq_r_reduction
-                .gruen_poly_deg_3(eval_at_0, eval_at_inf, previous_claim)
+                    eval_prod_5_accumulate(&pairs, inner);
+                },
+                |_x_out, e_out, inner| {
+                    inner.map(|v| {
+                        let v_reduced = F::from_montgomery_reduce(v);
+                        e_out * v_reduced
+                    })
+                },
+                |a, b| array::from_fn(|i| a[i] + b[i]),
+            );
+            let current_scalar = self.eq_r_reduction.get_current_scalar();
+            sum_evals.iter_mut().for_each(|v| *v *= current_scalar);
+            finish_mles_product_sum_from_evals(&sum_evals, previous_claim, &self.eq_r_reduction)
         }
     }
 
@@ -673,7 +700,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
 
             self.eq_r_reduction.bind(r_j);
             [
-                self.ra.as_mut().unwrap(),
                 self.combined_val_polynomial.as_mut().unwrap(),
                 self.combined_raf_val_polynomial.as_mut().unwrap(),
             ]
@@ -681,6 +707,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             .for_each(|poly| {
                 poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             });
+
+            self.ra_polys
+                .as_mut()
+                .unwrap()
+                .iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
 
@@ -717,14 +749,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                 claim,
             );
         });
-
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::InstructionRa,
-            SumcheckId::InstructionReadRaf,
-            r_sumcheck,
-            self.ra.as_ref().unwrap().final_sumcheck_claim(),
-        );
+        let mut r_address_chunks = sumcheck_challenges.chunks(LOG_K / 4);
+        for (i, ra_poly) in self.ra_polys.as_ref().unwrap().iter().enumerate() {
+            let r_address = r_address_chunks.next().unwrap();
+            let opening_point =
+                OpeningPoint::<BIG_ENDIAN, F>::new([r_address, &*r_cycle.r].concat());
+            accumulator.append_virtual(
+                transcript,
+                VirtualPolynomial::InstructionRa(i),
+                SumcheckId::InstructionReadRaf,
+                opening_point,
+                ra_poly.final_sumcheck_claim(),
+            );
+        }
         let raf_flag_claim = self
             .lookup_indices_identity
             .par_iter()
@@ -964,12 +1001,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
             .r;
         let eq_eval_r_reduction = EqPolynomial::<F>::mle(&r_reduction, &r_cycle_prime.r);
 
-        let ra_claim = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionRa,
-                SumcheckId::InstructionReadRaf,
-            )
-            .1;
+        let ra_claim = (0..4)
+            .map(|i| {
+                accumulator
+                    .get_virtual_polynomial_opening(
+                        VirtualPolynomial::InstructionRa(i),
+                        SumcheckId::InstructionReadRaf,
+                    )
+                    .1
+            })
+            .product::<F>();
 
         let table_flag_claims: Vec<F> = (0..LookupTables::<XLEN>::COUNT)
             .map(|i| {
@@ -1022,12 +1063,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
             );
         });
 
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::InstructionRa,
-            SumcheckId::InstructionReadRaf,
-            r_sumcheck,
-        );
+        let mut r_address_chunks = sumcheck_challenges.chunks(LOG_K / 4);
+        for i in 0..4 {
+            let r_address = r_address_chunks.next().unwrap();
+            let opening_point =
+                OpeningPoint::<BIG_ENDIAN, F>::new([r_address, &*r_cycle.r].concat());
+            accumulator.append_virtual(
+                transcript,
+                VirtualPolynomial::InstructionRa(i),
+                SumcheckId::InstructionReadRaf,
+                opening_point,
+            );
+        }
 
         accumulator.append_virtual(
             transcript,
