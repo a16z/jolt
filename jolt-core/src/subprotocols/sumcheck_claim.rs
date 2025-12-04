@@ -117,6 +117,7 @@ impl<F> Sub for ClaimExpr<F> {
 }
 
 /// Interpreted as `input_claim - output_claim = 0`.
+#[derive(Debug, Clone)]
 pub struct Claim<F: JoltField> {
     pub input_sumcheck_id: SumcheckId,
     pub input_claim_expr: ClaimExpr<F>,
@@ -124,6 +125,7 @@ pub struct Claim<F: JoltField> {
     pub is_offset: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct InputOutputClaims<F: JoltField> {
     pub claims: Vec<Claim<F>>,
     pub output_sumcheck_id: SumcheckId,
