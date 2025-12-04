@@ -318,7 +318,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     //   scaled_w[k][t] = lagrange_evals_r0[t] * r_grid[k]  (for klen > 1)
     // and scaled_w[0][t] = lagrange_evals_r0[t] when klen == 1 (no r_grid factor).
     #[allow(clippy::too_many_arguments)]
-    fn build_grids(
+    fn extrapolate_from_binary_grid_to_tertiary_grid(
         &self,
         grid_az: &mut [F],
         grid_bz: &mut [F],
@@ -497,7 +497,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     grid_a.fill(F::zero());
                     grid_b.fill(F::zero());
                     // Keep this call sequential to avoid nested rayon parallelism.
-                    self.build_grids(
+                    self.extrapolate_from_binary_grid_to_tertiary_grid(
                         &mut grid_a,
                         &mut grid_b,
                         jlen,
@@ -678,7 +678,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         skip_all,
         name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_poly_serial"
     )]
-    pub fn compute_evaluation_grid_from_polynomials_serial(&mut self, num_vars: usize) {
+    pub fn _compute_evaluation_grid_from_polynomials_serial(&mut self, num_vars: usize) {
         let eq_poly = &self.split_eq_poly;
 
         let n = self.az.as_ref().expect("az should be initialized").len();
@@ -904,128 +904,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.t_0 = Some(t0_acc);
         self.t_inf = Some(t_inf_acc);
     }
-    //fn stream_to_linear_time_parallel(&mut self) {
-    //    let num_x_out_vals = (&self.split_eq_poly).E_out_current_len();
-    //    let num_x_in_vals = (&self.split_eq_poly).E_in_current_len();
-    //    let r_grid = &self.r_grid;
-    //    let num_r_vals = r_grid.len();
-    //
-    //    // Output arrays are sized by (x_out, x_in) pairs
-    //    let output_size = num_x_out_vals * num_x_in_vals;
-    //    let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
-    //    let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
-    //
-    //    let num_r_bits = num_r_vals.log_2();
-    //    let num_x_in_bits = num_x_in_vals.log_2();
-    //
-    //    // Dynamic chunking for parallelization
-    //    let num_threads = rayon::current_num_threads();
-    //    let target_chunks = num_threads * 4; // 4x oversubscription
-    //    let min_chunk_pairs = 16; // Minimum pairs per chunk to avoid overhead
-    //    let pairs_per_chunk =
-    //        ((output_size + target_chunks - 1) / target_chunks).max(min_chunk_pairs);
-    //    let chunk_size = pairs_per_chunk * 2; // *2 for [X=0, X=1] storage
-    //
-    //    // Parallel computation with reduction
-    //    let (t0_acc, t_inf_acc) = az_bound
-    //        .par_chunks_mut(chunk_size)
-    //        .zip(bz_bound.par_chunks_mut(chunk_size))
-    //        .enumerate()
-    //        .fold(
-    //            || (F::zero(), F::zero()),
-    //            |(mut t0_local, mut t_inf_local), (chunk_idx, (az_chunk, bz_chunk))| {
-    //                let start_pair = chunk_idx * pairs_per_chunk;
-    //                let end_pair = (start_pair + pairs_per_chunk).min(output_size);
-    //
-    //                for pair_idx in start_pair..end_pair {
-    //                    // Decompose pair index into x_out, x_in
-    //                    let x_in_val = pair_idx % num_x_in_vals;
-    //                    let x_out_val = pair_idx / num_x_in_vals;
-    //
-    //                    // Initialize accumulators for this (x_out, x_in) pair
-    //                    let mut az0_sum = F::zero(); // For X=0
-    //                    let mut az1_sum = F::zero(); // For X=1
-    //                    let mut bz0_sum = F::zero(); // For X=0
-    //                    let mut bz1_sum = F::zero(); // For X=1
-    //
-    //                    // Iterate over X bit and r values
-    //                    for x_bit in 0..2 {
-    //                        for r_idx in 0..num_r_vals {
-    //                            // Build the full index: x_out || x_in || X || x_r
-    //                            let full_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
-    //                                | (x_in_val << (1 + num_r_bits))
-    //                                | (x_bit << num_r_bits)
-    //                                | r_idx;
-    //
-    //                            // Extract step index and selector
-    //                            let current_step_idx = full_idx >> 1;
-    //                            let selector = (full_idx & 1) == 1;
-    //
-    //                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
-    //                                &self.bytecode_preprocessing,
-    //                                &self.trace,
-    //                                current_step_idx,
-    //                            );
-    //
-    //                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-    //
-    //                            let (az, bz) = if !selector {
-    //                                // First group (selector = 0)
-    //                                (
-    //                                    eval.az_at_r_first_group(&self.lagrange_evals_r0),
-    //                                    eval.bz_at_r_first_group(&self.lagrange_evals_r0),
-    //                                )
-    //                            } else {
-    //                                // Second group (selector = 1)
-    //                                (
-    //                                    eval.az_at_r_second_group(&self.lagrange_evals_r0),
-    //                                    eval.bz_at_r_second_group(&self.lagrange_evals_r0),
-    //                                )
-    //                            };
-    //
-    //                            let r_eval = r_grid[r_idx];
-    //
-    //                            if x_bit == 0 {
-    //                                az0_sum += az * r_eval;
-    //                                bz0_sum += bz * r_eval;
-    //                            } else {
-    //                                az1_sum += az * r_eval;
-    //                                bz1_sum += bz * r_eval;
-    //                            }
-    //                        }
-    //                    }
-    //
-    //                    // Store in chunk-relative position
-    //                    let buffer_offset = 2 * (pair_idx - start_pair);
-    //                    az_chunk[buffer_offset] = az0_sum;
-    //                    az_chunk[buffer_offset + 1] = az1_sum;
-    //                    bz_chunk[buffer_offset] = bz0_sum;
-    //                    bz_chunk[buffer_offset + 1] = bz1_sum;
-    //
-    //                    // Local accumulation for t_0 and t_inf
-    //                    let e_in = (&self.split_eq_poly).E_in_current()[x_in_val];
-    //                    let e_out = (&self.split_eq_poly).E_out_current()[x_out_val];
-    //                    let p0 = az0_sum * bz0_sum;
-    //                    let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
-    //
-    //                    t0_local += e_out * e_in * p0;
-    //                    t_inf_local += e_out * e_in * slope;
-    //                }
-    //
-    //                (t0_local, t_inf_local)
-    //            },
-    //        )
-    //        .reduce(
-    //            || (F::zero(), F::zero()),
-    //            |(t0_a, t_inf_a), (t0_b, t_inf_b)| (t0_a + t0_b, t_inf_a + t_inf_b),
-    //        );
-    //
-    //    self.az = Some(DensePolynomial::new(az_bound));
-    //    self.bz = Some(DensePolynomial::new(bz_bound));
-    //    self.t_0 = Some(t0_acc);
-    //    self.t_inf = Some(t_inf_acc);
-    //}
-    //
+
     fn _materialise_sumcheck_polynomials_from_trace_serial(&mut self) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
@@ -1511,14 +1390,11 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace"
     )]
-    fn materialise_sumcheck_polynomials_from_trace(&mut self, window_size: usize) {
+    fn materialise_polynomials_from_trace(&mut self, window_size: usize) {
         let split_eq_poly = &self.split_eq_poly;
         if split_eq_poly.num_challenges() > 0 {
-            // NOTE: review this
-            //self.materialise_sumcheck_polynomials_from_trace_parallel(window_size);
             self.fused_materialise_polynomials_general_with_multiquadratic(window_size);
         } else {
-            //self.materialise_sumcheck_polynomials_from_trace_round_zero(window_size);
             self.fused_materialise_polynomials_round_zero(window_size);
         }
     }
@@ -1658,13 +1534,11 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let num_unbound_vars = self.schedule.num_unbound_vars(round);
         if self.schedule.is_switch_over_point(round) {
-            self.materialise_sumcheck_polynomials_from_trace(num_unbound_vars);
-            //self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
+            self.materialise_polynomials_from_trace(num_unbound_vars);
         } else if self.schedule.is_window_start(round) {
             if self.schedule.before_switch_over_point(round) {
                 self.compute_evaluation_grid_from_trace(num_unbound_vars);
             } else {
-                //TODO: This must be parallel
                 self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
             }
         }
