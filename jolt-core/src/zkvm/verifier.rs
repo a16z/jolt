@@ -123,8 +123,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let one_hot_params =
-            OneHotParams::new_with_log_k_chunk(proof.log_k_chunk, proof.bytecode_K, proof.ram_K);
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(
+            proof.log_k_chunk,
+            proof.lookups_ra_virtual_log_k_chunk,
+            proof.bytecode_K,
+            proof.ram_K,
+        );
 
         Ok(Self {
             trusted_advice_commitment,
@@ -347,6 +351,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(
             n_cycle_vars,
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -387,8 +392,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_ra_virtual =
-            LookupsRaSumcheckVerifier::new(&self.one_hot_params, &self.opening_accumulator);
+        let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
             instruction_lookups::new_ra_one_hot_verifiers(
                 self.proof.trace_length,

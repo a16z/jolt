@@ -48,6 +48,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub ram_K: usize,
     pub bytecode_K: usize,
     pub log_k_chunk: usize,
+    pub lookups_ra_virtual_log_k_chunk: usize,
 }
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
@@ -291,7 +292,10 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::LookupOutput => 24u8.serialize_with_mode(&mut writer, compress),
             Self::InstructionRaf => 25u8.serialize_with_mode(&mut writer, compress),
             Self::InstructionRafFlag => 26u8.serialize_with_mode(&mut writer, compress),
-            Self::InstructionRa => 27u8.serialize_with_mode(&mut writer, compress),
+            Self::InstructionRa(i) => {
+                27u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+            }
             Self::RegistersVal => 28u8.serialize_with_mode(&mut writer, compress),
             Self::RamAddress => 29u8.serialize_with_mode(&mut writer, compress),
             Self::RamRa => 30u8.serialize_with_mode(&mut writer, compress),
@@ -346,7 +350,6 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::LookupOutput
             | Self::InstructionRaf
             | Self::InstructionRafFlag
-            | Self::InstructionRa
             | Self::RegistersVal
             | Self::RamAddress
             | Self::RamRa
@@ -357,7 +360,10 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RamValFinal
             | Self::RamHammingWeight
             | Self::UnivariateSkip => 1,
-            Self::OpFlags(_) | Self::InstructionFlags(_) | Self::LookupTableFlag(_) => 2,
+            Self::InstructionRa(_)
+            | Self::OpFlags(_)
+            | Self::InstructionFlags(_)
+            | Self::LookupTableFlag(_) => 2,
         }
     }
 }
@@ -403,7 +409,10 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 24 => Self::LookupOutput,
                 25 => Self::InstructionRaf,
                 26 => Self::InstructionRafFlag,
-                27 => Self::InstructionRa,
+                27 => {
+                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::InstructionRa(i as usize)
+                }
                 28 => Self::RegistersVal,
                 29 => Self::RamAddress,
                 30 => Self::RamRa,
