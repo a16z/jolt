@@ -66,6 +66,7 @@ use crate::{
             val_evaluation::ValEvaluationSumcheckProver as RegistersValEvaluationSumcheckProver,
         },
         spartan::{
+            claim_reductions::InstructionLookupsClaimReductionSumcheckProver,
             instruction_input::InstructionInputSumcheckProver, outer::OuterRemainingSumcheckProver,
             product::ProductVirtualRemainderProver, prove_stage1_uni_skip, prove_stage2_uni_skip,
             shift::ShiftSumcheckProver,
@@ -549,6 +550,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.transcript,
         );
+        let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckProver::gen(
+            Arc::clone(&self.trace),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -559,6 +565,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             print_data_structure_heap_usage("RamRafEvaluationSumcheckProver", &ram_raf_evaluation);
             print_data_structure_heap_usage("RamReadWriteCheckingProver", &ram_read_write_checking);
             print_data_structure_heap_usage("OutputSumcheckProver", &ram_output_check);
+            print_data_structure_heap_usage(
+                "InstructionLookupsClaimReductionSumcheckProver",
+                &instruction_claim_reduction,
+            );
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
@@ -566,6 +576,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Box::new(ram_raf_evaluation),
             Box::new(ram_read_write_checking),
             Box::new(ram_output_check),
+            Box::new(instruction_claim_reduction),
         ];
 
         #[cfg(feature = "allocative")]
