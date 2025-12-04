@@ -422,7 +422,6 @@ impl<F: JoltField> RLCPolynomial<F> {
                         for (poly_id, coeff) in &ctx.dense_polys {
                             let dense_val = match poly_id {
                                 CommittedPolynomial::TrustedAdvice => {
-                                    tracing::info!("val: {}, row_index: {}, col_index: {}", left_vec[row_idx], row_idx, col_idx);
                                     // TrustedAdvice has different dimensions than main polynomials
                                     // Get trusted advice dimensions from DoryGlobals
                                     let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
@@ -442,7 +441,6 @@ impl<F: JoltField> RLCPolynomial<F> {
                                         // Trusted advice coefficients are stored row by row with ta_columns per row
                                         let ta_idx = row_idx * ta_columns + col_idx;
                                         if ta_idx < trusted_poly.original_len() {
-                                            tracing::info!("TEST: getting multiplied by trusted_poly.get_coeff(ta_idx)={:?}", trusted_poly.get_coeff(ta_idx));
                                             trusted_poly.get_coeff(ta_idx)
                                         } else {
                                             panic!("Trusted advice index out of bounds: ta_idx={}, len={}", ta_idx, trusted_poly.original_len());
