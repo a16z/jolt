@@ -104,9 +104,6 @@ impl StreamingSchedule for HalfSplitSchedule {
     }
 }
 
-/// Streaming schedule where window sizes increase as 1, 2, 3, ... until the
-/// streaming phase (first half of the rounds) is filled. The final window is
-/// truncated so that the total number of streaming rounds is still roughly half.
 //#[derive(Debug, Clone, Allocative)]
 //pub struct IncreasingWindowSchedule {
 //    pub(crate) num_rounds: usize,

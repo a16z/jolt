@@ -761,13 +761,11 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
     }
 
-    // TODO: No small value optimisation in this function currently.
-    // TODO: Put meaningful doc strings
     #[tracing::instrument(
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_parallel"
     )]
-    fn materialise_sumcheck_polynomials_from_trace_parallel(&mut self, _window_size: usize) {
+    fn _materialise_sumcheck_polynomials_from_trace_parallel(&mut self, _window_size: usize) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let r_grid = &self.r_grid;
@@ -1008,7 +1006,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_round_zero"
     )]
-    fn materialise_sumcheck_polynomials_from_trace_round_zero(&mut self, _window_size: usize) {
+    fn _materialise_sumcheck_polynomials_from_trace_round_zero(&mut self, _window_size: usize) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
@@ -1171,11 +1169,13 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
                         // Store the accumulated grid in chunk-relative position
                         let buffer_offset = grid_size * (pair_idx - start_pair);
-                        for j in 0..grid_size {
-                            az_chunk[buffer_offset + j] = az_grid[j];
-                            bz_chunk[buffer_offset + j] = bz_grid[j];
-                        }
-
+                        //for j in 0..grid_size {
+                        //    az_chunk[buffer_offset + j] = az_grid[j];
+                        //    bz_chunk[buffer_offset + j] = bz_grid[j];
+                        //}
+                        let end = buffer_offset + grid_size;
+                        az_chunk[buffer_offset..end].copy_from_slice(&az_grid[..grid_size]);
+                        bz_chunk[buffer_offset..end].copy_from_slice(&bz_grid[..grid_size]);
                         // Expand to multiquadratic
                         MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
                             &az_grid,
