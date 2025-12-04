@@ -302,6 +302,27 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
+        let span = tracing::span!(tracing::Level::INFO, "Computing job list");
+        let _guard = span.enter();
+        let mut jobs: Vec<(usize, u128, F)> = (
+            lookup_tables.par_iter().copied(),
+            lookup_indices.par_iter().copied(),
+            u_evals.par_iter().copied(),
+        )
+            .into_par_iter()
+            .filter_map(|(table, idx, u)| {
+                table.map(|table| (LookupTables::<XLEN>::enum_index(&table), idx.into(), u))
+            })
+            .collect::<Vec<_>>();
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "Sorting job list");
+        let _guard = span.enter();
+        jobs.par_sort_by_key(|(table, lookup_index, _u)| (*table, *lookup_index));
+        drop(_guard);
+        drop(span);
+
         let mut res = Self {
             r: Vec::with_capacity(log_T + LOG_K),
             lookup_tables,
@@ -489,32 +510,28 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let ra_polys: [MultilinearPolynomial<F>; 4] = {
             let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomials");
             let _guard = span.enter();
-            let mut poly_iter = self
-                .v
-                .chunks_exact(4)
-                .enumerate()
-                .map(|(chunk_i, v_chunk)| {
-                    let phase_offset = chunk_i * 4;
-                    let res = self
-                        .lookup_indices
-                        .par_iter()
-                        .with_min_len(1024)
-                        .map(|i| {
-                            let mut acc = F::one();
+            let mut poly_iter = self.v.chunks(2).enumerate().map(|(chunk_i, v_chunk)| {
+                let phase_offset = chunk_i * 2;
+                let res = self
+                    .lookup_indices
+                    .par_iter()
+                    .with_min_len(1024)
+                    .map(|i| {
+                        let mut acc = F::one();
 
-                            for (phase, table) in zip(phase_offset.., v_chunk) {
-                                let v: u128 = i.into();
-                                let i_segment = ((v >> ((self.params.phases - 1 - phase) * log_m))
-                                    as usize)
-                                    & m_mask;
-                                acc *= table[i_segment];
-                            }
+                        for (phase, table) in zip(phase_offset.., v_chunk) {
+                            let v: u128 = i.into();
+                            let i_segment = ((v >> ((self.params.phases - 1 - phase) * log_m))
+                                as usize)
+                                & m_mask;
+                            acc *= table[i_segment];
+                        }
 
-                            acc
-                        })
-                        .collect::<Vec<F>>();
-                    res.into()
-                });
+                        acc
+                    })
+                    .collect::<Vec<F>>();
+                res.into()
+            });
             array::from_fn(|_| poly_iter.next().unwrap())
         };
 

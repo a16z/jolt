@@ -14,11 +14,12 @@ pub const fn get_log_k_chunk(_log_T: usize) -> usize {
 /// NOTE: currently only divisors of 128 are supported
 #[inline]
 pub const fn instruction_sumcheck_phases(log_T: usize) -> usize {
-    if log_T < 23 {
-        16
-    } else {
-        8
-    }
+    // if log_T < 23 {
+    //     16
+    // } else {
+    //     8
+    // }
+    8
 }
 
 /// Helper to compute d (number of chunks) from log_k and log_k_chunk.
