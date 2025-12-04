@@ -83,7 +83,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for HammingWeight
         Box::new(&self.params)
     }
 
-    #[tracing::instrument(skip_all, name = "HammingWeightProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "HammingWeightSumcheckProver::compute_message", fields(variant = ?self.params.sumcheck_id))]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let prover_msg = self
             .ra
@@ -105,7 +105,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for HammingWeight
         UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0])
     }
 
-    #[tracing::instrument(skip_all, name = "HammingWeightProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "HammingWeightSumcheckProver::ingest_challenge", fields(variant = ?self.params.sumcheck_id))]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.ra
             .par_iter_mut()

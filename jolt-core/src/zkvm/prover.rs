@@ -122,7 +122,6 @@ pub struct JoltCpuProver<
     pub lazy_trace: LazyTraceIterator,
     pub trace: Arc<Vec<Cycle>>,
     pub advice: JoltAdvice<F, PCS>,
-    pub twist_sumcheck_switch_index: usize,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -245,12 +244,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             )
             .next_power_of_two() as usize;
 
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(trace.len());
-        let chunk_size = trace.len() / num_chunks;
-        let twist_sumcheck_switch_index = chunk_size.log_2();
-
         let transcript = ProofTranscript::new(b"Jolt");
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
 
@@ -269,7 +262,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 trusted_advice_commitment,
                 trusted_advice_polynomial: None,
             },
-            twist_sumcheck_switch_index,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -286,6 +278,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all)]
     pub fn prove(
         mut self,
     ) -> (
@@ -356,7 +349,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
             log_k_chunk: self.one_hot_params.log_k_chunk,
-            twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
         };
 
         let prove_duration = start.elapsed();
@@ -709,7 +701,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 4 baseline");
 
         let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
-            self.twist_sumcheck_switch_index,
             self.trace.len().log_2(),
             &self.opening_accumulator,
             &mut self.transcript,

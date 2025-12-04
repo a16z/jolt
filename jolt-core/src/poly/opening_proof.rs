@@ -147,7 +147,19 @@ where
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive, Allocative)]
+#[derive(
+    Hash,
+    PartialEq,
+    Eq,
+    Copy,
+    Clone,
+    Debug,
+    PartialOrd,
+    Ord,
+    FromPrimitive,
+    Allocative,
+    strum_macros::EnumCount,
+)]
 #[repr(u8)]
 pub enum SumcheckId {
     SpartanOuter,
