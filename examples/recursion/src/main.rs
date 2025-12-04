@@ -322,8 +322,12 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
 
         // Running tracing allows things like JOLT_BACKTRACE=1 to work properly
         info!("  Tracing...");
-        guest_prog.memory_config.program_size =
-            Some(guest_verifier_preprocessing.memory_layout.program_size);
+        guest_prog.memory_config.program_size = Some(
+            guest_verifier_preprocessing
+                .shared
+                .memory_layout
+                .program_size,
+        );
         let (_, _, _, device_io) = guest_prog.trace(&input_bytes, &[], &[]);
         assert!(!device_io.panic, "Guest program panicked during tracing");
 
@@ -485,12 +489,17 @@ fn run_recursion_proof(
         jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
 
     // update program_size in memory_config now that we know it
-    recursion.memory_config.program_size =
-        Some(recursion_verifier_preprocessing.memory_layout.program_size);
+    recursion.memory_config.program_size = Some(
+        recursion_verifier_preprocessing
+            .shared
+            .memory_layout
+            .program_size,
+    );
 
     let mut output_bytes = vec![
         0;
         recursion_verifier_preprocessing
+            .shared
             .memory_layout
             .max_output_size as usize
     ];

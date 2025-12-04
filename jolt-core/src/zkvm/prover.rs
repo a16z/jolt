@@ -1,11 +1,16 @@
+use std::{collections::HashMap, sync::Arc, time::Instant};
+
 use std::{
-    collections::HashMap,
     fs::File,
     io::{Read, Write},
     path::Path,
-    sync::Arc,
-    time::Instant,
 };
+
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
+use crate::zkvm::config::get_log_k_chunk;
+use crate::zkvm::verifier::JoltSharedPreprocessing;
+use crate::zkvm::Serializable;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -30,18 +35,13 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
-    zkvm::{
-        config::{get_log_k_chunk, OneHotParams},
-        ram::populate_memory_states,
-        verifier::JoltVerifierPreprocessing,
-    },
+    zkvm::{config::OneHotParams, ram::populate_memory_states},
 };
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     zkvm::{
         bytecode::{
             self, read_raf_checking::ReadRafSumcheckProver as BytecodeReadRafSumcheckProver,
-            BytecodePreprocessing,
         },
         fiat_shamir_preamble,
         instruction_lookups::{
@@ -59,7 +59,6 @@ use crate::{
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
             read_write_checking::RamReadWriteCheckingProver,
             val_evaluation::ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
-            RAMPreprocessing,
         },
         registers::{
             read_write_checking::RegistersReadWriteCheckingProver,
@@ -71,19 +70,17 @@ use crate::{
             shift::ShiftSumcheckProver,
         },
         witness::{AllCommittedPolynomials, CommittedPolynomial},
-        ProverDebugInfo, Serializable,
+        ProverDebugInfo,
     },
 };
+
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::{MemoryConfig, MemoryLayout};
+use common::jolt_device::MemoryConfig;
 use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::{
-    emulator::memory::Memory,
-    instruction::{Cycle, Instruction},
-    ChunksIterator, JoltDevice, LazyTraceIterator,
+    emulator::memory::Memory, instruction::Cycle, ChunksIterator, JoltDevice, LazyTraceIterator,
 };
 
 /// Jolt CPU prover for RV64IMAC.
@@ -120,13 +117,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_commitment: Option<PCS::Commitment>,
     ) -> Self {
         let memory_config = MemoryConfig {
-            max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
-            max_trusted_advice_size: preprocessing.memory_layout.max_trusted_advice_size,
-            max_input_size: preprocessing.memory_layout.max_input_size,
-            max_output_size: preprocessing.memory_layout.max_output_size,
-            stack_size: preprocessing.memory_layout.stack_size,
-            memory_size: preprocessing.memory_layout.memory_size,
-            program_size: Some(preprocessing.memory_layout.program_size),
+            max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
+            max_input_size: preprocessing.shared.memory_layout.max_input_size,
+            max_output_size: preprocessing.shared.memory_layout.max_output_size,
+            stack_size: preprocessing.shared.memory_layout.stack_size,
+            memory_size: preprocessing.shared.memory_layout.memory_size,
+            program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
         let (lazy_trace, trace, final_memory_state, program_io) = {
@@ -204,18 +201,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .filter_map(|cycle| {
                 crate::zkvm::ram::remap_address(
                     cycle.ram_access().address() as u64,
-                    &preprocessing.memory_layout,
+                    &preprocessing.shared.memory_layout,
                 )
             })
             .max()
             .unwrap_or(0)
             .max(
                 crate::zkvm::ram::remap_address(
-                    preprocessing.ram.min_bytecode_address,
-                    &preprocessing.memory_layout,
+                    preprocessing.shared.ram.min_bytecode_address,
+                    &preprocessing.shared.memory_layout,
                 )
                 .unwrap_or(0)
-                    + preprocessing.ram.bytecode_words.len() as u64
+                    + preprocessing.shared.ram.bytecode_words.len() as u64
                     + 1,
             )
             .next_power_of_two() as usize;
@@ -225,8 +222,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let spartan_key = UniformSpartanKey::new(trace.len());
 
-        let (initial_ram_state, final_ram_state) =
-            gen_ram_memory_states::<F>(ram_K, &preprocessing.ram, &program_io, &final_memory_state);
+        let (initial_ram_state, final_ram_state) = gen_ram_memory_states::<F>(
+            ram_K,
+            &preprocessing.shared.ram,
+            &program_io,
+            &final_memory_state,
+        );
 
         Self {
             preprocessing,
@@ -247,7 +248,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             final_ram_state,
             one_hot_params: OneHotParams::new(
                 padded_trace_len.log_2(),
-                preprocessing.bytecode.code_size,
+                preprocessing.shared.bytecode.code_size,
                 ram_K,
             ),
         }
@@ -271,7 +272,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        tracing::info!("bytecode size: {}", self.preprocessing.bytecode.code_size);
+        tracing::info!(
+            "bytecode size: {}",
+            self.preprocessing.shared.bytecode.code_size
+        );
 
         let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
@@ -380,7 +384,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                     .map(|poly| {
                         poly.stream_witness_and_commit_rows::<_, PCS>(
                             &self.preprocessing.generators,
-                            self.preprocessing,
+                            &self.preprocessing.shared,
                             &chunk,
                             &self.one_hot_params,
                         )
@@ -487,14 +491,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         tracing::info!("Stage 1 proving");
         let (uni_skip_state, first_round_proof) = prove_stage1_uni_skip(
             &self.trace,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.spartan_key,
             &mut self.transcript,
         );
 
         let mut spartan_outer_remaining = OuterRemainingSumcheckProver::gen(
             Arc::clone(&self.trace),
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &uni_skip_state,
         );
 
@@ -535,7 +539,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let ram_read_write_checking = RamReadWriteCheckingProver::gen(
             &self.initial_ram_state,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
             &self.trace,
             &self.one_hot_params,
@@ -590,7 +594,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let spartan_shift = ShiftSumcheckProver::gen(
             Arc::clone(&self.trace),
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -634,7 +638,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let registers_read_write_checking = RegistersReadWriteCheckingProver::gen(
             &self.trace,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
             &self.opening_accumulator,
             &mut self.transcript,
@@ -655,7 +659,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let ram_val_evaluation = RamValEvaluationSumcheckProver::gen(
             &self.trace,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
             &self.initial_ram_state,
             &self.one_hot_params,
@@ -663,7 +667,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let ram_val_final = ValFinalSumcheckProver::gen(
             &self.trace,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
             &self.opening_accumulator,
         );
@@ -708,7 +712,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let registers_val_evaluation = RegistersValEvaluationSumcheckProver::gen(
             &self.trace,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
             &self.opening_accumulator,
         );
@@ -770,14 +774,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let bytecode_read_raf = BytecodeReadRafSumcheckProver::gen(
             &self.trace,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
         let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::gen_ra_one_hot_provers(
             &self.trace,
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
@@ -906,7 +910,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             AllCommittedPolynomials::iter().copied().collect();
         let polynomials_map = CommittedPolynomial::generate_witness_batch(
             &all_polys,
-            self.preprocessing,
+            &self.preprocessing.shared,
             &self.trace,
             &self.one_hot_params,
         );
@@ -915,8 +919,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
         let streaming_data = Arc::new(RLCStreamingData {
-            bytecode: self.preprocessing.bytecode.clone(),
-            memory_layout: self.preprocessing.memory_layout.clone(),
+            bytecode: self.preprocessing.shared.bytecode.clone(),
+            memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 
         self.opening_accumulator.reduce_and_prove(
@@ -939,12 +943,22 @@ pub struct JoltAdvice<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub trusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
+#[cfg(feature = "allocative")]
+fn write_instance_flamegraph_svg(
+    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
+    path: impl AsRef<Path>,
+) {
+    let mut flamegraph = FlameGraphBuilder::default();
+    for instance in instances {
+        instance.update_flamegraph(&mut flamegraph)
+    }
+    write_flamegraph_svg(flamegraph, path);
+}
+
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub generators: PCS::ProverSetup,
-    pub bytecode: BytecodePreprocessing,
-    pub ram: RAMPreprocessing,
-    pub memory_layout: MemoryLayout,
+    pub shared: JoltSharedPreprocessing,
 }
 
 impl<F, PCS> JoltProverPreprocessing<F, PCS>
@@ -953,26 +967,14 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
-    pub fn gen(
-        bytecode: Vec<Instruction>,
-        memory_layout: MemoryLayout,
-        memory_init: Vec<(u64, u8)>,
+    pub fn new(
+        shared: JoltSharedPreprocessing,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
         let max_T: usize = max_trace_length.next_power_of_two();
         let log_chunk = get_log_k_chunk(max_T);
-
-        let bytecode = BytecodePreprocessing::preprocess(bytecode);
-        let ram = RAMPreprocessing::preprocess(memory_init);
-
         let generators = PCS::setup_prover(log_chunk + max_T.log_2());
-
-        JoltProverPreprocessing {
-            generators,
-            bytecode,
-            ram,
-            memory_layout,
-        }
+        JoltProverPreprocessing { generators, shared }
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -993,45 +995,17 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessing<F, PCS>>
-    for JoltVerifierPreprocessing<F, PCS>
-{
-    fn from(preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
-        let generators = PCS::setup_verifier(&preprocessing.generators);
-        Self {
-            generators,
-            bytecode: preprocessing.bytecode.clone(),
-            ram: preprocessing.ram.clone(),
-            memory_layout: preprocessing.memory_layout.clone(),
-        }
-    }
-}
-
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Serializable
     for JoltProverPreprocessing<F, PCS>
 {
 }
 
-#[cfg(feature = "allocative")]
-fn write_instance_flamegraph_svg(
-    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
-    path: impl AsRef<Path>,
-) {
-    let mut flamegraph = FlameGraphBuilder::default();
-    for instance in instances {
-        instance.update_flamegraph(&mut flamegraph)
-    }
-    write_flamegraph_svg(flamegraph, path);
-}
-
 #[cfg(test)]
 mod tests {
     use crate::host;
-    use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::zkvm::prover::JoltProverPreprocessing;
-    use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
+    use crate::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
     use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
-    use ark_bn254::Fr;
     use serial_test::serial;
 
     #[test]
@@ -1041,21 +1015,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1075,17 +1059,24 @@ mod tests {
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
         );
+
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone(), 256);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let log_chunk = 8; // Use default log_chunk for tests
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
 
         assert!(
             prover.padded_trace_len <= (1 << log_chunk),
@@ -1097,7 +1088,10 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1123,20 +1117,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1172,20 +1177,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1229,16 +1245,21 @@ mod tests {
 
         let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
-        let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
+        let max_trusted_advice_size = prover_preprocessing
+            .shared
+            .memory_layout
+            .max_trusted_advice_size;
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
         let trusted_advice_commitment = {
@@ -1253,13 +1274,13 @@ mod tests {
             let (trusted_advice_commitment, _hint) =
                 <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
                     &poly,
-                    &preprocessing.generators,
+                    &prover_preprocessing.generators,
                 );
             trusted_advice_commitment
         };
 
         let prover = RV64IMACProver::gen_from_elf(
-            &preprocessing,
+            &prover_preprocessing,
             elf_contents,
             &inputs,
             &untrusted_advice,
@@ -1269,7 +1290,10 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1308,20 +1332,25 @@ mod tests {
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[], &[], &[], None);
+            RV64IMACProver::gen_from_elf(&prover_preprocessing, elf_contents, &[], &[], &[], None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1341,20 +1370,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1374,20 +1414,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[50], &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &[50],
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1411,15 +1462,17 @@ mod tests {
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
 
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+
         let prover = RV64IMACProver::gen_from_trace(
-            &preprocessing,
+            &prover_preprocessing,
             lazy_trace,
             trace,
             program_io.clone(),
@@ -1429,8 +1482,10 @@ mod tests {
 
         let (proof, _) = prover.prove();
 
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
@@ -1447,12 +1502,13 @@ mod tests {
             program.trace(&inputs, &[], &[]);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
 
         // change memory address of output & termination bit to the same address as input
         // changes here should not be able to spoof the verifier result
@@ -1461,7 +1517,7 @@ mod tests {
         program_io.memory_layout.termination = program_io.memory_layout.input_start;
 
         let prover = RV64IMACProver::gen_from_trace(
-            &preprocessing,
+            &prover_preprocessing,
             lazy_trace,
             trace,
             program_io.clone(),
@@ -1470,8 +1526,10 @@ mod tests {
         );
         let (proof, _) = prover.prove();
 
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier =
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
