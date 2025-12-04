@@ -163,9 +163,6 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
     /// - `const FIRST_ROUND_POLY_NUM_COEFFS`: number of coefficients in the first-round polynomial
     /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
     /// - `transcript`: Fiat-Shamir transcript
-    ///
-    /// Returns `(r0, next_claim)` where `r0` is the verifier challenge for the first round
-    /// and `next_claim` is the claimed evaluation at `r0` to be used by remaining rounds.
     pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
         proof: &Self,
         sumcheck_instance: &dyn SumcheckInstanceVerifier<F, T>,
@@ -189,7 +186,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
         let input_claim = sumcheck_instance.input_claim(opening_accumulator);
         let ok = proof
             .uni_poly
-            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
+            .check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
         sumcheck_instance.cache_openings(opening_accumulator, transcript, &[r0]);
 
         if !ok {

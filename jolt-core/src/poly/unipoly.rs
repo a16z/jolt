@@ -321,14 +321,10 @@ impl<F: JoltField> UniPoly<F> {
     ///
     /// Behavior:
     /// - Computes Σ_{t in domain} s(t) = Σ_j a_j · S_j using i64 power sums and checks equality to `claim`.
-    /// - Independently evaluates and returns s(x) using Horner.
     ///
     /// Returns:
-    /// - (ok, value) where `ok` is true iff the domain-sum equals `claim`, and `value` = s(x).
-    pub fn check_sum_evals_and_set_new_claim<const N: usize, const OUT_LEN: usize>(
-        &self,
-        claim: F,
-    ) -> bool {
+    /// - true iff the domain-sum equals `claim`
+    pub fn check_sum_evals<const N: usize, const OUT_LEN: usize>(&self, claim: F) -> bool {
         // Relaxed: compute Σ_{t in symmetric N-window} s(t) via i128 power sums up to deg(s)
         debug_assert_eq!(self.degree() + 1, OUT_LEN);
         let power_sums = LagrangeHelper::power_sums::<N, OUT_LEN>();

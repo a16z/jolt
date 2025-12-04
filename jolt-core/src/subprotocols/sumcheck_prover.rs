@@ -50,23 +50,3 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder);
 }
-
-// /// Trait for a single-round instance of univariate skip
-// /// We make a number of assumptions for the usage of this trait currently:
-// /// 1. There is only one univariate skip round, which happens at the beginning of a sumcheck stage
-// /// 2. We do not bind anything after this round. Instead during the remaining sumcheck, we
-// ///    will stream from the trace again to initialize.
-// /// 3. We assume that the domain is symmetric around zero, and the prover sends the entire
-// ///    (univariate) polynomial for this round
-// pub trait UniSkipFirstRoundInstanceProver<F: JoltField, T: Transcript>:
-//     Send + Sync + MaybeAllocative
-// {
-//     /// Returns the initial claim of this univariate skip round, i.e.
-//     /// input_claim = \sum_{-floor(N/2) <= z <= ceil(N/2)} \sum_{x \in \{0, 1}^n} P(z, x)
-//     /// where N is the domain size (one more than the degree of univariate skip)
-//     fn input_claim(&self) -> F;
-
-//     /// Computes the full univariate polynomial to be sent in the uni-skip round.
-//     /// Returns a degree-bounded `UniPoly` with exactly `DEGREE_BOUND + 1` coefficients.
-//     fn compute_poly(&mut self) -> UniPoly<F>;
-// }
