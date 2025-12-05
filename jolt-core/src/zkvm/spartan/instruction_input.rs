@@ -7,7 +7,6 @@ use tracer::instruction::Cycle;
 use crate::{
     field::JoltField,
     poly::{
-        eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -17,7 +16,9 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend},
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
     zkvm::{
@@ -439,7 +440,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+        let result = self.input_output_claims().input_claim(accumulator);
+
+        #[cfg(test)]
+        {
+            let reference_result = self.params.input_claim(accumulator);
+            assert_eq!(result, reference_result);
+        }
+
+        result
     }
 
     fn expected_output_claim(
@@ -448,49 +457,65 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r = get_opening_point(sumcheck_challenges);
-        let eq_eval_at_r_cycle_stage_1 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_1);
-        let eq_eval_at_r_cycle_stage_2 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_2);
+        let result = self
+            .input_output_claims()
+            .expected_output_claim(&r, accumulator);
 
-        let (_, rs1_value_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, left_is_rs1_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, unexpanded_pc_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, left_is_pc_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, rs2_value_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, right_is_rs2_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, imm_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Imm,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        let (_, right_is_imm_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
-            SumcheckId::InstructionInputVirtualization,
-        );
+        #[cfg(test)]
+        {
+            use crate::poly::eq_poly::EqPolynomial;
 
-        let left_instruction_input =
-            left_is_rs1_eval * rs1_value_eval + left_is_pc_eval * unexpanded_pc_eval;
-        let right_instruction_input =
-            right_is_rs2_eval * rs2_value_eval + right_is_imm_eval * imm_eval;
+            let eq_eval_at_r_cycle_stage_1 =
+                EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_1);
+            let eq_eval_at_r_cycle_stage_2 =
+                EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_2);
 
-        (eq_eval_at_r_cycle_stage_1 + self.params.gamma.square() * eq_eval_at_r_cycle_stage_2)
-            * (right_instruction_input + self.params.gamma * left_instruction_input)
+            let (_, rs1_value_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::Rs1Value,
+                SumcheckId::InstructionInputVirtualization,
+            );
+            let (_, left_is_rs1_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
+                SumcheckId::InstructionInputVirtualization,
+            );
+            let (_, unexpanded_pc_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::UnexpandedPC,
+                SumcheckId::InstructionInputVirtualization,
+            );
+            let (_, left_is_pc_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
+                SumcheckId::InstructionInputVirtualization,
+            );
+            let (_, rs2_value_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::Rs2Value,
+                SumcheckId::InstructionInputVirtualization,
+            );
+            let (_, right_is_rs2_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
+                SumcheckId::InstructionInputVirtualization,
+            );
+            let (_, imm_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::Imm,
+                SumcheckId::InstructionInputVirtualization,
+            );
+            let (_, right_is_imm_eval) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
+                SumcheckId::InstructionInputVirtualization,
+            );
+
+            let left_instruction_input =
+                left_is_rs1_eval * rs1_value_eval + left_is_pc_eval * unexpanded_pc_eval;
+            let right_instruction_input =
+                right_is_rs2_eval * rs2_value_eval + right_is_imm_eval * imm_eval;
+
+            let reference_result = (eq_eval_at_r_cycle_stage_1
+                + self.params.gamma.square() * eq_eval_at_r_cycle_stage_2)
+                * (right_instruction_input + self.params.gamma * left_instruction_input);
+
+            assert_eq!(result, reference_result);
+        }
+
+        result
     }
 
     fn cache_openings(
@@ -548,6 +573,60 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::InstructionInputVirtualization,
             r,
         );
+    }
+}
+
+impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
+    fn input_output_claims(&self) -> InputOutputClaims<F> {
+        let right_instruction_input: ClaimExpr<F> = VirtualPolynomial::RightInstructionInput.into();
+        let left_instruction_input: ClaimExpr<F> = VirtualPolynomial::LeftInstructionInput.into();
+
+        let rs1_value: ClaimExpr<F> = VirtualPolynomial::Rs1Value.into();
+        let left_is_rs1: ClaimExpr<F> =
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value).into();
+        let unexpanded_pc: ClaimExpr<F> = VirtualPolynomial::UnexpandedPC.into();
+        let left_is_pc: ClaimExpr<F> =
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC).into();
+        let rs2_value: ClaimExpr<F> = VirtualPolynomial::Rs2Value.into();
+        let right_is_rs2: ClaimExpr<F> =
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value).into();
+        let imm: ClaimExpr<F> = VirtualPolynomial::Imm.into();
+        let right_is_imm: ClaimExpr<F> =
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm).into();
+
+        let left_instruction_input_eval = left_is_rs1 * rs1_value + left_is_pc * unexpanded_pc;
+        let right_instruction_input_eval = right_is_rs2 * rs2_value + right_is_imm * imm;
+
+        InputOutputClaims::new_from_gamma(
+            vec![
+                Claim {
+                    input_sumcheck_id: SumcheckId::SpartanOuter,
+                    input_claim_expr: right_instruction_input.clone(),
+                    expected_output_claim_expr: right_instruction_input_eval.clone(),
+                    is_offset: false,
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::SpartanOuter,
+                    input_claim_expr: left_instruction_input.clone(),
+                    expected_output_claim_expr: left_instruction_input_eval.clone(),
+                    is_offset: false,
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::ProductVirtualization,
+                    input_claim_expr: right_instruction_input,
+                    expected_output_claim_expr: right_instruction_input_eval,
+                    is_offset: false,
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::ProductVirtualization,
+                    input_claim_expr: left_instruction_input,
+                    expected_output_claim_expr: left_instruction_input_eval,
+                    is_offset: false,
+                },
+            ],
+            SumcheckId::InstructionInputVirtualization,
+            self.params.gamma,
+        )
     }
 }
 
