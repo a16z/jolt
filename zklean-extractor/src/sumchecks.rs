@@ -120,12 +120,21 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
         let single_step_claims_fun_name = "uniform_claims";
         let cross_step_claims_fun_name = "non_uniform_claims";
 
+        // NOTE We special-case the SpartanOuter sumcheck to refer to the R1CS constraints, so we
+        // don't need this entry
+        let mut sumchecks = self.clone();
+        sumchecks.sumchecks.remove(&SumcheckId::SpartanOuter);
+
         let mut vars_types: Vec<String> = vec![];
-        for (id, sumcheck) in &self.sumchecks {
+        for (id, sumcheck) in &sumchecks.sumchecks {
             if sumcheck.vars.len() > 0 {
                 let typename = sumcheck_ident(id);
                 vars_types.push(typename.clone());
-                writeln!(f, "{}structure {typename} (f : Type) : Type where", indent(indent_level))?;
+                writeln!(
+                    f,
+                    "{}structure {typename} (f : Type) : Type where",
+                    indent(indent_level)
+                )?;
 
                 indent_level += 1;
                 for var in &sumcheck.vars {
@@ -136,8 +145,17 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
             writeln!(f)?;
         }
 
-        writeln!(f, "{}structure {sumcheck_vars_typ} (f : Type) : Type where", indent(indent_level))?;
+        writeln!(
+            f,
+            "{}structure {sumcheck_vars_typ} (f : Type) : Type where",
+            indent(indent_level)
+        )?;
         indent_level += 1;
+        writeln!(
+            f,
+            "{}JoltR1CSInputs : JoltR1CSInputs f",
+            indent(indent_level)
+        )?;
         for typ in vars_types {
             writeln!(f, "{}{typ} : {typ} f", indent(indent_level))?;
         }
@@ -146,7 +164,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
 
         let mut single_step_claims_funs: Vec<String> = vec![];
         let mut cross_step_claims_funs: Vec<String> = vec![];
-        for (_, sumcheck) in &self.sumchecks {
+        for (_, sumcheck) in &sumchecks.sumchecks {
             match &sumcheck.claims {
                 Some(claims) => {
                     let (cross_step_claims, single_step_claims): (Vec<&Claim<F>>, Vec<&Claim<F>>) =
@@ -166,6 +184,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                             false,
                             indent_level,
                         )?;
+                        writeln!(f)?;
                     }
                     if cross_step_claims.len() > 0 {
                         let fun_name = format!(
@@ -182,6 +201,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                             true,
                             indent_level,
                         )?;
+                        writeln!(f)?;
                     }
                 }
                 None => (),
@@ -198,6 +218,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
             writeln!(f, "{}{fun_name} cycle", indent(indent_level))?;
         }
         indent_level -= 1;
+        writeln!(f)?;
 
         writeln!(
             f,
@@ -228,6 +249,11 @@ fn remove_parens(mut string: String) -> String {
 }
 
 fn sumcheck_ident(sumcheck_id: &SumcheckId) -> String {
+    // NOTE We special-case the SpartanOuter sumcheck to refer to the R1CS constraints
+    if *sumcheck_id == SumcheckId::SpartanOuter {
+        return String::from("JoltR1CSInputs");
+    }
+
     remove_parens(format!("{sumcheck_id:?}_Vars"))
 }
 
@@ -279,7 +305,6 @@ fn pretty_print_claims_fun<F: JoltField>(
             &claim.expected_output_claim_expr,
             true,
         )?;
-        writeln!(f)?;
         writeln!(f)?;
         indent_level -= 1;
     }
