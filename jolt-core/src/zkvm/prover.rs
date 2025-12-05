@@ -56,6 +56,7 @@ use crate::{
             val_evaluation::RegistersValEvaluationSumcheckParams,
         },
         spartan::{
+            claim_reductions::InstructionLookupsClaimReductionSumcheckParams,
             instruction_input::InstructionInputParams,
             outer::{OuterRemainingSumcheckParams, OuterUniSkipParams, OuterUniSkipProver},
             product::{
@@ -587,6 +588,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io,
             &mut self.transcript,
         );
+        let instruction_claim_reduction_params =
+            InstructionLookupsClaimReductionSumcheckParams::new(
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
 
         // Initialization
         let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
@@ -611,11 +618,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.final_ram_state,
             &self.program_io.memory_layout,
         );
-        let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckProver::gen(
-            Arc::clone(&self.trace),
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        let instruction_claim_reduction =
+            InstructionLookupsClaimReductionSumcheckProver::initialize(
+                instruction_claim_reduction_params,
+                Arc::clone(&self.trace),
+            );
 
         #[cfg(feature = "allocative")]
         {

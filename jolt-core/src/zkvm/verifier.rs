@@ -240,7 +240,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
         let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckVerifier::new(
-            self.proof.trace_length.log_2(),
+            self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
         );
