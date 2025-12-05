@@ -52,7 +52,7 @@ impl RISCVTrace for REMUW {
             }
             Xlen::Bit64 => {
                 if y == 0 {
-                    (u64::MAX, x as u64)
+                    (u32::MAX as u64, x as u64) // 32-bit operation: quotient is u32::MAX
                 } else {
                     let quotient = x / y;
                     let remainder = x % y;
@@ -88,12 +88,15 @@ impl RISCVTrace for REMUW {
     /// Verification strategy:
     /// 1. Zero-extend inputs to get proper 32-bit unsigned values
     /// 2. Receive untrusted quotient and remainder from oracle
-    /// 3. Verify: dividend = quotient × divisor + remainder (all 32-bit unsigned)
-    /// 4. Verify: remainder < divisor
+    /// 3. Verify quotient × divisor doesn't overflow 32 bits (high bits must be 0)
+    /// 4. Verify: dividend = quotient × divisor + remainder (all 32-bit unsigned)
+    /// 5. Verify: remainder < divisor
     ///
     /// Special case: Division by zero returns dividend (handled by VirtualAssertValidUnsignedRemainder)
     ///
-    /// Note: No overflow check needed since remainder operations work modulo 2^32.
+    /// The overflow check prevents forgery attacks where a malicious prover could
+    /// otherwise set quotient = (dividend - remainder) × divisor^(-1) (mod 2^32)
+    /// for odd divisors to forge any remainder less than the divisor.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -107,19 +110,24 @@ impl RISCVTrace for REMUW {
         let t1 = allocator.allocate(); // zero-extended dividend
         let t2 = allocator.allocate(); // zero-extended divisor
         let t3 = allocator.allocate(); // zero-extended quotient
+        let t4 = allocator.allocate(); // overflow check
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // Get untrusted advice from oracle
         asm.emit_j::<VirtualAdvice>(*a2, 0); // quotient
         asm.emit_j::<VirtualAdvice>(*a3, 0); // remainder
 
+        // Zero-extend quotient for later use
+        asm.emit_i::<VirtualZeroExtendWord>(*t3, *a2, 0); // Zero-extend quotient
+
         // Zero-extend inputs to proper 32-bit unsigned values
         asm.emit_i::<VirtualZeroExtendWord>(*t1, a0, 0); // dividend
         asm.emit_i::<VirtualZeroExtendWord>(*t2, a1, 0); // divisor
-        asm.emit_i::<VirtualZeroExtendWord>(*t3, *a2, 0); // quotient
 
-        // Compute quotient × divisor (32-bit unsigned values)
-        asm.emit_r::<MUL>(*t0, *t3, *t2);
+        // Verify no 32-bit overflow: result must fit in 32 bits
+        asm.emit_r::<MUL>(*t0, *t3, *t2); // Full 64-bit multiplication
+        asm.emit_i::<VirtualZeroExtendWord>(*t4, *t0, 0); // Mask to 32 bits
+        asm.emit_b::<VirtualAssertEQ>(*t4, *t0, 0); // Assert multiplication result fits in 32 bits
 
         // Verify: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t0, *t0, *a3);

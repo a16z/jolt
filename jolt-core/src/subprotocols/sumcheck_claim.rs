@@ -6,7 +6,8 @@ use std::{
 use crate::{
     field::JoltField,
     poly::{
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+        eq_plus_one_poly::EqPlusOnePolynomial,
+        eq_poly::EqPolynomial,
         opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},

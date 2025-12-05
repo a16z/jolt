@@ -39,13 +39,13 @@ pub struct BooleanitySumcheckProver<F: JoltField> {
     /// G as in the Twist and Shout paper
     G: Vec<Vec<F>>,
     /// H as in the Twist and Shout paper
-    H: Vec<RaPolynomial<u8, F>>,
+    H: Vec<RaPolynomial<u16, F>>,
     /// F: Expanding table
     F: ExpandingTable<F>,
     /// eq_r_r
     eq_r_r: F,
     /// Indices for H polynomials
-    H_indices: Vec<Vec<Option<u8>>>,
+    H_indices: Vec<Vec<Option<u16>>>,
     #[allocative(skip)]
     params: BooleanitySumcheckParams<F>,
 }
@@ -54,7 +54,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
     pub fn gen(
         params: BooleanitySumcheckParams<F>,
         G: Vec<Vec<F>>,
-        H_indices: Vec<Vec<Option<u8>>>,
+        H_indices: Vec<Vec<Option<u16>>>,
     ) -> Self {
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         let D_poly = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
@@ -187,7 +187,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         F::zero()
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message", fields(variant = ?self.params.sumcheck_id))]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_k_chunk {
             // Phase 1: First log(K_chunk) rounds
@@ -198,7 +198,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge", fields(variant = ?self.params.sumcheck_id))]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.params.log_k_chunk {
             // Phase 1: Bind B and update F
