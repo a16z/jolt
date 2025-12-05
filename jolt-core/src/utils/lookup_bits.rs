@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::BitAnd};
 
 use allocative::Allocative;
 
@@ -124,19 +124,12 @@ impl From<&LookupBits> for u32 {
     }
 }
 
-impl std::ops::Rem<usize> for &LookupBits {
+impl BitAnd<usize> for LookupBits {
     type Output = usize;
 
-    fn rem(self, rhs: usize) -> Self::Output {
-        (u128::from(self) % rhs as u128) as usize
-    }
-}
-
-impl std::ops::Rem<usize> for LookupBits {
-    type Output = usize;
-
-    fn rem(self, rhs: usize) -> Self::Output {
-        (u128::from(self) % rhs as u128) as usize
+    fn bitand(self, rhs: usize) -> Self::Output {
+        let lhs = usize::from_le_bytes(self.bytes[0..size_of::<usize>()].try_into().unwrap());
+        lhs & rhs
     }
 }
 

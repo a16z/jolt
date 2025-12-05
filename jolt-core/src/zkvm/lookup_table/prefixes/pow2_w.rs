@@ -26,10 +26,10 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<XLEN>
 
         // Shift amount is the last 5 bits of b (for modulo 32)
         if b.len() >= 5 {
-            return F::from_u64(1 << (b % 32));
+            return F::from_u64(1 << (b & (0b11111)));
         }
 
-        let mut result = F::from_u64(1 << (b % 32));
+        let mut result = F::from_u64(1 << (b & (0b11111)));
         let mut num_bits = b.len();
         let mut shift = 1u64 << (1u64 << num_bits);
         result *= F::from_u64(1 + (shift - 1) * c as u64);
