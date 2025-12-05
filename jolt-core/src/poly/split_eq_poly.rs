@@ -240,7 +240,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::HighToLow => {
                 // Streaming windows are not defined for HighToLow in the current
                 // Spartan code paths; return neutral head tables.
-                (&self.one_table, &self.one_table)
+                unimplemented!("Not implemented for high to low");
             }
         }
     }
@@ -277,7 +277,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             }
             BindingOrder::HighToLow => {
                 // Not used for the outer Spartan streaming code.
-                vec![F::one()]
+                unimplemented!("Not implemented for high to low");
             }
         }
     }

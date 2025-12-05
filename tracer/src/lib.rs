@@ -86,9 +86,7 @@ pub fn trace(
         memory_config,
     ));
     let lazy_trace_iter_ = lazy_trace_iter.clone();
-    // NOTE: this will materialise the trace in full
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
-    //let trace = lazy_trace_iter.by_ref();
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
     (
         lazy_trace_iter_,

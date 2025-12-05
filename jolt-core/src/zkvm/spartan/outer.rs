@@ -48,7 +48,7 @@ use allocative::FlameGraphBuilder;
 
 /// Degree bound of the sumcheck round polynomials for [`OuterRemainingSumcheckVerifier`].
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
-const INFINITY: usize = 2; // 2 represents ∞ in base-3
+const INFINITY: usize = 3; // 3 represents ∞ in base-3
 
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
@@ -242,10 +242,8 @@ pub struct OuterRemainingSumcheckProver<'a, F: JoltField, S: StreamingSchedule +
     /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
     #[allocative(skip)]
     params: OuterRemainingSumcheckParams<F>,
-    lagrange_evals_r0: [F; 10],
+    lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
     schedule: S,
-    t_0: Option<F>,
-    t_inf: Option<F>,
     #[allocative(skip)]
     checkpoints: &'a [std::iter::Take<LazyTraceIterator>],
     checkpoint_interval: usize,
@@ -303,8 +301,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
             params: outer_params,
             lagrange_evals_r0: lagrange_evals_r,
             schedule,
-            t_0: None,
-            t_inf: None,
         }
     }
 
@@ -674,6 +670,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
     }
 
+    // Good to keep as a reference
     #[tracing::instrument(
         skip_all,
         name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_poly_serial"
@@ -761,11 +758,12 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
     }
 
+    // NOTE: no small value optimisation
     #[tracing::instrument(
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_parallel"
     )]
-    fn _materialise_sumcheck_polynomials_from_trace_parallel(&mut self, _window_size: usize) {
+    fn materialise_polynomials_from_trace_parallel_dim_one(&mut self) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let r_grid = &self.r_grid;
@@ -899,104 +897,10 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
         self.az = Some(DensePolynomial::new(az_bound));
         self.bz = Some(DensePolynomial::new(bz_bound));
-        self.t_0 = Some(t0_acc);
-        self.t_inf = Some(t_inf_acc);
-    }
-
-    fn _materialise_sumcheck_polynomials_from_trace_serial(&mut self) {
-        let num_x_out_vals = self.split_eq_poly.E_out_current_len();
-        let num_x_in_vals = self.split_eq_poly.E_in_current_len();
-        let r_grid = &self.r_grid;
-        let num_r_vals = r_grid.len();
-
-        // Output arrays are sized by (x_out, x_in) pairs
-        let output_size = num_x_out_vals * num_x_in_vals;
-        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
-        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * output_size);
-
-        let num_r_bits = num_r_vals.log_2();
-        let num_x_in_bits = num_x_in_vals.log_2();
-        let mut t0_acc = F::zero();
-        let mut t_inf_acc = F::zero();
-
-        // Serial iteration over all (x_out, x_in) pairs
-        for x_out_val in 0..num_x_out_vals {
-            for x_in_val in 0..num_x_in_vals {
-                // Initialize accumulators for this (x_out, x_in) pair
-                let mut az0_sum = F::zero(); // For X=0
-                let mut az1_sum = F::zero(); // For X=1
-                let mut bz0_sum = F::zero(); // For X=0
-                let mut bz1_sum = F::zero(); // For X=1
-
-                // Iterate over X bit and r values
-                // NOTE: THIS WILL BECOME GRID SIZE
-                for x_bit in 0..2 {
-                    for r_idx in 0..num_r_vals {
-                        // Build the full index: x_out || x_in || X || x_r
-                        let full_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
-                            | (x_in_val << (1 + num_r_bits))
-                            | (x_bit << num_r_bits)
-                            | r_idx;
-
-                        // Extract step index and selector
-                        let current_step_idx = full_idx >> 1;
-                        let selector = (full_idx & 1) == 1;
-
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            &self.bytecode_preprocessing,
-                            &self.trace,
-                            current_step_idx,
-                        );
-
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-
-                        let (az, bz) = if !selector {
-                            // First group (selector = 0)
-                            (
-                                eval.az_at_r_first_group(&self.lagrange_evals_r0),
-                                eval.bz_at_r_first_group(&self.lagrange_evals_r0),
-                            )
-                        } else {
-                            // Second group (selector = 1)
-                            (
-                                eval.az_at_r_second_group(&self.lagrange_evals_r0),
-                                eval.bz_at_r_second_group(&self.lagrange_evals_r0),
-                            )
-                        };
-
-                        let r_eval = r_grid[r_idx];
-
-                        if x_bit == 0 {
-                            az0_sum += az * r_eval;
-                            bz0_sum += bz * r_eval;
-                        } else {
-                            az1_sum += az * r_eval;
-                            bz1_sum += bz * r_eval;
-                        }
-                    }
-                }
-
-                // Store the summed values in Az and Bz arrays
-                let pair_idx = x_out_val * num_x_in_vals + x_in_val;
-                let buffer_offset = 2 * pair_idx;
-                az_bound[buffer_offset] = az0_sum; // A(x_out, x_in, 0, r2, r1)
-                az_bound[buffer_offset + 1] = az1_sum; // A(x_out, x_in, 1, r2, r1)
-                bz_bound[buffer_offset] = bz0_sum; // B(x_out, x_in, 0, r2, r1)
-                bz_bound[buffer_offset + 1] = bz1_sum; // B(x_out, x_in, 1, r2, r1)
-
-                // For t_0 and t_inf, apply eq polynomials
-                let e_in = self.split_eq_poly.E_in_current()[x_in_val];
-                let e_out = self.split_eq_poly.E_out_current()[x_out_val];
-                let p0 = az0_sum * bz0_sum;
-                let slope = (az1_sum - az0_sum) * (bz1_sum - bz0_sum);
-
-                t0_acc += e_out * e_in * p0;
-                t_inf_acc += e_out * e_in * slope;
-            }
-        }
-
-        self.az = Some(DensePolynomial::new(az_bound));
-        self.bz = Some(DensePolynomial::new(bz_bound));
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(
+            1,
+            vec![t0_acc, t0_acc, t_inf_acc],
+        ));
     }
 
     // If the first round of the sumcheck is the switchover point
@@ -1006,7 +910,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_round_zero"
     )]
-    fn _materialise_sumcheck_polynomials_from_trace_round_zero(&mut self, _window_size: usize) {
+    fn materialise_polynomials_from_trace_round_zero_dim_one(&mut self) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
         let num_x_in_vals = self.split_eq_poly.E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
@@ -1015,15 +919,12 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
             .checked_mul(num_x_in_vals)
             .expect("overflow computing groups_exact");
 
-        // NOTE: (ari) unclear if this unsafe allocate is giving us performance gains
-        // Investigate further.
-
         // Preallocate interleaved buffers once ([lo, hi] per entry)
         let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
         let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(2 * groups_exact);
 
         // Parallel over x_out groups using exact-sized mutable chunks, with per-worker fold
-        let (_t0_acc_unr, _t_inf_acc_unr) = az_bound
+        let (t0_acc_unr, t_inf_acc_unr) = az_bound
             .par_chunks_exact_mut(2 * num_x_in_vals)
             .zip(bz_bound.par_chunks_exact_mut(2 * num_x_in_vals))
             .enumerate()
@@ -1072,8 +973,9 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
         self.az = Some(DensePolynomial::new(az_bound));
         self.bz = Some(DensePolynomial::new(bz_bound));
-        //self.t_0 = Some(F::from_montgomery_reduce::<9>(t0_acc_unr));
-        //self.t_inf = Some(F::from_montgomery_reduce::<9>(t_inf_acc_unr))
+        let t_0 = F::from_montgomery_reduce::<9>(t0_acc_unr);
+        let t_inf = F::from_montgomery_reduce::<9>(t_inf_acc_unr);
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(1, vec![t_0, t_0, t_inf]));
     }
     fn fused_materialise_polynomials_general_with_multiquadratic(&mut self, window_size: usize) {
         let (E_out, E_in) = self.split_eq_poly.E_out_in_for_window(window_size);
@@ -1393,28 +1295,21 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     fn materialise_polynomials_from_trace(&mut self, window_size: usize) {
         let split_eq_poly = &self.split_eq_poly;
         if split_eq_poly.num_challenges() > 0 {
-            self.fused_materialise_polynomials_general_with_multiquadratic(window_size);
+            if window_size == 1 {
+                self.materialise_polynomials_from_trace_parallel_dim_one();
+            } else {
+                self.fused_materialise_polynomials_general_with_multiquadratic(window_size);
+            }
         } else {
-            self.fused_materialise_polynomials_round_zero(window_size);
+            if window_size == 1 {
+                self.materialise_polynomials_from_trace_round_zero_dim_one();
+            } else {
+                self.fused_materialise_polynomials_round_zero(window_size);
+            }
         }
     }
 
-    /// Compute the polynomial for each of the remaining rounds, using the
-    /// linear-time algorithm with split-eq optimizations.
-    ///
-    /// At this point, we have computed the `bound_coeffs` for the current round.
-    /// We need to compute:
-    ///
-    /// `t_i(0) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] *
-    /// (az_bound[x_out, x_in, 0] * bz_bound[x_out, x_in, 0] - cz_bound[x_out, x_in, 0])`
-    ///
-    /// and
-    ///
-    /// `t_i(∞) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] *
-    /// az_bound[x_out, x_in, ∞] * bz_bound[x_out, x_in, ∞]`
-    ///
-    /// (ordering of indices is MSB to LSB, so x_out is the MSB and x_in is the LSB)
-    #[inline]
+    // Compute prover message directly for window size 1
     fn _remaining_quadratic_evals(&mut self) -> (F, F) {
         let eq_poly = &self.split_eq_poly;
 

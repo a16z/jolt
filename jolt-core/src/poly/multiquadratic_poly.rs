@@ -306,14 +306,14 @@ impl<F: JoltField> MultiquadraticPolynomial<F> {
         let new_size = 3_usize.pow((w - 1) as u32);
         let one = F::one();
 
+        let r_term = r * (r - one);
         for new_idx in 0..new_size {
             let old_base_idx = new_idx * 3;
             let eval_at_0 = self.evals[old_base_idx]; // z_0 = 0
             let eval_at_1 = self.evals[old_base_idx + 1]; // z_0 = 1
             let eval_at_inf = self.evals[old_base_idx + 2]; // z_0 = ∞
 
-            self.evals[new_idx] =
-                eval_at_0 * (one - r) + eval_at_1 * r + eval_at_inf * r * (r - one);
+            self.evals[new_idx] = eval_at_0 * (one - r) + eval_at_1 * r + eval_at_inf * r_term;
         }
 
         self.num_vars -= 1;
