@@ -48,7 +48,7 @@ use allocative::FlameGraphBuilder;
 
 /// Degree bound of the sumcheck round polynomials for [`OuterRemainingSumcheckVerifier`].
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
-const INFINITY: usize = 3; // 3 represents ∞ in base-3
+const INFINITY: usize = 2; // 3 represents ∞ in base-3
 
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
@@ -398,38 +398,25 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                 });
         }
 
-        // Final reductions once per j.
-        //for j in 0..jlen {
-        //    let az_j = acc_az[j].barrett_reduce();
-        //    let bz_first_j = acc_bz_first[j].barrett_reduce();
-        //    let bz_second_j = acc_bz_second[j].barrett_reduce();
-        //    grid_az[j] = az_j;
-        //    grid_bz[j] = bz_first_j + bz_second_j;
-        //}
-
-        let grid_az_ptr = grid_az.as_mut_ptr() as usize;
-        let grid_bz_ptr = grid_bz.as_mut_ptr() as usize;
-        let chunk_size = 4096;
-        // jlen + chunk_size - 1) / chunk_size
-        let num_chunks = jlen.div_ceil(chunk_size);
-        (0..num_chunks).into_par_iter().for_each(move |chunk_idx| {
-            let start = chunk_idx * chunk_size;
-            let end = (start + chunk_size).min(jlen);
-
-            let az_ptr = grid_az_ptr as *mut F;
-            let bz_ptr = grid_bz_ptr as *mut F;
-
-            for j in start..end {
-                let az_j = acc_az[j].barrett_reduce();
-                let bz_first_j = acc_bz_first[j].barrett_reduce();
-                let bz_second_j = acc_bz_second[j].barrett_reduce();
-
-                unsafe {
-                    *az_ptr.add(j) = az_j;
-                    *bz_ptr.add(j) = bz_first_j + bz_second_j;
+        // Final reductions: reduce accumulators and write to output slices.
+        // Each chunk writes to disjoint indices, so parallel iteration is safe.
+        const REDUCE_CHUNK_SIZE: usize = 4096;
+        grid_az
+            .par_chunks_mut(REDUCE_CHUNK_SIZE)
+            .zip(grid_bz.par_chunks_mut(REDUCE_CHUNK_SIZE))
+            .enumerate()
+            .for_each(|(chunk_idx, (az_chunk, bz_chunk))| {
+                let start = chunk_idx * REDUCE_CHUNK_SIZE;
+                for (local_j, (az_out, bz_out)) in
+                    az_chunk.iter_mut().zip(bz_chunk.iter_mut()).enumerate()
+                {
+                    let j = start + local_j;
+                    *az_out = acc_az[j].barrett_reduce();
+                    let bz_first_j = acc_bz_first[j].barrett_reduce();
+                    let bz_second_j = acc_bz_second[j].barrett_reduce();
+                    *bz_out = bz_first_j + bz_second_j;
                 }
-            }
-        });
+            });
     }
 
     // returns the grid of evaluations on {0,1,inf}^window_size
@@ -1294,19 +1281,28 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     )]
     fn materialise_polynomials_from_trace(&mut self, window_size: usize) {
         let split_eq_poly = &self.split_eq_poly;
-        if split_eq_poly.num_challenges() > 0 {
-            if window_size == 1 {
-                self.materialise_polynomials_from_trace_parallel_dim_one();
-            } else {
-                self.fused_materialise_polynomials_general_with_multiquadratic(window_size);
+        let is_not_first_round_of_sumcheck = split_eq_poly.num_challenges() > 0;
+        match (is_not_first_round_of_sumcheck, window_size == 1) {
+            (true, true) => self.materialise_polynomials_from_trace_parallel_dim_one(),
+            (true, false) => {
+                self.fused_materialise_polynomials_general_with_multiquadratic(window_size)
             }
-        } else {
-            if window_size == 1 {
-                self.materialise_polynomials_from_trace_round_zero_dim_one();
-            } else {
-                self.fused_materialise_polynomials_round_zero(window_size);
-            }
+            (false, true) => self.materialise_polynomials_from_trace_round_zero_dim_one(),
+            (false, false) => self.fused_materialise_polynomials_round_zero(window_size),
         }
+        //if split_eq_poly.num_challenges() > 0 {
+        //    if window_size == 1 {
+        //        self.materialise_polynomials_from_trace_parallel_dim_one();
+        //    } else {
+        //        self.fused_materialise_polynomials_general_with_multiquadratic(window_size);
+        //    }
+        //} else {
+        //    if window_size == 1 {
+        //        self.materialise_polynomials_from_trace_round_zero_dim_one();
+        //    } else {
+        //        self.fused_materialise_polynomials_round_zero(window_size);
+        //    }
+        //}
     }
 
     // Compute prover message directly for window size 1
