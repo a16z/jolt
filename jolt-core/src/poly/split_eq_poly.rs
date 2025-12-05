@@ -194,12 +194,30 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 let head_out_bits = core::cmp::min(head_len, m);
                 let head_in_bits = head_len.saturating_sub(head_out_bits);
 
+                // Invariant: head_out_bits + head_in_bits == head_len
+                // and head_len <= num_unbound - window_size < n - 1
+                debug_assert_eq!(
+                    head_out_bits + head_in_bits,
+                    head_len,
+                    "head bit split mismatch: {head_out_bits} + {head_in_bits} != {head_len}",
+                );
+                debug_assert!(
+                    head_out_bits <= m,
+                    "head_out_bits={head_out_bits} exceeds m={m}",
+                );
+                debug_assert!(
+                    head_in_bits <= n - 1 - m,
+                    "head_in_bits={} exceeds available in bits={}",
+                    head_in_bits,
+                    n - 1 - m
+                );
+
                 let e_out = if head_out_bits == 0 {
                     &self.one_table
                 } else {
                     debug_assert!(
                         head_out_bits < self.E_out_vec.len(),
-                        "head_out_bits={} E_out_vec.len()={}",
+                        "head_out_bits={} out of bounds for E_out_vec.len()={}",
                         head_out_bits,
                         self.E_out_vec.len()
                     );
