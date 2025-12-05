@@ -34,7 +34,6 @@ pub struct StreamingRLCContext<F: JoltField> {
     pub lazy_trace: LazyTraceIterator,
     pub preprocessing: Arc<RLCStreamingData>,
     pub one_hot_params: OneHotParams,
-    pub trusted_advice_poly: Option<MultilinearPolynomial<F>>,
 }
 
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
@@ -44,6 +43,9 @@ pub struct StreamingRLCContext<F: JoltField> {
 pub struct RLCPolynomial<F: JoltField> {
     /// Random linear combination of dense (i.e. length T) polynomials.
     /// Empty if using streaming mode.
+    pub trusted_advice_poly_coeffs: Vec<F>,
+    pub trusted_advice_poly_rows: usize,
+    pub trusted_advice_poly_columns: usize,
     pub dense_rlc: Vec<F>,
     /// Random linear combination of one-hot polynomials (length T x K
     /// for some K). Instead of pre-emptively combining these polynomials,
@@ -69,6 +71,9 @@ impl<F: JoltField> RLCPolynomial<F> {
             dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),
             one_hot_rlc: vec![],
             streaming_context: None,
+            trusted_advice_poly_coeffs: vec![],
+            trusted_advice_poly_rows: 0,
+            trusted_advice_poly_columns: 0,
         }
     }
 
@@ -80,7 +85,9 @@ impl<F: JoltField> RLCPolynomial<F> {
         lazy_trace: LazyTraceIterator,
         preprocessing: Arc<RLCStreamingData>,
         one_hot_params: &OneHotParams,
-        trusted_advice_poly: Option<MultilinearPolynomial<F>>,
+        trusted_advice_poly_coeffs: Vec<F>,
+        trusted_advice_poly_rows: usize,
+        trusted_advice_poly_columns: usize,
     ) -> Self {
         Self {
             dense_rlc: vec![],   // Not materialized in streaming mode
@@ -91,8 +98,10 @@ impl<F: JoltField> RLCPolynomial<F> {
                 lazy_trace,
                 preprocessing,
                 one_hot_params: one_hot_params.clone(),
-                trusted_advice_poly,
             })),
+            trusted_advice_poly_coeffs: trusted_advice_poly_coeffs,
+            trusted_advice_poly_rows: trusted_advice_poly_rows,
+            trusted_advice_poly_columns: trusted_advice_poly_columns,
         }
     }
 
@@ -101,7 +110,10 @@ impl<F: JoltField> RLCPolynomial<F> {
         poly_ids: Vec<CommittedPolynomial>,
         polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
         coefficients: &[F],
-        trusted_advice_poly: Option<MultilinearPolynomial<F>>,
+        trusted_advice_poly_coeffs: Vec<F>,
+        trusted_advice_poly_rows: usize,
+        trusted_advice_poly_columns: usize,
+        trusted_advice_gamma: F,
         streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
@@ -128,18 +140,22 @@ impl<F: JoltField> RLCPolynomial<F> {
             }
         }
 
+        let coeffs = trusted_advice_poly_coeffs.iter().map(|c| *c * trusted_advice_gamma).collect();
+
         Self::new_streaming(
             dense_polys,
             onehot_polys,
             lazy_trace,
             preprocessing,
             &one_hot_params,
-            trusted_advice_poly,
+            coeffs,
+            trusted_advice_poly_rows,
+            trusted_advice_poly_columns,
         )
     }
 
     /// Materializes a streaming RLC polynomial for testing purposes.
-    #[cfg(test)]
+    // #[cfg(test)]
     pub fn materialize(
         &self,
         _poly_ids: &[CommittedPolynomial],
@@ -151,6 +167,8 @@ impl<F: JoltField> RLCPolynomial<F> {
         if self.streaming_context.is_none() {
             return self.clone();
         }
+
+        tracing::info!("Hereeeeeeeeeee trusted_advice_info={:?}", self.trusted_advice_poly_coeffs);
 
         let mut result = RLCPolynomial::<F>::new();
         let dense_indices: Vec<usize> = polynomials
@@ -214,6 +232,9 @@ impl<F: JoltField> RLCPolynomial<F> {
                 result.one_hot_rlc.push((coefficients[i], poly.clone()));
             }
         }
+        result.trusted_advice_poly_coeffs = self.trusted_advice_poly_coeffs.clone();
+        result.trusted_advice_poly_rows = self.trusted_advice_poly_rows;
+        result.trusted_advice_poly_columns = self.trusted_advice_poly_columns;
 
         result
     }
@@ -321,6 +342,47 @@ impl<F: JoltField> RLCPolynomial<F> {
                 .collect()
         };
 
+        let trusted_advice_poly_coeffs = self.trusted_advice_poly_coeffs.clone();
+        let ta_columns = self.trusted_advice_poly_columns;
+        let ta_rows = self.trusted_advice_poly_rows;
+        tracing::info!("Hereeeeee ta_columns={}, ta_rows={}", ta_columns, ta_rows);
+        
+        // Compute trusted advice contribution for each column
+        // Vector-matrix product: result[col] = Σ_row left_vec[row] * TA[row, col]
+        // TA[row, col] is stored at flat_index = row * ta_columns + col
+
+        let mut ta_contribution = vec![F::zero(); result.len()];
+        for col_index in 0..ta_columns {
+            for row_index in 0..ta_rows {
+                let flat_index = row_index * ta_columns + col_index;
+                ta_contribution[col_index] += trusted_advice_poly_coeffs[flat_index] * left_vec[row_index];
+                tracing::info!("flat_index={}, row_index={}, col_index={}, adding {} * {} = {}", flat_index, row_index, col_index, trusted_advice_poly_coeffs[flat_index], left_vec[row_index], trusted_advice_poly_coeffs[flat_index] * left_vec[row_index]);
+            }
+        }
+        // let ta_contribution: Vec<F> = (0..result.len())
+        //     .par_iter_mut()
+        //     .map(|row_index| {
+        //         if row_index >= ta_rows {
+        //             F::zero()
+        //         } else {
+        //             (0..ta_columns)
+        //                 .map(|col_index| {
+        //                     let flat_index = row_index * ta_columns + col_index;
+        //                     tracing::info!("flat_index={}, row_index={}, col_index={}", flat_index, row_index, col_index);
+        //                     tracing::info!("addding {} * {} = {}", trusted_advice_poly_coeffs[flat_index], left_vec[row_index], trusted_advice_poly_coeffs[flat_index] * left_vec[row_index]);
+        //                     trusted_advice_poly_coeffs[flat_index] * left_vec[row_index]
+        //                 })
+        //                 .sum::<F>()
+        //         }
+        //     })
+        //     .collect();
+        
+        // Add trusted advice contribution to result
+        // for (r, ta) in result.iter_mut().zip(ta_contribution.iter()) {
+        //     *r += *ta;
+        // }
+        let x = result[0];
+
         // Compute the vector-matrix product for one-hot polynomials (linear space)
         for (coeff, poly) in self.one_hot_rlc.iter() {
             match poly.as_ref() {
@@ -330,6 +392,8 @@ impl<F: JoltField> RLCPolynomial<F> {
                 _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
             }
         }
+
+        tracing::info!("Result: {:?}, one_hot contribution: {:?}", result, result[0] - x);
 
         result
     }
@@ -422,30 +486,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                         for (poly_id, coeff) in &ctx.dense_polys {
                             let dense_val = match poly_id {
                                 CommittedPolynomial::TrustedAdvice => {
-                                    // TrustedAdvice has different dimensions than main polynomials
-                                    // Get trusted advice dimensions from DoryGlobals
-                                    let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-                                    let ta_columns = DoryGlobals::get_num_columns();
-                                    let ta_rows = DoryGlobals::get_max_num_rows();
-                                    drop(_ctx);
-                                    
-                                    let trusted_poly = ctx.trusted_advice_poly.as_ref().unwrap();
-                                    
-                                    // If row is beyond trusted advice rows, coefficient is zero
-                                    if row_idx >= ta_rows {
-                                        F::zero()
-                                    // If column is beyond trusted advice columns, coefficient is zero
-                                    } else if col_idx >= ta_columns {
-                                        F::zero()
-                                    } else {
-                                        // Trusted advice coefficients are stored row by row with ta_columns per row
-                                        let ta_idx = row_idx * ta_columns + col_idx;
-                                        if ta_idx < trusted_poly.original_len() {
-                                            trusted_poly.get_coeff(ta_idx)
-                                        } else {
-                                            panic!("Trusted advice index out of bounds: ta_idx={}, len={}", ta_idx, trusted_poly.original_len());
-                                        }
-                                    }
+                                    F::zero()
                                 }
                                 _ => Self::extract_dense_value(poly_id, cycle),
                             };

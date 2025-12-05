@@ -207,7 +207,9 @@ impl DoryGlobals {
 
     /// Initialize the globals for trusted advice commitments
     pub fn initialize_trusted_advice(K: usize, T: usize) -> Option<()> {
+        tracing::info!("DEBUGG:initialize_trusted_advice: K={}, T={}", K, T);
         let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
+        tracing::info!("DEBUGG:initialize_trusted_advice: num_columns={}, num_rows={}, t={}", num_columns, num_rows, t);
         Self::set_num_columns_for_context(num_columns, DoryContext::TrustedAdvice);
         Self::set_T_for_context(t, DoryContext::TrustedAdvice);
         Self::set_max_num_rows_for_context(num_rows, DoryContext::TrustedAdvice);

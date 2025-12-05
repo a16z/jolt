@@ -8,11 +8,11 @@ pub fn main() {
     let save_to_disk = std::env::args().any(|arg| arg == "--save");
 
     let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_fib2(target_dir);
+    let mut program = guest::compile_dummy(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_fib(&mut program);
+    let prover_preprocessing = guest::preprocess_prover_dummy(&mut program);
     let verifier_preprocessing =
-        guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
+        guest::verifier_preprocessing_from_prover_dummy(&prover_preprocessing);
 
     if save_to_disk {
         serialize_and_print_size(
@@ -23,35 +23,35 @@ pub fn main() {
         .expect("Could not serialize preprocessing.");
     }
 
-    let prove_fib = guest::build_prover_fib2(program, prover_preprocessing.clone());
-    let verify_fib = guest::build_verifier_fib2(verifier_preprocessing);
-    let advice_data = [53u8, 100, 112, 56, 57, 230, 59, 54, 73];
-    let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_fib2(
+    let prove_dummy = guest::build_prover_dummy(program, prover_preprocessing.clone());
+    let verify_dummy = guest::build_verifier_dummy(verifier_preprocessing);
+    let advice_data = [53u8, 100, 112, 56, 57, 230, 59, 54, 73, 74, 75, 76, 77, 78, 79, 80];
+    let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_dummy(
         TrustedAdvice::new(advice_data),
         &prover_preprocessing,
     );
 
-    // let program_summary = guest::analyze_fib(10);
+    // let program_summary = guest::analyze_dummy(10);
     // program_summary
-    //     .write_to_file("fib_10.txt".into())
+    //     .write_to_file("dummy_10.txt".into())
     //     .expect("should write");
 
-    let trace_file = "/tmp/fib_trace.bin";
-    guest::trace_fib2_to_file(trace_file, 10, TrustedAdvice::new(advice_data));
+    let trace_file = "/tmp/dummy_trace.bin";
+    guest::trace_dummy_to_file(trace_file, 10, TrustedAdvice::new(advice_data));
     info!("Trace file written to: {trace_file}.");
 
     let now = Instant::now();
-    let (output, proof, io_device) = prove_fib(10, TrustedAdvice::new(advice_data), trusted_advice_commitment);
+    let (output, proof, io_device) = prove_dummy(10, TrustedAdvice::new(advice_data), trusted_advice_commitment);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     if save_to_disk {
-        serialize_and_print_size("Proof", "/tmp/fib_proof.bin", &proof)
+        serialize_and_print_size("Proof", "/tmp/dummy_proof.bin", &proof)
             .expect("Could not serialize proof.");
-        serialize_and_print_size("io_device", "/tmp/fib_io_device.bin", &io_device)
+        serialize_and_print_size("io_device", "/tmp/dummy_io_device.bin", &io_device)
             .expect("Could not serialize io_device.");
     }
 
-    let is_valid = verify_fib(10, output, io_device.panic, trusted_advice_commitment, proof);
+    let is_valid = verify_dummy(10, output, io_device.panic, trusted_advice_commitment, proof);
     info!("output: {output}");
     info!("valid: {is_valid}");
 }

@@ -18,10 +18,10 @@ fn fib(n: u32) -> u128 {
     b
 }
 
-#[jolt::provable(memory_size = 4096, max_trace_length = 65536)]
-fn fib2(
+#[jolt::provable(memory_size = 32768, max_trace_length = 65536)]
+fn dummy(
     n: u128,
-    _dummy: jolt::TrustedAdvice<[u8; 9]>,
+    _du: jolt::TrustedAdvice<[u8; 16]>,
 ) -> u128 {
     // let mut a: u128 = 0;
     // let mut b: u128 = 1;

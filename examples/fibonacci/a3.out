@@ -1,0 +1,91 @@
+   Compiling jolt-core v0.1.0 (/Users/amir.kh/Desktop/north/jolt/jolt-core)
+warning: unused import: `DoryContext`
+ --> jolt-core/src/poly/rlc_polynomial.rs:3:37
+  |
+3 | use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
+  |                                     ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::zkvm::ram::read_write_checking::RamReadWriteCheckingProver`
+ --> jolt-core/src/poly/rlc_polynomial.rs:8:5
+  |
+8 | use crate::zkvm::ram::read_write_checking::RamReadWriteCheckingProver;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `OpeningPoint` and `PolynomialEvaluation`
+  --> jolt-core/src/zkvm/prover.rs:22:57
+   |
+22 |         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+   |                                                         ^^^^^^^^^^^^^^^^^^^^
+23 |         opening_proof::{OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof},
+   |                         ^^^^^^^^^^^^
+
+warning: unused variable: `poly`
+   --> jolt-core/src/poly/opening_proof.rs:834:21
+    |
+834 |         if let Some(poly) = &trusted_advice_poly {
+    |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_poly`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `test_ram_ra_hint`
+   --> jolt-core/src/poly/opening_proof.rs:975:32
+    |
+975 |         let (joint_poly, hint, test_ram_ra_hint, test_trusted_advice_hint, test_poly_ids, test_coeffs) = result;
+    |                                ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_test_ram_ra_hint`
+
+warning: unused variable: `test_trusted_advice_hint`
+   --> jolt-core/src/poly/opening_proof.rs:975:50
+    |
+975 |         let (joint_poly, hint, test_ram_ra_hint, test_trusted_advice_hint, test_poly_ids, test_coeffs) = result;
+    |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_test_trusted_advice_hint`
+
+warning: unused variable: `test_poly_ids`
+   --> jolt-core/src/poly/opening_proof.rs:975:76
+    |
+975 |         let (joint_poly, hint, test_ram_ra_hint, test_trusted_advice_hint, test_poly_ids, test_coeffs) = result;
+    |                                                                            ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_test_poly_ids`
+
+warning: unused variable: `test_coeffs`
+   --> jolt-core/src/poly/opening_proof.rs:975:91
+    |
+975 |         let (joint_poly, hint, test_ram_ra_hint, test_trusted_advice_hint, test_poly_ids, test_coeffs) = result;
+    |                                                                                           ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_test_coeffs`
+
+warning: variable does not need to be mutable
+    --> jolt-core/src/poly/opening_proof.rs:1005:13
+     |
+1005 |         let mut joint_eval: F = gamma_powers
+     |             ----^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `main_rows`
+    --> jolt-core/src/poly/opening_proof.rs:1693:25
+     |
+1693 |                     let main_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
+     |                         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_main_rows`
+
+warning: variable does not need to be mutable
+    --> jolt-core/src/poly/opening_proof.rs:1683:13
+     |
+1683 |         let mut joint_claim: F = gamma_powers
+     |             ----^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `col_idx`
+   --> jolt-core/src/poly/rlc_polynomial.rs:482:28
+    |
+482 |                     .map(|(col_idx, cycle)| {
+    |                            ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_col_idx`
+
+warning: unused variable: `poly_idx`
+   --> jolt-core/src/zkvm/witness.rs:177:9
+    |
+177 |         poly_idx: usize,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_poly_idx`
+

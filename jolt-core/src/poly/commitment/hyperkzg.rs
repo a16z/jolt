@@ -170,7 +170,7 @@ where
 
     let B = if has_one_hot {
         let dummy_poly_ids = vec![CommittedPolynomial::RdInc; f_arc.len()];
-        let rlc_result = RLCPolynomial::linear_combination(dummy_poly_ids, f_arc, &q_powers, None, None);
+        let rlc_result = RLCPolynomial::linear_combination(dummy_poly_ids, f_arc, &q_powers, vec![], 0, 0, P::ScalarField::zero(), None);
         MultilinearPolynomial::RLC(rlc_result)
     } else {
         let poly_refs: Vec<&MultilinearPolynomial<P::ScalarField>> =
