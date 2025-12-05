@@ -15,7 +15,7 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -27,6 +27,68 @@ use tracer::instruction::Cycle;
 /// Degree bound of the sumcheck round polynomials in [`InstructionLookupsClaimReductionSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
 
+#[derive(Allocative, Clone)]
+pub struct InstructionLookupsClaimReductionSumcheckParams<F: JoltField> {
+    gamma: F,
+    gamma_sqr: F,
+    n_cycle_vars: usize,
+    r_spartan: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+impl<F: JoltField> InstructionLookupsClaimReductionSumcheckParams<F> {
+    pub fn new(
+        trace_len: usize,
+        accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let gamma = transcript.challenge_scalar::<F>();
+        let gamma_sqr = gamma.square();
+        let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+        Self {
+            gamma,
+            gamma_sqr,
+            n_cycle_vars: trace_len.log_2(),
+            r_spartan,
+        }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductionSumcheckParams<F> {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, lookup_output_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, left_operand_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, right_operand_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        lookup_output_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
+    }
+
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.n_cycle_vars
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
 /// Sumcheck prover for [`InstructionLookupsClaimReductionSumcheckVerifier`].
 #[derive(Allocative)]
 #[allow(clippy::large_enum_variant, private_interfaces)]
@@ -36,40 +98,22 @@ pub enum InstructionLookupsClaimReductionSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionLookupsClaimReductionSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "InstructionClaimReductionSumcheckProver::gen")]
-    pub fn gen(
+    #[tracing::instrument(skip_all, name = "InstructionClaimReductionSumcheckProver::initialize")]
+    pub fn initialize(
+        params: InstructionLookupsClaimReductionSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let n_cycle_vars = trace.len().log_2();
-        let params = InstructionLookupsClaimReductionSumcheckParams::new(
-            n_cycle_vars,
-            accumulator,
-            transcript,
-        );
-        Self::Phase1(InstructionLookupsPhase1Prover::gen(trace, params))
+        Self::Phase1(InstructionLookupsPhase1Prover::initialize(trace, params))
     }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for InstructionLookupsClaimReductionSumcheckProver<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         match self {
-            Self::Phase1(prover) => prover.params.n_cycle_vars,
-            Self::Phase2(prover) => prover.params.n_cycle_vars,
-        }
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        match self {
-            Self::Phase1(prover) => prover.params.input_claim(accumulator),
-            Self::Phase2(prover) => prover.params.input_claim(accumulator),
+            InstructionLookupsClaimReductionSumcheckProver::Phase1(prover) => &prover.params,
+            InstructionLookupsClaimReductionSumcheckProver::Phase2(prover) => &prover.params,
         }
     }
 
@@ -118,7 +162,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             panic!("Should finish sumcheck on phase 2");
         };
 
-        let opening_point = get_opening_point(sumcheck_challenges);
+        let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
 
         let lookup_output_claim = prover.lookup_output_poly.final_sumcheck_claim();
         let left_lookup_operand_claim = prover.left_lookup_operand_poly.final_sumcheck_claim();
@@ -169,7 +214,7 @@ pub struct InstructionLookupsPhase1Prover<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionLookupsPhase1Prover<F> {
-    fn gen(
+    fn initialize(
         trace: Arc<Vec<Cycle>>,
         params: InstructionLookupsClaimReductionSumcheckParams<F>,
     ) -> Self {
@@ -383,15 +428,12 @@ pub struct InstructionLookupsClaimReductionSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> InstructionLookupsClaimReductionSumcheckVerifier<F> {
     pub fn new(
-        n_cycle_vars: usize,
+        trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = InstructionLookupsClaimReductionSumcheckParams::new(
-            n_cycle_vars,
-            accumulator,
-            transcript,
-        );
+        let params =
+            InstructionLookupsClaimReductionSumcheckParams::new(trace_len, accumulator, transcript);
         Self { params }
     }
 }
@@ -399,16 +441,8 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for InstructionLookupsClaimReductionSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.n_cycle_vars
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -416,7 +450,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let opening_point = get_opening_point::<F>(sumcheck_challenges);
+        let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
 
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
@@ -448,7 +483,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = get_opening_point::<F>(sumcheck_challenges);
+        let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_virtual(
             transcript,
@@ -469,55 +505,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             opening_point,
         );
     }
-}
-
-#[derive(Allocative, Clone)]
-struct InstructionLookupsClaimReductionSumcheckParams<F: JoltField> {
-    gamma: F,
-    gamma_sqr: F,
-    n_cycle_vars: usize,
-    r_spartan: OpeningPoint<BIG_ENDIAN, F>,
-}
-
-impl<F: JoltField> InstructionLookupsClaimReductionSumcheckParams<F> {
-    fn new(
-        n_cycle_vars: usize,
-        accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-    ) -> Self {
-        let gamma = transcript.challenge_scalar::<F>();
-        let gamma_sqr = gamma.square();
-        let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        Self {
-            gamma,
-            gamma_sqr,
-            n_cycle_vars,
-            r_spartan,
-        }
-    }
-
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, lookup_output_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, left_operand_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_operand_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        lookup_output_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
-    }
-}
-
-fn get_opening_point<F: JoltField>(
-    sumcheck_challenges: &[F::Challenge],
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }

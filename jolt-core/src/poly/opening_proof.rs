@@ -9,6 +9,7 @@
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
     poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
+    subprotocols::sumcheck_verifier::SumcheckInstanceParams,
     zkvm::config::OneHotParams,
 };
 use allocative::Allocative;
@@ -197,7 +198,9 @@ pub enum OpeningId {
     TrustedAdvice,
 }
 
-pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
+/// (point, claim)
+pub type Opening<F> = (OpeningPoint<BIG_ENDIAN, F>, F);
+pub type Openings<F> = BTreeMap<OpeningId, Opening<F>>;
 
 #[derive(Clone, Debug, Allocative)]
 pub struct SharedDensePolynomial<F: JoltField> {
@@ -289,8 +292,7 @@ where
     polynomial: CommittedPolynomial,
     /// The ID of the sumcheck these openings originated from
     sumcheck_id: SumcheckId,
-    input_claim: F,
-    opening_point: Vec<F::Challenge>,
+    opening: Opening<F>,
     sumcheck_claim: Option<F>,
     log_T: usize,
 }
@@ -314,9 +316,8 @@ where
         Self {
             polynomial,
             sumcheck_id,
-            input_claim: claim,
+            opening: (opening_point.into(), claim),
             prover_state: opening.into(),
-            opening_point,
             sumcheck_claim: None,
             log_T,
         }
@@ -335,9 +336,8 @@ where
         Self {
             polynomial,
             sumcheck_id,
-            input_claim: claim,
+            opening: (opening_point.into(), claim),
             prover_state: opening.into(),
-            opening_point,
             sumcheck_claim: None,
             log_T,
         }
@@ -357,14 +357,14 @@ where
             use crate::poly::multilinear_polynomial::PolynomialEvaluation;
             let poly = polynomials_map.get(&self.polynomial).unwrap();
             debug_assert_eq!(
-                poly.evaluate(&self.opening_point),
-                self.input_claim,
+                poly.evaluate(&self.opening.0.r),
+                self.opening.1,
                 "Evaluation mismatch for {:?} {:?}",
                 self.sumcheck_id,
                 self.polynomial,
             );
             let num_vars = poly.get_num_vars();
-            let opening_point_len = self.opening_point.len();
+            let opening_point_len = self.opening.0.len();
             debug_assert_eq!(
                         num_vars,
                         opening_point_len,
@@ -400,20 +400,33 @@ where
     }
 }
 
-impl<F, T: Transcript> SumcheckInstanceProver<F, T> for OpeningProofReductionSumcheckProver<F>
-where
-    F: JoltField,
-{
+impl<F: JoltField> SumcheckInstanceParams<F> for Opening<F> {
     fn degree(&self) -> usize {
         OPENING_SUMCHECK_DEGREE
     }
 
     fn num_rounds(&self) -> usize {
-        self.opening_point.len()
+        self.0.len()
     }
 
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.input_claim
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
+        self.1
+    }
+
+    fn normalize_opening_point(
+        &self,
+        _: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        unimplemented!("Unused")
+    }
+}
+
+impl<F, T: Transcript> SumcheckInstanceProver<F, T> for OpeningProofReductionSumcheckProver<F>
+where
+    F: JoltField,
+{
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.opening
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
@@ -451,8 +464,7 @@ where
 {
     /// Represents the polynomial opened.
     polynomial: CommittedPolynomial,
-    input_claim: F,
-    opening_point: Vec<F::Challenge>,
+    opening: Opening<F>,
     sumcheck_claim: Option<F>,
     log_T: usize,
 }
@@ -466,8 +478,7 @@ impl<F: JoltField> OpeningProofReductionSumcheckVerifier<F> {
     ) -> Self {
         Self {
             polynomial,
-            input_claim,
-            opening_point,
+            opening: (opening_point.into(), input_claim),
             sumcheck_claim: None,
             log_T,
         }
@@ -477,16 +488,8 @@ impl<F: JoltField> OpeningProofReductionSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for OpeningProofReductionSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        OPENING_SUMCHECK_DEGREE
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.opening_point.len()
-    }
-
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.input_claim
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.opening
     }
 
     fn expected_output_claim(
@@ -505,7 +508,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 r[..log_K].reverse();
             }
         }
-        let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);
+        let eq_eval = EqPolynomial::<F>::mle(&self.opening.0.r, &r);
         eq_eval * self.sumcheck_claim.unwrap()
     }
 
@@ -565,12 +568,8 @@ pub trait OpeningAccumulator<F: JoltField> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
-pub struct ReducedOpeningProof<
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
-> {
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+pub struct ReducedOpeningProof<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> {
+    pub sumcheck_proof: SumcheckInstanceProof<F, T>,
     pub sumcheck_claims: Vec<F>,
     joint_opening_proof: PCS::Proof,
     #[cfg(test)]
@@ -797,14 +796,14 @@ where
     /// Reduces the multiple openings accumulated into a single opening proof,
     /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
-    pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn reduce_and_prove<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
         mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
-        transcript: &mut ProofTranscript,
+        transcript: &mut T,
         streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
-    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
+    ) -> ReducedOpeningProof<F, PCS, T> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
             self.sumchecks.len()
@@ -936,14 +935,10 @@ where
 
     /// Proves the sumcheck used to prove the reduction of many openings into one.
     #[tracing::instrument(skip_all)]
-    pub fn prove_batch_opening_reduction<ProofTranscript: Transcript>(
+    pub fn prove_batch_opening_reduction<T: Transcript>(
         &mut self,
-        transcript: &mut ProofTranscript,
-    ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
-        Vec<F::Challenge>,
-        Vec<F>,
-    ) {
+        transcript: &mut T,
+    ) -> (SumcheckInstanceProof<F, T>, Vec<F::Challenge>, Vec<F>) {
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("Opening accumulator", &(*self));
@@ -1071,7 +1066,7 @@ where
             let prover_opening =
                 &self.prover_opening_accumulator.as_ref().unwrap().sumchecks[self.sumchecks.len()];
             assert_eq!(
-                prover_opening.opening_point, opening_point,
+                prover_opening.opening.0.r, opening_point,
                 "opening point mismatch"
             );
         }
@@ -1118,7 +1113,7 @@ where
                     "Polynomial mismatch"
                 );
                 assert_eq!(
-                    prover_opening.opening_point, opening_point,
+                    prover_opening.opening.0.r, opening_point,
                     "opening point mismatch for {sumcheck:?} {label:?}"
                 );
             }
@@ -1196,12 +1191,12 @@ where
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
     /// and a single opening proof) indeed proves the openings accumulated.
-    pub fn reduce_and_verify<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn reduce_and_verify<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
         pcs_setup: &PCS::VerifierSetup,
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
-        reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        reduced_opening_proof: &ReducedOpeningProof<F, PCS, T>,
+        transcript: &mut T,
     ) -> Result<(), ProofVerifyError> {
         #[cfg(test)]
         if let Some(prover_openings) = &self.prover_opening_accumulator {
@@ -1211,7 +1206,7 @@ where
         let num_sumcheck_rounds = self
             .sumchecks
             .iter()
-            .map(|opening| opening.opening_point.len())
+            .map(|opening| SumcheckInstanceVerifier::<F, T>::num_rounds(opening))
             .max()
             .unwrap();
 
@@ -1264,7 +1259,8 @@ where
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .zip(self.sumchecks.iter())
             .map(|((coeff, claim), opening)| {
-                let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                let r_slice = &r_sumcheck
+                    [..num_sumcheck_rounds - SumcheckInstanceVerifier::<F, T>::num_rounds(opening)];
                 let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
                 *coeff * claim * lagrange_eval
             })
@@ -1282,16 +1278,16 @@ where
     }
 
     /// Verifies the sumcheck proven in `ProverOpeningAccumulator::prove_batch_opening_reduction`.
-    fn verify_batch_opening_reduction<ProofTranscript: Transcript>(
+    fn verify_batch_opening_reduction<T: Transcript>(
         &self,
-        sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        sumcheck_proof: &SumcheckInstanceProof<F, T>,
+        transcript: &mut T,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = self
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, T>> = self
             .sumchecks
             .iter()
             .map(|opening| {
-                let instance: &dyn SumcheckInstanceVerifier<F, ProofTranscript> = opening;
+                let instance: &dyn SumcheckInstanceVerifier<F, T> = opening;
                 instance
             })
             .collect();

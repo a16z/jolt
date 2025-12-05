@@ -19,15 +19,59 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, thread::drop_in_background_thread},
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::witness::CommittedPolynomial,
 };
 
 /// Degree bound of the sumcheck round polynomials in [`BooleanitySumcheckVerifier`].
 const DEGREE_BOUND: usize = 3;
+
+pub struct BooleanitySumcheckParams<F: JoltField> {
+    /// Number of address chunks
+    pub d: usize,
+    /// Log of chunk size
+    pub log_k_chunk: usize,
+    /// Log of trace length
+    pub log_t: usize,
+    /// Batching challenges
+    pub gammas: Vec<F::Challenge>,
+    /// Address binding point
+    pub r_address: Vec<F::Challenge>,
+    /// Cycle binding point
+    pub r_cycle: Vec<F::Challenge>,
+    /// Polynomial types for opening accumulator
+    pub polynomial_types: Vec<CommittedPolynomial>,
+    /// Sumcheck ID for opening accumulator
+    pub sumcheck_id: SumcheckId,
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.log_k_chunk + self.log_t
+    }
+
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
+        F::zero()
+    }
+
+    fn normalize_opening_point(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut opening_point = sumcheck_challenges.to_vec();
+        opening_point[..self.log_k_chunk].reverse();
+        opening_point[self.log_k_chunk..].reverse();
+        opening_point.into()
+    }
+}
 
 /// Unified Booleanity Sumcheck implementation for RAM, Bytecode, and Instruction lookups
 #[derive(Allocative)]
@@ -175,16 +219,8 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySumcheckProver<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        F::zero()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message", fields(variant = ?self.params.sumcheck_id))]
@@ -238,7 +274,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let claims: Vec<F> = self.H.iter().map(|H| H.final_sumcheck_claim()).collect();
         accumulator.append_sparse(
             transcript,
@@ -267,16 +303,8 @@ impl<F: JoltField> BooleanitySumcheckVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanitySumcheckVerifier<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        F::zero()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -295,15 +323,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
             })
             .collect::<Vec<F>>();
 
-        let r_cycle = self.params.get_r_cycle(accumulator);
-
         let combined_r: Vec<F::Challenge> = self
             .params
             .r_address
             .iter()
             .cloned()
             .rev()
-            .chain(r_cycle.iter().cloned().rev())
+            .chain(self.params.r_cycle.iter().cloned().rev())
             .collect();
 
         EqPolynomial::<F>::mle(sumcheck_challenges, &combined_r)
@@ -318,64 +344,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_sparse(
             transcript,
             self.params.polynomial_types.clone(),
             self.params.sumcheck_id,
             opening_point.r,
         );
-    }
-}
-
-pub struct BooleanitySumcheckParams<F: JoltField> {
-    /// Number of address chunks
-    pub d: usize,
-    /// Log of chunk size
-    pub log_k_chunk: usize,
-    /// Log of trace length
-    pub log_t: usize,
-    /// Batching challenges
-    pub gammas: Vec<F::Challenge>,
-    /// Address binding point
-    pub r_address: Vec<F::Challenge>,
-    /// Cycle binding point
-    pub r_cycle: Vec<F::Challenge>,
-    /// Polynomial types for opening accumulator
-    pub polynomial_types: Vec<CommittedPolynomial>,
-    /// Sumcheck ID for opening accumulator
-    pub sumcheck_id: SumcheckId,
-    /// Optional virtual polynomial for r_cycle
-    pub virtual_poly: Option<VirtualPolynomial>,
-}
-
-impl<F: JoltField> BooleanitySumcheckParams<F> {
-    pub fn num_rounds(&self) -> usize {
-        self.log_k_chunk + self.log_t
-    }
-
-    fn get_r_cycle(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F::Challenge> {
-        if !self.r_cycle.is_empty() {
-            self.r_cycle.clone()
-        } else {
-            let virtual_poly = self
-                .virtual_poly
-                .expect("virtual_poly must be set when r_cycle is empty");
-            accumulator
-                .get_virtual_polynomial_opening(virtual_poly, SumcheckId::SpartanOuter)
-                .0
-                .r
-                .clone()
-        }
-    }
-
-    fn get_opening_point(
-        &self,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut opening_point = sumcheck_challenges.to_vec();
-        opening_point[..self.log_k_chunk].reverse();
-        opening_point[self.log_k_chunk..].reverse();
-        opening_point.into()
     }
 }

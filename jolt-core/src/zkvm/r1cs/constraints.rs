@@ -416,6 +416,9 @@ pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
     2 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
 pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS: usize =
     3 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
+/// Degree of the first-round polynomial.
+pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_DEGREE_BOUND: usize =
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum ProductConstraintLabel {
