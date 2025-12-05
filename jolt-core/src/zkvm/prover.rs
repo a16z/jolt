@@ -23,7 +23,9 @@ use crate::{
             dory::{DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{ProverOpeningAccumulator, ReducedOpeningProof},
+        opening_proof::{
+            CompressedReducedOpeningProof, ProverOpeningAccumulator, ReducedOpeningProof,
+        },
         rlc_polynomial::RLCStreamingData,
     },
     pprof_scope,
@@ -403,10 +405,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let (commitments, opening_proof_hints) =
             self.generate_and_commit_witness_polynomials_compressed();
 
-        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
+        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice_compressed();
         let trusted_advice_proof = self.prove_trusted_advice_compressed();
         let untrusted_advice_proof = self.prove_untrusted_advice_compressed();
-        let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
+        let reduced_opening_proof = self.prove_stage7_compressed(opening_proof_hints);
 
         #[cfg(test)]
         assert!(
@@ -599,7 +601,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         (commitments, hint_map)
     }
 
-    fn generate_and_commit_untrusted_advice(&mut self) -> Option<PCS::Commitment> {
+    fn generate_and_commit_untrusted_advice_helper(&mut self) -> Option<MultilinearPolynomial<F>> {
         if self.program_io.untrusted_advice.is_empty() {
             return None;
         }
@@ -621,10 +623,31 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
+
+        Some(poly)
+    }
+
+    fn generate_and_commit_untrusted_advice(&mut self) -> Option<PCS::Commitment> {
+        let poly = self.generate_and_commit_untrusted_advice_helper()?;
         let (commitment, _hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript.append_serializable(&commitment);
 
         self.advice.untrusted_advice_polynomial = Some(poly);
+
+        Some(commitment)
+    }
+
+    fn generate_and_commit_untrusted_advice_compressed(
+        &mut self,
+    ) -> Option<PCS::CompressedCommitment>
+    where
+        PCS: CompressedCommitmentScheme<Field = F>,
+    {
+        let poly = self.generate_and_commit_untrusted_advice_helper()?;
+        let (commitment, _hint) = PCS::commit_compressed(&poly, &self.preprocessing.generators);
+        self.transcript.append_serializable(&commitment);
+
+        self.advice.trusted_advice_polynomial = Some(poly);
 
         Some(commitment)
     }
@@ -1187,7 +1210,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             memory_layout: self.preprocessing.memory_layout.clone(),
         });
 
-        self.opening_accumulator.reduce_and_prove(
+        self.opening_accumulator.reduce_and_prove_compressed(
             polynomials_map,
             opening_proof_hints,
             &self.preprocessing.generators,
@@ -1418,6 +1441,157 @@ mod tests {
     }
 
     impl JoltProofFieldSizeTracker {
+        /// Records the serialized size (in bytes) of an entire JoltCompressedProof and all its fields.
+        fn record_compressed<F, PCS, FS>(
+            &mut self,
+            proof: &crate::zkvm::proof_serialization::JoltCompressedProof<F, PCS, FS>,
+        ) where
+            F: JoltField,
+            PCS: crate::poly::commitment::commitment_scheme::CompressedCommitmentScheme<Field = F>,
+            FS: crate::transcripts::Transcript,
+        {
+            // Full proof
+            let mut buf = Vec::new();
+            proof
+                .serialize_compressed(&mut buf)
+                .expect("failed to serialize compressed proof");
+            self.all_proof_size = buf.len();
+
+            // Field: opening_claims
+            let mut buf = Vec::new();
+            proof.opening_claims.serialize_compressed(&mut buf).unwrap();
+            self.opening_claims_size = buf.len();
+
+            // Field: commitments
+            let mut buf = Vec::new();
+            proof.commitments.serialize_compressed(&mut buf).unwrap();
+            self.commitments_size = buf.len();
+
+            // Field: stage1_uni_skip_first_round_proof
+            let mut buf = Vec::new();
+            proof
+                .stage1_uni_skip_first_round_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage1_uni_skip_first_round_proof_size = buf.len();
+
+            // Field: stage1_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage1_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage1_sumcheck_proof_size = buf.len();
+
+            // Field: stage2_uni_skip_first_round_proof
+            let mut buf = Vec::new();
+            proof
+                .stage2_uni_skip_first_round_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage2_uni_skip_first_round_proof_size = buf.len();
+
+            // Field: stage2_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage2_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage2_sumcheck_proof_size = buf.len();
+
+            // Field: stage3_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage3_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage3_sumcheck_proof_size = buf.len();
+
+            // Field: stage4_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage4_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage4_sumcheck_proof_size = buf.len();
+
+            // Field: stage5_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage5_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage5_sumcheck_proof_size = buf.len();
+
+            // Field: stage6_sumcheck_proof
+            let mut buf = Vec::new();
+            proof
+                .stage6_sumcheck_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.stage6_sumcheck_proof_size = buf.len();
+
+            // Field: trusted_advice_proof
+            let mut buf = Vec::new();
+            proof
+                .trusted_advice_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.trusted_advice_proof_size = buf.len();
+
+            // Field: untrusted_advice_proof
+            let mut buf = Vec::new();
+            proof
+                .untrusted_advice_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.untrusted_advice_proof_size = buf.len();
+
+            // Field: reduced_opening_proof
+            let mut buf = Vec::new();
+            proof
+                .reduced_opening_proof
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.reduced_opening_proof_size = buf.len();
+
+            // Field: untrusted_advice_commitment
+            let mut buf = Vec::new();
+            proof
+                .untrusted_advice_commitment
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.untrusted_advice_commitment_size = buf.len();
+
+            // Field: trace_length
+            let mut buf = Vec::new();
+            proof.trace_length.serialize_compressed(&mut buf).unwrap();
+            self.trace_length_size = buf.len();
+
+            // Field: ram_K
+            let mut buf = Vec::new();
+            proof.ram_K.serialize_compressed(&mut buf).unwrap();
+            self.ram_k_size = buf.len();
+
+            // Field: bytecode_K
+            let mut buf = Vec::new();
+            proof.bytecode_K.serialize_compressed(&mut buf).unwrap();
+            self.bytecode_k_size = buf.len();
+
+            // Field: log_k_chunk
+            let mut buf = Vec::new();
+            proof.log_k_chunk.serialize_compressed(&mut buf).unwrap();
+            self.log_k_chunk_size = buf.len();
+
+            // Field: twist_sumcheck_switch_index
+            let mut buf = Vec::new();
+            proof
+                .twist_sumcheck_switch_index
+                .serialize_compressed(&mut buf)
+                .unwrap();
+            self.twist_sumcheck_switch_index_size = buf.len();
+        }
+
         /// Records the serialized size (in bytes) of an entire JoltProof and all its fields.
         fn record<F, PCS, FS>(
             &mut self,
@@ -1667,15 +1841,14 @@ mod tests {
             RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let _io_device = prover1.program_io.clone();
-        let (jolt_proof_compressed, _debug_info_compressed) =
-            prover1.prove_with_mode(JoltProofCompressionFlag::TorusCompression);
+        let (jolt_proof_compressed, _debug_info_compressed) = prover1.prove_compressed();
         let (jolt_proof_uncompressed, _debug_info_uncompressed) = prover2.prove();
 
         let mut uncompressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
         let mut compressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
 
         uncompressed_proof_field_size_tracker.record(&jolt_proof_uncompressed);
-        compressed_proof_field_size_tracker.record(&jolt_proof_compressed);
+        compressed_proof_field_size_tracker.record_compressed(&jolt_proof_compressed);
 
         expect![[r#"
             Field                                    | Uncompressed B |   Compressed B |      Ratio
@@ -1869,15 +2042,14 @@ mod tests {
             RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let _io_device = prover1.program_io.clone();
-        let (jolt_proof_compressed, _debug_info_compressed) =
-            prover1.prove_with_mode(JoltProofCompressionFlag::TorusCompression);
+        let (jolt_proof_compressed, _debug_info_compressed) = prover1.prove_compressed();
         let (jolt_proof_uncompressed, _debug_info_uncompressed) = prover2.prove();
 
         let mut uncompressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
         let mut compressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
 
         uncompressed_proof_field_size_tracker.record(&jolt_proof_uncompressed);
-        compressed_proof_field_size_tracker.record(&jolt_proof_compressed);
+        compressed_proof_field_size_tracker.record_compressed(&jolt_proof_compressed);
 
         expect![[r#"
             Field                                    | Uncompressed B |   Compressed B |      Ratio
@@ -2116,14 +2288,13 @@ mod tests {
             RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[], &[], &[], None);
 
         let (jolt_proof_uncompressed, _debug_info_uncompressed) = prover_uncompressed.prove();
-        let (jolt_proof_compressed, _debug_info_compressed) =
-            prover_compressed.prove_with_mode(JoltProofCompressionFlag::TorusCompression);
+        let (jolt_proof_compressed, _debug_info_compressed) = prover_compressed.prove_compressed();
 
         let mut uncompressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
         let mut compressed_proof_field_size_tracker = JoltProofFieldSizeTracker::default();
 
         uncompressed_proof_field_size_tracker.record(&jolt_proof_uncompressed);
-        compressed_proof_field_size_tracker.record(&jolt_proof_compressed);
+        compressed_proof_field_size_tracker.record_compressed(&jolt_proof_compressed);
 
         expect![[r#"
             Field                                    | Uncompressed B |   Compressed B |      Ratio

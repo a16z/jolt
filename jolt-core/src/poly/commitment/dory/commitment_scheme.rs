@@ -99,6 +99,49 @@ impl CompressedStreamingCommitmentScheme for DoryCommitmentScheme {
     }
 }
 
+impl DoryCommitmentScheme {
+    fn prove_helper<'a, ProofTranscript: Transcript>(
+        setup: &<Self as CommitmentScheme>::ProverSetup,
+        poly: &MultilinearPolynomial<<Self as CommitmentScheme>::Field>,
+        opening_point: &[<<Self as CommitmentScheme>::Field as JoltField>::Challenge],
+        hint: Option<<Self as CommitmentScheme>::OpeningProofHint>,
+        transcript: &mut ProofTranscript,
+    ) -> (
+        Vec<<Self as CommitmentScheme>::Field>,
+        <Self as CommitmentScheme>::OpeningProofHint,
+        usize,
+        usize,
+        JoltToDoryTranscript<'a, ProofTranscript>,
+    ) {
+        let _span: tracing::span::EnteredSpan =
+            trace_span!("DoryCommitmentScheme::prove").entered();
+
+        let row_commitments = hint.unwrap_or_else(|| {
+            let (_commitment, row_commitments) = Self::commit(poly, setup);
+            row_commitments
+        });
+
+        let num_cols = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_max_num_rows();
+        let sigma = num_cols.log_2();
+        let nu = num_rows.log_2();
+
+        // Dory uses the opposite endian-ness as Jolt
+        let ark_point = opening_point
+            .iter()
+            .rev()  // Reverse the order for Dory
+            .map(|p| {
+                let f_val: ark_bn254::Fr = (*p).into();
+                jolt_to_ark(&f_val)
+            })
+            .collect();
+
+        let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
+
+        (ark_point, row_commitments, nu, sigma, dory_transcript)
+    }
+}
+
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
     type ProverSetup = DoryProverSetup;
@@ -165,30 +208,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let _span = trace_span!("DoryCommitmentScheme::prove").entered();
-
-        let row_commitments = hint.unwrap_or_else(|| {
-            let (_commitment, row_commitments) = Self::commit(poly, setup);
-            row_commitments
-        });
-
-        let num_cols = DoryGlobals::get_num_columns();
-        let num_rows = DoryGlobals::get_max_num_rows();
-        let sigma = num_cols.log_2();
-        let nu = num_rows.log_2();
-
-        // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = opening_point
-            .iter()
-            .rev()  // Reverse the order for Dory
-            .map(|p| {
-                let f_val: ark_bn254::Fr = (*p).into();
-                jolt_to_ark(&f_val)
-            })
-            .collect();
-
-        let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
-
+        let (ark_point, row_commitments, nu, sigma, dory_transcript) =
+            Self::prove_helper::<ProofTranscript>(setup, poly, opening_point, hint, transcript);
         dory::prove::<ArkFr, JoltBn254, JoltG1Routines, JoltG2Routines, _, _>(
             poly,
             &ark_point,
