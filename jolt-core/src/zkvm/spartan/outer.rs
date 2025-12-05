@@ -377,7 +377,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
             // per k from `scaled_w`, avoiding redundant tensor products.
             acc_az
                 .par_iter_mut()
-                .with_min_len(4096)
                 .zip(acc_bz_first.par_iter_mut())
                 .zip(acc_bz_second.par_iter_mut())
                 .enumerate()
@@ -559,7 +558,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
             // Parallel version with reduction
             (0..E_out.len())
                 .into_par_iter()
-                .with_min_len(4096)
                 .map(|i| {
                     let mut local_ans = vec![F::zero(); three_pow_dim];
                     let mut az_grid = vec![F::zero(); grid_size];
@@ -607,7 +605,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
             let num_xin_bits = E_in.len().log_2();
             (0..E_out.len())
                 .into_par_iter()
-                .with_min_len(4096)
                 .map(|x_out| {
                     let mut local_ans = vec![F::zero(); three_pow_dim];
                     let mut az_grid = vec![F::zero(); grid_size];
@@ -639,10 +636,12 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             num_vars,
                         );
 
-                        let e_product = E_out[x_out] * E_in[x_in];
                         for idx in 0..three_pow_dim {
-                            local_ans[idx] += buff_a[idx] * buff_b[idx] * e_product;
+                            local_ans[idx] += buff_a[idx] * buff_b[idx] * E_in[x_in];
                         }
+                    }
+                    for idx in 0..three_pow_dim {
+                        local_ans[idx] *= E_out[x_out];
                     }
 
                     local_ans
@@ -683,11 +682,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         let mut ans = vec![F::zero(); three_pow_dim];
 
         let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
-        //println!("Size of Az/Bz: {}", n.log_2());
-        //println!("Size of Grid: {grid_size}, Num-vars: {num_vars}");
-        //println!("Num out vars: {}", E_out.len().log_2());
-        //println!("Num in vars: {}", E_in.len().log_2());
-        //
         if E_in.len() == 1 {
             // this is a simple case of a linear loop
             for i in 0..E_out.len() {
@@ -1061,10 +1055,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
                         // Store the accumulated grid in chunk-relative position
                         let buffer_offset = grid_size * (pair_idx - start_pair);
-                        //for j in 0..grid_size {
-                        //    az_chunk[buffer_offset + j] = az_grid[j];
-                        //    bz_chunk[buffer_offset + j] = bz_grid[j];
-                        //}
                         let end = buffer_offset + grid_size;
                         az_chunk[buffer_offset..end].copy_from_slice(&az_grid[..grid_size]);
                         bz_chunk[buffer_offset..end].copy_from_slice(&bz_grid[..grid_size]);
