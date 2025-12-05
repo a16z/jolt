@@ -79,8 +79,8 @@ impl<F: JoltField> HammingWeightSumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for HammingWeightSumcheckProver<F> {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "HammingWeightSumcheckProver::compute_message", fields(variant = ?self.params.sumcheck_id))]
@@ -150,8 +150,8 @@ impl<F: JoltField> HammingWeightSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for HammingWeightSumcheckVerifier<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(

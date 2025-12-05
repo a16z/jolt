@@ -238,8 +238,8 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtualUniSkipProver<F> {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(
@@ -310,8 +310,8 @@ impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for ProductVirtualUniSkipVerifier<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -589,8 +589,8 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for ProductVirtualRemainderProver<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::compute_message")]
@@ -659,8 +659,8 @@ impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for ProductVirtualRemainderVerifier<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(

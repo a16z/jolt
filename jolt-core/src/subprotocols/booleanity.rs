@@ -219,8 +219,8 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySumcheckProver<F> {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message", fields(variant = ?self.params.sumcheck_id))]
@@ -303,8 +303,8 @@ impl<F: JoltField> BooleanitySumcheckVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanitySumcheckVerifier<F> {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(

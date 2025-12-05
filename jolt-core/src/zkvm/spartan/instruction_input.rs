@@ -222,8 +222,8 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for InstructionInputSumcheckProver<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::compute_message")]
@@ -490,8 +490,8 @@ impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for InstructionInputSumcheckVerifier<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(

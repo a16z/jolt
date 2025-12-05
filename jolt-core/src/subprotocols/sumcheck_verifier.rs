@@ -4,7 +4,7 @@ use crate::transcripts::Transcript;
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
 
 pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         unimplemented!(
             "If get_params is unimplemented, degree, num_rounds, and \
             input_claim should be implemented directly"

@@ -424,8 +424,8 @@ impl<F, T: Transcript> SumcheckInstanceProver<F, T> for OpeningProofReductionSum
 where
     F: JoltField,
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.opening)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.opening
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
@@ -487,8 +487,8 @@ impl<F: JoltField> OpeningProofReductionSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for OpeningProofReductionSumcheckVerifier<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.opening)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.opening
     }
 
     fn expected_output_claim(

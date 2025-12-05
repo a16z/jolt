@@ -10,7 +10,7 @@ use crate::{
 pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     Send + Sync + MaybeAllocative
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         unimplemented!(
             "If get_params is unimplemented, degree, num_rounds, and \
             input_claim should be implemented directly"

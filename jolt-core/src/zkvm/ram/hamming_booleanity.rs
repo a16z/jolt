@@ -94,8 +94,8 @@ impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for HammingBooleanitySumcheckProver<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::compute_message")]
@@ -158,8 +158,8 @@ impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for HammingBooleanitySumcheckVerifier<F>
 {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(

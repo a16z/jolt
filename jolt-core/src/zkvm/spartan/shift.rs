@@ -147,10 +147,10 @@ impl<F: JoltField> ShiftSumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheckProver<F> {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         match self {
-            ShiftSumcheckProver::Phase1(phase1_prover) => Box::new(&phase1_prover.params),
-            ShiftSumcheckProver::Phase2(phase2_prover) => Box::new(&phase2_prover.params),
+            ShiftSumcheckProver::Phase1(phase1_prover) => &phase1_prover.params,
+            ShiftSumcheckProver::Phase2(phase2_prover) => &phase2_prover.params,
         }
     }
 
@@ -261,8 +261,8 @@ impl<F: JoltField> ShiftSumcheckVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumcheckVerifier<F> {
-    fn get_params(&self) -> Box<&dyn SumcheckInstanceParams<F>> {
-        Box::new(&self.params)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
