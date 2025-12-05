@@ -48,7 +48,7 @@ use allocative::FlameGraphBuilder;
 
 /// Degree bound of the sumcheck round polynomials for [`OuterRemainingSumcheckVerifier`].
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
-const INFINITY: usize = 2; // 3 represents ∞ in base-3
+const INFINITY: usize = 2; // this represents the index position in multi-quadratic poly array
 
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
