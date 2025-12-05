@@ -9,6 +9,8 @@ use crate::zkvm::r1cs::constraints::{
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::outer::{OuterUniSkipParams, OuterUniSkipVerifier};
 use crate::zkvm::spartan::product::{ProductVirtualUniSkipParams, ProductVirtualUniSkipVerifier};
+
+pub mod claim_reductions;
 pub mod instruction_input;
 pub mod outer;
 pub mod product;

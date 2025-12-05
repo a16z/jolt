@@ -1,3 +1,5 @@
+use std::array;
+
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -55,8 +57,8 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // Notation:
 // - Field F. Let K = 2^{LOG_K}, T = 2^{log_T}.
 // - Address index k ∈ {0..K-1}, cycle index j ∈ {0..T-1}.
-// - eq_addr(k; r_addr) := multilinear equality polynomial over LOG_K vars.
-// - eq_sp(j; r_sp) and eq_br(j; r_br) := equality polynomials over LOG_T vars.
+// - eq(k; r_addr) := multilinear equality polynomial over LOG_K vars.
+// - eq(j; r_reduction) := equality polynomials over LOG_T vars.
 // - ra(k, j) ∈ F is the selector arising from prefix/suffix condensation; logically ra(k, j) = 1
 //   when the j-th cycle's lookup key equals k, and 0 otherwise (implemented via ExpandingTable).
 // - Val_j(k) ∈ F is the lookup-table value selected by (j, k); concretely Val_j(k) = table_j(k)
@@ -68,34 +70,26 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // We introduce a batching challenge γ ∈ F. Define
 //   RafVal_j(k) := (1 - raf_flag(j)) · (LeftPrefix_j + γ · RightPrefix_j)
 //                  + raf_flag(j) · γ · IdentityPrefix_j.
-// The overall γ-weights are arranged so that γ^2 multiplies RafVal_j(k) in the final identity.
+// The overall γ-weights are arranged so that γ multiplies RafVal_j(k) in the final identity.
 //
-// Claims supplied by the accumulator (LHS):
-// - rv_spartan := ⟦LookupOutput⟧ at SumcheckId::SpartanOuter
-// - rv_branch  := ⟦LookupOutput⟧ at SumcheckId::ProductVirtualization
-// - left_op    := ⟦LeftLookupOperand⟧ at SumcheckId::SpartanOuter
-// - right_op   := ⟦RightLookupOperand⟧ at SumcheckId::SpartanOuter
-//   Combined as: rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+// Claims supplied by the accumulator (LHS), all claimed at `SumcheckId::InstructionClaimReduction`
+// and `SumcheckId::ProductVirtualization`:
+// - rv         := ⟦LookupOutput⟧
+// - left_op    := ⟦LeftLookupOperand⟧
+// - right_op   := ⟦RightLookupOperand⟧
+//   Combined as: rv + γ·left_op + γ^2·right_op
 //
 // Statement proved by this sumcheck (RHS), for random challenges
-// r_addr ∈ F^{LOG_K}, r_sp, r_br ∈ F^{log_T}:
+// r_addr ∈ F^{LOG_K}, r_reduction ∈ F^{log_T}:
 //
-//   rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
-//   = Σ_{j=0}^{T-1} Σ_{k=0}^{K-1} [ (eq_sp(j; r_sp) + γ·eq_br(j; r_br)) · ra(k, j) · Val_j(k)
-//                                   + γ^2 · eq_sp(j; r_sp) · ra(k, j) · RafVal_j(k) ].
-//
-// Equivalent split (for GruenSplitEqPolynomial in the last log(T) rounds):
-//   (i)  rv_spartan(r_sp) + γ^2·raf(r_sp)
-//        = Σ_j eq_sp(j; r_sp) · Σ_k ra(k, j) · (Val_j(k) + γ^2·RafVal_j(k))
-//   (ii) rv_branch(r_br)
-//        = Σ_j eq_br(j; r_br) · Σ_k ra(k, j) · Val_j(k).
+//   rv(r_reduction) + γ·left_op(r_reduction) + γ^2·right_op(r_reduction)
+//   = Σ_{j=0}^{T-1} Σ_{k=0}^{K-1} [ eq(j; r_reduction) · ra(k, j) · (Val_j(k) + γ · RafVal_j(k)) ].
 //
 // Prover structure:
 // - First log(K) rounds bind address vars using prefix/suffix decomposition, accumulating:
 //   Σ_k ra(k, j)·Val_j(k)  and  Σ_k ra(k, j)·RafVal_j(k)
 //   for each j (via u_evals vectors and suffix polynomials).
-// - Last log(T) rounds bind cycle vars using two GruenSplitEqPolynomial instances (for r_sp, r_br),
-//   producing degree-3 univariates with the required previous-round claims.
+// - Last log(T) rounds bind cycle vars producing a degree-3 univariate with the required previous-round claim.
 // - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
 
 /// Degree bound of the sumcheck round polynomials in [`ReadRafSumcheckVerifier`].
@@ -109,8 +103,7 @@ pub struct ReadRafSumcheckParams<F: JoltField> {
     log_T: usize,
     /// Number of phases for instruction lookups.
     phases: usize,
-    r_branch: OpeningPoint<BIG_ENDIAN, F>,
-    r_spartan: OpeningPoint<BIG_ENDIAN, F>,
+    r_reduction: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
@@ -122,13 +115,9 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
         let phases = config::instruction_sumcheck_phases(n_cycle_vars);
-        let (r_branch, _) = opening_accumulator.get_virtual_polynomial_opening(
+        let (r_reduction, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ProductVirtualization,
-        );
-        let (r_spartan, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
         );
 
         Self {
@@ -136,8 +125,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             gamma_sqr,
             log_T: n_cycle_vars,
             phases,
-            r_branch,
-            r_spartan,
+            r_reduction,
         }
     }
 }
@@ -148,25 +136,25 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
     }
 
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, rv_claim_spartan) = accumulator.get_virtual_polynomial_opening(
+        let (_, rv_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
         );
         let (_, rv_claim_branch) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
         );
+        // TODO: Make error and move to more appropriate place.
+        assert_eq!(rv_claim, rv_claim_branch);
         let (_, left_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
         );
         let (_, right_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
         );
-        rv_claim_spartan
-            + self.gamma * rv_claim_branch
-            + self.gamma_sqr * (left_operand_claim + self.gamma * right_operand_claim)
+        rv_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
     }
 
     fn degree(&self) -> usize {
@@ -188,8 +176,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
 ///
 /// Binds address variables first using prefix/suffix decomposition to aggregate, per cycle j,
 ///   Σ_k ra(k, j)·Val_j(k) and Σ_k ra(k, j)·RafVal_j(k),
-/// then binds cycle variables using two `GruenSplitEqPolynomial` instances (Spartan and Branch),
-/// producing degree-3 univariates with previous-round claims to support the Gruen evaluation.
 #[derive(Allocative)]
 pub struct ReadRafSumcheckProver<F: JoltField> {
     /// Materialized `ra(k, j)` MLE over (address, cycle) after the first log(K) rounds.
@@ -216,26 +202,13 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
     /// For each lookup table, dense polynomials holding suffix contributions in the current phase.
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
-    /// Expanding tables accumulating address-prefix products per phase (see `u_evals_*`).
+    /// Expanding tables accumulating address-prefix products per phase.
     v: Vec<ExpandingTable<F>>,
-    /// u_evals for read-checking part: eq(r_spartan,j) + gamma·eq(r_branch,j).
-    u_evals_rv: Vec<F>,
-    /// u_evals for RAF part: eq(r_spartan,j).
-    u_evals_raf: Vec<F>,
+    /// u_evals for read-checking and RAF: eq(r_reduction,j).
+    u_evals: Vec<F>,
 
-    // State related to Gruen EQ optimization
-    /// Gruen-split equality polynomial over cycle vars for Spartan part (high-to-low binding).
-    eq_r_spartan: GruenSplitEqPolynomial<F>,
-    /// Gruen-split equality polynomial over cycle vars for Branch/ProductVirtualization part.
-    eq_r_branch: GruenSplitEqPolynomial<F>,
-    /// Previous-round sumcheck claim s_spartan(0)+s_spartan(1) for degree-3 univariate recovery.
-    prev_claim_spartan: Option<F>,
-    /// Previous-round sumcheck claim s_branch(0)+s_branch(1) for degree-3 univariate recovery.
-    prev_claim_branch: Option<F>,
-    /// Previous round polynomial for Spartan part, used to derive next claim at r_j.
-    prev_round_poly_spartan: Option<UniPoly<F>>,
-    /// Previous round polynomial for Branch part, used to derive next claim at r_j.
-    prev_round_poly_branch: Option<UniPoly<F>>,
+    /// Gruen-split equality polynomial over cycle vars.
+    eq_r_reduction: GruenSplitEqPolynomial<F>,
 
     /// Registry holding prefix checkpoint values for `PrefixSuffixDecomposition` instances.
     prefix_registry: PrefixRegistry<F>,
@@ -387,51 +360,12 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             })
             .collect();
 
-        // Build split-eq polynomials and use them to compute u_evals_raf and u_evals_rv
-        let eq_poly_spartan =
-            GruenSplitEqPolynomial::<F>::new(&params.r_spartan.r, BindingOrder::LowToHigh);
-        let eq_poly_branch =
-            GruenSplitEqPolynomial::<F>::new(&params.r_branch.r, BindingOrder::LowToHigh);
-
-        // Pre-size and allocate outputs up-front
-        let e_out_s = eq_poly_spartan.E_out_current();
-        let e_out_b = eq_poly_branch.E_out_current();
-        debug_assert_eq!(e_out_s.len(), e_out_b.len());
-        let in_len = eq_poly_spartan.E_in_current_len();
-        debug_assert_eq!(in_len, eq_poly_branch.E_in_current_len());
-        let out_len = e_out_s.len();
-        let merged_in_len = in_len * 2;
-        let total_len = out_len * merged_in_len;
-
-        // Precompute merged inner coeffs [low*(1-w), low*w] for both EQs
-        let merged_s = eq_poly_spartan.merged_in_with_current_w();
-        let merged_b = eq_poly_branch.merged_in_with_current_w();
-
-        let mut u_evals_raf: Vec<F> = unsafe_allocate_zero_vec(total_len);
-        let mut u_evals_rv: Vec<F> = unsafe_allocate_zero_vec(total_len);
-
-        // Fill in parallel within a span
-        let span = tracing::span!(tracing::Level::INFO, "Compute u_evals_raf and u_evals_rv");
+        // Build split-eq polynomials and u_evals.
+        let span = tracing::span!(tracing::Level::INFO, "Compute u_evals");
         let _guard = span.enter();
-        u_evals_rv
-            .par_chunks_exact_mut(merged_in_len)
-            .zip(u_evals_raf.par_chunks_exact_mut(merged_in_len))
-            .enumerate()
-            .for_each(|(x_out, (rv_chunk, raf_chunk))| {
-                let high_s = e_out_s[x_out];
-                let high_b = params.gamma * e_out_b[x_out];
-                for x_in in 0..in_len {
-                    let off = 2 * x_in;
-                    let eval0_s = high_s * merged_s[off];
-                    let eval1_s = high_s * merged_s[off + 1];
-                    let eval0_b = high_b * merged_b[off];
-                    let eval1_b = high_b * merged_b[off + 1];
-                    raf_chunk[off] = eval0_s;
-                    raf_chunk[off + 1] = eval1_s;
-                    rv_chunk[off] = eval0_s + eval0_b;
-                    rv_chunk[off + 1] = eval1_s + eval1_b;
-                }
-            });
+        let eq_poly_r_reduction =
+            GruenSplitEqPolynomial::<F>::new(&params.r_reduction.r, BindingOrder::LowToHigh);
+        let u_evals = EqPolynomial::evals(&params.r_reduction.r);
         drop(_guard);
         drop(span);
 
@@ -450,20 +384,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             v: (0..params.phases)
                 .map(|_| ExpandingTable::new(1 << log_m, BindingOrder::HighToLow))
                 .collect(),
-            u_evals_rv,
-            u_evals_raf,
+            u_evals,
             right_operand_ps,
             left_operand_ps,
             identity_ps,
 
             // State for last log(T) rounds
             ra: None,
-            eq_r_spartan: eq_poly_spartan,
-            eq_r_branch: eq_poly_branch,
-            prev_claim_spartan: None,
-            prev_claim_branch: None,
-            prev_round_poly_spartan: None,
-            prev_round_poly_branch: None,
+            eq_r_reduction: eq_poly_r_reduction,
             prefix_registry: PrefixRegistry::new(),
             combined_val_polynomial: None,
             combined_raf_val_polynomial: None,
@@ -490,13 +418,11 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             let _guard = span.enter();
             self.lookup_indices
                 .par_iter()
-                .zip(self.u_evals_rv.par_iter_mut())
-                .zip(self.u_evals_raf.par_iter_mut())
-                .for_each(|((k, u), u_raf)| {
+                .zip(&mut self.u_evals)
+                .for_each(|(k, u_eval)| {
                     let (prefix, _) = k.split((self.params.phases - phase) * log_m);
                     let k_bound: usize = prefix % m;
-                    *u *= self.v[phase - 1][k_bound];
-                    *u_raf *= self.v[phase - 1][k_bound];
+                    *u_eval *= self.v[phase - 1][k_bound];
                 });
         }
 
@@ -506,14 +432,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 PrefixSuffixDecomposition::init_Q_dual(
                     &mut self.left_operand_ps,
                     &mut self.right_operand_ps,
-                    &self.u_evals_raf,
+                    &self.u_evals,
                     &self.lookup_indices_uninterleave,
                     &self.lookup_indices,
                 )
             });
             s.spawn(|_| {
                 self.identity_ps.init_Q(
-                    &self.u_evals_raf,
+                    &self.u_evals,
                     &self.lookup_indices_identity,
                     &self.lookup_indices,
                 )
@@ -561,7 +487,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 {
                                     let t = suffix.suffix_mle::<XLEN>(suffix_bits);
                                     if t != 0 {
-                                        let u = self.u_evals_rv[*j];
+                                        let u = self.u_evals[*j];
                                         result[prefix_bits % m] += u.mul_u64_unreduced(t);
                                     }
                                 }
@@ -615,7 +541,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Commits prefix checkpoints into a fixed `PrefixEval` vector
     /// - Materializes Val_j(k) from table prefixes/suffixes
     /// - Materializes RafVal_j(k) from (Left,Right,Identity) prefixes with γ-weights
-    /// - Computes previous-claim hints for Gruen (Spartan and Branch)
     /// - Converts ra/Val/RafVal into MultilinearPolynomial over (addr,cycle)
     #[tracing::instrument(skip_all, name = "InstructionReadRafProver::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_sqr: F) {
@@ -623,8 +548,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let m = 1 << log_m;
         // Drop stuff that's no longer needed
         drop_in_background_thread((
-            std::mem::take(&mut self.u_evals_raf),
-            std::mem::take(&mut self.u_evals_rv),
+            std::mem::take(&mut self.u_evals),
             std::mem::take(&mut self.lookup_indices_uninterleave),
         ));
 
@@ -672,7 +596,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     }
                 });
         }
-        let gamma_cub = gamma * gamma_sqr;
 
         let mut combined_raf_val_poly: Vec<F> = unsafe_allocate_zero_vec(self.lookup_indices.len());
         {
@@ -683,110 +606,16 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .zip(std::mem::take(&mut self.is_interleaved_operands))
                 .for_each(|(val, is_interleaved_operands)| {
                     if is_interleaved_operands {
-                        *val += gamma_sqr
+                        *val += gamma
                             * self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
-                            + gamma_cub
+                            + gamma_sqr
                                 * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
                     } else {
                         *val +=
-                            gamma_cub * self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
+                            gamma_sqr * self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
                     }
                 });
         }
-
-        // The first log(K) rounds of this sumcheck effectively batches the following two sumchecks together:
-        // (simplified for exposition)
-        //
-        // 1. rv(r_spartan) + gamma * rv(r_branch) = \sum (eq(r_spartan, j) + gamma * eq(r_branch, j)) * ra(k, j) * Val(k, j)
-        // 2. raf(r_spartan) = \sum eq(r_spartan, j) * ra(k, j) * rafVal(k, j)
-        //
-        // Batched:
-        //   rv(r_spartan) + gamma * rv(r_branch) + gamma^2 * raf(r_spartan)
-        //     = \sum (eq(r_spartan, j) + gamma * eq(r_branch, j)) * ra(k, j) * Val(k, j) + gamma^2 * eq(r_spartan, j) * ra(k, j) * rafVal(k, j)
-        //
-        // Where the (eq(r_spartan, j) + gamma * eq(r_branch, j)) term appearing in sumcheck 1 can be represented by a single
-        // vector `u_evals_rv`, since it doesn't involve any k variables.
-        //
-        // But in order to use GruenSplitEqPolynomial to represent eq(r_spartan, j) and eq(r_branch, j) in the last log(T)
-        // rounds, we need to split the batched sumcheck by EQ term, rather splitting by rv vs. raf.
-        //
-        // i. rv(r_spartan) + gamma^2 * raf(r_spartan) = \sum eq(r_spartan, j) * ra(k, j) * (Val(k, j) + gamma^2 rafVal(k, j))
-        // ii. rv(r_branch) = \sum \sum eq(r_branch, j) * ra(k, j) * Val(k, j)
-        //
-        // Note that the batched sumcheck expression can be equivalently represented by (1) + gamma^2 * (2) and
-        // (i) + gamma * (ii), so this alternative decomposition works.
-        //
-        // In order to derive the univariate polynomial in round log(K), GruenSplitEqPolynomial needs the sumcheck claim from round log(K)-1.
-        // For sumchecks (i) and (ii), these claims correspond to:
-        // \sum_j eq(r_spartan, j) * ra(r_address, j) * (Val(r_address, j) + gamma^2 rafVal(r_address, j)) and
-        // \sum_j eq(r_branch, j) * ra(r_address, j) * Val(r_address, j)
-        //
-        // We compute these two claims below.
-        let (prev_claim_spartan, prev_claim_branch) = {
-            let span = tracing::span!(tracing::Level::INFO, "Compute prev_claims");
-            let _guard = span.enter();
-            // Compute both sums in a single parallel traversal over j with delayed reduction.
-            let out_evals_spartan = self.eq_r_spartan.E_out_current();
-            let out_evals_branch = self.eq_r_branch.E_out_current();
-            debug_assert_eq!(out_evals_spartan.len(), out_evals_branch.len());
-
-            let in_len = self.eq_r_spartan.E_in_current_len();
-            debug_assert_eq!(in_len, self.eq_r_branch.E_in_current_len());
-            let x_in_bits = in_len.log_2();
-
-            // Precompute merged inner coeffs [low*(1-w), low*w] for both EQs
-            let merged_s = self.eq_r_spartan.merged_in_with_current_w();
-            let merged_b = self.eq_r_branch.merged_in_with_current_w();
-
-            let (prev_claim_spartan_unr, prev_claim_branch_unr) = (0..out_evals_spartan.len())
-                .into_par_iter()
-                .map(|x_out| {
-                    let high_s = out_evals_spartan[x_out];
-                    let high_b = out_evals_branch[x_out];
-
-                    let mut inner_s = F::Unreduced::<9>::zero();
-                    let mut inner_b = F::Unreduced::<9>::zero();
-
-                    for x_in in 0..in_len {
-                        let base_index = (x_out << (x_in_bits + 1)) + (x_in << 1);
-
-                        // Spartan and Branch eq coeffs using premerged inner
-                        let off = 2 * x_in;
-
-                        // j = base_index
-                        {
-                            let j0 = base_index;
-                            let p_s = ra[j0] * (combined_val_poly[j0] + combined_raf_val_poly[j0]);
-                            let p_b = ra[j0] * combined_val_poly[j0];
-                            inner_s += merged_s[off].mul_unreduced::<9>(p_s);
-                            inner_b += merged_b[off].mul_unreduced::<9>(p_b);
-                        }
-                        // j = base_index + 1
-                        {
-                            let j1 = base_index + 1;
-                            let p_s = ra[j1] * (combined_val_poly[j1] + combined_raf_val_poly[j1]);
-                            let p_b = ra[j1] * combined_val_poly[j1];
-                            inner_s += merged_s[off + 1].mul_unreduced::<9>(p_s);
-                            inner_b += merged_b[off + 1].mul_unreduced::<9>(p_b);
-                        }
-                    }
-
-                    let scaled_s =
-                        high_s.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_s));
-                    let scaled_b =
-                        high_b.mul_unreduced::<9>(F::from_montgomery_reduce::<9>(inner_b));
-                    (scaled_s, scaled_b)
-                })
-                .reduce(
-                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
-                    |(s0, b0), (s1, b1)| (s0 + s1, b0 + b1),
-                );
-            let prev_claim_spartan = F::from_montgomery_reduce::<9>(prev_claim_spartan_unr);
-            let prev_claim_branch = F::from_montgomery_reduce::<9>(prev_claim_branch_unr);
-            (prev_claim_spartan, prev_claim_branch)
-        };
-        self.prev_claim_spartan = Some(prev_claim_spartan);
-        self.prev_claim_branch = Some(prev_claim_branch);
 
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
         self.combined_raf_val_polynomial = Some(MultilinearPolynomial::from(combined_raf_val_poly));
@@ -804,8 +633,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
     ///
     /// - For the first LOG_K rounds: returns two evaluations combining
     ///   read-checking and RAF prefix–suffix messages (at X∈{0,2}).
-    /// - For the last log(T) rounds: uses Gruen-split EQs to form the Spartan
-    ///   and Branch univariates and returns their γ-weighted sum.
+    /// - For the last log(T) rounds: uses Gruen-split EQ.
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < LOG_K {
             // Phase 1: First log(K) rounds
@@ -815,96 +643,38 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             let val = self.combined_val_polynomial.as_ref().unwrap();
             let raf_val = self.combined_raf_val_polynomial.as_ref().unwrap();
 
-            // Lockstep invariant for split-eq structures
-            debug_assert_eq!(
-                self.eq_r_spartan.E_out_current_len(),
-                self.eq_r_branch.E_out_current_len(),
-                "Spartan and Branch split-eq must have same E_out length"
-            );
-            debug_assert_eq!(
-                self.eq_r_spartan.E_in_current_len(),
-                self.eq_r_branch.E_in_current_len(),
-                "Spartan and Branch split-eq must have same E_in length"
-            );
+            let [eval_at_0, eval_at_inf] = self
+                .eq_r_reduction
+                .par_fold_out_in(
+                    || [F::Unreduced::<9>::zero(); 2],
+                    |inner, j, _x_in, e_in| {
+                        // Eval ra(x), val(x), raf_val(x) at (r', j, {0, inf})
+                        let ra_at_0_j = ra.get_bound_coeff(2 * j);
+                        let ra_at_inf_j = ra.get_bound_coeff(2 * j + 1) - ra_at_0_j;
 
-            let out_evals_branch = self.eq_r_branch.E_out_current();
-            let in_evals_branch = self.eq_r_branch.E_in_current();
+                        let val_at_0_j = val.get_bound_coeff(2 * j);
+                        let val_at_inf_j = val.get_bound_coeff(2 * j + 1) - val_at_0_j;
 
-            // Fold across (x_out, x_in) using Spartan's split-eq, mirror weights from Branch
-            let [eval_at_0_spartan, eval_at_inf_spartan, eval_at_0_branch, eval_at_inf_branch] =
-                self.eq_r_spartan
-                    .par_fold_out_in(
-                        || [F::Unreduced::<9>::zero(); 4],
-                        |inner, j, x_in, e_in_spartan| {
-                            // Eval ra(x), val(x), raf_val(x) at (r', j, {0, inf})
-                            let ra_at_0_j = ra.get_bound_coeff(2 * j);
-                            let ra_at_inf_j = ra.get_bound_coeff(2 * j + 1) - ra_at_0_j;
+                        let raf_val_at_0_j = raf_val.get_bound_coeff(2 * j);
+                        let raf_val_at_inf_j = raf_val.get_bound_coeff(2 * j + 1) - raf_val_at_0_j;
 
-                            let val_at_0_j = val.get_bound_coeff(2 * j);
-                            let val_at_inf_j = val.get_bound_coeff(2 * j + 1) - val_at_0_j;
+                        inner[0] +=
+                            e_in.mul_unreduced::<9>(ra_at_0_j * (val_at_0_j + raf_val_at_0_j));
+                        inner[1] += e_in
+                            .mul_unreduced::<9>(ra_at_inf_j * (val_at_inf_j + raf_val_at_inf_j));
+                    },
+                    |_x_out, e_out, inner| {
+                        array::from_fn(|i| {
+                            let reduced = F::from_montgomery_reduce(inner[i]);
+                            e_out.mul_unreduced::<9>(reduced)
+                        })
+                    },
+                    |a, b| array::from_fn(|i| a[i] + b[i]),
+                )
+                .map(F::from_montgomery_reduce);
 
-                            let raf_val_at_0_j = raf_val.get_bound_coeff(2 * j);
-                            let raf_val_at_inf_j =
-                                raf_val.get_bound_coeff(2 * j + 1) - raf_val_at_0_j;
-
-                            // Spartan endpoints: e_in_spartan · ra · (val + raf_val)
-                            let sp_0 = ra_at_0_j * (val_at_0_j + raf_val_at_0_j);
-                            let sp_inf = ra_at_inf_j * (val_at_inf_j + raf_val_at_inf_j);
-                            inner[0] += e_in_spartan.mul_unreduced::<9>(sp_0);
-                            inner[1] += e_in_spartan.mul_unreduced::<9>(sp_inf);
-
-                            // Branch endpoints: e_in_branch · ra · val
-                            let e_in_branch = if in_evals_branch.len() <= 1 {
-                                F::one()
-                            } else {
-                                in_evals_branch[x_in]
-                            };
-                            let br_0 = ra_at_0_j * val_at_0_j;
-                            let br_inf = ra_at_inf_j * val_at_inf_j;
-                            inner[2] += e_in_branch.mul_unreduced::<9>(br_0);
-                            inner[3] += e_in_branch.mul_unreduced::<9>(br_inf);
-                        },
-                        |x_out, e_out_spartan, inner| {
-                            // Multiply by respective E_out weights
-                            let mut out = [F::Unreduced::<9>::zero(); 4];
-                            let reduced0 = F::from_montgomery_reduce::<9>(inner[0]);
-                            let reduced1 = F::from_montgomery_reduce::<9>(inner[1]);
-                            let reduced2 = F::from_montgomery_reduce::<9>(inner[2]);
-                            let reduced3 = F::from_montgomery_reduce::<9>(inner[3]);
-                            let e_out_branch = if out_evals_branch.len() <= 1 {
-                                F::one()
-                            } else {
-                                out_evals_branch[x_out]
-                            };
-                            out[0] = e_out_spartan.mul_unreduced::<9>(reduced0);
-                            out[1] = e_out_spartan.mul_unreduced::<9>(reduced1);
-                            out[2] = e_out_branch.mul_unreduced::<9>(reduced2);
-                            out[3] = e_out_branch.mul_unreduced::<9>(reduced3);
-                            out
-                        },
-                        |mut a, b| {
-                            for i in 0..4 {
-                                a[i] += b[i];
-                            }
-                            a
-                        },
-                    )
-                    .map(F::from_montgomery_reduce);
-
-            let round_poly_spartan = self.eq_r_spartan.gruen_poly_deg_3(
-                eval_at_0_spartan,
-                eval_at_inf_spartan,
-                self.prev_claim_spartan.unwrap(),
-            );
-            let round_poly_branch = self.eq_r_branch.gruen_poly_deg_3(
-                eval_at_0_branch,
-                eval_at_inf_branch,
-                self.prev_claim_branch.unwrap(),
-            );
-            let res = &round_poly_spartan + &(&round_poly_branch * self.params.gamma);
-            self.prev_round_poly_spartan = Some(round_poly_spartan);
-            self.prev_round_poly_branch = Some(round_poly_branch);
-            res
+            self.eq_r_reduction
+                .gruen_poly_deg_3(eval_at_0, eval_at_inf, previous_claim)
         }
     }
 
@@ -914,8 +684,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
     /// Address rounds: bind all active prefix–suffix polynomials and the
     /// expanding-table accumulator; update checkpoints every two rounds;
     /// initialize next phase/handoff when needed. Cycle rounds: bind the ra/Val
-    /// polynomials and Gruen EQs; update previous-claim hints via last round's
-    /// univariate.
+    /// polynomials and Gruen EQ.
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         let log_m = LOG_K / self.params.phases;
         self.r.push(r_j);
@@ -963,8 +732,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         } else {
             // log(T) rounds
 
-            self.eq_r_spartan.bind(r_j);
-            self.eq_r_branch.bind(r_j);
+            self.eq_r_reduction.bind(r_j);
             [
                 self.ra.as_mut().unwrap(),
                 self.combined_val_polynomial.as_mut().unwrap(),
@@ -974,11 +742,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             .for_each(|poly| {
                 poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             });
-
-            self.prev_claim_spartan =
-                Some(self.prev_round_poly_spartan.take().unwrap().evaluate(&r_j));
-            self.prev_claim_branch =
-                Some(self.prev_round_poly_branch.take().unwrap().evaluate(&r_j));
         }
     }
 
@@ -1105,15 +868,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     ]
                 },
             );
-        let gamma_cub = self.params.gamma * self.params.gamma_sqr;
         [
             F::from_montgomery_reduce(
-                left_0.mul_trunc::<4, 9>(self.params.gamma_sqr.as_unreduced_ref())
-                    + right_0.mul_trunc::<4, 9>(gamma_cub.as_unreduced_ref()),
+                left_0.mul_trunc::<4, 9>(self.params.gamma.as_unreduced_ref())
+                    + right_0.mul_trunc::<4, 9>(self.params.gamma_sqr.as_unreduced_ref()),
             ),
             F::from_montgomery_reduce(
-                left_2.mul_trunc::<4, 9>(self.params.gamma_sqr.as_unreduced_ref())
-                    + right_2.mul_trunc::<4, 9>(gamma_cub.as_unreduced_ref()),
+                left_2.mul_trunc::<4, 9>(self.params.gamma.as_unreduced_ref())
+                    + right_2.mul_trunc::<4, 9>(self.params.gamma_sqr.as_unreduced_ref()),
             ),
         ]
     }
@@ -1202,14 +964,13 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
 /// Instruction lookups: batched Read + RAF sumcheck.
 ///
-/// Let K = 2^{LOG_K}, T = 2^{log_T}. For random r_addr ∈ F^{LOG_K}, r_sp, r_br ∈ F^{log_T},
+/// Let K = 2^{LOG_K}, T = 2^{log_T}. For random r_addr ∈ F^{LOG_K}, r_reduction ∈ F^{log_T},
 /// this sumcheck proves that the accumulator claims
-///   rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+///   rv + γ·left_op + γ^2·right_op
 /// equal the double sum over (j, k):
-///   Σ_j Σ_k [ (eq_sp(j; r_sp) + γ·eq_br(j; r_br)) · ra(k, j) · Val_j(k)
-///             + γ^2 · eq_sp(j; r_sp) · ra(k, j) · RafVal_j(k) ].
+///   Σ_j Σ_k [ eq(j; r_reduction) · ra(k, j) · (Val_j(k) + γ·RafVal_j(k)) ].
 /// It is implemented as: first log(K) address-binding rounds (prefix/suffix condensation), then
-/// last log(T) cycle-binding rounds driven by two `GruenSplitEqPolynomial`s (Spartan/Branch).
+/// last log(T) cycle-binding rounds driven by [`GruenSplitEqPolynomial`].
 pub struct ReadRafSumcheckVerifier<F: JoltField> {
     params: ReadRafSumcheckParams<F>,
 }
@@ -1238,8 +999,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         // Verifier's RHS reconstruction from virtual claims at r:
         //
         // Computes Val and RafVal contributions at r_address, forms EQ(r_cycle)
-        // for Spartan/Branch, multiplies by ra claim at r_sumcheck, and returns
-        // the batched identity RHS to be matched against the LHS input claim.
+        // for InstructionClaimReduction sumcheck, multiplies by ra claim at r_sumcheck,
+        // and returns the batched identity RHS to be matched against the LHS input claim.
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address_prime, r_cycle_prime) = opening_point.split_at(LOG_K);
         let left_operand_eval =
@@ -1251,22 +1012,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
             .map(|table| table.evaluate_mle::<F, F::Challenge>(&r_address_prime.r))
             .collect();
 
-        let r_spartan = accumulator
+        let r_reduction = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
+                SumcheckId::InstructionClaimReduction,
             )
             .0
             .r;
-        let r_branch = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::ProductVirtualization,
-            )
-            .0
-            .r;
-        let eq_eval_spartan = EqPolynomial::<F>::mle(&r_spartan, &r_cycle_prime.r);
-        let eq_eval_branch = EqPolynomial::<F>::mle(&r_branch, &r_cycle_prime.r);
+        let eq_eval_r_reduction = EqPolynomial::<F>::mle(&r_reduction, &r_cycle_prime.r);
 
         let ra_claim = accumulator
             .get_virtual_polynomial_opening(
@@ -1303,9 +1056,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
             * (left_operand_eval + self.params.gamma * right_operand_eval)
             + raf_flag_claim * self.params.gamma * identity_poly_eval;
 
-        ra_claim
-            * (val_claim * (eq_eval_spartan + self.params.gamma * eq_eval_branch)
-                + self.params.gamma_sqr * raf_claim * eq_eval_spartan)
+        eq_eval_r_reduction * ra_claim * (val_claim + self.params.gamma * raf_claim)
     }
 
     fn cache_openings(
@@ -1448,16 +1199,9 @@ mod tests {
             verifier_transcript.challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
-        let r_cycle_branch: Vec<<Fr as JoltField>::Challenge> =
-            prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);
-        let _r_cycle_branch: Vec<<Fr as JoltField>::Challenge> =
-            verifier_transcript.challenge_vector_optimized::<Fr>(LOG_T);
-        let eq_r_cycle_branch = EqPolynomial::<Fr>::evals(&r_cycle_branch);
-
         let mut rv_claim = Fr::zero();
         let mut left_operand_claim = Fr::zero();
         let mut right_operand_claim = Fr::zero();
-        let mut rv_claim_branch = Fr::zero();
 
         for (i, cycle) in trace.iter().enumerate() {
             let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
@@ -1465,11 +1209,6 @@ mod tests {
             if let Some(table) = table {
                 rv_claim +=
                     JoltField::mul_u64(&eq_r_cycle[i], table.materialize_entry(lookup_index));
-
-                rv_claim_branch += JoltField::mul_u64(
-                    &eq_r_cycle_branch[i],
-                    table.materialize_entry(lookup_index),
-                );
             }
 
             // Compute left and right operand claims
@@ -1481,21 +1220,21 @@ mod tests {
         prover_opening_accumulator.append_virtual(
             prover_transcript,
             VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             rv_claim,
         );
         prover_opening_accumulator.append_virtual(
             prover_transcript,
             VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             left_operand_claim,
         );
         prover_opening_accumulator.append_virtual(
             prover_transcript,
             VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             right_operand_claim,
         );
@@ -1503,8 +1242,8 @@ mod tests {
             prover_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
-            OpeningPoint::new(r_cycle_branch.clone()),
-            rv_claim_branch,
+            OpeningPoint::new(r_cycle.clone()),
+            rv_claim,
         );
 
         let params = ReadRafSumcheckParams::new(
@@ -1531,26 +1270,26 @@ mod tests {
         verifier_opening_accumulator.append_virtual(
             verifier_transcript,
             VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
             verifier_transcript,
             VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
             verifier_transcript,
             VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
+            SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
             verifier_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
-            OpeningPoint::new(r_cycle_branch.clone()),
+            OpeningPoint::new(r_cycle.clone()),
         );
 
         let mut verifier_sumcheck = ReadRafSumcheckVerifier::new(
