@@ -58,6 +58,31 @@ impl CompressedCommitmentScheme for DoryCommitmentScheme {
 
         (tier_2, row_commitments)
     }
+
+    fn prove_compressed<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        hint: Option<Self::OpeningProofHint>,
+        transcript: &mut ProofTranscript,
+    ) -> Self::CompressedProof {
+        let (ark_point, row_commitments, nu, sigma, mut dory_transcript) =
+            Self::prove_helper(setup, poly, opening_point, hint, transcript);
+
+        let proof =
+            dory::prove_compressed::<ArkFr, JoltBn254, JoltG1Routines, JoltG2Routines, _, _>(
+                poly,
+                &ark_point,
+                row_commitments,
+                nu,
+                sigma,
+                setup,
+                &mut dory_transcript,
+            )
+            .expect("proof generation should succeed");
+
+        CompressedArkDoryProof(proof)
+    }
 }
 
 impl CompressedStreamingCommitmentScheme for DoryCommitmentScheme {
@@ -105,9 +130,9 @@ impl DoryCommitmentScheme {
         poly: &MultilinearPolynomial<<Self as CommitmentScheme>::Field>,
         opening_point: &[<<Self as CommitmentScheme>::Field as JoltField>::Challenge],
         hint: Option<<Self as CommitmentScheme>::OpeningProofHint>,
-        transcript: &mut ProofTranscript,
+        transcript: &'a mut ProofTranscript,
     ) -> (
-        Vec<<Self as CommitmentScheme>::Field>,
+        Vec<ArkFr>,
         <Self as CommitmentScheme>::OpeningProofHint,
         usize,
         usize,
@@ -127,7 +152,7 @@ impl DoryCommitmentScheme {
         let nu = num_rows.log_2();
 
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point = opening_point
+        let ark_point: Vec<ArkFr> = opening_point
             .iter()
             .rev()  // Reverse the order for Dory
             .map(|p| {
@@ -136,7 +161,7 @@ impl DoryCommitmentScheme {
             })
             .collect();
 
-        let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
+        let dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
         (ark_point, row_commitments, nu, sigma, dory_transcript)
     }
@@ -208,8 +233,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let (ark_point, row_commitments, nu, sigma, dory_transcript) =
-            Self::prove_helper::<ProofTranscript>(setup, poly, opening_point, hint, transcript);
+        let (ark_point, row_commitments, nu, sigma, mut dory_transcript) =
+            Self::prove_helper(setup, poly, opening_point, hint, transcript);
         dory::prove::<ArkFr, JoltBn254, JoltG1Routines, JoltG2Routines, _, _>(
             poly,
             &ark_point,
