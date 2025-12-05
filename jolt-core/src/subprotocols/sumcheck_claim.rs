@@ -196,7 +196,7 @@ impl<F: JoltField> InputOutputClaims<F> {
                             } else {
                                 opening_point
                             };
-                            EqPolynomial::mle_endian(&r_cycle_stage, &r)
+                            EqPolynomial::mle_endian(&r_cycle_stage, r)
                         })
                 };
                 let claim_eval = claim
