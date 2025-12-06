@@ -1,4 +1,5 @@
 //! This file implements the Hyrax polynomial commitment scheme used in snark composition
+use super::commitment_scheme::CommitmentScheme;
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
@@ -13,6 +14,8 @@ use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Roots;
 use rayon::prelude::*;
+use std::borrow::Borrow;
+use std::marker::PhantomData;
 use tracing::trace_span;
 
 /// Hyrax commits to a multilinear polynomial by interpreting its coefficients as a
@@ -78,172 +81,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         tracing::debug!(duration_ms = start.elapsed().as_millis(), "Commit complete");
 
         Self { row_commitments }
-    }
-
-    /// Optimized batch commit for 4-variable (16-coefficient) polynomials.
-    #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit_4var")]
-    fn batch_commit_4var(
-        batch: &[&[G::ScalarField]],
-        generators: &PedersenGenerators<G>,
-    ) -> Vec<Self> {
-        const EXPECTED_SIZE: usize = 16;
-        const ROW_SIZE: usize = 4;
-        const NUM_ROWS: usize = 4;
-
-        let start = std::time::Instant::now();
-        tracing::info!(
-            num_polynomials = batch.len(),
-            poly_size = EXPECTED_SIZE,
-            "Using optimized 4-var batch commit"
-        );
-
-        #[cfg(test)]
-        {
-            batch.iter().for_each(|poly| {
-                assert_eq!(
-                    poly.len(),
-                    EXPECTED_SIZE,
-                    "batch_commit_4var requires 16-coefficient polynomials"
-                );
-            });
-        }
-
-        let gen_start = std::time::Instant::now();
-        let gens = &generators.generators[..ROW_SIZE];
-        tracing::debug!(
-            duration_ms = gen_start.elapsed().as_millis(),
-            "Generator normalization complete"
-        );
-
-        let flatten_start = std::time::Instant::now();
-        let all_rows: Vec<(usize, usize, &[G::ScalarField])> = batch
-            .iter()
-            .enumerate()
-            .flat_map(|(poly_idx, poly)| {
-                poly.chunks(ROW_SIZE)
-                    .enumerate()
-                    .map(move |(row_idx, row)| (poly_idx, row_idx, row))
-            })
-            .collect();
-
-        tracing::debug!(
-            total_rows = all_rows.len(),
-            duration_ms = flatten_start.elapsed().as_millis(),
-            "Flattened polynomial rows"
-        );
-
-        let commit_start = std::time::Instant::now();
-        let row_commitments: Vec<(usize, usize, G)> = all_rows
-            .par_iter()
-            .map(|(poly_idx, row_idx, row)| {
-                // Serial linear combination: acc = sum(g_i * coeff_i)
-                let mut acc = G::zero();
-                for (i, &coeff) in row.iter().enumerate() {
-                    acc += gens[i] * coeff;
-                }
-                (*poly_idx, *row_idx, acc)
-            })
-            .collect();
-
-        tracing::debug!(
-            duration_ms = commit_start.elapsed().as_millis(),
-            total_operations = row_commitments.len(),
-            "Parallel row commitment computation complete"
-        );
-
-        let reorg_start = std::time::Instant::now();
-        let mut result = vec![vec![G::zero(); NUM_ROWS]; batch.len()];
-        for (poly_idx, row_idx, commitment) in row_commitments {
-            result[poly_idx][row_idx] = commitment;
-        }
-
-        let final_result: Vec<Self> = result
-            .into_iter()
-            .map(|row_commitments| Self { row_commitments })
-            .collect();
-
-        tracing::debug!(
-            duration_ms = reorg_start.elapsed().as_millis(),
-            "Reorganization complete"
-        );
-
-        tracing::info!(
-            total_duration_ms = start.elapsed().as_millis(),
-            num_polynomials = batch.len(),
-            "Optimized 4-var batch commit complete"
-        );
-
-        final_result
-    }
-
-    /// Same result as committing to each polynomial in the batch individually,
-    /// but tends to have better parallelism.
-    #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit")]
-    pub fn batch_commit(
-        batch: &[&[G::ScalarField]],
-        generators: &PedersenGenerators<G>,
-    ) -> Vec<Self> {
-        let n = batch[0].len();
-        batch.iter().for_each(|poly| assert_eq!(poly.len(), n));
-        let ell = n.log_2();
-
-        // We we optimized variant for the recursion 4 variable polys
-        if ell == 4 && RATIO == 1 {
-            return Self::batch_commit_4var(batch, generators);
-        }
-
-        let start = std::time::Instant::now();
-        tracing::info!(
-            num_polynomials = batch.len(),
-            poly_size = batch[0].len(),
-            "Starting batch commit"
-        );
-
-        let (L_size, R_size) = matrix_dimensions(ell, RATIO);
-        assert_eq!(L_size * R_size, n);
-
-        tracing::debug!(
-            L_size,
-            R_size,
-            num_rows_per_poly = L_size,
-            row_size = R_size,
-            "Matrix dimensions"
-        );
-
-        let gen_start = std::time::Instant::now();
-        let gens = &generators.generators[..R_size];
-        tracing::debug!(
-            duration_ms = gen_start.elapsed().as_millis(),
-            "Generator normalization complete"
-        );
-
-        // TODO(markosg04) this path seems to cause a stack overflow with arkworks Variablebase MSM
-        let mut all_commitments = Vec::with_capacity(batch.len());
-
-        for (poly_idx, poly) in batch.iter().enumerate() {
-            let poly_start = std::time::Instant::now();
-            tracing::debug!(poly_idx, num_rows = L_size, "Committing polynomial");
-
-            let row_commitments: Vec<G> = poly
-                .par_chunks(R_size)
-                .map(|row| VariableBaseMSM::msm_field_elements(&gens[..row.len()], row).unwrap())
-                .collect();
-
-            tracing::debug!(
-                poly_idx,
-                duration_ms = poly_start.elapsed().as_millis(),
-                "Polynomial commit complete"
-            );
-
-            all_commitments.push(Self { row_commitments });
-        }
-
-        tracing::info!(
-            total_duration_ms = start.elapsed().as_millis(),
-            num_polynomials = batch.len(),
-            "Batch commit complete"
-        );
-        all_commitments
     }
 }
 
@@ -547,343 +384,142 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::transcripts::Blake2bTranscript;
-    use ark_bn254::{Fr, G1Projective};
-    use ark_std::test_rng;
-    use ark_std::UniformRand;
+/// Wrapper struct for Hyrax to implement CommitmentScheme trait
+#[derive(Clone)]
+pub struct Hyrax<const RATIO: usize, G: CurveGroup> {
+    _phantom: PhantomData<G>,
+}
 
-    #[test]
-    fn test_hyrax_batch_pcs_random_polys() {
-        const NUM_VARS: usize = 10; // 2^10 = 1024 coefficients per poly
-        const NUM_POLYS: usize = 5;
-        const RATIO: usize = 1;
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme
+    for Hyrax<RATIO, G>
+{
+    type Field = F;
+    type ProverSetup = PedersenGenerators<G>;
+    type VerifierSetup = PedersenGenerators<G>;
+    type Commitment = HyraxCommitment<RATIO, G>;
+    type Proof = HyraxOpeningProof<RATIO, G>;
+    type BatchedProof = BatchedHyraxOpeningProof<RATIO, G>;
+    type OpeningProofHint = ();
 
-        type F = Fr;
-        type G = G1Projective;
-        type Transcript = Blake2bTranscript;
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
+        let (_left, right) = matrix_dimensions(max_num_vars, RATIO);
+        PedersenGenerators::new(right, b"Jolt v1 Hyrax generators")
+    }
 
-        let mut rng = test_rng();
+    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        // For Hyrax, verifier uses the same setup as prover
+        setup.clone()
+    }
 
-        let polys: Vec<DensePolynomial<F>> = (0..NUM_POLYS)
-            .map(|_| {
-                let coeffs: Vec<F> = (0..1 << NUM_VARS).map(|_| F::rand(&mut rng)).collect();
-                DensePolynomial::new(coeffs)
+    fn commit(
+        poly: &MultilinearPolynomial<Self::Field>,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        let dense_poly = match poly {
+            MultilinearPolynomial::LargeScalars(dense) => dense.clone(),
+            MultilinearPolynomial::RLC(rlc) => {
+                // For RLC polynomials, use the materialized dense representation
+                DensePolynomial::new(rlc.dense_rlc.clone())
+            }
+            _ => panic!("Hyrax only supports dense and RLC polynomials"),
+        };
+        let commitment = HyraxCommitment::commit(&dense_poly, setup);
+        (commitment, ())
+    }
+
+    fn batch_commit<U>(
+        _polys: &[U],
+        _gens: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
+    where
+        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
+    {
+        unimplemented!("Hyrax batch commit not implemented")
+    }
+
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        assert_eq!(commitments.len(), coeffs.len());
+        if commitments.is_empty() {
+            return HyraxCommitment::default();
+        }
+
+        // Get the size from the first commitment
+        let first = commitments[0].borrow();
+        let row_count = first.row_commitments.len();
+
+        // Compute the linear combination of row commitments
+        let combined_rows: Vec<G> = (0..row_count)
+            .map(|row_idx| {
+                commitments
+                    .iter()
+                    .zip(coeffs.iter())
+                    .map(|(commitment, coeff)| {
+                        let c = commitment.borrow();
+                        c.row_commitments[row_idx] * coeff
+                    })
+                    .fold(G::zero(), |acc, point| acc + point)
             })
             .collect();
 
-        // Setup generators
-        let (L_size, R_size) = matrix_dimensions(NUM_VARS, RATIO);
-        let gens = PedersenGenerators::<G>::new(R_size, b"test hyrax batch");
-
-        // Commit to all polynomials
-        let poly_refs: Vec<&[F]> = polys.iter().map(|p| p.evals_ref()).collect();
-        let commitments = HyraxCommitment::<RATIO, G>::batch_commit(&poly_refs, &gens);
-
-        // Generate random opening point
-        let opening_point: Vec<F> = (0..NUM_VARS).map(|_| F::rand(&mut rng)).collect();
-
-        // Compute openings (evaluations at the point)
-        let openings: Vec<F> = polys
-            .iter()
-            .map(|poly| poly.evaluate(&opening_point))
-            .collect();
-
-        // Create proof
-        let mut prover_transcript = Transcript::new(b"test_batch_hyrax");
-        let poly_refs_for_proof: Vec<&DensePolynomial<F>> = polys.iter().collect();
-        let proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &poly_refs_for_proof,
-            &opening_point,
-            &openings,
-            &mut prover_transcript,
-        );
-
-        // Verify proof
-        let mut verifier_transcript = Transcript::new(b"test_batch_hyrax");
-        let commitment_refs: Vec<&HyraxCommitment<RATIO, G>> = commitments.iter().collect();
-        let result = proof.verify(
-            &gens,
-            &opening_point,
-            &openings,
-            &commitment_refs,
-            &mut verifier_transcript,
-        );
-
-        assert!(result.is_ok(), "Batch Hyrax verification failed");
+        HyraxCommitment {
+            row_commitments: combined_rows,
+        }
     }
 
-    #[test]
-    fn test_hyrax_batch_pcs_edge_cases() {
-        const RATIO: usize = 1;
-        type F = Fr;
-        type G = G1Projective;
-        type Transcript = Blake2bTranscript;
-
-        let mut rng = test_rng();
-
-        // Test with single polynomial
-        let num_vars = 4; // 2^4 = 16 coefficients
-        let coeffs: Vec<F> = (0..16).map(|_| F::rand(&mut rng)).collect();
-        let poly = DensePolynomial::new(coeffs);
-
-        let (_, R_size) = matrix_dimensions(num_vars, RATIO);
-        let gens = PedersenGenerators::<G>::new(R_size, b"test single");
-
-        let poly_slice = &[poly.evals_ref()];
-        let commitments = HyraxCommitment::<RATIO, G>::batch_commit(poly_slice, &gens);
-
-        let opening_point: Vec<F> = (0..num_vars).map(|_| F::rand(&mut rng)).collect();
-        let opening = poly.evaluate(&opening_point);
-
-        let mut prover_transcript = Transcript::new(b"test_single");
-        let proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &[&poly],
-            &opening_point,
-            &[opening],
-            &mut prover_transcript,
-        );
-
-        let mut verifier_transcript = Transcript::new(b"test_single");
-        let result = proof.verify(
-            &gens,
-            &opening_point,
-            &[opening],
-            &[&commitments[0]],
-            &mut verifier_transcript,
-        );
-
-        assert!(result.is_ok(), "Single polynomial verification failed");
-
-        // Test with wrong opening value (should fail)
-        let wrong_opening = opening + F::from(1u64);
-        let mut verifier_transcript_wrong = Transcript::new(b"test_single");
-        let result_wrong = proof.verify(
-            &gens,
-            &opening_point,
-            &[wrong_opening],
-            &[&commitments[0]],
-            &mut verifier_transcript_wrong,
-        );
-
-        assert!(
-            result_wrong.is_err(),
-            "Verification should fail with wrong opening"
-        );
+    fn combine_hints(
+        _hints: Vec<Self::OpeningProofHint>,
+        _coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        // Hyrax doesn't use hints
+        ()
     }
 
-    #[test]
-    fn test_hyrax_fp12_multilinear_completeness() {
-        use ark_bn254::{Fq, Fq12};
-        use ark_grumpkin::Projective as GrumpkinProjective;
-        use jolt_optimizations::fq12_to_multilinear_evals;
+    fn prove<ProofTranscript: Transcript>(
+        _setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        _hint: Option<Self::OpeningProofHint>,
+        _transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        let dense_poly_owned;
+        let dense_poly = match poly {
+            MultilinearPolynomial::LargeScalars(dense) => dense,
+            MultilinearPolynomial::RLC(rlc) => {
+                // For RLC polynomials, use the materialized dense representation
+                dense_poly_owned = DensePolynomial::new(rlc.dense_rlc.clone());
+                &dense_poly_owned
+            }
+            _ => panic!("Hyrax only supports dense and RLC polynomials"),
+        };
 
-        const RATIO: usize = 1;
-        const NUM_FP12_ELEMENTS: usize = 4;
-        type G = GrumpkinProjective; // Grumpkin's scalar field is BN254's Fq
-        type Transcript = Blake2bTranscript;
-
-        let mut rng = test_rng();
-
-        let fp12_elements: Vec<Fq12> = (0..NUM_FP12_ELEMENTS)
-            .map(|_| Fq12::rand(&mut rng))
-            .collect();
-
-        let multilinear_evals_fq: Vec<Vec<Fq>> = fp12_elements
+        let opening_point_field: Vec<F> = opening_point
             .iter()
-            .map(|fp12| fq12_to_multilinear_evals(fp12))
+            .map(|challenge| (*challenge).into())
             .collect();
 
-        let polys: Vec<DensePolynomial<Fq>> = multilinear_evals_fq
-            .iter()
-            .map(|evals| DensePolynomial::new(evals.clone()))
-            .collect();
-
-        let num_vars = 4; // 2^4 = 16
-        let (_, R_size) = matrix_dimensions(num_vars, RATIO);
-        let gens = PedersenGenerators::<G>::new(R_size, b"test fp12 hyrax");
-
-        let poly_refs: Vec<&[Fq]> = polys.iter().map(|p| p.evals_ref()).collect();
-        let commitments = HyraxCommitment::<RATIO, G>::batch_commit(&poly_refs[..], &gens);
-
-        let opening_point: Vec<Fq> = (0..num_vars).map(|_| Fq::rand(&mut rng)).collect();
-
-        let openings: Vec<Fq> = polys
-            .iter()
-            .map(|poly| poly.evaluate(&opening_point))
-            .collect();
-
-        let mut prover_transcript = Transcript::new(b"test_fp12_batch");
-        let poly_refs_for_proof: Vec<&DensePolynomial<Fq>> = polys.iter().collect();
-        let proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &poly_refs_for_proof[..],
-            &opening_point,
-            &openings,
-            &mut prover_transcript,
-        );
-
-        let mut verifier_transcript = Transcript::new(b"test_fp12_batch");
-        let commitment_refs: Vec<&HyraxCommitment<RATIO, G>> = commitments.iter().collect();
-        let result = proof.verify(
-            &gens,
-            &opening_point,
-            &openings,
-            &commitment_refs[..],
-            &mut verifier_transcript,
-        );
-
-        assert!(result.is_ok(), "Fp12 multilinear Hyrax verification failed");
-
-        assert_ne!(
-            commitments[0].row_commitments, commitments[1].row_commitments,
-            "Different Fp12 elements should produce different commitments"
-        );
-
-        assert_eq!(
-            polys[0].len(),
-            16,
-            "Each Fp12 should produce 16 coefficients"
-        );
-        assert_ne!(
-            polys[0].Z, polys[1].Z,
-            "Different Fp12 elements should produce different polynomials"
-        );
+        HyraxOpeningProof::prove(dense_poly, &opening_point_field, RATIO)
     }
 
-    #[test]
-    fn test_hyrax_fp12_soundness() {
-        use ark_bn254::{Fq, Fq12};
-        use ark_grumpkin::Projective as GrumpkinProjective;
-        use jolt_optimizations::fq12_to_multilinear_evals;
+    fn verify<ProofTranscript: Transcript>(
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        _transcript: &mut ProofTranscript,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        opening: &Self::Field,
+        commitment: &Self::Commitment,
+    ) -> Result<(), ProofVerifyError> {
+        let opening_point_field: Vec<F> = opening_point
+            .iter()
+            .map(|challenge| (*challenge).into())
+            .collect();
 
-        const RATIO: usize = 1;
-        type G = GrumpkinProjective;
-        type Transcript = Blake2bTranscript;
+        proof.verify(setup, &opening_point_field, opening, commitment)
+    }
 
-        let mut rng = test_rng();
-
-        let fp12_element = Fq12::rand(&mut rng);
-
-        let multilinear_evals = fq12_to_multilinear_evals(&fp12_element);
-
-        // Create polynomial from the evaluations
-        let poly = DensePolynomial::new(multilinear_evals.clone());
-
-        // Setup generators for Hyrax
-        let num_vars = 4; // 2^4 = 16
-        let (_, R_size) = matrix_dimensions(num_vars, RATIO);
-        let gens = PedersenGenerators::<G>::new(R_size, b"test cheating");
-
-        // Commit to the polynomial
-        let poly_slice = &[poly.evals_ref()];
-        let commitments = HyraxCommitment::<RATIO, G>::batch_commit(&poly_slice[..], &gens);
-
-        // Generate random opening point
-        let opening_point: Vec<Fq> = (0..num_vars).map(|_| Fq::rand(&mut rng)).collect();
-
-        // Compute the correct evaluation
-        let correct_opening = poly.evaluate(&opening_point);
-
-        // Create a proof for the correct opening
-        let mut prover_transcript = Transcript::new(b"test_cheating");
-        let proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &[&poly],
-            &opening_point,
-            &[correct_opening],
-            &mut prover_transcript,
-        );
-
-        // Test 1: Try to verify with a wrong opening value (should fail)
-        let wrong_opening = correct_opening + Fq::from(1u64);
-        let mut verifier_transcript_wrong = Transcript::new(b"test_cheating");
-        let result_wrong_opening = proof.verify(
-            &gens,
-            &opening_point,
-            &[wrong_opening],
-            &[&commitments[0]],
-            &mut verifier_transcript_wrong,
-        );
-        assert!(
-            result_wrong_opening.is_err(),
-            "Verification should fail with wrong opening value"
-        );
-
-        // Test 2: Create a cheating polynomial that doesn't come from Fp12
-        // but try to use a proof from the real Fp12 polynomial
-        let mut cheating_evals = multilinear_evals.clone();
-        cheating_evals[12] = Fq::rand(&mut rng);
-        cheating_evals[13] = Fq::rand(&mut rng);
-        cheating_evals[14] = Fq::rand(&mut rng);
-        cheating_evals[15] = Fq::rand(&mut rng);
-
-        let cheating_poly = DensePolynomial::new(cheating_evals);
-
-        // Commit to the cheating polynomial
-        let cheating_slice = &[cheating_poly.evals_ref()];
-        let cheating_commitments =
-            HyraxCommitment::<RATIO, G>::batch_commit(&cheating_slice[..], &gens);
-
-        // The commitment should be different
-        assert_ne!(
-            commitments[0].row_commitments, cheating_commitments[0].row_commitments,
-            "Cheating polynomial should have different commitment"
-        );
-
-        // Try to use the proof from the original polynomial with the cheating commitment
-        // This should fail because the commitment doesn't match the proof
-        let mut verifier_transcript_cheat = Transcript::new(b"test_cheating");
-        let result_wrong_commitment = proof.verify(
-            &gens,
-            &opening_point,
-            &[correct_opening],
-            &[&cheating_commitments[0]],
-            &mut verifier_transcript_cheat,
-        );
-        assert!(
-            result_wrong_commitment.is_err(),
-            "Verification should fail when commitment doesn't match the proof"
-        );
-
-        // Test 3: Create a proof for a modified Fp12 element but claim it's the original
-        let different_fp12 = Fq12::rand(&mut rng);
-        let different_evals = fq12_to_multilinear_evals(&different_fp12);
-        let different_poly = DensePolynomial::new(different_evals);
-        let different_opening = different_poly.evaluate(&opening_point);
-
-        // Create proof for the different polynomial
-        let mut prover_transcript_different = Transcript::new(b"test_different");
-        let different_proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &[&different_poly],
-            &opening_point,
-            &[different_opening],
-            &mut prover_transcript_different,
-        );
-
-        // Try to verify this proof against the original commitment (should fail)
-        let mut verifier_transcript_mismatch = Transcript::new(b"test_different");
-        let result_mismatch = different_proof.verify(
-            &gens,
-            &opening_point,
-            &[different_opening],
-            &[&commitments[0]], // Using original commitment
-            &mut verifier_transcript_mismatch,
-        );
-        assert!(
-            result_mismatch.is_err(),
-            "Verification should fail when proof doesn't match commitment"
-        );
-
-        // Verify that the correct proof still works
-        let mut verifier_transcript_correct = Transcript::new(b"test_cheating");
-        let result_correct = proof.verify(
-            &gens,
-            &opening_point,
-            &[correct_opening],
-            &[&commitments[0]],
-            &mut verifier_transcript_correct,
-        );
-        assert!(result_correct.is_ok(), "Correct proof should still verify");
+    fn protocol_name() -> &'static [u8] {
+        b"hyrax"
     }
 }

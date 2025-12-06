@@ -102,32 +102,43 @@ impl<F: JoltField> RLCPolynomial<F> {
         debug_assert_eq!(polynomials.len(), coefficients.len());
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
-        let (lazy_trace, preprocessing, one_hot_params) =
-            streaming_context.expect("Streaming context must be provided");
+        match streaming_context {
+            Some((lazy_trace, preprocessing, one_hot_params)) => {
+                // Streaming mode - existing implementation
+                let mut dense_polys = Vec::new();
+                let mut onehot_polys = Vec::new();
 
-        let mut dense_polys = Vec::new();
-        let mut onehot_polys = Vec::new();
-
-        for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
-            match poly_id {
-                CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
-                    dense_polys.push((*poly_id, *coeff));
+                for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
+                    match poly_id {
+                        CommittedPolynomial::RdInc | CommittedPolynomial::RamInc | CommittedPolynomial::DoryConstraintMatrix => {
+                            dense_polys.push((*poly_id, *coeff));
+                        }
+                        CommittedPolynomial::InstructionRa(_)
+                        | CommittedPolynomial::BytecodeRa(_)
+                        | CommittedPolynomial::RamRa(_) => {
+                            onehot_polys.push((*poly_id, *coeff));
+                        }
+                    }
                 }
-                CommittedPolynomial::InstructionRa(_)
-                | CommittedPolynomial::BytecodeRa(_)
-                | CommittedPolynomial::RamRa(_) => {
-                    onehot_polys.push((*poly_id, *coeff));
+
+                Self::new_streaming(
+                    dense_polys,
+                    onehot_polys,
+                    lazy_trace,
+                    preprocessing,
+                    &one_hot_params,
+                )
+            }
+            None => {
+                // Non-streaming mode - materialize the RLC polynomial
+                let dense_rlc = Self::compute_dense_rlc(&polynomials, coefficients);
+                Self {
+                    dense_rlc,
+                    one_hot_rlc: vec![], // Not used in non-streaming mode
+                    streaming_context: None,
                 }
             }
         }
-
-        Self::new_streaming(
-            dense_polys,
-            onehot_polys,
-            lazy_trace,
-            preprocessing,
-            &one_hot_params,
-        )
     }
 
     /// Materializes a streaming RLC polynomial for testing purposes.
@@ -344,6 +355,9 @@ impl<F: JoltField> RLCPolynomial<F> {
             | CommittedPolynomial::RamRa(_) => {
                 panic!("One-hot polynomials should not be passed to extract_dense_value")
             }
+            CommittedPolynomial::DoryConstraintMatrix => {
+                panic!("DoryConstraintMatrix is not from witness generation")
+            }
         }
     }
 
@@ -368,7 +382,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 &preprocessing.memory_layout,
             )
             .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize),
-            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
+            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc | CommittedPolynomial::DoryConstraintMatrix => {
                 panic!("Dense polynomials should not be passed to extract_onehot_k")
             }
         }
@@ -439,5 +453,62 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         drop_in_background_thread(ctx);
         result
+    }
+
+    /// Compute dense RLC for non-streaming mode
+    fn compute_dense_rlc(
+        polynomials: &[Arc<MultilinearPolynomial<F>>],
+        coefficients: &[F],
+    ) -> Vec<F> {
+        if polynomials.is_empty() {
+            return vec![];
+        }
+
+        let n = polynomials[0].len();
+
+        // Compute contributions from each polynomial in parallel, then sum
+        let contributions: Vec<Vec<F>> = polynomials
+            .par_iter()
+            .zip(coefficients.par_iter())
+            .map(|(poly, coeff)| {
+                let mut contribution = vec![F::zero(); n];
+                match poly.as_ref() {
+                    MultilinearPolynomial::OneHot(one_hot) => {
+                        // Handle one-hot polynomials
+                        // For one-hot, nonzero_indices[t] = Some(k) means the polynomial is 1 at (k,t)
+                        let T = one_hot.nonzero_indices.len();
+                        for (t, k_opt) in one_hot.nonzero_indices.iter().enumerate() {
+                            if let Some(k) = k_opt {
+                                let global_index = (*k as usize) * T + t;
+                                if global_index < n {
+                                    contribution[global_index] = *coeff; // Value is always 1 for one-hot
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Handle dense polynomials
+                        contribution
+                            .par_iter_mut()
+                            .enumerate()
+                            .for_each(|(j, contrib)| {
+                                *contrib = *coeff * poly.get_coeff(j);
+                            });
+                    }
+                }
+                contribution
+            })
+            .collect();
+
+        // Sum all contributions
+        contributions
+            .into_iter()
+            .reduce(|mut acc, contrib| {
+                acc.par_iter_mut()
+                    .zip(contrib.par_iter())
+                    .for_each(|(a, b)| *a += *b);
+                acc
+            })
+            .unwrap_or_else(|| vec![F::zero(); n])
     }
 }

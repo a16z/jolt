@@ -46,6 +46,8 @@ pub enum CommittedPolynomial {
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
     RamRa(usize),
+    /// Dory constraint matrix polynomial for recursion
+    DoryConstraintMatrix,
 }
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
@@ -237,6 +239,9 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
+            CommittedPolynomial::DoryConstraintMatrix => {
+                panic!("DoryConstraintMatrix is not generated from witness data")
+            }
         }
     }
 
@@ -380,6 +385,9 @@ impl CommittedPolynomial {
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
+                CommittedPolynomial::DoryConstraintMatrix => {
+                    panic!("DoryConstraintMatrix is not generated from witness data")
+                }
             }
         }
         results
@@ -463,6 +471,9 @@ impl CommittedPolynomial {
                     addresses,
                     one_hot_params.k_chunk,
                 ))
+            }
+            CommittedPolynomial::DoryConstraintMatrix => {
+                panic!("DoryConstraintMatrix is not generated from witness data")
             }
         }
     }

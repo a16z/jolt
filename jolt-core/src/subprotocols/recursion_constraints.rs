@@ -34,6 +34,19 @@ pub fn index_to_binary(index: usize, num_vars: usize) -> Vec<Fq> {
     binary
 }
 
+/// Compute constraint formula: ρ_curr - ρ_prev² × base^{b} - quotient × g
+pub fn compute_constraint_formula(
+    rho_curr: Fq,
+    rho_prev: Fq,
+    base: Fq,
+    quotient: Fq,
+    g_val: Fq,
+    bit: bool,
+) -> Fq {
+    let base_power = if bit { base } else { Fq::one() };
+    rho_curr - rho_prev.square() * base_power - quotient * g_val
+}
+
 /// Row type offsets for the interleaved matrix layout.
 /// Layout: row = offset * num_constraints_padded + constraint_index
 /// This puts offset bits HIGH-order so they remain unbound after Phase 2 of recursion sum-check.
@@ -68,9 +81,7 @@ impl RowOffset {
     }
 }
 
-// Matrix-based constraint system structures
-
-/// Giant multilinear matrix M(s, x) that stores all polynomials in a single structure.
+/// Giant multilinear matrix M(s, x) that stores all Dory polynomials in a single structure.
 ///
 /// Layout: M(offset_bits, constraint_bits, x_bits)
 /// - offset_bits: 2 bits (high-order in row dimension) for row type [Base, RhoPrev, RhoCurr, Quotient]
@@ -154,7 +165,7 @@ impl DoryMultilinearMatrix {
 /// - Rows [n, 2n): rho_prev polynomials (offset=1)
 /// - Rows [2n, 3n): rho_curr polynomials (offset=2)
 /// - Rows [3n, 4n): quotient polynomials (offset=3)
-pub struct GiantMultilinearMatrixBuilder {
+pub struct DoryMatrixBuilder {
     num_constraint_vars: usize,
     /// Rows grouped by offset type: [base_rows, rho_prev_rows, rho_curr_rows, quotient_rows]
     rows_by_offset: [Vec<Vec<Fq>>; 4],
@@ -162,7 +173,7 @@ pub struct GiantMultilinearMatrixBuilder {
     bits: Vec<bool>,
 }
 
-impl GiantMultilinearMatrixBuilder {
+impl DoryMatrixBuilder {
     pub fn new(num_constraint_vars: usize) -> Self {
         Self {
             num_constraint_vars,
@@ -301,7 +312,7 @@ impl ConstraintSystem {
         )?;
 
         // Build matrix with new interleaved layout
-        let mut builder = GiantMultilinearMatrixBuilder::new(4); // 4 vars for Fq12
+        let mut builder = DoryMatrixBuilder::new(4); // 4 vars for Fq12
 
         for (_op_id, witness) in witnesses.gt_exp.iter() {
             builder.add_gt_exp_witness(witness);

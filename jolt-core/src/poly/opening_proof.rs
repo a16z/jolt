@@ -174,6 +174,10 @@ pub enum SumcheckId {
     BytecodeBooleanity,
     BytecodeHammingWeight,
     RecursionZeroCheck,
+    RecursionBase,
+    RecursionRhoPrev,
+    RecursionRhoCurr,
+    RecursionQuotient,
     OpeningReduction,
 }
 
@@ -229,6 +233,39 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         let polynomial = &polynomial_ref.read().unwrap().poly;
         let gruen_eq = &shared_eq.D;
 
+        // Check if current w bit is 0
+        let current_w: F = gruen_eq.get_current_w().into();
+        if current_w.is_zero() {
+            // Handle special case: compute evaluations at 0 and 2 directly
+            // without using Gruen interpolation
+
+            // Compute eq polynomial evaluations
+            let current_scalar = gruen_eq.get_current_scalar();
+            let eq_eval_0 = current_scalar; // Since eq_eval_1 = 0
+                                            // eq_m = eq_eval_1 - eq_eval_0 = 0 - current_scalar = -current_scalar
+                                            // eq_eval_2 = eq_eval_1 + eq_m = 0 + (-current_scalar) = -current_scalar
+            let eq_eval_2 = -current_scalar;
+
+            // Compute q(0) as normal
+            let [q_0] = gruen_eq
+                .par_fold_out_in_unreduced::<9, 1>(&|g| [polynomial.get_bound_coeff(2 * g)]);
+
+            // Compute q(2) directly
+            let [q_2] = gruen_eq.par_fold_out_in_unreduced::<9, 1>(&|g| {
+                // For X=2: polynomial evaluation at (w_fixed, 2)
+                let coeff_0 = polynomial.get_bound_coeff(2 * g);
+                let coeff_1 = polynomial.get_bound_coeff(2 * g + 1);
+                [coeff_0 + coeff_1 + coeff_1] // coeff_0 + 2*coeff_1
+            });
+            // Construct polynomial from evaluations using hint
+            // With hint (previous_claim = s(0) + s(1)), we only need 2 points
+            let s_0 = eq_eval_0 * q_0;
+            let s_2 = eq_eval_2 * q_2;
+
+            return UniPoly::from_evals_and_hint(previous_claim, &[s_0, s_2]);
+        }
+
+        // Normal case: use Gruen interpolation
         // Compute q(0) = sum of polynomial(i) * eq(r, i) for i in [0, mle_half)
         let [q_0] = gruen_eq.par_fold_out_in_unreduced::<9, 1>(&|g| {
             // TODO(Quang): can special case on polynomial type
@@ -491,6 +528,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 let log_K = r.len() - self.log_T;
                 r[log_K..].reverse();
                 r[..log_K].reverse();
+            }
+            CommittedPolynomial::DoryConstraintMatrix => {
+                // DoryConstraintMatrix doesn't need any special reversing
             }
         }
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);

@@ -3,10 +3,9 @@
 //! This module provides JoltField implementations for field types that are
 //! specifically needed for recursive SNARK composition.
 
-use crate::field::{FieldOps, JoltField};
-#[cfg(feature = "challenge-254-bit")]
+// #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
-use crate::field::challenge::MontU128Challenge;
+use crate::field::{FieldOps, JoltField};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{BigInt, BigInteger, Field, One, PrimeField, UniformRand, Zero};
 use rayon::prelude::*;
@@ -29,7 +28,9 @@ impl JoltField for ark_bn254::Fq {
 
     // Default: Use optimized 125-bit MontChallenge
     #[cfg(not(feature = "challenge-254-bit"))]
-    type Challenge = MontU128Challenge<ark_bn254::Fq>;
+    // type Challenge = MontU128Challenge<ark_bn254::Fq>;
+    // let's test the non special 128 bit challenge
+    type Challenge = Mont254BitChallenge<ark_bn254::Fq>;
 
     // Optional: Use full 254-bit field elements
     #[cfg(feature = "challenge-254-bit")]
