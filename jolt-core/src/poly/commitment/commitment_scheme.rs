@@ -54,6 +54,25 @@ pub trait CompressedCommitmentScheme: CommitmentScheme {
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::CompressedProof;
+
+    fn verify_compressed<ProofTranscript: Transcript>(
+        proof: &Self::CompressedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut ProofTranscript,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        opening: &Self::Field,
+        commitment: &Self::CompressedCommitment,
+    ) -> Result<(), ProofVerifyError>;
+
+    /// Homomorphically combines multiple commitments into a single commitment, computed as a
+    /// linear combination with the given coefficients.
+    /// TODO:
+    fn combine_commitments_compressed<C: Borrow<Self::CompressedCommitment>>(
+        _commitments: &[C],
+        _coeffs: &[Self::Field],
+    ) -> Self::CompressedCommitment {
+        todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
+    }
 }
 
 pub trait CompressedStreamingCommitmentScheme:

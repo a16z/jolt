@@ -562,7 +562,7 @@ pub struct ReducedOpeningProof<
 > {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
-    joint_opening_proof: PCS::Proof,
+    pub joint_opening_proof: PCS::Proof,
     #[cfg(test)]
     joint_poly: MultilinearPolynomial<F>,
     #[cfg(test)]
@@ -577,7 +577,7 @@ pub struct CompressedReducedOpeningProof<
 > {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
-    joint_opening_proof: PCS::CompressedProof,
+    pub joint_opening_proof: PCS::CompressedProof,
     #[cfg(test)]
     joint_poly: MultilinearPolynomial<F>,
     #[cfg(test)]
@@ -1430,6 +1430,97 @@ where
 
         // Verify the reduced opening proof
         PCS::verify(
+            &reduced_opening_proof.joint_opening_proof,
+            pcs_setup,
+            transcript,
+            &r_sumcheck,
+            &joint_claim,
+            &joint_commitment,
+        )
+    }
+
+    /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
+    /// and a single opening proof) indeed proves the openings accumulated.
+    /// TODO: refactor this to avoid code duplication
+    pub fn reduce_and_verify_compressed<
+        ProofTranscript: Transcript,
+        PCS: CompressedCommitmentScheme<Field = F>,
+    >(
+        &mut self,
+        pcs_setup: &PCS::VerifierSetup,
+        commitment_map: &mut HashMap<CommittedPolynomial, PCS::CompressedCommitment>,
+        reduced_opening_proof: &CompressedReducedOpeningProof<F, PCS, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        #[cfg(test)]
+        if let Some(prover_openings) = &self.prover_opening_accumulator {
+            assert_eq!(prover_openings.len(), self.len());
+        }
+
+        let num_sumcheck_rounds = self
+            .sumchecks
+            .iter()
+            .map(|opening| opening.opening_point.len())
+            .max()
+            .unwrap();
+
+        self.sumchecks
+            .iter_mut()
+            .zip(reduced_opening_proof.sumcheck_claims.iter())
+            .for_each(|(opening, claim)| opening.sumcheck_claim = Some(*claim));
+
+        // Verify the sumcheck
+        let mut r_sumcheck =
+            self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
+        let log_K = r_sumcheck.len() - self.log_T;
+        r_sumcheck[..log_K].reverse();
+        r_sumcheck[log_K..].reverse();
+
+        transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
+
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
+
+        // Compute the commitment for the reduced opening proof by homomorphically combining
+        // the commitments of the individual polynomials.
+        let joint_commitment = {
+            let mut rlc_map = HashMap::new();
+            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
+                if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
+                    *value += *gamma;
+                } else {
+                    rlc_map.insert(sumcheck.polynomial, *gamma);
+                }
+            }
+
+            let (coeffs, commitments): (Vec<F>, Vec<PCS::CompressedCommitment>) = rlc_map
+                .into_iter()
+                .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
+                .unzip();
+            debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
+
+            PCS::combine_commitments_compressed(&commitments, &coeffs)
+        };
+
+        #[cfg(test)]
+        assert_eq!(
+            joint_commitment, reduced_opening_proof.joint_commitment,
+            "joint commitment mismatch"
+        );
+
+        // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
+        let joint_claim: F = gamma_powers
+            .iter()
+            .zip(reduced_opening_proof.sumcheck_claims.iter())
+            .zip(self.sumchecks.iter())
+            .map(|((coeff, claim), opening)| {
+                let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                *coeff * claim * lagrange_eval
+            })
+            .sum();
+
+        // Verify the reduced opening proof
+        PCS::verify_compressed(
             &reduced_opening_proof.joint_opening_proof,
             pcs_setup,
             transcript,

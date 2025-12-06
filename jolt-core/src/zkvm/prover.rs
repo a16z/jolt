@@ -1359,9 +1359,10 @@ mod tests {
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::zkvm::prover::{JoltProofCompressionFlag, JoltProverPreprocessing};
     use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
-    use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
+    use crate::zkvm::{RV64IMACCompressedVerifier, RV64IMACProver, RV64IMACVerifier};
     use ark_bn254::Fr;
     use ark_serialize::CanonicalSerialize;
+    use dory::backends::{ArkDoryProof, ArkGT};
     use expect_test::expect;
     use serial_test::serial;
 
@@ -2364,12 +2365,12 @@ mod tests {
             ));
 
         let binding = JoltVerifierPreprocessing::from(&preprocessing);
-        // let verifier =
-        //     RV64IMACVerifier::new(&binding, jolt_proof_compressed, io_device, None, None)
-        //         .expect("Failed to create verifier for compressed proof");
-        // verifier
-        //     .verify()
-        // .expect("Failed to verify compressed proof");
+        let verifier =
+            RV64IMACCompressedVerifier::new(&binding, jolt_proof_compressed, io_device, None, None)
+                .expect("Failed to create verifier for compressed proof");
+        verifier
+            .verify()
+            .expect("Failed to verify compressed proof");
     }
 
     #[test]

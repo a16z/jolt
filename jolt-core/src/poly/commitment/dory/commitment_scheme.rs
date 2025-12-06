@@ -83,6 +83,42 @@ impl CompressedCommitmentScheme for DoryCommitmentScheme {
 
         CompressedArkDoryProof(proof)
     }
+
+    fn verify_compressed<ProofTranscript: Transcript>(
+        proof: &Self::CompressedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut ProofTranscript,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        opening: &Self::Field,
+        commitment: &Self::CompressedCommitment,
+    ) -> Result<(), ProofVerifyError> {
+        let _span = trace_span!("DoryCommitmentScheme::verify").entered();
+
+        // Dory uses the opposite endian-ness as Jolt
+        let ark_point: Vec<ArkFr> = opening_point
+            .iter()
+            .rev()  // Reverse the order for Dory
+            .map(|p| {
+                let f_val: ark_bn254::Fr = (*p).into();
+                jolt_to_ark(&f_val)
+            })
+            .collect();
+        let ark_eval: ArkFr = jolt_to_ark(opening);
+
+        let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
+
+        dory::verify_compressed::<ArkFr, JoltBn254, JoltG1Routines, JoltG2Routines, _>(
+            *commitment,
+            ark_eval,
+            &ark_point,
+            &proof.0,
+            setup.clone().into_inner(),
+            &mut dory_transcript,
+        )
+        .map_err(|_| ProofVerifyError::InternalError)?;
+
+        Ok(())
+    }
 }
 
 impl CompressedStreamingCommitmentScheme for DoryCommitmentScheme {
