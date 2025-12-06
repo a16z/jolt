@@ -507,9 +507,16 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     );
 
                     let e_in_val = *in_val;
-                    for idx in 0..three_pow_dim {
-                        let val = buff_a[idx] * buff_b[idx];
-                        local_res_unr[idx] += e_in_val.mul_unreduced::<9>(val);
+                    // For window_size == 1, we only need evals at 0 and ∞ (indices 0 and 2).
+                    // The eval at 1 is unused by Gruen polynomial computation.
+                    if window_size == 1 {
+                        local_res_unr[0] += e_in_val.mul_unreduced::<9>(buff_a[0] * buff_b[0]);
+                        local_res_unr[2] += e_in_val.mul_unreduced::<9>(buff_a[2] * buff_b[2]);
+                    } else {
+                        for idx in 0..three_pow_dim {
+                            let val = buff_a[idx] * buff_b[idx];
+                            local_res_unr[idx] += e_in_val.mul_unreduced::<9>(val);
+                        }
                     }
                 }
 
