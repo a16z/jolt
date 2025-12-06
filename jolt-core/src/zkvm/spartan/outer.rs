@@ -343,17 +343,21 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
         // Reset accumulators
         if !parallel {
-             for j in 0..jlen {
+            for j in 0..jlen {
                 acc_az[j] = Acc5U::zero();
                 acc_bz_first[j] = Acc6S::zero();
                 acc_bz_second[j] = Acc7S::zero();
-             }
+            }
         } else {
-             acc_az.par_iter_mut().zip(acc_bz_first.par_iter_mut()).zip(acc_bz_second.par_iter_mut()).for_each(|((a, b), c)| {
-                *a = Acc5U::zero();
-                *b = Acc6S::zero();
-                *c = Acc7S::zero();
-             });
+            acc_az
+                .par_iter_mut()
+                .zip(acc_bz_first.par_iter_mut())
+                .zip(acc_bz_second.par_iter_mut())
+                .for_each(|((a, b), c)| {
+                    *a = Acc5U::zero();
+                    *b = Acc6S::zero();
+                    *c = Acc7S::zero();
+                });
         }
 
         if !parallel {
@@ -374,14 +378,18 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         let row_inputs =
                             R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
                         let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        
+
                         // First group (k)
                         let w_k = &scaled_w[k];
                         eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
 
                         // Second group (k+1)
                         let w_k_next = &scaled_w[k + 1];
-                        eval.fmadd_second_group_at_r(w_k_next, &mut acc_az[j], &mut acc_bz_second[j]);
+                        eval.fmadd_second_group_at_r(
+                            w_k_next,
+                            &mut acc_az[j],
+                            &mut acc_bz_second[j],
+                        );
 
                         k += 2;
                     }
@@ -390,12 +398,12 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                 // klen == 1. Iterate j in pairs if possible.
                 let mut j = 0;
                 while j < jlen {
-                    // Check if we can process a pair (j, j+1). 
+                    // Check if we can process a pair (j, j+1).
                     // This requires jlen >= 2.
                     if j + 1 < jlen {
                         let full_idx = offset + j; // k=0 implied
                         let current_step_idx = full_idx >> 1;
-                        
+
                         // full_idx is even (assuming offset even).
                         let row_inputs =
                             R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
@@ -406,24 +414,32 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
 
                         // Second group (j+1)
-                        eval.fmadd_second_group_at_r(w_k, &mut acc_az[j+1], &mut acc_bz_second[j+1]);
+                        eval.fmadd_second_group_at_r(
+                            w_k,
+                            &mut acc_az[j + 1],
+                            &mut acc_bz_second[j + 1],
+                        );
 
                         j += 2;
                     } else {
-                         // Fallback for single/last item
-                         let full_idx = offset + j;
-                         let current_step_idx = full_idx >> 1;
-                         let selector = (full_idx & 1) == 1;
-                         
-                         let row_inputs =
+                        // Fallback for single/last item
+                        let full_idx = offset + j;
+                        let current_step_idx = full_idx >> 1;
+                        let selector = (full_idx & 1) == 1;
+
+                        let row_inputs =
                             R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
                         let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
                         let w_k = &scaled_w[0];
 
                         if !selector {
-                             eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
+                            eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
                         } else {
-                             eval.fmadd_second_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_second[j]);
+                            eval.fmadd_second_group_at_r(
+                                w_k,
+                                &mut acc_az[j],
+                                &mut acc_bz_second[j],
+                            );
                         }
                         j += 1;
                     }
@@ -819,6 +835,10 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
     }
 
+    // TODO: Consider removing this specialized dim_one version in favor of the generic
+    // `fused_materialise_polynomials_general_with_multiquadratic`. Keeping for now to
+    // benchmark whether the specialization provides any performance benefit.
+    #[allow(dead_code)]
     #[tracing::instrument(
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_parallel_dim_one"
@@ -890,18 +910,18 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
 
                         // Process pairs of (r_idx, r_idx+1) to share R1CSCycleInputs construction
                         if num_r_vals >= 2 {
-                             let mut r_idx = 0;
-                             while r_idx < num_r_vals {
-                                 let full_idx_x0 = base_idx | r_idx;
-                                 let step_idx_x0 = full_idx_x0 >> 1;
-                                 
-                                 let row_inputs_x0 = R1CSCycleInputs::from_trace::<F>(
+                            let mut r_idx = 0;
+                            while r_idx < num_r_vals {
+                                let full_idx_x0 = base_idx | r_idx;
+                                let step_idx_x0 = full_idx_x0 >> 1;
+
+                                let row_inputs_x0 = R1CSCycleInputs::from_trace::<F>(
                                     &self.bytecode_preprocessing,
                                     &self.trace,
                                     step_idx_x0,
                                 );
                                 let eval_x0 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x0);
-                                
+
                                 // First item: r_idx (Group 1)
                                 let w_r = &scaled_w[r_idx];
                                 eval_x0.fmadd_first_group_at_r(
@@ -909,17 +929,17 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                                     &mut acc_az0,
                                     &mut acc_bz0_first,
                                 );
-                                
+
                                 // Second item: r_idx+1 (Group 2)
-                                let w_r_next = &scaled_w[r_idx+1];
+                                let w_r_next = &scaled_w[r_idx + 1];
                                 eval_x0.fmadd_second_group_at_r(
                                     w_r_next,
                                     &mut acc_az0,
                                     &mut acc_bz0_second,
                                 );
-                                
+
                                 r_idx += 2;
-                             }
+                            }
                         } else {
                             // Fallback for num_r_vals == 1
                             for r_idx in 0..num_r_vals {
@@ -954,18 +974,18 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         // All X=1 accesses (sequential step_idx values)
                         let x1_offset = 1 << num_r_bits;
                         if num_r_vals >= 2 {
-                             let mut r_idx = 0;
-                             while r_idx < num_r_vals {
-                                 let full_idx_x1 = base_idx | x1_offset | r_idx;
-                                 let step_idx_x1 = full_idx_x1 >> 1;
-                                 
-                                 let row_inputs_x1 = R1CSCycleInputs::from_trace::<F>(
+                            let mut r_idx = 0;
+                            while r_idx < num_r_vals {
+                                let full_idx_x1 = base_idx | x1_offset | r_idx;
+                                let step_idx_x1 = full_idx_x1 >> 1;
+
+                                let row_inputs_x1 = R1CSCycleInputs::from_trace::<F>(
                                     &self.bytecode_preprocessing,
                                     &self.trace,
                                     step_idx_x1,
                                 );
                                 let eval_x1 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x1);
-                                
+
                                 // First item: r_idx (Group 1)
                                 let w_r = &scaled_w[r_idx];
                                 eval_x1.fmadd_first_group_at_r(
@@ -973,17 +993,17 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                                     &mut acc_az1,
                                     &mut acc_bz1_first,
                                 );
-                                
+
                                 // Second item: r_idx+1 (Group 2)
-                                let w_r_next = &scaled_w[r_idx+1];
+                                let w_r_next = &scaled_w[r_idx + 1];
                                 eval_x1.fmadd_second_group_at_r(
                                     w_r_next,
                                     &mut acc_az1,
                                     &mut acc_bz1_second,
                                 );
-                                
+
                                 r_idx += 2;
-                             }
+                            }
                         } else {
                             for r_idx in 0..num_r_vals {
                                 let w_r = &scaled_w[r_idx];
@@ -1058,6 +1078,10 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     // If the first round of the sumcheck is the switchover point
     // then materialisng Az and Bz is significantly simpler.
     // We do not need to deal with challenges.
+    // TODO: Consider removing this specialized round_zero_dim_one version in favor of the generic
+    // `fused_materialise_polynomials_round_zero`. Keeping for now to benchmark whether the
+    // specialization provides any performance benefit.
+    #[allow(dead_code)]
     #[tracing::instrument(
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_round_zero_dim_one"
@@ -1358,18 +1382,18 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             let full_idx = grid_size * i + j;
                             let time_step_idx = full_idx >> 1;
                             // j is even => full_idx even => selector=0
-                            
+
                             let row_inputs = R1CSCycleInputs::from_trace::<F>(
                                 &self.bytecode_preprocessing,
                                 &self.trace,
                                 time_step_idx,
                             );
                             let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                            
+
                             // First group (j)
                             let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
                             let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
-                            
+
                             // Second group (j+1)
                             let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
                             let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
@@ -1378,28 +1402,28 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             bz_chunk[j] = bz0;
                             az_grid[j] = az0;
                             bz_grid[j] = bz0;
-                            
-                            az_chunk[j+1] = az1;
-                            bz_chunk[j+1] = bz1;
-                            az_grid[j+1] = az1;
-                            bz_grid[j+1] = bz1;
-                            
+
+                            az_chunk[j + 1] = az1;
+                            bz_chunk[j + 1] = bz1;
+                            az_grid[j + 1] = az1;
+                            bz_grid[j + 1] = bz1;
+
                             j += 2;
                         }
                     } else {
-                         for j in 0..grid_size {
+                        for j in 0..grid_size {
                             let full_idx = grid_size * i + j;
                             // Extract time_step_idx and selector from full_idx
                             let time_step_idx = full_idx >> 1;
                             let selector = (full_idx & 1) == 1;
-    
+
                             let row_inputs = R1CSCycleInputs::from_trace::<F>(
                                 &self.bytecode_preprocessing,
                                 &self.trace,
                                 time_step_idx,
                             );
                             let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-    
+
                             let (az_at_full_idx, bz_at_full_idx) = if !selector {
                                 (
                                     eval.az_at_r_first_group(&self.lagrange_evals_r0),
@@ -1411,7 +1435,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                                     eval.bz_at_r_second_group(&self.lagrange_evals_r0),
                                 )
                             };
-    
+
                             az_chunk[j] = az_at_full_idx;
                             bz_chunk[j] = bz_at_full_idx;
                             az_grid[j] = az_at_full_idx;
@@ -1476,18 +1500,18 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             while j < grid_size {
                                 let full_idx = grid_size * i + j;
                                 let time_step_idx = full_idx >> 1;
-                                
+
                                 let row_inputs = R1CSCycleInputs::from_trace::<F>(
                                     &self.bytecode_preprocessing,
                                     &self.trace,
                                     time_step_idx,
                                 );
                                 let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                                
+
                                 // First group (j)
                                 let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
                                 let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
-                                
+
                                 // Second group (j+1)
                                 let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
                                 let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
@@ -1497,12 +1521,12 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                                 bz_outer_chunk[offset_in_chunk] = bz0;
                                 az_grid[j] = az0;
                                 bz_grid[j] = bz0;
-                                
+
                                 az_outer_chunk[offset_in_chunk + 1] = az1;
                                 bz_outer_chunk[offset_in_chunk + 1] = bz1;
                                 az_grid[j + 1] = az1;
                                 bz_grid[j + 1] = bz1;
-                                
+
                                 j += 2;
                             }
                         } else {
