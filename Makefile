@@ -4,7 +4,7 @@ MAKEFILE_DIR := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
 
 # Define a general macro for RISCOF test runs
 define RISCOF_RUN
-	export PATH=$(MAKEFILE_DIR)/target/debug:$(PATH); \
+	export PATH=$(MAKEFILE_DIR)/target/debug:/opt/riscv/bin:$(PATH); \
 	export RUST_BACKTRACE=full; \
 	riscof --verbose info run --no-browser --config tests/arch-tests/$(1).ini \
 		--suite third-party/riscv-arch-test/riscv-test-suite/ \
