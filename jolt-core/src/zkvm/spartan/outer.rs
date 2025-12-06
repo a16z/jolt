@@ -441,20 +441,25 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         // these scaled tables.
         let lagrange_evals_r = &self.lagrange_evals_r0;
         let r_grid = &self.r_grid;
-        let mut scaled_w = vec![[F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]; klen];
-        if klen > 1 {
+        let scaled_w: Vec<[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]> = if klen > 1 {
             debug_assert_eq!(klen, r_grid.len());
-            for k in 0..klen {
-                let weight = r_grid[k];
-                let row = &mut scaled_w[k];
-                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
-                    row[t] = lagrange_evals_r[t] * weight;
-                }
-            }
+            (0..klen)
+                .into_par_iter()
+                .map(|k| {
+                    let weight = r_grid[k];
+                    let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+                    for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+                        row[t] = lagrange_evals_r[t] * weight;
+                    }
+                    row
+                })
+                .collect()
         } else {
             debug_assert_eq!(klen, 1);
-            scaled_w[0].copy_from_slice(lagrange_evals_r);
-        }
+            let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+            row.copy_from_slice(lagrange_evals_r);
+            vec![row]
+        };
 
         // Head-factor eq tables for this window.
         let (e_out, e_in) = split_eq.E_out_in_for_window(window_size);
@@ -749,10 +754,9 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
     }
 
-    // NOTE: no small value optimisation
     #[tracing::instrument(
         skip_all,
-        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_parallel"
+        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_parallel_dim_one"
     )]
     fn materialise_polynomials_from_trace_parallel_dim_one(&mut self) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
@@ -768,12 +772,25 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         let num_r_bits = num_r_vals.log_2();
         let num_x_in_bits = num_x_in_vals.log_2();
 
+        // Precompute scaled Lagrange weights: scaled_w[r_idx][t] = lagrange_evals_r0[t] * r_grid[r_idx]
+        // This avoids multiplying by r_eval inside the hot loop.
+        let lagrange_evals_r = &self.lagrange_evals_r0;
+        let scaled_w: Vec<[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]> = (0..num_r_vals)
+            .into_par_iter()
+            .map(|r_idx| {
+                let weight = r_grid[r_idx];
+                let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+                    row[t] = lagrange_evals_r[t] * weight;
+                }
+                row
+            })
+            .collect();
+
         // Dynamic chunking for parallelization
         let num_threads = rayon::current_num_threads();
         let target_chunks = num_threads * 4;
         let min_chunk_pairs = 16;
-        //let pairs_per_chunk =
-        //((output_size + target_chunks - 1) / target_chunks).max(min_chunk_pairs);
         let pairs_per_chunk = output_size.div_ceil(target_chunks).max(min_chunk_pairs);
         let chunk_size = pairs_per_chunk * 2;
 
@@ -792,20 +809,24 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         let x_in_val = pair_idx % num_x_in_vals;
                         let x_out_val = pair_idx / num_x_in_vals;
 
-                        let mut az0_sum = F::zero(); // For X=0
-                        let mut az1_sum = F::zero(); // For X=1
-                        let mut bz0_sum = F::zero(); // For X=0
-                        let mut bz1_sum = F::zero(); // For X=1
+                        // Unreduced accumulators for X=0 and X=1
+                        // Az uses Acc5U for both groups; Bz uses Acc6S (first) and Acc7S (second)
+                        let mut acc_az0: Acc5U<F> = Acc5U::zero();
+                        let mut acc_bz0_first: Acc6S<F> = Acc6S::zero();
+                        let mut acc_bz0_second: Acc7S<F> = Acc7S::zero();
+                        let mut acc_az1: Acc5U<F> = Acc5U::zero();
+                        let mut acc_bz1_first: Acc6S<F> = Acc6S::zero();
+                        let mut acc_bz1_second: Acc7S<F> = Acc7S::zero();
 
                         // Single loop over r values, computing both X=0 and X=1
                         for r_idx in 0..num_r_vals {
-                            let r_eval = r_grid[r_idx];
+                            let w_r = &scaled_w[r_idx];
 
                             // Build indices for both X=0 and X=1
                             let base_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
                                 | (x_in_val << (1 + num_r_bits));
 
-                            let full_idx_x0 = base_idx | (0 << num_r_bits) | r_idx;
+                            let full_idx_x0 = base_idx | r_idx;
                             let full_idx_x1 = base_idx | (1 << num_r_bits) | r_idx;
 
                             // Process X=0
@@ -819,17 +840,12 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             );
                             let eval_x0 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x0);
 
-                            let (az_x0, bz_x0) = if !selector_x0 {
-                                (
-                                    eval_x0.az_at_r_first_group(&self.lagrange_evals_r0),
-                                    eval_x0.bz_at_r_first_group(&self.lagrange_evals_r0),
-                                )
+                            if !selector_x0 {
+                                eval_x0.fmadd_first_group_at_r(w_r, &mut acc_az0, &mut acc_bz0_first);
                             } else {
-                                (
-                                    eval_x0.az_at_r_second_group(&self.lagrange_evals_r0),
-                                    eval_x0.bz_at_r_second_group(&self.lagrange_evals_r0),
-                                )
-                            };
+                                eval_x0
+                                    .fmadd_second_group_at_r(w_r, &mut acc_az0, &mut acc_bz0_second);
+                            }
 
                             // Process X=1
                             let step_idx_x1 = full_idx_x1 >> 1;
@@ -842,24 +858,21 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             );
                             let eval_x1 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x1);
 
-                            let (az_x1, bz_x1) = if !selector_x1 {
-                                (
-                                    eval_x1.az_at_r_first_group(&self.lagrange_evals_r0),
-                                    eval_x1.bz_at_r_first_group(&self.lagrange_evals_r0),
-                                )
+                            if !selector_x1 {
+                                eval_x1.fmadd_first_group_at_r(w_r, &mut acc_az1, &mut acc_bz1_first);
                             } else {
-                                (
-                                    eval_x1.az_at_r_second_group(&self.lagrange_evals_r0),
-                                    eval_x1.bz_at_r_second_group(&self.lagrange_evals_r0),
-                                )
-                            };
-
-                            // Accumulate both with the same r_eval
-                            az0_sum += az_x0 * r_eval;
-                            bz0_sum += bz_x0 * r_eval;
-                            az1_sum += az_x1 * r_eval;
-                            bz1_sum += bz_x1 * r_eval;
+                                eval_x1
+                                    .fmadd_second_group_at_r(w_r, &mut acc_az1, &mut acc_bz1_second);
+                            }
                         }
+
+                        // Reduce accumulators to field elements
+                        let az0_sum = acc_az0.barrett_reduce();
+                        let az1_sum = acc_az1.barrett_reduce();
+                        let bz0_sum =
+                            acc_bz0_first.barrett_reduce() + acc_bz0_second.barrett_reduce();
+                        let bz1_sum =
+                            acc_bz1_first.barrett_reduce() + acc_bz1_second.barrett_reduce();
 
                         // Store in chunk-relative position
                         let buffer_offset = 2 * (pair_idx - start_pair);
@@ -899,7 +912,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     // We do not need to deal with challenges.
     #[tracing::instrument(
         skip_all,
-        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_round_zero"
+        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace_round_zero_dim_one"
     )]
     fn materialise_polynomials_from_trace_round_zero_dim_one(&mut self) {
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
@@ -985,6 +998,20 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         let num_r_bits = num_r_vals.log_2();
         let num_x_in_bits = num_x_in_vals.log_2();
 
+        // Precompute scaled Lagrange weights: scaled_w[r_idx][t] = lagrange_evals_r0[t] * r_grid[r_idx]
+        let lagrange_evals_r = &self.lagrange_evals_r0;
+        let scaled_w: Vec<[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]> = (0..num_r_vals)
+            .into_par_iter()
+            .map(|r_idx| {
+                let weight = r_grid[r_idx];
+                let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+                    row[t] = lagrange_evals_r[t] * weight;
+                }
+                row
+            })
+            .collect();
+
         let output_size = num_x_out_vals * num_x_in_vals;
 
         // Dynamic chunking for parallelization
@@ -1012,17 +1039,25 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     let mut az_grid = vec![F::zero(); grid_size];
                     let mut bz_grid = vec![F::zero(); grid_size];
 
+                    // Unreduced accumulators for each grid point
+                    let mut acc_az: Vec<Acc5U<F>> = vec![Acc5U::zero(); grid_size];
+                    let mut acc_bz_first: Vec<Acc6S<F>> = vec![Acc6S::zero(); grid_size];
+                    let mut acc_bz_second: Vec<Acc7S<F>> = vec![Acc7S::zero(); grid_size];
+
                     for pair_idx in start_pair..end_pair {
                         let x_in_val = pair_idx % num_x_in_vals;
                         let x_out_val = pair_idx / num_x_in_vals;
 
-                        // Initialize grid accumulator for this (x_out, x_in) pair
-                        az_grid.fill(F::zero());
-                        bz_grid.fill(F::zero());
+                        // Reset accumulators for this (x_out, x_in) pair
+                        for x_val in 0..grid_size {
+                            acc_az[x_val] = Acc5U::zero();
+                            acc_bz_first[x_val] = Acc6S::zero();
+                            acc_bz_second[x_val] = Acc7S::zero();
+                        }
 
-                        // Loop over r values and accumulate for each grid point
+                        // Loop over r values and accumulate for each grid point using fmadd
                         for r_idx in 0..num_r_vals {
-                            let r_eval = r_grid[r_idx];
+                            let w_r = &scaled_w[r_idx];
 
                             let base_idx = (x_out_val
                                 << (num_x_in_bits + window_size + num_r_bits))
@@ -1042,22 +1077,27 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                                 );
                                 let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
 
-                                let (az_val, bz_val) = if !selector {
-                                    (
-                                        eval.az_at_r_first_group(&self.lagrange_evals_r0),
-                                        eval.bz_at_r_first_group(&self.lagrange_evals_r0),
-                                    )
+                                if !selector {
+                                    eval.fmadd_first_group_at_r(
+                                        w_r,
+                                        &mut acc_az[x_val],
+                                        &mut acc_bz_first[x_val],
+                                    );
                                 } else {
-                                    (
-                                        eval.az_at_r_second_group(&self.lagrange_evals_r0),
-                                        eval.bz_at_r_second_group(&self.lagrange_evals_r0),
-                                    )
-                                };
-
-                                // Accumulate with r_eval weight
-                                az_grid[x_val] += az_val * r_eval;
-                                bz_grid[x_val] += bz_val * r_eval;
+                                    eval.fmadd_second_group_at_r(
+                                        w_r,
+                                        &mut acc_az[x_val],
+                                        &mut acc_bz_second[x_val],
+                                    );
+                                }
                             }
+                        }
+
+                        // Reduce accumulators and fill grids
+                        for x_val in 0..grid_size {
+                            az_grid[x_val] = acc_az[x_val].barrett_reduce();
+                            bz_grid[x_val] = acc_bz_first[x_val].barrett_reduce()
+                                + acc_bz_second[x_val].barrett_reduce();
                         }
 
                         // Store the accumulated grid in chunk-relative position
@@ -1065,6 +1105,7 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         let end = buffer_offset + grid_size;
                         az_chunk[buffer_offset..end].copy_from_slice(&az_grid[..grid_size]);
                         bz_chunk[buffer_offset..end].copy_from_slice(&bz_grid[..grid_size]);
+
                         // Expand to multiquadratic
                         MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
                             &az_grid,
@@ -1459,17 +1500,29 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
     }
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         self.split_eq_poly.bind(r_j);
 
-        if self.az.is_none() {
-            let t_prime_poly = self
-                .t_prime_poly
-                .as_mut()
-                .expect("t_prime_poly should be initialized");
-            t_prime_poly.bind(r_j, BindingOrder::LowToHigh);
+        // Always bind the multiquadratic polynomial
+        let t_prime_poly = self
+            .t_prime_poly
+            .as_mut()
+            .expect("t_prime_poly should be initialized");
+        t_prime_poly.bind(r_j, BindingOrder::LowToHigh);
+
+        if self.schedule.before_switch_over_point(round) {
+            // Streaming mode: update r_grid for weighting trace evaluations
+            debug_assert!(
+                self.az.is_none(),
+                "az should not be materialized before switch-over"
+            );
             self.r_grid.update(r_j);
         } else {
+            // Linear mode: bind the materialized az/bz polynomials
+            debug_assert!(
+                self.az.is_some(),
+                "az should be materialized at or after switch-over"
+            );
             // NOTE: As we are binding low-to-high in streaming
             // I need to revisit the binding algorithm and optimise
             // cache lines again
