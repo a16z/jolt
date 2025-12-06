@@ -9,6 +9,64 @@ use crate::{
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
+pub trait CompressedCommitmentScheme: CommitmentScheme {
+    type CompressedCommitment: Default
+        + Debug
+        + Sync
+        + Send
+        + PartialEq
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + AppendToTranscript
+        + Clone;
+    type CompressedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
+
+    /// Commits to a multilinear polynomial using the provided setup, where the commitment is compressed.
+    ///
+    /// # Arguments
+    /// * `poly` - The multilinear polynomial to commit to
+    /// * `setup` - The prover setup for the commitment scheme
+    ///
+    /// # Returns
+    /// A tuple containing the compressed commitment to the polynomial and a hint that can be used
+    /// to optimize opening proof generation
+    fn commit_compressed(
+        poly: &MultilinearPolynomial<Self::Field>,
+        setup: &Self::ProverSetup,
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint);
+
+    /// Generates a compressed proof of evaluation for a polynomial at a specific point.
+    ///
+    /// # Arguments
+    /// * `setup` - The prover setup for the commitment scheme
+    /// * `poly` - The multilinear polynomial being proved
+    /// * `opening_point` - The point at which the polynomial is evaluated
+    /// * `hint` - An optional hint that helps optimize the proof generation.
+    ///   When `None`, implementations should compute the hint internally if needed.
+    /// * `transcript` - The transcript for Fiat-Shamir transformation
+    ///
+    /// # Returns
+    /// A proof of the polynomial evaluation at the specified point
+    fn prove_compressed<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        hint: Option<Self::OpeningProofHint>,
+        transcript: &mut ProofTranscript,
+    ) -> Self::CompressedProof;
+}
+
+pub trait CompressedStreamingCommitmentScheme:
+    CompressedCommitmentScheme + StreamingCommitmentScheme
+{
+    /// Compute tier 2 commitment from accumulated tier 1 commitments, where the output commitment is compressed.
+    fn aggregate_chunks_compressed(
+        setup: &Self::ProverSetup,
+        onehot_k: Option<usize>,
+        tier1_commitments: &[Self::ChunkState],
+    ) -> (Self::CompressedCommitment, Self::OpeningProofHint);
+}
+
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type ProverSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
@@ -22,6 +80,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + CanonicalDeserialize
         + AppendToTranscript
         + Clone;
+
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of

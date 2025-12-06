@@ -8,7 +8,10 @@
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
-    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
+    poly::{
+        commitment::commitment_scheme::CompressedCommitmentScheme,
+        rlc_polynomial::{RLCPolynomial, RLCStreamingData},
+    },
     zkvm::config::OneHotParams,
 };
 use allocative::Allocative;
@@ -579,6 +582,21 @@ pub struct ReducedOpeningProof<
     joint_commitment: PCS::Commitment,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
+pub struct CompressedReducedOpeningProof<
+    F: JoltField,
+    PCS: CompressedCommitmentScheme<Field = F>,
+    ProofTranscript: Transcript,
+> {
+    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub sumcheck_claims: Vec<F>,
+    joint_opening_proof: PCS::CompressedProof,
+    #[cfg(test)]
+    joint_poly: MultilinearPolynomial<F>,
+    #[cfg(test)]
+    joint_commitment: PCS::CompressedCommitment,
+}
+
 impl<F> Default for ProverOpeningAccumulator<F>
 where
     F: JoltField,
@@ -623,6 +641,28 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         (point.clone(), *claim)
     }
 }
+
+#[cfg(not(test))]
+type ReduceAndProveSumcheckHelperResult<F, ProofTranscript, PCS: CommitmentScheme<Field = F>> = (
+    SumcheckInstanceProof<F, ProofTranscript>,
+    Vec<F>,
+    Vec<<F as JoltField>::Challenge>,
+    MultilinearPolynomial<F>,
+    <PCS as CommitmentScheme>::OpeningProofHint,
+);
+#[cfg(test)]
+type ReduceAndProveSumcheckHelperResult<F, ProofTranscript, PCS: CommitmentScheme<Field = F>> = (
+    SumcheckInstanceProof<F, ProofTranscript>,
+    Vec<F>,
+    Vec<<F as JoltField>::Challenge>,
+    (
+        MultilinearPolynomial<F>,
+        Vec<CommittedPolynomial>,
+        Vec<Arc<MultilinearPolynomial<F>>>,
+        Vec<F>,
+    ),
+    <PCS as CommitmentScheme>::OpeningProofHint,
+);
 
 impl<F> ProverOpeningAccumulator<F>
 where
@@ -794,17 +834,20 @@ where
             .insert(OpeningId::TrustedAdvice, (opening_point, claim));
     }
 
-    /// Reduces the multiple openings accumulated into a single opening proof,
-    /// using a single sumcheck.
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
-    pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    #[tracing::instrument(
+        skip_all,
+        name = "ProverOpeningAccumulator::reduce_and_prove_sumcheck_helper"
+    )]
+    pub fn reduce_and_prove_sumcheck_helper<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
         &mut self,
         mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
         streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
-    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
+    ) -> ReduceAndProveSumcheckHelperResult<F, ProofTranscript, PCS> {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
             self.sumchecks.len()
@@ -898,6 +941,59 @@ where
             (joint_poly, hint)
         };
 
+        #[cfg(not(test))]
+        {
+            (
+                sumcheck_proof,
+                sumcheck_claims,
+                r_sumcheck,
+                joint_poly,
+                hint,
+            )
+        }
+
+        #[cfg(test)]
+        {
+            (
+                sumcheck_proof,
+                sumcheck_claims,
+                r_sumcheck,
+                joint_poly,
+                hint,
+            )
+        }
+    }
+
+    /// Reduces the multiple openings accumulated into a single opening proof,
+    /// using a single sumcheck.
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
+    pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        &mut self,
+        polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut ProofTranscript,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
+        #[cfg(not(test))]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
+                streaming_context,
+            );
+        #[cfg(test)]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
+                streaming_context,
+            );
+
         #[cfg(test)]
         let joint_commitment = {
             let (joint_poly_ref, poly_ids, poly_arcs, coeffs) = &joint_poly;
@@ -924,6 +1020,81 @@ where
             PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, Some(hint), transcript);
 
         ReducedOpeningProof {
+            sumcheck_proof,
+            sumcheck_claims,
+            joint_opening_proof,
+            #[cfg(test)]
+            joint_poly,
+            #[cfg(test)]
+            joint_commitment,
+        }
+    }
+
+    /// Reduces the multiple openings accumulated into a single compressed opening proof,
+    /// using a single sumcheck.
+    #[tracing::instrument(
+        skip_all,
+        name = "ProverOpeningAccumulator::reduce_and_prove_compressed"
+    )]
+    pub fn reduce_and_prove_compressed<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        &mut self,
+        polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut ProofTranscript,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+    ) -> CompressedReducedOpeningProof<F, PCS, ProofTranscript>
+    where
+        PCS: CompressedCommitmentScheme,
+    {
+        #[cfg(not(test))]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
+                streaming_context,
+            );
+        #[cfg(test)]
+        let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
+            Self::reduce_and_prove_sumcheck_helper::<ProofTranscript, PCS>(
+                self,
+                polynomials,
+                opening_hints,
+                transcript,
+                streaming_context,
+            );
+
+        #[cfg(test)]
+        let joint_commitment = {
+            let (joint_poly_ref, poly_ids, poly_arcs, coeffs) = &joint_poly;
+            let materialized_poly = match joint_poly_ref {
+                MultilinearPolynomial::RLC(rlc) => {
+                    MultilinearPolynomial::RLC(rlc.materialize(poly_ids, poly_arcs, coeffs))
+                }
+                _ => joint_poly_ref.clone(),
+            };
+            PCS::commit_compressed(&materialized_poly, pcs_setup).0
+        };
+
+        #[cfg(test)]
+        let joint_poly = joint_poly.0;
+
+        #[cfg(not(test))]
+        {
+            let sumchecks = std::mem::take(&mut self.sumchecks);
+            crate::utils::thread::drop_in_background_thread(sumchecks);
+        }
+
+        // Reduced opening proof
+        let joint_opening_proof =
+            PCS::prove_compressed(pcs_setup, &joint_poly, &r_sumcheck, Some(hint), transcript);
+
+        CompressedReducedOpeningProof {
             sumcheck_proof,
             sumcheck_claims,
             joint_opening_proof,

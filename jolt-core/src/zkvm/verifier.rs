@@ -16,7 +16,7 @@ use crate::zkvm::{
         self, ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
         read_raf_checking::ReadRafSumcheckVerifier as LookupsReadRafSumcheckVerifier,
     },
-    proof_serialization::JoltProof,
+    proof_serialization::JoltUncompressedProof,
     r1cs::key::UniformSpartanKey,
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
@@ -62,7 +62,7 @@ pub struct JoltVerifier<
 > {
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
-    pub proof: JoltProof<F, PCS, ProofTranscript>,
+    pub proof: JoltUncompressedProof<F, PCS, ProofTranscript>,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
@@ -75,7 +75,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 {
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
-        proof: JoltProof<F, PCS, ProofTranscript>,
+        proof: JoltUncompressedProof<F, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
@@ -137,6 +137,22 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         })
     }
 
+    // TODO:
+    // pub fn uncompressed_commitments(mut self) -> Self {
+    //     match self.proof.commitments {
+    //         JoltProofCommitments::Compressed(commitments) => {
+    //             let uncompressed_commitments = commitments
+    //                 .into_iter()
+    //                 .map(|commitment| commitment.into())
+    //                 .collect();
+    //             self.proof.commitments =
+    //                 JoltProofCommitments::Uncompressed(uncompressed_commitments);
+    //             self
+    //         }
+    //         JoltProofCommitments::Uncompressed(_) => self,
+    //     }
+    // }
+
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
         let _pprof_verify = pprof_scope!("verify");
@@ -157,27 +173,34 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
 
-        // Append commitments to transcript
-        for commitment in &self.proof.commitments {
-            self.transcript.append_serializable(commitment);
-        }
-        // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
-            self.transcript
-                .append_serializable(untrusted_advice_commitment);
-        }
-        // Append trusted advice commitment to transcript
+        // Append trusted advice commitment to transcript (must be before stages to match prover order)
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             self.transcript
                 .append_serializable(trusted_advice_commitment);
         }
 
+        // Verify stages 1-6 first (these append proofs/challenges to transcript, matching prover order)
         self.verify_stage1()?;
         self.verify_stage2()?;
         self.verify_stage3()?;
         self.verify_stage4()?;
         self.verify_stage5()?;
         self.verify_stage6()?;
+
+        // Append commitments to transcript (after stages 1-6, matching prover order)
+        for commitment in &self.proof.commitments {
+            self.transcript.append_serializable(commitment);
+        }
+
+        // TODO: // Uncompress commitments if they are compressed
+        // // NOTE: this needs to happen after the transcript is appended to, because the prover appends the compressed commitments to the transcript.
+        // self = self.uncompressed_commitments();
+
+        // Append untrusted advice commitment to transcript
+        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
+            self.transcript
+                .append_serializable(untrusted_advice_commitment);
+        }
         self.verify_trusted_advice_opening_proofs()?;
         self.verify_untrusted_advice_opening_proofs()?;
         self.verify_stage7()?;
@@ -524,3 +547,5 @@ where
         Ok(Self::deserialize_compressed(&*data).unwrap())
     }
 }
+
+// TODO: should refactor for now just copy all the code
