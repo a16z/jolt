@@ -119,6 +119,24 @@ impl CompressedCommitmentScheme for DoryCommitmentScheme {
 
         Ok(())
     }
+
+    fn combine_commitments_compressed<C: Borrow<Self::CompressedCommitment>>(
+        commitments: &[C],
+        coeffs: &[Self::Field],
+    ) -> Self::CompressedCommitment {
+        let _span = trace_span!("DoryCommitmentScheme::combine_commitments").entered();
+
+        // Combine GT elements using parallel RLC
+        let commitments_vec: Vec<&ArkGT> = commitments.iter().map(|c| c.borrow()).collect();
+        coeffs
+            .par_iter()
+            .zip(commitments_vec.par_iter())
+            .map(|(coeff, commitment)| {
+                let ark_coeff = jolt_to_ark(coeff);
+                ark_coeff * **commitment
+            })
+            .reduce(ArkGT::identity, |a, b| a + b)
+    }
 }
 
 impl CompressedStreamingCommitmentScheme for DoryCommitmentScheme {

@@ -66,12 +66,14 @@ pub trait CompressedCommitmentScheme: CommitmentScheme {
 
     /// Homomorphically combines multiple commitments into a single commitment, computed as a
     /// linear combination with the given coefficients.
+    ///
     /// TODO:
     fn combine_commitments_compressed<C: Borrow<Self::CompressedCommitment>>(
         _commitments: &[C],
         _coeffs: &[Self::Field],
     ) -> Self::CompressedCommitment {
-        todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
+        panic!("`combine_commitments_compressed` is not implemented for this compressed commitment scheme 
+        or it does not support homomorphic combination of commitments");
     }
 }
 

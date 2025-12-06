@@ -2337,9 +2337,9 @@ mod tests {
         expect![[r#"
             Field                                    | Uncompressed B |   Compressed B |      Ratio
             -----------------------------------------+----------------+----------------+-----------
-            All proof                                |          72222 |          64798 |      1.11x
+            All proof                                |          72221 |          51741 |      1.40x
             opening_claims                           |           8366 |           8366 |      1.00x
-            commitments                              |          11145 |           3721 |      3.00x
+            commitments                              |          11144 |           3720 |      3.00x
             stage1_uni_skip_first_round_proof        |            904 |            904 |      1.00x
             stage1_sumcheck_proof                    |           1152 |           1152 |      1.00x
             stage2_uni_skip_first_round_proof        |            424 |            424 |      1.00x
@@ -2350,7 +2350,7 @@ mod tests {
             stage6_sumcheck_proof                    |           8432 |           8432 |      1.00x
             trusted_advice_proof                     |              1 |              1 |      1.00x
             untrusted_advice_proof                   |              1 |              1 |      1.00x
-            reduced_opening_proof                    |          25948 |          25948 |      1.00x
+            reduced_opening_proof                    |          25948 |          12892 |      2.01x
             untrusted_advice_commitment              |              1 |              1 |      1.00x
             trace_length                             |              8 |              8 |      1.00x
             ram_K                                    |              8 |              8 |      1.00x
