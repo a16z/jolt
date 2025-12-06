@@ -171,7 +171,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -182,7 +182,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -224,7 +224,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "quote",
  "syn 2.0.111",
@@ -233,7 +233,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "ark-grumpkin"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -270,7 +270,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/JuI3s/arkworks-algebra?branch=compression)",
  "ark-std",
@@ -294,7 +294,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -539,9 +539,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.48"
+version = "1.2.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c481bdbf0ed3b892f6f806287d72acd515b352a4ec27a208489b8c1bc839633a"
+checksum = "90583009037521a116abf44494efecd645ba48b6622457080f080b85544e2215"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -1215,9 +1215,9 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flate2"
-version = "1.1.5"
+version = "1.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfe33edd8e85a12a67454e37f8c75e730830d83e313556ab9ebf9ee7fbeb3bfb"
+checksum = "a2152dbcb980c05735e2a651d96011320a949eb31a0c8b38b72645ce97dec676"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -2079,7 +2079,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#ffe882cab9836657aec451f7244bd900e4ec9745"
+source = "git+https://github.com/JuI3s/arkworks-algebra?branch=compression#929fe92c39e0ddd6c0bb36a6ccbc2b76d58495cd"
 dependencies = [
  "ark-bn254",
  "ark-ec",

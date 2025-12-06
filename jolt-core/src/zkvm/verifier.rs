@@ -136,20 +136,21 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         })
     }
 
-    pub fn uncompressed_commitments(mut self) -> Self {
-        match self.proof.commitments {
-            JoltProofCommitments::Compressed(commitments) => {
-                let uncompressed_commitments = commitments
-                    .into_iter()
-                    .map(|commitment| commitment.into())
-                    .collect();
-                self.proof.commitments =
-                    JoltProofCommitments::Uncompressed(uncompressed_commitments);
-                self
-            }
-            JoltProofCommitments::Uncompressed(_) => self,
-        }
-    }
+    // TODO:
+    // pub fn uncompressed_commitments(mut self) -> Self {
+    //     match self.proof.commitments {
+    //         JoltProofCommitments::Compressed(commitments) => {
+    //             let uncompressed_commitments = commitments
+    //                 .into_iter()
+    //                 .map(|commitment| commitment.into())
+    //                 .collect();
+    //             self.proof.commitments =
+    //                 JoltProofCommitments::Uncompressed(uncompressed_commitments);
+    //             self
+    //         }
+    //         JoltProofCommitments::Uncompressed(_) => self,
+    //     }
+    // }
 
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
@@ -171,41 +172,34 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
 
-        // Append commitments to transcript
-        match &self.proof.commitments {
-            JoltProofCommitments::Compressed(commitments) => {
-                for commitment in commitments {
-                    self.transcript.append_serializable(commitment);
-                }
-            }
-            JoltProofCommitments::Uncompressed(commitments) => {
-                for commitment in commitments {
-                    self.transcript.append_serializable(commitment);
-                }
-            }
-        };
-
-        // Uncompress commitments if they are compressed
-        // NOTE: this needs to happen after the transcript is appended to, because the prover appends the compressed commitments to the transcript.
-        self = self.uncompressed_commitments();
-
-        // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
-            self.transcript
-                .append_serializable(untrusted_advice_commitment);
-        }
-        // Append trusted advice commitment to transcript
+        // Append trusted advice commitment to transcript (must be before stages to match prover order)
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             self.transcript
                 .append_serializable(trusted_advice_commitment);
         }
 
+        // Verify stages 1-6 first (these append proofs/challenges to transcript, matching prover order)
         self.verify_stage1()?;
         self.verify_stage2()?;
         self.verify_stage3()?;
         self.verify_stage4()?;
         self.verify_stage5()?;
         self.verify_stage6()?;
+
+        // Append commitments to transcript (after stages 1-6, matching prover order)
+        for commitment in &self.proof.commitments {
+            self.transcript.append_serializable(commitment);
+        }
+
+        // TODO: // Uncompress commitments if they are compressed
+        // // NOTE: this needs to happen after the transcript is appended to, because the prover appends the compressed commitments to the transcript.
+        // self = self.uncompressed_commitments();
+
+        // Append untrusted advice commitment to transcript
+        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
+            self.transcript
+                .append_serializable(untrusted_advice_commitment);
+        }
         self.verify_trusted_advice_opening_proofs()?;
         self.verify_untrusted_advice_opening_proofs()?;
         self.verify_stage7()?;
@@ -487,17 +481,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
         // Batch-prove all openings (Stage 7)
         let mut commitments_map = HashMap::new();
-        match &self.proof.commitments {
-            JoltProofCommitments::Compressed(_commitments) => {
-                panic!("Commitments should have been uncompressed by now");
-            }
-            JoltProofCommitments::Uncompressed(commitments) => {
-                for (polynomial, commitment) in AllCommittedPolynomials::iter().zip_eq(commitments)
-                {
-                    commitments_map.insert(*polynomial, commitment.clone());
-                }
-            }
-        };
+        for (polynomial, commitment) in
+            AllCommittedPolynomials::iter().zip_eq(&self.proof.commitments)
+        {
+            commitments_map.insert(*polynomial, commitment.clone());
+        }
 
         self.opening_accumulator
             .reduce_and_verify(
@@ -553,3 +541,5 @@ where
         Ok(Self::deserialize_compressed(&*data).unwrap())
     }
 }
+
+// TODO: should refactor for now just copy all the code
