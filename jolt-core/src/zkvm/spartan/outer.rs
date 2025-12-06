@@ -79,7 +79,7 @@ const INFINITY: usize = 2;
 //
 // Final check (verifier): with r = [r0 || r_tail] and outer binding order from
 // the top, evaluate Eq_τ(τ, r) and verify
-//   Eq_τ(τ, r) · (Az(r) · Bz(r)).
+//  L(τ_high, r_high) · Eq_τ(τ, r) · (Az(r) · Bz(r)).
 
 /// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
 #[derive(Allocative)]
@@ -1416,16 +1416,36 @@ impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckIns
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        // The schedule determines how many variables we process in this window.
+        // In streaming mode: exponentially growing windows (1, 2, 4, 8, ...)
+        // In linear mode: single-variable windows (1, 1, 1, ...)
         let num_unbound_vars = self.schedule.num_unbound_vars(round);
+
         if self.schedule.is_switch_over_point(round) {
+            // TRANSITION: Streaming → Linear mode
+            // At this point we've done all streaming rounds. Now we:
+            // 1. Materialize az/bz polynomials from the trace (O(n) memory)
+            // 2. Compute the first evaluation grid from those polynomials
+            // After this, we never touch the trace again.
             self.materialise_polynomials_from_trace(num_unbound_vars);
         } else if self.schedule.is_window_start(round) {
+            // WINDOW START: Need to (re)compute the evaluation grid for this window.
+            // The grid holds partial sums over {0,1,∞}^d needed for the sumcheck.
             if self.schedule.before_switch_over_point(round) {
+                // STREAMING MODE: Compute grid directly from trace.
+                // No polynomials materialized; we re-scan the trace each window.
+                // Memory: O(3^d) for grid, where d = window size.
                 self.compute_evaluation_grid_from_trace(num_unbound_vars);
             } else {
+                // LINEAR MODE: Compute grid from materialized az/bz polynomials.
+                // Faster per-round since polynomials are in memory.
                 self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
             }
         }
+        // Else: mid-window round, just reuse the existing grid (handled by bind)
+
+        // Extract T'(0) and T'(∞) from the grid, then compute the degree-3 univariate
+        // polynomial T(X) = eq(τ, x) · [Az(x) · Bz(x) - u · Cz(x)] using Gruen's formula.
         let (t_prime_0, t_prime_inf) = self.compute_t_evals(num_unbound_vars);
         self.split_eq_poly
             .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)

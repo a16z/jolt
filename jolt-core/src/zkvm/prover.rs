@@ -1,4 +1,4 @@
-use crate::subprotocols::streaming_schedule::LinearOnlySchedule;
+use crate::subprotocols::streaming_schedule::HalfSplitSchedule;
 use std::{
     collections::HashMap,
     fs::File,
@@ -551,8 +551,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Every sum-check with num_rounds > 1 requires a schedule
         // which dictates the compute_message and bind methods
-        let schedule = LinearOnlySchedule::new(uni_skip_state.tau.len() - 1);
-        //let schedule = HalfSplitSchedule::new(uni_skip_state.tau.len() - 1, 3);
+        let schedule = HalfSplitSchedule::new(uni_skip_state.tau.len() - 1);
         let mut spartan_outer_remaining = OuterRemainingSumcheckProver::gen(
             Arc::clone(&self.trace),
             &self.checkpoints,
