@@ -446,11 +446,8 @@ mod tests {
                 let cost_factor = 3.0_f64.powi(w as i32) / 2.0_f64.powi((w + round) as i32);
                 // Allow cost factor between 0.5 and 2.0 (close to 1)
                 assert!(
-                    cost_factor >= 0.5 && cost_factor <= 2.0,
-                    "Cost factor {} out of range for round {} with window size {}",
-                    cost_factor,
-                    round,
-                    w
+                    (0.5..=2.0).contains(&cost_factor),
+                    "Cost factor {cost_factor} out of range for round {round} with window size {w}"
                 );
             }
 
