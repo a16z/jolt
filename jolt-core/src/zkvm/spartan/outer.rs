@@ -841,10 +841,17 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             let eval_x0 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x0);
 
                             if !selector_x0 {
-                                eval_x0.fmadd_first_group_at_r(w_r, &mut acc_az0, &mut acc_bz0_first);
+                                eval_x0.fmadd_first_group_at_r(
+                                    w_r,
+                                    &mut acc_az0,
+                                    &mut acc_bz0_first,
+                                );
                             } else {
-                                eval_x0
-                                    .fmadd_second_group_at_r(w_r, &mut acc_az0, &mut acc_bz0_second);
+                                eval_x0.fmadd_second_group_at_r(
+                                    w_r,
+                                    &mut acc_az0,
+                                    &mut acc_bz0_second,
+                                );
                             }
 
                             // Process X=1
@@ -859,10 +866,17 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             let eval_x1 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x1);
 
                             if !selector_x1 {
-                                eval_x1.fmadd_first_group_at_r(w_r, &mut acc_az1, &mut acc_bz1_first);
+                                eval_x1.fmadd_first_group_at_r(
+                                    w_r,
+                                    &mut acc_az1,
+                                    &mut acc_bz1_first,
+                                );
                             } else {
-                                eval_x1
-                                    .fmadd_second_group_at_r(w_r, &mut acc_az1, &mut acc_bz1_second);
+                                eval_x1.fmadd_second_group_at_r(
+                                    w_r,
+                                    &mut acc_az1,
+                                    &mut acc_bz1_second,
+                                );
                             }
                         }
 

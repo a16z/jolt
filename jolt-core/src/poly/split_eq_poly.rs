@@ -172,7 +172,10 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
     pub fn E_out_current_len(&self) -> usize {
         // Invariant: E_out_vec always has at least one entry ([1] at index 0)
-        self.E_out_vec.last().expect("E_out_vec is never empty").len()
+        self.E_out_vec
+            .last()
+            .expect("E_out_vec is never empty")
+            .len()
     }
 
     /// Return the last vector from `E_in_vec` as a slice.
@@ -790,7 +793,11 @@ mod tests {
 
             // tables[k] should have 2^k entries
             for k in 0..=num_vars {
-                assert_eq!(tables[k].len(), 1 << k, "tables[{k}] should have 2^{k} entries");
+                assert_eq!(
+                    tables[k].len(),
+                    1 << k,
+                    "tables[{k}] should have 2^{k} entries"
+                );
             }
         }
     }
