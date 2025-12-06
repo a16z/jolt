@@ -386,7 +386,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     /// Fused accumulate of first-group Az and Bz into unreduced accumulators using
     /// Lagrange weights `w`. This keeps everything in unreduced form; callers are
     /// responsible for reducing at the end.
-    #[inline(always)]
+    #[inline]
     pub fn fmadd_first_group_at_r(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
@@ -394,8 +394,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc_bz: &mut Acc6S<F>,
     ) {
         let az = self.eval_az_first_group();
-        let bz = self.eval_bz_first_group();
         az.fmadd_at_r(w, acc_az);
+        let bz = self.eval_bz_first_group();
         bz.fmadd_at_r(w, acc_bz);
     }
 
@@ -628,7 +628,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     /// Fused accumulate of second-group Az and Bz into unreduced accumulators
     /// using Lagrange weights `w`. This keeps everything in unreduced form; callers
     /// are responsible for reducing at the end.
-    #[inline(always)]
+    #[inline]
     pub fn fmadd_second_group_at_r(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
@@ -636,10 +636,11 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc_bz: &mut Acc7S<F>,
     ) {
         let az = self.eval_az_second_group();
-        let bz = self.eval_bz_second_group();
         az.fmadd_at_r(w, acc_az);
+        let bz = self.eval_bz_second_group();
         bz.fmadd_at_r(w, acc_bz);
     }
+
     /// Product Az·Bz at the j-th extended uniskip target for the second group (uses precomputed weights).
     pub fn extended_azbz_product_second_group(&self, j: usize) -> S192 {
         #[cfg(test)]

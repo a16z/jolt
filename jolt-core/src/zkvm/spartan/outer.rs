@@ -319,6 +319,9 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
     #[allow(clippy::too_many_arguments)]
     fn extrapolate_from_binary_grid_to_tertiary_grid(
         &self,
+        acc_az: &mut [Acc5U<F>],
+        acc_bz_first: &mut [Acc6S<F>],
+        acc_bz_second: &mut [Acc7S<F>],
         grid_az: &mut [F],
         grid_bz: &mut [F],
         jlen: usize,
@@ -334,39 +337,95 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         debug_assert_eq!(scaled_w.len(), klen);
         debug_assert_eq!(grid_az.len(), jlen);
         debug_assert_eq!(grid_bz.len(), jlen);
+        debug_assert_eq!(acc_az.len(), jlen);
+        debug_assert_eq!(acc_bz_first.len(), jlen);
+        debug_assert_eq!(acc_bz_second.len(), jlen);
 
-        // Unreduced accumulators per j for Az and the two Bz groups.
-        let mut acc_az = vec![Acc5U::<F>::zero(); jlen];
-        let mut acc_bz_first = vec![Acc6S::<F>::zero(); jlen];
-        let mut acc_bz_second = vec![Acc7S::<F>::zero(); jlen];
+        // Reset accumulators
+        if !parallel {
+             for j in 0..jlen {
+                acc_az[j] = Acc5U::zero();
+                acc_bz_first[j] = Acc6S::zero();
+                acc_bz_second[j] = Acc7S::zero();
+             }
+        } else {
+             acc_az.par_iter_mut().zip(acc_bz_first.par_iter_mut()).zip(acc_bz_second.par_iter_mut()).for_each(|((a, b), c)| {
+                *a = Acc5U::zero();
+                *b = Acc6S::zero();
+                *c = Acc7S::zero();
+             });
+        }
 
         if !parallel {
             // Sequential traversal: iterate over j first and then k so that we
             // walk consecutive cycles in memory (full_idx increases by 1 inside
             // the inner loop).
-            for j in 0..jlen {
-                for k in 0..klen {
-                    let full_idx = offset + j * klen + k;
-                    let current_step_idx = full_idx >> 1;
-                    let selector = (full_idx & 1) == 1;
+            if klen >= 2 {
+                for j in 0..jlen {
+                    // Process k in pairs
+                    let mut k = 0;
+                    while k < klen {
+                        let full_idx = offset + j * klen + k;
+                        let current_step_idx = full_idx >> 1;
+                        // Since k starts at 0 and increments by 2, and offset is even,
+                        // full_idx is even. full_idx maps to Group 1, full_idx+1 to Group 2.
+                        // Both share current_step_idx.
 
-                    // TODO: use the lazy trace iterator here instead of indexing directly into the
-                    // trace that is all that needs to change for now
-                    //let row_inputs_prime = R1CSCycleInputs::from_checkpoints::<F>(
-                    //    preprocess,
-                    //    checkpoints,
-                    //    checkpoint_interval,
-                    //    current_step_idx,
-                    //);
-                    let row_inputs =
-                        R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                    let w_k = &scaled_w[k];
-
-                    if !selector {
+                        let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        
+                        // First group (k)
+                        let w_k = &scaled_w[k];
                         eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
+
+                        // Second group (k+1)
+                        let w_k_next = &scaled_w[k + 1];
+                        eval.fmadd_second_group_at_r(w_k_next, &mut acc_az[j], &mut acc_bz_second[j]);
+
+                        k += 2;
+                    }
+                }
+            } else {
+                // klen == 1. Iterate j in pairs if possible.
+                let mut j = 0;
+                while j < jlen {
+                    // Check if we can process a pair (j, j+1). 
+                    // This requires jlen >= 2.
+                    if j + 1 < jlen {
+                        let full_idx = offset + j; // k=0 implied
+                        let current_step_idx = full_idx >> 1;
+                        
+                        // full_idx is even (assuming offset even).
+                        let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        let w_k = &scaled_w[0];
+
+                        // First group (j)
+                        eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
+
+                        // Second group (j+1)
+                        eval.fmadd_second_group_at_r(w_k, &mut acc_az[j+1], &mut acc_bz_second[j+1]);
+
+                        j += 2;
                     } else {
-                        eval.fmadd_second_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_second[j]);
+                         // Fallback for single/last item
+                         let full_idx = offset + j;
+                         let current_step_idx = full_idx >> 1;
+                         let selector = (full_idx & 1) == 1;
+                         
+                         let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                        let w_k = &scaled_w[0];
+
+                        if !selector {
+                             eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
+                        } else {
+                             eval.fmadd_second_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_second[j]);
+                        }
+                        j += 1;
                     }
                 }
             }
@@ -479,6 +538,9 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                 let mut tmp = vec![F::zero(); three_pow_dim];
                 let mut grid_a = vec![F::zero(); jlen];
                 let mut grid_b = vec![F::zero(); jlen];
+                let mut acc_az = vec![Acc5U::<F>::zero(); jlen];
+                let mut acc_bz_first = vec![Acc6S::<F>::zero(); jlen];
+                let mut acc_bz_second = vec![Acc7S::<F>::zero(); jlen];
 
                 for (in_idx, in_val) in e_in.iter().enumerate() {
                     let i = out_idx * e_in_len + in_idx;
@@ -488,6 +550,9 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     grid_b.fill(F::zero());
                     // Keep this call sequential to avoid nested rayon parallelism.
                     self.extrapolate_from_binary_grid_to_tertiary_grid(
+                        &mut acc_az,
+                        &mut acc_bz_first,
+                        &mut acc_bz_second,
                         &mut grid_a,
                         &mut grid_b,
                         jlen,
@@ -818,65 +883,134 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         let mut acc_bz1_first: Acc6S<F> = Acc6S::zero();
                         let mut acc_bz1_second: Acc7S<F> = Acc7S::zero();
 
-                        // Single loop over r values, computing both X=0 and X=1
-                        for r_idx in 0..num_r_vals {
-                            let w_r = &scaled_w[r_idx];
+                        // Process X=0 first, then X=1 for better cache locality.
+                        // Consecutive r_idx gives consecutive step_idx within each X value.
+                        let base_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
+                            | (x_in_val << (1 + num_r_bits));
 
-                            // Build indices for both X=0 and X=1
-                            let base_idx = (x_out_val << (num_x_in_bits + 1 + num_r_bits))
-                                | (x_in_val << (1 + num_r_bits));
-
-                            let full_idx_x0 = base_idx | r_idx;
-                            let full_idx_x1 = base_idx | (1 << num_r_bits) | r_idx;
-
-                            // Process X=0
-                            let step_idx_x0 = full_idx_x0 >> 1;
-                            let selector_x0 = (full_idx_x0 & 1) == 1;
-
-                            let row_inputs_x0 = R1CSCycleInputs::from_trace::<F>(
-                                &self.bytecode_preprocessing,
-                                &self.trace,
-                                step_idx_x0,
-                            );
-                            let eval_x0 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x0);
-
-                            if !selector_x0 {
+                        // Process pairs of (r_idx, r_idx+1) to share R1CSCycleInputs construction
+                        if num_r_vals >= 2 {
+                             let mut r_idx = 0;
+                             while r_idx < num_r_vals {
+                                 let full_idx_x0 = base_idx | r_idx;
+                                 let step_idx_x0 = full_idx_x0 >> 1;
+                                 
+                                 let row_inputs_x0 = R1CSCycleInputs::from_trace::<F>(
+                                    &self.bytecode_preprocessing,
+                                    &self.trace,
+                                    step_idx_x0,
+                                );
+                                let eval_x0 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x0);
+                                
+                                // First item: r_idx (Group 1)
+                                let w_r = &scaled_w[r_idx];
                                 eval_x0.fmadd_first_group_at_r(
                                     w_r,
                                     &mut acc_az0,
                                     &mut acc_bz0_first,
                                 );
-                            } else {
+                                
+                                // Second item: r_idx+1 (Group 2)
+                                let w_r_next = &scaled_w[r_idx+1];
                                 eval_x0.fmadd_second_group_at_r(
-                                    w_r,
+                                    w_r_next,
                                     &mut acc_az0,
                                     &mut acc_bz0_second,
                                 );
+                                
+                                r_idx += 2;
+                             }
+                        } else {
+                            // Fallback for num_r_vals == 1
+                            for r_idx in 0..num_r_vals {
+                                let w_r = &scaled_w[r_idx];
+                                let full_idx_x0 = base_idx | r_idx;
+                                let step_idx_x0 = full_idx_x0 >> 1;
+                                let selector_x0 = (full_idx_x0 & 1) == 1;
+
+                                let row_inputs_x0 = R1CSCycleInputs::from_trace::<F>(
+                                    &self.bytecode_preprocessing,
+                                    &self.trace,
+                                    step_idx_x0,
+                                );
+                                let eval_x0 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x0);
+
+                                if !selector_x0 {
+                                    eval_x0.fmadd_first_group_at_r(
+                                        w_r,
+                                        &mut acc_az0,
+                                        &mut acc_bz0_first,
+                                    );
+                                } else {
+                                    eval_x0.fmadd_second_group_at_r(
+                                        w_r,
+                                        &mut acc_az0,
+                                        &mut acc_bz0_second,
+                                    );
+                                }
                             }
+                        }
 
-                            // Process X=1
-                            let step_idx_x1 = full_idx_x1 >> 1;
-                            let selector_x1 = (full_idx_x1 & 1) == 1;
-
-                            let row_inputs_x1 = R1CSCycleInputs::from_trace::<F>(
-                                &self.bytecode_preprocessing,
-                                &self.trace,
-                                step_idx_x1,
-                            );
-                            let eval_x1 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x1);
-
-                            if !selector_x1 {
+                        // All X=1 accesses (sequential step_idx values)
+                        let x1_offset = 1 << num_r_bits;
+                        if num_r_vals >= 2 {
+                             let mut r_idx = 0;
+                             while r_idx < num_r_vals {
+                                 let full_idx_x1 = base_idx | x1_offset | r_idx;
+                                 let step_idx_x1 = full_idx_x1 >> 1;
+                                 
+                                 let row_inputs_x1 = R1CSCycleInputs::from_trace::<F>(
+                                    &self.bytecode_preprocessing,
+                                    &self.trace,
+                                    step_idx_x1,
+                                );
+                                let eval_x1 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x1);
+                                
+                                // First item: r_idx (Group 1)
+                                let w_r = &scaled_w[r_idx];
                                 eval_x1.fmadd_first_group_at_r(
                                     w_r,
                                     &mut acc_az1,
                                     &mut acc_bz1_first,
                                 );
-                            } else {
+                                
+                                // Second item: r_idx+1 (Group 2)
+                                let w_r_next = &scaled_w[r_idx+1];
                                 eval_x1.fmadd_second_group_at_r(
-                                    w_r,
+                                    w_r_next,
                                     &mut acc_az1,
                                     &mut acc_bz1_second,
                                 );
+                                
+                                r_idx += 2;
+                             }
+                        } else {
+                            for r_idx in 0..num_r_vals {
+                                let w_r = &scaled_w[r_idx];
+                                let full_idx_x1 = base_idx | x1_offset | r_idx;
+                                let step_idx_x1 = full_idx_x1 >> 1;
+                                let selector_x1 = (full_idx_x1 & 1) == 1;
+
+                                let row_inputs_x1 = R1CSCycleInputs::from_trace::<F>(
+                                    &self.bytecode_preprocessing,
+                                    &self.trace,
+                                    step_idx_x1,
+                                );
+                                let eval_x1 = R1CSEval::<F>::from_cycle_inputs(&row_inputs_x1);
+
+                                if !selector_x1 {
+                                    eval_x1.fmadd_first_group_at_r(
+                                        w_r,
+                                        &mut acc_az1,
+                                        &mut acc_bz1_first,
+                                    );
+                                } else {
+                                    eval_x1.fmadd_second_group_at_r(
+                                        w_r,
+                                        &mut acc_az1,
+                                        &mut acc_bz1_second,
+                                    );
+                                }
                             }
                         }
 
@@ -1058,9 +1192,26 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     let mut acc_bz_first: Vec<Acc6S<F>> = vec![Acc6S::zero(); grid_size];
                     let mut acc_bz_second: Vec<Acc7S<F>> = vec![Acc7S::zero(); grid_size];
 
+                    // Inner sum over x_in for double summation: Σ_x_out E_out * (Σ_x_in E_in * ...)
+                    // Using Unreduced<9> for accumulation of (buff_a * buff_b).mul_unreduced::<9>(e_in)
+                    let mut inner_sum: Vec<F::Unreduced<9>> =
+                        vec![F::Unreduced::<9>::zero(); three_pow_dim];
+                    let mut current_x_out = start_pair / num_x_in_vals;
+
                     for pair_idx in start_pair..end_pair {
                         let x_in_val = pair_idx % num_x_in_vals;
                         let x_out_val = pair_idx / num_x_in_vals;
+
+                        // When we move to a new x_out, reduce inner_sum and finalize
+                        if x_out_val != current_x_out {
+                            let e_out = E_out[current_x_out];
+                            for idx in 0..three_pow_dim {
+                                local_ans[idx] +=
+                                    F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
+                                inner_sum[idx] = F::Unreduced::<9>::zero();
+                            }
+                            current_x_out = x_out_val;
+                        }
 
                         // Reset accumulators for this (x_out, x_in) pair
                         for x_val in 0..grid_size {
@@ -1069,17 +1220,17 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             acc_bz_second[x_val] = Acc7S::zero();
                         }
 
-                        // Loop over r values and accumulate for each grid point using fmadd
-                        for r_idx in 0..num_r_vals {
-                            let w_r = &scaled_w[r_idx];
+                        // Loop over grid points, then r values for better cache locality.
+                        // Since r_idx is in the low bits of full_idx, consecutive r_idx
+                        // gives consecutive step_idx values for better trace access patterns.
+                        let base_idx = (x_out_val << (num_x_in_bits + window_size + num_r_bits))
+                            | (x_in_val << (window_size + num_r_bits));
 
-                            let base_idx = (x_out_val
-                                << (num_x_in_bits + window_size + num_r_bits))
-                                | (x_in_val << (window_size + num_r_bits));
-
-                            // Process all grid_size points
-                            for x_val in 0..grid_size {
-                                let full_idx = base_idx | (x_val << num_r_bits) | r_idx;
+                        for x_val in 0..grid_size {
+                            let x_val_shifted = x_val << num_r_bits;
+                            for r_idx in 0..num_r_vals {
+                                let w_r = &scaled_w[r_idx];
+                                let full_idx = base_idx | x_val_shifted | r_idx;
 
                                 let step_idx = full_idx >> 1;
                                 let selector = (full_idx & 1) == 1;
@@ -1134,14 +1285,28 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                             window_size,
                         );
 
-                        // Accumulate into local ans with E_out * E_in weight
+                        // Accumulate unreduced: inner_sum += (buff_a * buff_b).mul_unreduced::<9>(e_in)
                         let e_in = E_in[x_in_val];
-                        let e_out = E_out[x_out_val];
-                        let e_product = e_out * e_in;
 
-                        for idx in 0..three_pow_dim {
-                            local_ans[idx] += buff_a[idx] * buff_b[idx] * e_product;
+                        // For window_size == 1, we only need evals at 0 and ∞ (indices 0 and 2).
+                        // The eval at 1 is unused by Gruen polynomial computation.
+                        if window_size == 1 {
+                            let prod0 = buff_a[0] * buff_b[0];
+                            let prod2 = buff_a[2] * buff_b[2];
+                            inner_sum[0] += prod0.mul_unreduced::<9>(e_in);
+                            inner_sum[2] += prod2.mul_unreduced::<9>(e_in);
+                        } else {
+                            for idx in 0..three_pow_dim {
+                                let prod = buff_a[idx] * buff_b[idx];
+                                inner_sum[idx] += prod.mul_unreduced::<9>(e_in);
+                            }
                         }
+                    }
+
+                    // Finalize the last x_out: reduce and multiply by e_out
+                    let e_out = E_out[current_x_out];
+                    for idx in 0..three_pow_dim {
+                        local_ans[idx] += F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
                     }
 
                     local_ans
@@ -1186,35 +1351,72 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                     let mut buff_b = vec![F::zero(); three_pow_dim];
                     let mut tmp = vec![F::zero(); three_pow_dim];
 
-                    for j in 0..grid_size {
-                        let full_idx = grid_size * i + j;
-                        // Extract time_step_idx and selector from full_idx
-                        let time_step_idx = full_idx >> 1;
-                        let selector = (full_idx & 1) == 1;
+                    // Parallel over grid_size in pairs if possible
+                    if grid_size >= 2 {
+                        let mut j = 0;
+                        while j < grid_size {
+                            let full_idx = grid_size * i + j;
+                            let time_step_idx = full_idx >> 1;
+                            // j is even => full_idx even => selector=0
+                            
+                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                &self.bytecode_preprocessing,
+                                &self.trace,
+                                time_step_idx,
+                            );
+                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                            
+                            // First group (j)
+                            let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
+                            let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
+                            
+                            // Second group (j+1)
+                            let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
+                            let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
 
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            &self.bytecode_preprocessing,
-                            &self.trace,
-                            time_step_idx,
-                        );
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-
-                        let (az_at_full_idx, bz_at_full_idx) = if !selector {
-                            (
-                                eval.az_at_r_first_group(&self.lagrange_evals_r0),
-                                eval.bz_at_r_first_group(&self.lagrange_evals_r0),
-                            )
-                        } else {
-                            (
-                                eval.az_at_r_second_group(&self.lagrange_evals_r0),
-                                eval.bz_at_r_second_group(&self.lagrange_evals_r0),
-                            )
-                        };
-
-                        az_chunk[j] = az_at_full_idx;
-                        bz_chunk[j] = bz_at_full_idx;
-                        az_grid[j] = az_at_full_idx;
-                        bz_grid[j] = bz_at_full_idx;
+                            az_chunk[j] = az0;
+                            bz_chunk[j] = bz0;
+                            az_grid[j] = az0;
+                            bz_grid[j] = bz0;
+                            
+                            az_chunk[j+1] = az1;
+                            bz_chunk[j+1] = bz1;
+                            az_grid[j+1] = az1;
+                            bz_grid[j+1] = bz1;
+                            
+                            j += 2;
+                        }
+                    } else {
+                         for j in 0..grid_size {
+                            let full_idx = grid_size * i + j;
+                            // Extract time_step_idx and selector from full_idx
+                            let time_step_idx = full_idx >> 1;
+                            let selector = (full_idx & 1) == 1;
+    
+                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                &self.bytecode_preprocessing,
+                                &self.trace,
+                                time_step_idx,
+                            );
+                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+    
+                            let (az_at_full_idx, bz_at_full_idx) = if !selector {
+                                (
+                                    eval.az_at_r_first_group(&self.lagrange_evals_r0),
+                                    eval.bz_at_r_first_group(&self.lagrange_evals_r0),
+                                )
+                            } else {
+                                (
+                                    eval.az_at_r_second_group(&self.lagrange_evals_r0),
+                                    eval.bz_at_r_second_group(&self.lagrange_evals_r0),
+                                )
+                            };
+    
+                            az_chunk[j] = az_at_full_idx;
+                            bz_chunk[j] = bz_at_full_idx;
+                            az_grid[j] = az_at_full_idx;
+                            bz_grid[j] = bz_at_full_idx;
+                        }
                     }
 
                     MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
@@ -1230,8 +1432,14 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         num_vars,
                     );
 
-                    for idx in 0..three_pow_dim {
-                        local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
+                    // For num_vars == 1, we only need evals at 0 and ∞ (indices 0 and 2).
+                    if num_vars == 1 {
+                        local_ans[0] = buff_a[0] * buff_b[0] * E_out[i];
+                        local_ans[2] = buff_a[2] * buff_b[2] * E_out[i];
+                    } else {
+                        for idx in 0..three_pow_dim {
+                            local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
+                        }
                     }
 
                     local_ans
@@ -1263,35 +1471,71 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         let i = (x_out << num_xin_bits) | x_in;
 
                         // Fill grids for this (x_out, x_in) pair
-                        for j in 0..grid_size {
-                            let full_idx = grid_size * i + j;
-                            let time_step_idx = full_idx >> 1;
-                            let selector = (full_idx & 1) == 1;
+                        if grid_size >= 2 {
+                            let mut j = 0;
+                            while j < grid_size {
+                                let full_idx = grid_size * i + j;
+                                let time_step_idx = full_idx >> 1;
+                                
+                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                    &self.bytecode_preprocessing,
+                                    &self.trace,
+                                    time_step_idx,
+                                );
+                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                                
+                                // First group (j)
+                                let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
+                                let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
+                                
+                                // Second group (j+1)
+                                let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
+                                let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
 
-                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                &self.bytecode_preprocessing,
-                                &self.trace,
-                                time_step_idx,
-                            );
-                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                                let offset_in_chunk = x_in * grid_size + j;
+                                az_outer_chunk[offset_in_chunk] = az0;
+                                bz_outer_chunk[offset_in_chunk] = bz0;
+                                az_grid[j] = az0;
+                                bz_grid[j] = bz0;
+                                
+                                az_outer_chunk[offset_in_chunk + 1] = az1;
+                                bz_outer_chunk[offset_in_chunk + 1] = bz1;
+                                az_grid[j + 1] = az1;
+                                bz_grid[j + 1] = bz1;
+                                
+                                j += 2;
+                            }
+                        } else {
+                            for j in 0..grid_size {
+                                let full_idx = grid_size * i + j;
+                                let time_step_idx = full_idx >> 1;
+                                let selector = (full_idx & 1) == 1;
 
-                            let (az_at_full_idx, bz_at_full_idx) = if !selector {
-                                (
-                                    eval.az_at_r_first_group(&self.lagrange_evals_r0),
-                                    eval.bz_at_r_first_group(&self.lagrange_evals_r0),
-                                )
-                            } else {
-                                (
-                                    eval.az_at_r_second_group(&self.lagrange_evals_r0),
-                                    eval.bz_at_r_second_group(&self.lagrange_evals_r0),
-                                )
-                            };
+                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                    &self.bytecode_preprocessing,
+                                    &self.trace,
+                                    time_step_idx,
+                                );
+                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
 
-                            let offset_in_chunk = x_in * grid_size + j;
-                            az_outer_chunk[offset_in_chunk] = az_at_full_idx;
-                            bz_outer_chunk[offset_in_chunk] = bz_at_full_idx;
-                            az_grid[j] = az_at_full_idx;
-                            bz_grid[j] = bz_at_full_idx;
+                                let (az_at_full_idx, bz_at_full_idx) = if !selector {
+                                    (
+                                        eval.az_at_r_first_group(&self.lagrange_evals_r0),
+                                        eval.bz_at_r_first_group(&self.lagrange_evals_r0),
+                                    )
+                                } else {
+                                    (
+                                        eval.az_at_r_second_group(&self.lagrange_evals_r0),
+                                        eval.bz_at_r_second_group(&self.lagrange_evals_r0),
+                                    )
+                                };
+
+                                let offset_in_chunk = x_in * grid_size + j;
+                                az_outer_chunk[offset_in_chunk] = az_at_full_idx;
+                                bz_outer_chunk[offset_in_chunk] = bz_at_full_idx;
+                                az_grid[j] = az_at_full_idx;
+                                bz_grid[j] = bz_at_full_idx;
+                            }
                         }
 
                         MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
@@ -1330,6 +1574,26 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         self.bz = Some(DensePolynomial::new(bz));
     }
 
+    /// Materialise Az/Bz polynomials from the trace at the switch-over point.
+    ///
+    /// # Design Note: Binding Order and Cache Locality
+    ///
+    /// The streaming index (constraint group selector, 2 groups per cycle) is bound
+    /// as the FIRST sumcheck variable. This creates different memory access patterns:
+    ///
+    /// - **Round zero** (`num_challenges() == 0`): The group selector is the LSB of
+    ///   `full_idx`, so consecutive indices access `(cycle0,G0), (cycle0,G1), (cycle1,G0)...`
+    ///   which maps to sequential `step_idx` values. Natural cache locality.
+    ///
+    /// - **After round zero** (`num_challenges() > 0`): The group selector has been
+    ///   bound into `r_grid`. Now X=0 (first group) and X=1 (second group) occupy
+    ///   separate memory regions separated by `2^num_r_bits`. Naive iteration causes
+    ///   cache thrashing; we use loop reordering (process all X=0 then all X=1) to
+    ///   maintain sequential access patterns.
+    ///
+    /// An alternative design would bind the streaming index LAST, which would preserve
+    /// natural cache locality throughout but would require restructuring the split-eq
+    /// polynomial and univariate-skip machinery.
     #[tracing::instrument(
         skip_all,
         name = "OuterRemainingSumcheckProver::materialise_poly_from_trace"
@@ -1338,26 +1602,15 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         let split_eq_poly = &self.split_eq_poly;
         let is_not_first_round_of_sumcheck = split_eq_poly.num_challenges() > 0;
         match (is_not_first_round_of_sumcheck, window_size == 1) {
-            (true, true) => self.materialise_polynomials_from_trace_parallel_dim_one(),
-            (true, false) => {
+            // Disable this for now, see perf of generic version
+            // (true, true) => self.materialise_polynomials_from_trace_parallel_dim_one(),
+            (true, _) => {
                 self.fused_materialise_polynomials_general_with_multiquadratic(window_size)
             }
-            (false, true) => self.materialise_polynomials_from_trace_round_zero_dim_one(),
-            (false, false) => self.fused_materialise_polynomials_round_zero(window_size),
+            // (false, true) => self.materialise_polynomials_from_trace_round_zero_dim_one(),
+            // Disable this for now, see perf of generic version
+            (false, _) => self.fused_materialise_polynomials_round_zero(window_size),
         }
-        //if split_eq_poly.num_challenges() > 0 {
-        //    if window_size == 1 {
-        //        self.materialise_polynomials_from_trace_parallel_dim_one();
-        //    } else {
-        //        self.fused_materialise_polynomials_general_with_multiquadratic(window_size);
-        //    }
-        //} else {
-        //    if window_size == 1 {
-        //        self.materialise_polynomials_from_trace_round_zero_dim_one();
-        //    } else {
-        //        self.fused_materialise_polynomials_round_zero(window_size);
-        //    }
-        //}
     }
 
     // Compute prover message directly for window size 1
