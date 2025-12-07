@@ -7,7 +7,9 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::{
+            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+        },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator,
@@ -284,7 +286,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
 }
 
 impl RecursionSumcheckProver {
-    fn compute_phase1_message(&self, _round: usize, previous_claim: Fq) -> UniPoly<Fq> {
+    fn compute_phase1_message(&self, _round: usize, _previous_claim: Fq) -> UniPoly<Fq> {
         const DEGREE: usize = 4;
         let num_x_remaining = self.eq_x.get_num_vars();
         let x_half = 1 << (num_x_remaining - 1);
@@ -354,7 +356,7 @@ impl RecursionSumcheckProver {
         UniPoly::from_evals(&total_evals)
     }
 
-    fn compute_phase2_message(&self, _phase2_round: usize, previous_claim: Fq) -> UniPoly<Fq> {
+    fn compute_phase2_message(&self, _phase2_round: usize, _previous_claim: Fq) -> UniPoly<Fq> {
         const DEGREE: usize = 4;
 
         let g_val = self.g_poly.get_bound_coeff(0);
