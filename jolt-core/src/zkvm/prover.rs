@@ -1197,10 +1197,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
-        let streaming_data = Arc::new(RLCStreamingData {
+        let streaming_data: Arc<RLCStreamingData> = Arc::new(RLCStreamingData {
             bytecode: self.preprocessing.bytecode.clone(),
             memory_layout: self.preprocessing.memory_layout.clone(),
         });
+
+        println!("streaming_data: {:?}", streaming_data);
 
         self.opening_accumulator.reduce_and_prove(
             polynomials_map,
@@ -1246,6 +1248,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             bytecode: self.preprocessing.bytecode.clone(),
             memory_layout: self.preprocessing.memory_layout.clone(),
         });
+
+        println!("streaming_data: {:?}", streaming_data);
 
         self.opening_accumulator.reduce_and_prove_compressed(
             polynomials_map,
@@ -1917,6 +1921,32 @@ mod tests {
             &uncompressed_proof_field_size_tracker,
             &compressed_proof_field_size_tracker,
         ));
+
+        // Correctness check
+        let compressed_commitments_uncompressed = jolt_proof_compressed
+            .commitments
+            .iter()
+            .map(|c| ArkGT::from(c.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            compressed_commitments_uncompressed,
+            jolt_proof_uncompressed.commitments
+        );
+
+        let gt_elements = jolt_proof_uncompressed
+            .reduced_opening_proof
+            .joint_opening_proof
+            .gt_elements();
+        let compressed_gt_elements_decompressed: Vec<ArkGT> = jolt_proof_compressed
+            .reduced_opening_proof
+            .joint_opening_proof
+            .0
+            .clone()
+            .gt_elements()
+            .into_iter()
+            .map(|c| ArkGT::from(c))
+            .collect();
+        assert_eq!(gt_elements, compressed_gt_elements_decompressed);
 
         let binding = JoltVerifierPreprocessing::from(&preprocessing);
         // let verifier =

@@ -984,7 +984,7 @@ checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
 [[package]]
 name = "dory-derive"
 version = "0.1.0"
-source = "git+https://github.com/JuI3s/dory?branch=compression-integration#d407e821125a7bf6a63491291183bd306e305ddd"
+source = "git+https://github.com/JuI3s/dory?branch=compression-integration#79f709a355cac3c8aac58f685466e6d9302f10d6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -994,7 +994,7 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.1.0"
-source = "git+https://github.com/JuI3s/dory?branch=compression-integration#d407e821125a7bf6a63491291183bd306e305ddd"
+source = "git+https://github.com/JuI3s/dory?branch=compression-integration#79f709a355cac3c8aac58f685466e6d9302f10d6"
 dependencies = [
  "ark-bn254",
  "ark-ec",
