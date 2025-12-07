@@ -1891,9 +1891,9 @@ mod tests {
         expect![[r#"
             Field                                    | Uncompressed B |   Compressed B |      Ratio
             -----------------------------------------+----------------+----------------+-----------
-            All proof                                |          76182 |          68758 |      1.11x
+            All proof                                |          76181 |          54165 |      1.41x
             opening_claims                           |           8366 |           8366 |      1.00x
-            commitments                              |          11145 |           3721 |      3.00x
+            commitments                              |          11144 |           3720 |      3.00x
             stage1_uni_skip_first_round_proof        |            904 |            904 |      1.00x
             stage1_sumcheck_proof                    |           1256 |           1256 |      1.00x
             stage2_uni_skip_first_round_proof        |            424 |            424 |      1.00x
@@ -1904,7 +1904,7 @@ mod tests {
             stage6_sumcheck_proof                    |           9176 |           9176 |      1.00x
             trusted_advice_proof                     |              1 |              1 |      1.00x
             untrusted_advice_proof                   |              1 |              1 |      1.00x
-            reduced_opening_proof                    |          28612 |          28612 |      1.00x
+            reduced_opening_proof                    |          28612 |          14020 |      2.04x
             untrusted_advice_commitment              |              1 |              1 |      1.00x
             trace_length                             |              8 |              8 |      1.00x
             ram_K                                    |              8 |              8 |      1.00x
@@ -2092,9 +2092,9 @@ mod tests {
         expect![[r#"
             Field                                    | Uncompressed B |   Compressed B |      Ratio
             -----------------------------------------+----------------+----------------+-----------
-            All proof                                |          82260 |          74580 |      1.10x
+            All proof                                |          82259 |          58451 |      1.41x
             opening_claims                           |           8492 |           8492 |      1.00x
-            commitments                              |          11529 |           3849 |      3.00x
+            commitments                              |          11528 |           3848 |      3.00x
             stage1_uni_skip_first_round_proof        |            904 |            904 |      1.00x
             stage1_sumcheck_proof                    |           1464 |           1464 |      1.00x
             stage2_uni_skip_first_round_proof        |            424 |            424 |      1.00x
@@ -2105,7 +2105,7 @@ mod tests {
             stage6_sumcheck_proof                    |          10808 |          10808 |      1.00x
             trusted_advice_proof                     |              1 |              1 |      1.00x
             untrusted_advice_proof                   |              1 |              1 |      1.00x
-            reduced_opening_proof                    |          31444 |          31444 |      1.00x
+            reduced_opening_proof                    |          31444 |          15316 |      2.05x
             untrusted_advice_commitment              |              1 |              1 |      1.00x
             trace_length                             |              8 |              8 |      1.00x
             ram_K                                    |              8 |              8 |      1.00x
