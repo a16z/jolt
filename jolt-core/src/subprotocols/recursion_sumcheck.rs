@@ -7,9 +7,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator,
@@ -17,9 +15,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        recursion_constraints::{
-            index_to_binary, MatrixConstraint, RowOffset,
-        },
+        recursion_constraints::{MatrixConstraint, RowOffset},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
@@ -29,6 +25,7 @@ use crate::{
 use ark_bn254::Fq;
 use ark_ff::{One, Zero};
 use rayon::prelude::*;
+use std::array;
 
 /// Parameters shared between prover and verifier
 ///
@@ -75,6 +72,28 @@ impl RecursionSumcheckParams {
         self.num_constraint_vars + self.num_constraint_index_vars
     }
 
+    /// Construct opening point for M evaluation at (offset, r_i, r_x)
+    fn construct_opening_point(
+        &self,
+        offset: RowOffset,
+        i_challenges: &[<Fq as JoltField>::Challenge],
+        x_challenges: &[<Fq as JoltField>::Challenge],
+    ) -> Vec<<Fq as JoltField>::Challenge> {
+        let bits = offset.to_bits();
+        let mut offset_bits: Vec<<Fq as JoltField>::Challenge> = bits
+            .into_iter()
+            .map(|bit| <Fq as JoltField>::Challenge::from(bit))
+            .collect();
+        offset_bits.reverse();
+
+        let mut reversed_x = x_challenges.to_vec();
+        reversed_x.reverse();
+        let mut reversed_i = i_challenges.to_vec();
+        reversed_i.reverse();
+
+        [&offset_bits[..], &reversed_i[..], &reversed_x[..]].concat()
+    }
+
     pub fn get_opening_point<const E: crate::poly::opening_proof::Endianness>(
         &self,
         sumcheck_challenges: &[<Fq as JoltField>::Challenge],
@@ -94,17 +113,16 @@ pub struct RecursionSumcheckProver {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub g_poly: MultilinearPolynomial<Fq>,
 
-    /// Dense bit array: constraint_bits[i] = bit for constraint i (false for padding)
-    #[cfg_attr(feature = "allocative", allocative(skip))]
+    /// Constraint bits for direct evaluation
     pub constraint_bits: Vec<bool>,
 
     /// Equality polynomial for constraint variables x (phase 1)
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub eq_x: MultilinearPolynomial<Fq>,
 
-    /// Precomputed eq(r_i, i) values for all constraint indices
+    /// Equality polynomial for constraint indices i (phase 2)
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub eq_i_table: Vec<Fq>,
+    pub eq_i: MultilinearPolynomial<Fq>,
 
     /// Random challenge for eq(r, x)
     pub r_x: Vec<<Fq as JoltField>::Challenge>,
@@ -122,12 +140,10 @@ pub struct RecursionSumcheckProver {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub params: RecursionSumcheckParams,
 
-    /// Values of eq_r_x * eq(r_i, i) * C_i(r_x) over all padded constraint indices.
-    /// This is the polynomial we sumcheck over in Phase 2.
+    /// Optional: public exponent MLE for cross-checks
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub phase2_values: Vec<Fq>,
+    pub exponent_mle: DensePolynomial<Fq>,
 }
-
 
 impl RecursionSumcheckProver {
     pub fn gen<T: Transcript>(
@@ -135,48 +151,36 @@ impl RecursionSumcheckProver {
         constraint_system: &super::recursion_constraints::ConstraintSystem,
         transcript: &mut T,
     ) -> Self {
-        // Extract random challenges for eq polynomials
-        // r_x for constraint variables (Phase 1)
         let r_x: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_vars)
             .map(|_| transcript.challenge_scalar_optimized::<Fq>())
             .collect();
 
-        // r_i for constraint indices (Phase 2)
         let r_i: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_index_vars)
             .map(|_| transcript.challenge_scalar_optimized::<Fq>())
             .collect();
 
-        // Materialize M polynomial directly
         let m_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
 
         let eq_x = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_x));
-
-        // Create eq_i_table using explicit evaluations with our index convention
-        let padded_size = 1 << params.num_constraint_index_vars;
-        let mut eq_i_table = Vec::with_capacity(padded_size);
-        for i in 0..padded_size {
-            let i_bits = index_to_binary(i, params.num_constraint_index_vars);
-            let eq_i_val = EqPolynomial::<Fq>::mle(&r_i, &i_bits);
-            eq_i_table.push(eq_i_val);
-        }
+        let eq_i = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_i));
 
         let mut constraint_bits = vec![false; params.num_constraints];
-
         for constraint in &constraint_system.constraints {
             constraint_bits[constraint.constraint_index] = constraint.bit;
         }
+
         Self {
             m_poly,
             g_poly: MultilinearPolynomial::LargeScalars(constraint_system.g_poly.clone()),
             constraint_bits,
             eq_x,
-            eq_i_table,
+            eq_i,
             r_x,
             r_i,
             eq_r_x: Fq::one(),
             round: 0,
             params,
-            phase2_values: Vec::new(),
+            exponent_mle: constraint_system.exponent_mle.clone(),
         }
     }
 }
@@ -191,19 +195,11 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
     }
 
     fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<Fq>) -> Fq {
-        // Zero-check: claim the sum is zero
         Fq::zero()
     }
 
+    #[tracing::instrument(skip_all, name = "RecursionSumcheck::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: Fq) -> UniPoly<Fq> {
-        debug_assert!(
-            round < self.params.num_rounds(),
-            "Round {} exceeds total rounds {}",
-            round,
-            self.params.num_rounds()
-        );
-
-
         if round < self.params.num_constraint_vars {
             // Phase 1: Sum over constraint variables (x)
             self.compute_phase1_message(round, previous_claim)
@@ -213,20 +209,14 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "RecursionSumcheck::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: <Fq as JoltField>::Challenge, round: usize) {
-        debug_assert_eq!(
-            round, self.round,
-            "Expected round {}, got {}",
-            self.round, round
-        );
-
         if round < self.params.num_constraint_vars {
             // Phase 1: Bind constraint variable x (low-order bits in M)
             self.eq_x.bind_parallel(r_j, BindingOrder::LowToHigh);
             self.m_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             self.g_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-            // At phase transition, capture eq(r, x_bound)
             if round == self.params.num_constraint_vars - 1 {
                 self.eq_r_x = self.eq_x.get_bound_coeff(0);
                 debug_assert_eq!(
@@ -234,38 +224,11 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
                     1,
                     "eq_x should be fully bound after Phase 1"
                 );
-
-
-                // Build phase2_values from m_poly, eq_i, and constraint_bits
-                self.init_phase2_values();
             }
         } else {
             // Phase 2: Bind constraint index variable i
-            // First fold the phase2_values table with the challenge
-            let r_scalar: Fq = r_j.into();
-            self.fold_phase2_values(r_scalar);
-
-            // M layout: M(offset_bits, constraint_index_bits, x_bits)
-            // After Phase 1, x_bits are bound. Now we bind constraint_index_bits.
-            // offset_bits (2 bits, high-order) remain unbound → 4 final openings
-            // Note: eq_i_table is not bound - it's precomputed at the start
+            self.eq_i.bind_parallel(r_j, BindingOrder::LowToHigh);
             self.m_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-
-            #[cfg(test)]
-            {
-                let phase2_round = round - self.params.num_constraint_vars;
-                // Print final state after all Phase 2 rounds
-                if phase2_round == self.params.num_constraint_index_vars - 1 {
-                    eprintln!("\n=== FINAL PHASE 2 DEBUG ===");
-                    eprintln!("Final phase2_values.len() = {}", self.phase2_values.len());
-                    if self.phase2_values.len() <= 4 {
-                        eprintln!("Final phase2_values = {:?}", self.phase2_values);
-                    }
-                    eprintln!("Final eq_i_table.len() = {}", self.eq_i_table.len());
-                    eprintln!("Final m_poly.len() = {}", self.m_poly.len());
-                    eprintln!("===========================");
-                }
-            }
         }
 
         self.round = round + 1;
@@ -277,117 +240,37 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
         transcript: &mut T,
         sumcheck_challenges: &[<Fq as JoltField>::Challenge],
     ) {
-        // After Phase 1 (x) and Phase 2 (constraint index), M has 2 unbound offset bits.
-        // M layout: M(offset_bits, constraint_index_bits, x_bits)
-        // After binding: m_poly has 4 coefficients, one per offset:
-        //   - m_poly.get_bound_coeff(0) = M(00, r_i, r_x) = base
-        //   - m_poly.get_bound_coeff(1) = M(01, r_i, r_x) = rho_prev
-        //   - m_poly.get_bound_coeff(2) = M(10, r_i, r_x) = rho_curr
-        //   - m_poly.get_bound_coeff(3) = M(11, r_i, r_x) = quotient
-
         let base_val = self.m_poly.get_bound_coeff(RowOffset::Base as usize);
         let rho_prev_val = self.m_poly.get_bound_coeff(RowOffset::RhoPrev as usize);
         let rho_curr_val = self.m_poly.get_bound_coeff(RowOffset::RhoCurr as usize);
         let quotient_val = self.m_poly.get_bound_coeff(RowOffset::Quotient as usize);
 
-        #[cfg(test)]
-        {
-            eprintln!("\n=== PROVER FINAL EVALUATION ===");
-            // Check what the final phase2_values should be
-            if self.phase2_values.len() == 1 {
-                eprintln!("Final phase2_values[0] = {:?}", self.phase2_values[0]);
-            }
-
-            // Compute what the verifier will compute
-            let (x_challenges, i_challenges) =
-                sumcheck_challenges.split_at(self.params.num_constraint_vars);
-
-            let g_val = if self.g_poly.len() == 1 {
-                self.g_poly.get_bound_coeff(0)
-            } else {
-                panic!("g_poly should be fully bound after Phase 1");
-            };
-
-            let r_i_fq: Vec<Fq> = i_challenges.iter().map(|c| (*c).into()).collect();
-            let bit_eval = self.compute_bit_mle_at_point(&r_i_fq);
-
-            let base_power = Fq::one() + (base_val - Fq::one()) * bit_eval;
-            let constraint_eval = rho_curr_val - rho_prev_val.square() * base_power - quotient_val * g_val;
-
-            let eq_r_x_val = EqPolynomial::<Fq>::mle(&self.r_x, x_challenges);
-            let eq_r_i_val = EqPolynomial::<Fq>::mle(&self.r_i, i_challenges);
-
-            let expected_final = eq_r_x_val * eq_r_i_val * constraint_eval;
-
-            eprintln!("Expected final claim = {:?}", expected_final);
-
-            // Debug: Let's check what eq(r_i, i_challenges) gives us
-            eprintln!("Debug values:");
-            eprintln!("  base_val = {:?}", base_val);
-            eprintln!("  rho_prev_val = {:?}", rho_prev_val);
-            eprintln!("  rho_curr_val = {:?}", rho_curr_val);
-            eprintln!("  quotient_val = {:?}", quotient_val);
-            eprintln!("  g_val = {:?}", g_val);
-            eprintln!("  bit_eval = {:?}", bit_eval);
-            eprintln!("  base_power = {:?}", base_power);
-            eprintln!("  constraint_eval = {:?}", constraint_eval);
-            eprintln!("  eq_r_x_val = {:?}", eq_r_x_val);
-            eprintln!("  eq_r_i_val = {:?}", eq_r_i_val);
-
-            // The issue might be that phase2_values[0] doesn't equal expected_final
-            // Let's check if they should be equal
-            if self.phase2_values.len() == 1 {
-                let phase2_final = self.phase2_values[0];
-                eprintln!("  phase2_values[0] = {:?}", phase2_final);
-                eprintln!("  Mismatch: phase2_values[0] != expected_final");
-
-                // Check if eq_r_x is the issue
-                eprintln!("  self.eq_r_x (from Phase 1) = {:?}", self.eq_r_x);
-                eprintln!("  eq_r_x_val (fresh compute) = {:?}", eq_r_x_val);
-                if self.eq_r_x != eq_r_x_val {
-                    eprintln!("  ERROR: eq_r_x values don't match!");
-                }
-            }
-
-            eprintln!("================================");
-        }
-
-
         let (x_challenges, i_challenges) =
             sumcheck_challenges.split_at(self.params.num_constraint_vars);
 
-        // Append 4 dense claims for the 4 offset evaluations
-        // Each uses opening point: [offset_bits || i_challenges || x_challenges]
         for (offset, value) in [
             (RowOffset::Base, base_val),
             (RowOffset::RhoPrev, rho_prev_val),
             (RowOffset::RhoCurr, rho_curr_val),
             (RowOffset::Quotient, quotient_val),
         ] {
-            let mut offset_bits = offset_bits_to_challenges(offset);
-            // The matrix layout is M(offset_bits, constraint_index_bits, x_bits)
-            // The offset bits need to be reversed from little-endian to big-endian
+            let bits = offset.to_bits();
+            let mut offset_bits: Vec<<Fq as JoltField>::Challenge> = bits
+                .into_iter()
+                .map(|bit| <Fq as JoltField>::Challenge::from(bit))
+                .collect();
             offset_bits.reverse();
 
-
-            // The polynomial has variables in storage order: [x_bits, i_bits, offset_bits] (little-endian)
-            // MLE evaluate expects big-endian order: highest variable first
-            // So for storage order [v0, v1, ..., v18], MLE expects point for [v18, v17, ..., v0]
-            //
-            // Storage: [x0, x1, x2, x3, i0, i1, ..., i12, offset0, offset1]
-            // MLE expects: [offset1, offset0, i12, ..., i0, x3, x2, x1, x0]
             let mut reversed_x = x_challenges.to_vec();
             reversed_x.reverse();
             let mut reversed_i = i_challenges.to_vec();
             reversed_i.reverse();
-            // Construct opening point in big-endian order to match MLE expectations
             let opening_point = [&offset_bits[..], &reversed_i[..], &reversed_x[..]].concat();
-
 
             accumulator.append_dense(
                 transcript,
                 self.params.polynomial,
-                offset_to_sumcheck_id(offset),
+                self.params.sumcheck_id,
                 opening_point,
                 value,
             );
@@ -400,435 +283,136 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
     }
 }
 
-fn offset_to_sumcheck_id(offset: RowOffset) -> SumcheckId {
-    match offset {
-        RowOffset::Base => SumcheckId::RecursionBase,
-        RowOffset::RhoPrev => SumcheckId::RecursionRhoPrev,
-        RowOffset::RhoCurr => SumcheckId::RecursionRhoCurr,
-        RowOffset::Quotient => SumcheckId::RecursionQuotient,
-    }
-}
-
-fn offset_bits_to_challenges(offset: RowOffset) -> Vec<<Fq as JoltField>::Challenge> {
-    let bits = offset.to_bits(); // Returns [Fq; 2]
-    bits.into_iter()
-        .map(|bit| <Fq as JoltField>::Challenge::from(bit))
-        .collect()
-}
-
-/// Convert index to bit representation
-#[cfg(test)]
-fn index_to_bits(index: usize, num_bits: usize) -> Vec<<Fq as JoltField>::Challenge> {
-    (0..num_bits)
-        .map(|i| {
-            let bit = if (index >> i) & 1 == 1 {
-                Fq::one()
-            } else {
-                Fq::zero()
-            };
-            <Fq as JoltField>::Challenge::from(bit)
-        })
-        .collect()
-}
-
-// Helper methods for phase computation
 impl RecursionSumcheckProver {
-    /// Initialize the Phase 2 table with precomputed values.
-    /// Called once at the transition from Phase 1 to Phase 2.
-    fn init_phase2_values(&mut self) {
-        // Only do it once
-        if !self.phase2_values.is_empty() {
-            return;
-        }
-
-        let num_i_bits = self.params.num_constraint_index_vars;
-        let padded_size = 1 << num_i_bits;
-
-        // After Phase 1, m_poly has vars [i_bits][offset_bits] and len = 2^(num_i_bits + 2)
-        debug_assert_eq!(self.m_poly.len(), 1 << (num_i_bits + 2));
-
-        // g(x) is fully bound after Phase 1
-        debug_assert_eq!(self.g_poly.len(), 1);
-        let g_val = self.g_poly.get_bound_coeff(0);
-
-        self.phase2_values = Vec::with_capacity(padded_size);
-
-        for i in 0..padded_size {
-            // Index in m_poly: i_bits are low-order, offset_bits are high-order
-            let row = |offset: RowOffset| -> Fq {
-                let offset_as_usize = offset as usize;
-                let base_idx = (offset_as_usize << num_i_bits) | i;
-                self.m_poly.get_bound_coeff(base_idx)
-            };
-
-            let base = row(RowOffset::Base);
-            let rho_prev = row(RowOffset::RhoPrev);
-            let rho_curr = row(RowOffset::RhoCurr);
-            let quotient = row(RowOffset::Quotient);
-
-            let bit = if i < self.params.num_constraints {
-                self.constraint_bits[i]
-            } else {
-                false
-            };
-
-            // Use the same interpolation formula as the verifier
-            let bit_as_field = if bit { Fq::one() } else { Fq::zero() };
-            let base_power = Fq::one() + (base - Fq::one()) * bit_as_field;
-
-            let c_i = rho_curr - rho_prev * rho_prev * base_power - quotient * g_val;
-
-            // Get eq(r_i, i) from precomputed table
-            let eq_i_val = self.eq_i_table[i];
-
-            // Multiply by eq_r_x at Phase-2 entry
-            let value = self.eq_r_x * eq_i_val * c_i;
-
-            self.phase2_values.push(value);
-        }
-
-        #[cfg(test)]
-        {
-            // Compute the "intended" table directly to check if F̃ = F
-            let mut intended_values = Vec::with_capacity(padded_size);
-
-            for i in 0..padded_size {
-                // Get constraint values from m_poly (same as above)
-                let row = |offset: RowOffset| -> Fq {
-                    let offset_as_usize = offset as usize;
-                    let base_idx = (offset_as_usize << num_i_bits) | i;
-                    self.m_poly.get_bound_coeff(base_idx)
-                };
-
-                let base = row(RowOffset::Base);
-                let rho_prev = row(RowOffset::RhoPrev);
-                let rho_curr = row(RowOffset::RhoCurr);
-                let quotient = row(RowOffset::Quotient);
-
-                let bit = if i < self.params.num_constraints {
-                    self.constraint_bits[i]
-                } else {
-                    false
-                };
-
-                // Compute C_i(x_challenges)
-                let bit_as_field = if bit { Fq::one() } else { Fq::zero() };
-                let base_power = Fq::one() + (base - Fq::one()) * bit_as_field;
-                let c_i = rho_curr - rho_prev * rho_prev * base_power - quotient * g_val;
-
-                // Compute eq(r_i, i) - this should match what we stored in eq_i_table
-                let eq_i_val = self.eq_i_table[i];
-
-                // Double-check by computing from first principles
-                let i_bits = index_to_bits(i, self.params.num_constraint_index_vars);
-                let eq_i_from_scratch = EqPolynomial::<Fq>::mle(&self.r_i, &i_bits);
-
-                if eq_i_val != eq_i_from_scratch {
-                    eprintln!("WARNING: eq_i_table mismatch at index {}: table = {:?}, eval = {:?}",
-                             i, eq_i_val, eq_i_from_scratch);
-                }
-
-                // The intended value - use the correct eq_i computation
-                let intended = self.eq_r_x * eq_i_from_scratch * c_i;
-                intended_values.push(intended);
-            }
-
-            // Compare tables
-            let mut mismatch_found = false;
-            for i in 0..padded_size {
-                if self.phase2_values[i] != intended_values[i] {
-                    eprintln!("MISMATCH at index {}: actual = {:?}, intended = {:?}",
-                             i, self.phase2_values[i], intended_values[i]);
-                    mismatch_found = true;
-                    // Only print first few mismatches to avoid spam
-                    if i > 5 {
-                        eprintln!("... (further mismatches omitted)");
-                        break;
-                    }
-                }
-            }
-
-            if mismatch_found {
-                eprintln!("Phase 2 table mismatch detected! F̃ ≠ F");
-            } else {
-                eprintln!("Phase 2 table matches intended values ✓");
-            }
-        }
-    }
-
-    /// Fold the Phase 2 table after receiving a challenge.
-    fn fold_phase2_values(&mut self, r: Fq) {
-        let len = self.phase2_values.len();
-        debug_assert!(len.is_power_of_two());
-        debug_assert!(len >= 2);
-
-        let half = len / 2;
-        let one_minus_r = Fq::one() - r;
-
-        let mut next = vec![Fq::zero(); half];
-
-        for i in 0..half {
-            let g0 = self.phase2_values[2 * i];
-            let g1 = self.phase2_values[2 * i + 1];
-            next[i] = one_minus_r * g0 + r * g1;
-        }
-
-        self.phase2_values = next;
-    }
-
-    /// Compute the MLE of the bit vector evaluated at a specific point
-    /// bit_eval = Σ_i eq(eval_point, i) * b_i
-    pub fn compute_bit_mle_at_point(&self, eval_point: &[Fq]) -> Fq {
-        let mut result = Fq::zero();
-        let padded_size = 1 << self.params.num_constraint_index_vars;
-
-        for idx in 0..padded_size {
-            if idx < self.constraint_bits.len() && self.constraint_bits[idx] {
-                let idx_bits = index_to_binary(idx, self.params.num_constraint_index_vars);
-                let eq_val = EqPolynomial::<Fq>::mle(eval_point, &idx_bits);
-                result += eq_val;
-            }
-        }
-        result
-    }
-    /// Computes the index into the partially-bound M polynomial for sumcheck evaluation.
-    ///
-    /// # Polynomial Structure
-    /// M has layout: [offset_bits][constraint_bits][x_bits] (big-endian)
-    /// This matches the construction in recursion_constraints.rs
-    /// After binding k x variables, remaining structure is:
-    /// - x_remaining = original_x_bits - k
-    /// - i_bits unchanged
-    /// - offset_bits unchanged (always 2)
-    ///
-    /// # Index Formula Derivation
-    /// For sumcheck_evals_array to work, we need index < size/2 where:
-    /// - size = 2^(x_remaining + i_bits + offset_bits)
-    /// - We're accessing the "left half" for interpolation
-    ///
-    /// The formula matches the actual construction layout: M(offset_bits, constraint_bits, x_bits)
-    /// represents the position in the flattened array where:
-    /// - offset: highest order bits (selects which row: Base/RhoPrev/RhoCurr/Quotient)
-    /// - constraint_idx: middle bits (selects which constraint)
-    /// - x_idx: lowest order bits (position within x variables)
-    fn compute_m_sumcheck_index(
-        &self,
-        offset: RowOffset,
-        constraint_idx: usize,
-        x_idx: usize,
-        num_i_bits: usize,
-        num_x_remaining: usize,
-    ) -> usize {
-        // Fixed formula to match actual construction layout:
-        // M(offset_bits, constraint_bits, x_bits)
-        ((offset as usize) << (num_i_bits + num_x_remaining - 1))
-            | (constraint_idx << (num_x_remaining - 1))
-            | x_idx
-    }
-
-    /// Phase 1: Compute sumcheck message while binding constraint variables x
-    /// p(t) = Σ_i eq(r', i) * Σ_{x_remaining} eq(r, x) * C_i(x)
-    ///
-    /// M layout: M(offset_bits, constraint_index_bits, x_bits)
-    /// During Phase 1, we're binding x_bits (low-order).
     fn compute_phase1_message(&self, _round: usize, previous_claim: Fq) -> UniPoly<Fq> {
         const DEGREE: usize = 4;
-        const NUM_EVALS: usize = DEGREE + 1; // Need degree + 1 points
         let num_x_remaining = self.eq_x.get_num_vars();
         let x_half = 1 << (num_x_remaining - 1);
 
-        debug_assert!(
-            num_x_remaining > 0,
-            "eq_x should have unbound variables in Phase 1"
-        );
+        let total_evals = (0..x_half)
+            .into_par_iter()
+            .map(|x_idx| {
+                let eq_x_evals = self
+                    .eq_x
+                    .sumcheck_evals_array::<{ DEGREE + 1 }>(x_idx, BindingOrder::LowToHigh);
+                let g_evals = self
+                    .g_poly
+                    .sumcheck_evals_array::<{ DEGREE + 1 }>(x_idx, BindingOrder::LowToHigh);
 
-        // Calculate bit positions for index computation
-        let num_i_bits = self.params.num_constraint_index_vars;
+                let mut x_evals = [Fq::zero(); DEGREE + 1];
 
-        // Compute evaluations at t = 0, 1, 2, 3, 4 explicitly (need 5 points for degree 4)
-        let evals: [Fq; NUM_EVALS] = std::array::from_fn(|t| {
-            let t_scalar = Fq::from(t as u64);
+                // Sum over all constraint indices
+                for constraint_idx in 0..self.params.num_constraints {
+                    let eq_i_val = self.eq_i.get_bound_coeff(constraint_idx);
 
-            // For each evaluation point t, sum over all x indices
-            (0..x_half)
-                .into_par_iter()
-                .map(|x_idx| {
-                    // Compute eq_x evaluation at point t
-                    // For multilinear: p(t) = (1-t)*p(0) + t*p(1)
-                    let eq_x_0 = self.eq_x.get_bound_coeff(2 * x_idx);
-                    let eq_x_1 = self.eq_x.get_bound_coeff(2 * x_idx + 1);
-                    let eq_x_t = (Fq::one() - t_scalar) * eq_x_0 + t_scalar * eq_x_1;
+                    // For each offset row type, compute the constraint evaluation
+                    // M layout: M(x_bits, constraint_index_bits, offset_bits)
+                    let num_i_bits = self.params.num_constraint_index_vars;
 
-                    // Similarly for g_poly
-                    let g_0 = self.g_poly.get_bound_coeff(2 * x_idx);
-                    let g_1 = self.g_poly.get_bound_coeff(2 * x_idx + 1);
-                    let g_t = (Fq::one() - t_scalar) * g_0 + t_scalar * g_1;
+                    // Helper to get M evaluations for a specific offset and constraint
+                    // M polynomial layout: M(x_bits(4), constraint_index_bits, offset_bits(2))
+                    let get_m_evals = |offset: RowOffset| -> [Fq; DEGREE + 1] {
+                        let m_idx = ((offset as usize) << (num_i_bits + num_x_remaining - 1))  // offset bits (MSB)
+                                  | (constraint_idx << (num_x_remaining - 1))                   // constraint bits
+                                  | x_idx; // remaining x bits (LSB)
+                        self.m_poly
+                            .sumcheck_evals_array::<{ DEGREE + 1 }>(m_idx, BindingOrder::LowToHigh)
+                    };
 
-                    let mut constraint_sum = Fq::zero();
+                    let base_evals = get_m_evals(RowOffset::Base);
+                    let rho_prev_evals = get_m_evals(RowOffset::RhoPrev);
+                    let rho_curr_evals = get_m_evals(RowOffset::RhoCurr);
+                    let quotient_evals = get_m_evals(RowOffset::Quotient);
 
-                    for constraint_idx in 0..self.params.num_constraints {
-                        let eq_i_val = self.eq_i_table[constraint_idx];
+                    // Get the bit for this constraint
+                    let bit = if constraint_idx < self.params.num_constraints {
+                        self.constraint_bits[constraint_idx]
+                    } else {
+                        false // padding
+                    };
+                    let bit_f = if bit { Fq::one() } else { Fq::zero() };
 
-                        // Compute constraint evaluation at point t
-                        let constraint_val = self.evaluate_constraint_at_point(
-                            constraint_idx,
-                            x_idx,
-                            t,
-                            g_t,
-                            num_i_bits,
-                            num_x_remaining,
-                        );
+                    // Compute constraint at each evaluation point
+                    for t in 0..=DEGREE {
+                        // base^{b_i} = 1 + (base - 1) * b_i
+                        let base_power = Fq::one() + (base_evals[t] - Fq::one()) * bit_f;
+                        let constraint_val = rho_curr_evals[t]
+                            - rho_prev_evals[t] * rho_prev_evals[t] * base_power
+                            - quotient_evals[t] * g_evals[t];
 
-                        constraint_sum += eq_i_val * constraint_val;
+                        x_evals[t] += eq_x_evals[t] * eq_i_val * constraint_val;
                     }
+                }
+                x_evals
+            })
+            .reduce(
+                || [Fq::zero(); DEGREE + 1],
+                |a, b| array::from_fn(|i| a[i] + b[i]),
+            );
 
-                    eq_x_t * constraint_sum
-                })
-                .reduce(|| Fq::zero(), |a, b| a + b)
-        });
-
-        // Use standard polynomial interpolation without hints
-        let poly = UniPoly::from_evals(&evals);
-
-        // Keep H(0)+H(1) verification
-        #[cfg(debug_assertions)]
-        {
-            let sum = poly.evaluate(&Fq::zero()) + poly.evaluate(&Fq::one());
-            if sum != previous_claim {
-                eprintln!("WARNING: Phase 1 sumcheck relation not satisfied!");
-                eprintln!("  H(0)+H(1) = {:?}, expected = {:?}", sum, previous_claim);
-            }
-        }
-
-        poly
+        // Use all evaluations since we computed them anyway
+        UniPoly::from_evals(&total_evals)
     }
 
-    /// Phase 2: Compute sumcheck message while binding constraint index variables i
-    /// At this point, x is fully bound, so C_i(x_bound) is a scalar for each constraint.
-    /// We bind both eq_i AND m_poly on the constraint index variables.
-    ///
-    /// The polynomial being summed is: f(i) = eq_r_x * eq(r_i, i) * C_i(r_x)
-    /// While eq is multilinear, C_i contains squares and exponentiation, so the
-    fn compute_phase2_message(&self, phase2_round: usize, previous_claim: Fq) -> UniPoly<Fq> {
-        // Phase 2 has degree 4 (same as Phase 1)
+    fn compute_phase2_message(&self, _phase2_round: usize, previous_claim: Fq) -> UniPoly<Fq> {
         const DEGREE: usize = 4;
-        const NUM_EVALS: usize = DEGREE + 1; // 5 points: t = 0,1,2,3,4
 
-        let len = self.phase2_values.len();
-        debug_assert!(len.is_power_of_two());
-        debug_assert!(len >= 2);
+        let g_val = self.g_poly.get_bound_coeff(0);
 
-        let half = len / 2;
+        let num_i_remaining = self.eq_i.get_num_vars();
+        let i_half = 1 << (num_i_remaining - 1);
 
-        // Compute evaluations at t = 0, 1, 2, 3, 4
-        let evals: [Fq; NUM_EVALS] = std::array::from_fn(|t| {
-            let t_scalar = Fq::from(t as u64);
-            let one_minus_t = Fq::one() - t_scalar;
+        let total_evals = (0..i_half)
+            .into_par_iter()
+            .map(|i| {
+                // Get eq_i evaluations at this index
+                let eq_i_evals = self
+                    .eq_i
+                    .sumcheck_evals_array::<{ DEGREE + 1 }>(i, BindingOrder::LowToHigh);
 
-            (0..half)
-                .into_par_iter()
-                .map(|i| {
-                    let g0 = self.phase2_values[2 * i];
-                    let g1 = self.phase2_values[2 * i + 1];
-                    one_minus_t * g0 + t_scalar * g1
-                })
-                .reduce(Fq::zero, |a, b| a + b)
-        });
+                // For each offset, we need to get M evaluations
+                // The index into m_poly is: (i << 2) | offset
+                let get_m_evals = |offset: RowOffset| -> [Fq; DEGREE + 1] {
+                    let m_idx = (i << 2) | (offset as usize);
+                    self.m_poly
+                        .sumcheck_evals_array::<{ DEGREE + 1 }>(m_idx, BindingOrder::LowToHigh)
+                };
 
-        let poly = UniPoly::from_evals(&evals);
+                let base_evals = get_m_evals(RowOffset::Base);
+                let rho_prev_evals = get_m_evals(RowOffset::RhoPrev);
+                let rho_curr_evals = get_m_evals(RowOffset::RhoCurr);
+                let quotient_evals = get_m_evals(RowOffset::Quotient);
 
-        #[cfg(debug_assertions)]
-        {
-            let sum = poly.evaluate(&Fq::zero()) + poly.evaluate(&Fq::one());
-            if sum != previous_claim {
-                eprintln!("WARNING: Phase 2 sumcheck relation not satisfied!");
-                eprintln!("  Round {}: H(0)+H(1) = {:?}, expected = {:?}",
-                          phase2_round, sum, previous_claim);
-            }
-        }
+                let mut i_evals = [Fq::zero(); DEGREE + 1];
 
-        poly
-    }
+                for t in 0..=DEGREE {
+                    // For phase 2, we need to evaluate the exponent MLE at the current point
+                    // The current index position is i (offset by t for sumcheck evaluation)
+                    // We'll compute it by checking constraint_bits directly
+                    let actual_constraint_idx = (i << 1) | (t & 1);
+                    let bit = if actual_constraint_idx < self.params.num_constraints {
+                        self.constraint_bits[actual_constraint_idx]
+                    } else {
+                        false
+                    };
+                    let bit_f = if bit { Fq::one() } else { Fq::zero() };
 
-    /// Helper function to evaluate constraint at a specific point t
-    fn evaluate_constraint_at_point(
-        &self,
-        constraint_idx: usize,
-        x_idx: usize,
-        t: usize,
-        g_t: Fq,
-        num_i_bits: usize,
-        num_x_remaining: usize,
-    ) -> Fq {
-        // Get the constraint bit
-        let bit = self.constraint_bits[constraint_idx];
+                    // base^{b_i} = 1 + (base - 1) * b_i
+                    let base_power = Fq::one() + (base_evals[t] - Fq::one()) * bit_f;
+                    let constraint_val = rho_curr_evals[t]
+                        - rho_prev_evals[t] * rho_prev_evals[t] * base_power
+                        - quotient_evals[t] * g_val;
 
-        // Compute row evaluations at point t
-        let base_t = self.evaluate_row_at_t(
-            RowOffset::Base,
-            constraint_idx,
-            x_idx,
-            t,
-            num_i_bits,
-            num_x_remaining,
-        );
-        let rho_prev_t = self.evaluate_row_at_t(
-            RowOffset::RhoPrev,
-            constraint_idx,
-            x_idx,
-            t,
-            num_i_bits,
-            num_x_remaining,
-        );
-        let rho_curr_t = self.evaluate_row_at_t(
-            RowOffset::RhoCurr,
-            constraint_idx,
-            x_idx,
-            t,
-            num_i_bits,
-            num_x_remaining,
-        );
-        let quotient_t = self.evaluate_row_at_t(
-            RowOffset::Quotient,
-            constraint_idx,
-            x_idx,
-            t,
-            num_i_bits,
-            num_x_remaining,
-        );
-
-        // Compute C_i(x) = ρ_curr(x) - ρ_prev(x)² × base(x)^{b_i} - quotient(x) × g(x)
-        // Use the same interpolation formula as in phase2 and verifier
-        let bit_as_field = if bit { Fq::one() } else { Fq::zero() };
-        let base_power = Fq::one() + (base_t - Fq::one()) * bit_as_field;
-        rho_curr_t - rho_prev_t * rho_prev_t * base_power - quotient_t * g_t
-    }
-
-    /// Helper function to evaluate a row of the matrix at point t
-    fn evaluate_row_at_t(
-        &self,
-        offset: RowOffset,
-        constraint_idx: usize,
-        x_idx: usize,
-        t: usize,
-        num_i_bits: usize,
-        num_x_remaining: usize,
-    ) -> Fq {
-        let t_scalar = Fq::from(t as u64);
-        let idx = self.compute_m_sumcheck_index(
-            offset,
-            constraint_idx,
-            x_idx,
-            num_i_bits,
-            num_x_remaining,
-        );
-
-        // Get evaluations at 0 and 1
-        let val_0 = self.m_poly.get_bound_coeff(2 * idx);
-        let val_1 = self.m_poly.get_bound_coeff(2 * idx + 1);
-
-        // Linear interpolation for multilinear polynomial
-        (Fq::one() - t_scalar) * val_0 + t_scalar * val_1
+                    // In Phase 2, we accumulate: eq_r_x * eq(r_i, i) * C_i(r_x)
+                    i_evals[t] = self.eq_r_x * eq_i_evals[t] * constraint_val;
+                }
+                i_evals
+            })
+            .reduce(
+                || [Fq::zero(); DEGREE + 1],
+                |a, b| array::from_fn(|i| a[i] + b[i]),
+            );
+        UniPoly::from_evals(&total_evals)
     }
 }
 
@@ -841,25 +425,26 @@ impl RecursionSumcheckProver {
 /// - M(11, r_i, r_x) = quotient
 ///
 /// The verifier computes the constraint:
-/// C(r_i, r_x) = rho_curr - rho_prev² × [1 + (base - 1) × bit_eval] - quotient × g(r_x)
-/// where bit_eval = Σ_i eq(r_i, i) * b_i (MLE of bits at r_i)
+/// C(r_i, r_x) = rho_curr - rho_prev² × base^{b_i} - quotient × g(r_x)
+/// where b_i comes from the exponent MLE
 pub struct RecursionSumcheckVerifier {
     pub params: RecursionSumcheckParams,
     /// Random challenge for eq(r, x) - constraint variables
     pub r_x: Vec<<Fq as JoltField>::Challenge>,
     /// Random challenge for eq(r', i) - constraint indices
     pub r_i: Vec<<Fq as JoltField>::Challenge>,
-    /// Dense bit array: constraint_bits[i] = bit for constraint i (false for padding)
-    pub constraint_bits: Vec<bool>,
     /// Precomputed g(x) polynomial for constraint evaluation
     pub g_poly: DensePolynomial<Fq>,
+    /// Public exponent MLE over index bits: Σ_i b_i eq(z, i)
+    pub exponent_mle: DensePolynomial<Fq>,
 }
 
 impl RecursionSumcheckVerifier {
     pub fn new<T: Transcript>(
         params: RecursionSumcheckParams,
-        constraints: Vec<MatrixConstraint>,
+        _constraints: Vec<MatrixConstraint>,
         g_poly: DensePolynomial<Fq>,
+        exponent_mle: DensePolynomial<Fq>,
         transcript: &mut T,
     ) -> Self {
         let r_x: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_vars)
@@ -870,34 +455,18 @@ impl RecursionSumcheckVerifier {
             .map(|_| transcript.challenge_scalar_optimized::<Fq>())
             .collect();
 
-        // Build dense bit array from constraints
-        let mut constraint_bits = vec![false; params.num_constraints];
-        for constraint in &constraints {
-            constraint_bits[constraint.constraint_index] = constraint.bit;
-        }
         Self {
             params,
             r_x,
             r_i,
-            constraint_bits,
             g_poly,
+            exponent_mle,
         }
     }
 
-    /// Compute the MLE of the bit vector evaluated at a specific point
-    /// bit_eval = Σ_i eq(eval_point, i) * b_i
-    pub fn compute_bit_mle_at_point(&self, eval_point: &[Fq]) -> Fq {
-        let mut result = Fq::zero();
-        let padded_size = 1 << self.params.num_constraint_index_vars;
-
-        for idx in 0..padded_size {
-            if idx < self.constraint_bits.len() && self.constraint_bits[idx] {
-                let idx_bits = index_to_binary(idx, self.params.num_constraint_index_vars);
-                let eq_val = EqPolynomial::<Fq>::mle(eval_point, &idx_bits);
-                result += eq_val;
-            }
-        }
-        result
+    /// Evaluate the exponent MLE at the given point
+    pub fn exponent_eval_at_point(&self, eval_point: &[Fq]) -> Fq {
+        self.exponent_mle.evaluate(eval_point)
     }
 }
 
@@ -924,16 +493,9 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionSumcheckVerifie
             sumcheck_challenges.split_at(self.params.num_constraint_vars);
 
         let mut values = vec![];
-        for offset in [
-            RowOffset::Base,
-            RowOffset::RhoPrev,
-            RowOffset::RhoCurr,
-            RowOffset::Quotient,
-        ] {
-            let (_point, value) = accumulator.get_committed_polynomial_opening(
-                self.params.polynomial,
-                offset_to_sumcheck_id(offset),
-            );
+        for _ in 0..4 {
+            let (_point, value) = accumulator
+                .get_committed_polynomial_opening(self.params.polynomial, self.params.sumcheck_id);
             values.push(value);
         }
 
@@ -944,21 +506,24 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionSumcheckVerifie
         x_challenges_reversed.reverse();
         let g_val = self.g_poly.evaluate(&x_challenges_reversed);
 
-        let r_i_fq: Vec<Fq> = i_challenges.iter().map(|c| (*c).into()).collect();
+        // Get the exponent bit at r_i
+        let mut i_challenges_reversed = i_challenges.to_vec();
+        i_challenges_reversed.reverse();
+        let r_i_fq: Vec<Fq> = i_challenges_reversed.iter().map(|c| (*c).into()).collect();
+        let bit_eval = self.exponent_eval_at_point(&r_i_fq);
 
-        let bit_eval = self.compute_bit_mle_at_point(&r_i_fq);
-
-
-        // Compute constraint: C = ρ_curr - ρ_prev² × [1 + (base - 1) × bit_eval] - quotient × g
+        // Compute constraint: C(r_i, r_x) = ρ_curr - ρ_prev² × base^{b_i} - quotient × g(r_x)
+        // where base^{b_i} = 1 + (base - 1) * b_i
         let base_power = Fq::one() + (base_val - Fq::one()) * bit_eval;
         let constraint_eval =
             rho_curr_val - rho_prev_val.square() * base_power - quotient_val * g_val;
 
-        let eq_r_x = EqPolynomial::<Fq>::mle(&self.r_x, x_challenges);
-        let eq_r_i = EqPolynomial::<Fq>::mle(&self.r_i, i_challenges);
+        let x_bits_msb = x_challenges.to_vec();
+        let i_bits_msb = i_challenges.to_vec();
 
+        let eq_r_x = EqPolynomial::<Fq>::mle(&self.r_x, &x_bits_msb);
+        let eq_r_i = EqPolynomial::<Fq>::mle(&self.r_i, &i_bits_msb);
         let expected_claim = eq_r_x * eq_r_i * constraint_eval;
-
 
         expected_claim
     }
@@ -982,22 +547,13 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionSumcheckVerifie
             RowOffset::RhoCurr,
             RowOffset::Quotient,
         ] {
-            let mut offset_bits = offset_bits_to_challenges(offset);
-            offset_bits.reverse();
-
-            // The polynomial has variables in storage order: [x_bits, i_bits, offset_bits] (little-endian)
-            // MLE evaluate expects big-endian order: highest variable first
-            let mut reversed_x = x_challenges.to_vec();
-            reversed_x.reverse();
-            let mut reversed_i = i_challenges.to_vec();
-            reversed_i.reverse();
-            let opening_point = [&offset_bits[..], &reversed_i[..], &reversed_x[..]].concat();
-
-
+            let opening_point =
+                self.params
+                    .construct_opening_point(offset, i_challenges, x_challenges);
             accumulator.append_dense(
                 transcript,
                 self.params.polynomial,
-                offset_to_sumcheck_id(offset),
+                self.params.sumcheck_id, // Use same sumcheck ID for all openings
                 opening_point,
             );
         }
@@ -1012,7 +568,6 @@ mod tests {
             commitment::{
                 commitment_scheme::CommitmentScheme,
                 dory::{DoryCommitmentScheme, DoryGlobals},
-                hyrax::Hyrax,
             },
             dense_mlpoly::DensePolynomial,
             multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
@@ -1028,6 +583,7 @@ mod tests {
 
     #[test]
     #[serial]
+    // #[ignore]
     fn test_dory_witness_recursion_sumcheck_hyrax_reduce_and_prove() {
         use crate::poly::commitment::commitment_scheme::RecursionExt;
         use crate::poly::commitment::hyrax::Hyrax;
@@ -1101,6 +657,9 @@ mod tests {
         let (m_commitment, _) =
             Hyrax::<RATIO, GrumpkinProjective>::commit(&m_poly, &hyrax_prover_setup);
 
+        // 3.5. Sanity check: Verify all constraints are zero over the hypercube
+        constraint_system.verify_constraints_are_zero();
+
         // 4. Run recursion sumcheck (two-phase)
         let params = RecursionSumcheckParams::new(
             constraint_system.matrix.num_constraint_index_vars,
@@ -1110,29 +669,25 @@ mod tests {
 
         let mut sumcheck_transcript = Blake2bTranscript::new(b"recursion_sumcheck");
 
-        // Clone transcript for verifier to read from same state
         let mut verifier_transcript = sumcheck_transcript.clone();
 
-        // Create opening accumulator for prover
         let log_T = m_poly.get_num_vars();
         let mut prover_accumulator = ProverOpeningAccumulator::<Fq>::new(log_T);
 
-        // Create prover instance
         let mut prover = RecursionSumcheckProver::gen(
             params.clone(),
             &constraint_system,
             &mut sumcheck_transcript,
         );
 
-        // Create verifier instance from same transcript state
         let verifier = RecursionSumcheckVerifier::new(
             params.clone(),
             constraint_system.constraints.clone(),
             constraint_system.g_poly.clone(),
+            constraint_system.exponent_mle.clone(),
             &mut verifier_transcript,
         );
 
-        // Use batched sumcheck to prove
         let (sumcheck_proof, sumcheck_challenges) = BatchedSumcheck::prove(
             vec![&mut prover],
             &mut prover_accumulator,
@@ -1140,14 +695,10 @@ mod tests {
         );
 
         // 5. Reduce 4 offset claims to single claim using Hyrax
-        // Create HashMaps for reduce_and_prove
         let mut committed_polynomials = HashMap::new();
         let mut committed_hints = HashMap::new();
 
-        // Add the constraint matrix M to the committed polynomial map
         committed_polynomials.insert(CommittedPolynomial::DoryConstraintMatrix, m_poly.clone());
-
-        // For Hyrax, the opening hint is just () (empty tuple)
         committed_hints.insert(CommittedPolynomial::DoryConstraintMatrix, ());
 
         // Use reduce_and_prove to reduce the 4 offset claims to a single claim
@@ -1164,7 +715,7 @@ mod tests {
         // Create verifier accumulator
         let mut verifier_accumulator = VerifierOpeningAccumulator::<Fq>::new(log_T);
 
-        // Populate claims in the verifier accumulator (but not the points)
+        // Populate claims in the verifier accumulator
         for (key, (_, claim)) in &prover_accumulator.openings {
             verifier_accumulator
                 .openings
@@ -1179,7 +730,6 @@ mod tests {
         )
         .expect("Sumcheck verification should succeed");
 
-        // Verify challenges match
         assert_eq!(
             verified_challenges.len(),
             sumcheck_challenges.len(),
@@ -1196,8 +746,6 @@ mod tests {
                 i
             );
         }
-
-        // Create commitment maps for verifier
         let mut commitment_map = HashMap::new();
         commitment_map.insert(
             CommittedPolynomial::DoryConstraintMatrix,

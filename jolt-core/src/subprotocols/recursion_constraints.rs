@@ -31,6 +31,7 @@ pub fn index_to_binary(index: usize, num_vars: usize) -> Vec<Fq> {
         idx >>= 1;
     }
 
+    // binary.reverse();
     binary
 }
 
@@ -195,8 +196,9 @@ impl DoryMatrixBuilder {
         let n = witness.bits.len();
 
         for step in 0..n {
-            // Base: replicated for each constraint
-            self.rows_by_offset[RowOffset::Base as usize].push(base_mle.clone());
+            // Base: always store a(x), independent of bit
+            let base_row = base_mle.clone();
+            self.rows_by_offset[RowOffset::Base as usize].push(base_row);
 
             // RhoPrev: ρ_step
             let rho_prev = witness.rho_mles[step].clone();
@@ -222,6 +224,21 @@ impl DoryMatrixBuilder {
         let num_constraints = self.rows_by_offset[0].len();
         assert!(num_constraints > 0, "No constraints added");
 
+        // Verify all row types have the same number of constraints
+        for offset in RowOffset::all() {
+            assert_eq!(
+                self.rows_by_offset[offset as usize].len(),
+                num_constraints,
+                "Row type {:?} has wrong number of constraints",
+                offset
+            );
+        }
+        assert_eq!(
+            self.bits.len(),
+            num_constraints,
+            "Number of bits must match number of constraints"
+        );
+
         // Pad to power of 2
         let num_constraint_index_vars = (num_constraints as f64).log2().ceil() as usize;
         let num_constraints_padded = 1 << num_constraint_index_vars;
@@ -236,9 +253,12 @@ impl DoryMatrixBuilder {
         // Layout: rows are organized as [all base] [all rho_prev] [all rho_curr] [all quotient]
         for offset in RowOffset::all() {
             let rows = &self.rows_by_offset[offset as usize];
+
+            // For all row types, use as-is (no baking)
             for row in rows {
                 evaluations.extend_from_slice(row);
             }
+
             // Pad this offset section to num_constraints_padded
             for _ in rows.len()..num_constraints_padded {
                 evaluations.extend_from_slice(&zero_row);
@@ -292,6 +312,10 @@ pub struct ConstraintSystem {
 
     /// Constraint metadata: maps constraint index to matrix rows it references
     pub constraints: Vec<MatrixConstraint>,
+
+    /// Public multilinear extension of the exponent bits b_i over index bits
+    /// Domain: {0,1}^{num_constraint_index_vars}
+    pub exponent_mle: DensePolynomial<Fq>,
 }
 
 impl ConstraintSystem {
@@ -321,11 +345,33 @@ impl ConstraintSystem {
         let (matrix, constraints) = builder.build();
         let g_poly = DensePolynomial::new(get_g_mle());
 
+        // Build exponent MLE from constraint bits.
+        //
+        // exponent_mle is the MLE over the index bits:
+        //   exp(z) = Σ_i b_i * eq(z, i)
+        //
+        // But we store it as values on {0,1}^{num_constraint_index_vars}, i.e. a dense table:
+        //   values[j] = b_j for 0 <= j < num_constraints
+        //             = 0    for padding indices
+        let num_i_bits = matrix.num_constraint_index_vars;
+        let size = 1 << num_i_bits;
+        let mut exponent_values = vec![Fq::zero(); size];
+
+        for constraint in &constraints {
+            if constraint.bit {
+                exponent_values[constraint.constraint_index] = Fq::one();
+            }
+            // else it stays zero
+        }
+
+        let exponent_mle = DensePolynomial::new(exponent_values);
+
         Ok((
             Self {
                 matrix,
                 g_poly,
                 constraints,
+                exponent_mle,
             },
             hints,
         ))
@@ -388,15 +434,83 @@ impl ConstraintSystem {
         let quotient_row = self.matrix.row_index(RowOffset::Quotient, idx);
 
         // Evaluate each row polynomial at x
-        let base_eval = self.matrix.evaluate_row(base_row, x);
+        let base_eval = self.matrix.evaluate_row(base_row, x); // a(x)
         let rho_prev = self.matrix.evaluate_row(rho_prev_row, x);
         let rho_curr = self.matrix.evaluate_row(rho_curr_row, x);
         let quotient = self.matrix.evaluate_row(quotient_row, x);
         let g_eval = self.g_poly.evaluate(x);
 
-        // Compute: ρ_curr(x) - ρ_prev(x)² × base(x)^{b_i} - quotient(x) × g(x)
-        let base_power = if constraint.bit { base_eval } else { Fq::one() };
+        let bit = constraint.bit;
+        let bit_f = if bit { Fq::one() } else { Fq::zero() };
+
+        // a(x)^{b_i} = 1 + (a(x) - 1) * b_i
+        let base_power = Fq::one() + (base_eval - Fq::one()) * bit_f;
+
         rho_curr - rho_prev.square() * base_power - quotient * g_eval
+    }
+
+    /// Evaluate the exponent MLE Σ_i b_i eq(z, i) at a point in index-variable space.
+    ///
+    /// `i_point` is in the same variable order as used for `num_constraint_index_vars`.
+    pub fn exponent_eval_at(&self, i_point: &[Fq]) -> Fq {
+        // MLE semantics: exponent_mle is defined on {0,1}^{num_i_bits}
+        // and DensePolynomial::evaluate expects the point in the same convention as g_poly
+        self.exponent_mle.evaluate(i_point)
+    }
+
+    #[cfg(test)]
+    pub fn verify_constraints_are_zero(&self) {
+        // Verify that each constraint evaluates to 0 over the entire hypercube
+        let num_x_points = 1 << self.matrix.num_constraint_vars;
+
+        for constraint in &self.constraints {
+            let idx = constraint.constraint_index;
+
+            // Check constraint over all x values in the hypercube
+            for x_val in 0..num_x_points {
+                // Convert x_val to binary representation
+                let mut x_binary = Vec::with_capacity(self.matrix.num_constraint_vars);
+                let mut x = x_val;
+                for _ in 0..self.matrix.num_constraint_vars {
+                    x_binary.push(if x & 1 == 1 { Fq::one() } else { Fq::zero() });
+                    x >>= 1;
+                }
+
+                // Evaluate constraint C_i(x)
+                let base_row = self.matrix.row_index(RowOffset::Base, idx);
+                let rho_prev_row = self.matrix.row_index(RowOffset::RhoPrev, idx);
+                let rho_curr_row = self.matrix.row_index(RowOffset::RhoCurr, idx);
+                let quotient_row = self.matrix.row_index(RowOffset::Quotient, idx);
+
+                let base_eval = self.matrix.evaluate_row(base_row, &x_binary);
+                let rho_prev = self.matrix.evaluate_row(rho_prev_row, &x_binary);
+                let rho_curr = self.matrix.evaluate_row(rho_curr_row, &x_binary);
+                let quotient = self.matrix.evaluate_row(quotient_row, &x_binary);
+                let g_eval = self.g_poly.evaluate(&x_binary);
+
+                // Get the bit for this constraint
+                let bit = constraint.bit;
+                let bit_f = if bit { Fq::one() } else { Fq::zero() };
+
+                // Compute: ρ_curr(x) - ρ_prev(x)² × base(x)^{b_i} - quotient(x) × g(x)
+                // where base(x)^{b_i} = 1 + (base(x) - 1) * b_i
+                let base_power = Fq::one() + (base_eval - Fq::one()) * bit_f;
+                let constraint_eval = rho_curr - rho_prev.square() * base_power - quotient * g_eval;
+
+                assert!(
+                    constraint_eval == Fq::zero(),
+                    "Constraint {} failed at x={:?}: got {}, expected 0",
+                    idx,
+                    x_binary,
+                    constraint_eval
+                );
+            }
+        }
+
+        println!(
+            "All {} constraints verified to be 0 over the hypercube!",
+            self.constraints.len()
+        );
     }
 }
 
@@ -457,15 +571,10 @@ mod tests {
             &commitment,
         )
         .expect("System creation should succeed");
-        println!(
-            "Created system with {} constraints",
-            system.num_constraints()
-        );
         let total_vars = system.num_vars();
         let num_points = 1 << total_vars;
 
         if num_points <= (1 << 16) {
-            println!("Testing all {} points on the boolean hypercube", num_points);
             let all_zero = (0..num_points).into_par_iter().all(|i| {
                 let mut point = Vec::with_capacity(total_vars);
                 for j in 0..total_vars {
@@ -482,15 +591,7 @@ mod tests {
                 all_zero,
                 "Constraint system should evaluate to 0 on all points of the boolean hypercube"
             );
-            println!(
-                "✓ Constraint system correctly evaluates to 0 on all {} boolean hypercube points",
-                num_points
-            );
         } else {
-            println!(
-                "Testing 1000 random boolean points ({} vars = {} total points)",
-                total_vars, num_points
-            );
             use rand::{rngs::StdRng, Rng, SeedableRng};
 
             let all_zero = (0..1000).into_par_iter().all(|i| {
@@ -511,7 +612,6 @@ mod tests {
                 all_zero,
                 "Constraint system should evaluate to 0 on sampled boolean points"
             );
-            println!("✓ Constraint system correctly evaluates to 0 on sampled boolean points");
         }
         let mut verify_transcript = crate::transcripts::Blake2bTranscript::new(b"test");
         DoryCommitmentScheme::verify_with_hint(
