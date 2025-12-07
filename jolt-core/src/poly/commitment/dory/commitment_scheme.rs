@@ -18,10 +18,10 @@ use crate::{
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
-use ark_bn254::{Bn254 as ArkBn254, G1Affine, G1Projective};
+use ark_bn254::{Bn254 as ArkBn254, CompressedFq12, G1Affine, G1Projective};
 use ark_ec::pairing::{CompressedPairing, MillerLoopOutput, Pairing};
 use ark_ec::CurveGroup;
-use ark_ff::{One, Zero};
+use ark_ff::{One, PrimeField, Zero};
 use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
@@ -124,19 +124,21 @@ impl CompressedCommitmentScheme for DoryCommitmentScheme {
         commitments: &[C],
         coeffs: &[Self::Field],
     ) -> Self::CompressedCommitment {
-        todo!()
-        // let _span = trace_span!("DoryCommitmentScheme::combine_commitments").entered();
+        let _span = trace_span!("DoryCommitmentScheme::combine_commitments_compressed").entered();
 
-        // // Combine GT elements using parallel RLC
-        // let commitments_vec: Vec<&ArkGT> = commitments.iter().map(|c| c.borrow()).collect();
-        // coeffs
-        //     .par_iter()
-        //     .zip(commitments_vec.par_iter())
-        //     .map(|(coeff, commitment)| {
-        //         let ark_coeff = jolt_to_ark(coeff);
-        //         ark_coeff * **commitment
-        //     })
-        //     .reduce(ArkGT::identity, |a, b| a + b)
+        // Combine GT elements using parallel RLC
+        let commitments_vec: Vec<&Self::CompressedCommitment> =
+            commitments.iter().map(|c| c.borrow()).collect();
+        let pows = coeffs
+            .par_iter()
+            .zip(commitments_vec.par_iter())
+            .map(|(coeff, commitment)| {
+                let ark_coeff = jolt_to_ark(coeff);
+                CompressedFq12::pow(&commitment.0, ark_coeff.0.into_bigint())
+            })
+            .collect::<Vec<CompressedFq12>>();
+        let value = CompressedFq12::homomorphic_combine_pairing_values(&pows);
+        ArkGTCompressed(value)
     }
 }
 

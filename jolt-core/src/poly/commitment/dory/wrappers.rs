@@ -253,6 +253,23 @@ impl CanonicalDeserialize for CompressedArkDoryProof {
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ArkGTCompressed(pub CompressedFq12);
 
+impl ArkGTCompressed {
+    pub fn mul_compressed(lhs: Self, rhs: Self) -> Self {
+        ArkGTCompressed(CompressedFq12::mul_compressed(lhs.0, rhs.0))
+    }
+
+    pub fn homomorphic_combine(elements: &[Self]) -> Self {
+        let elements_vec: Vec<CompressedFq12> = elements.iter().map(|e| e.0).collect();
+        let value = CompressedFq12::homomorphic_combine_pairing_values(elements_vec.as_slice());
+        ArkGTCompressed(value)
+    }
+
+    pub fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self {
+        let value = CompressedFq12::pow(&self.0, exp);
+        ArkGTCompressed(value)
+    }
+}
+
 impl DoryElement for ArkGTCompressed {}
 
 impl Valid for ArkGTCompressed {

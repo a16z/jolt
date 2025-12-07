@@ -1933,28 +1933,13 @@ mod tests {
             jolt_proof_uncompressed.commitments
         );
 
-        let gt_elements = jolt_proof_uncompressed
-            .reduced_opening_proof
-            .joint_opening_proof
-            .gt_elements();
-        let compressed_gt_elements_decompressed: Vec<ArkGT> = jolt_proof_compressed
-            .reduced_opening_proof
-            .joint_opening_proof
-            .0
-            .clone()
-            .gt_elements()
-            .into_iter()
-            .map(|c| ArkGT::from(c))
-            .collect();
-        assert_eq!(gt_elements, compressed_gt_elements_decompressed);
-
         let binding = JoltVerifierPreprocessing::from(&preprocessing);
-        // let verifier =
-        //     RV64IMACVerifier::new(&binding, jolt_proof_compressed, io_device, None, None)
-        //         .expect("Failed to create verifier for compressed proof");
-        // verifier
-        //     .verify()
-        //     .expect("Failed to verify compressed proof");
+        let verifier =
+            RV64IMACCompressedVerifier::new(&binding, jolt_proof_compressed, io_device, None, None)
+                .expect("Failed to create verifier for compressed proof");
+        verifier
+            .verify()
+            .expect("Failed to verify compressed proof");
     }
 
     #[test]
