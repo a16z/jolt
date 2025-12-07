@@ -8,7 +8,7 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder, MultilinearPolynomial, PolynomialBinding,
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -18,7 +18,7 @@ use crate::{
     },
     subprotocols::{
         recursion_constraints::{
-            compute_constraint_formula, index_to_binary, MatrixConstraint, RowOffset,
+            index_to_binary, MatrixConstraint, RowOffset,
         },
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
@@ -102,9 +102,9 @@ pub struct RecursionSumcheckProver {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub eq_x: MultilinearPolynomial<Fq>,
 
-    /// Equality polynomial for constraint index i (phase 2)
+    /// Precomputed eq(r_i, i) values for all constraint indices
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub eq_i: MultilinearPolynomial<Fq>,
+    pub eq_i_table: Vec<Fq>,
 
     /// Random challenge for eq(r, x)
     pub r_x: Vec<<Fq as JoltField>::Challenge>,
@@ -128,13 +128,6 @@ pub struct RecursionSumcheckProver {
     pub phase2_values: Vec<Fq>,
 }
 
-/// Helper struct to hold row evaluations for all offset types
-struct RowEvaluations<const DEGREE: usize> {
-    base: [Fq; DEGREE],
-    rho_prev: [Fq; DEGREE],
-    rho_curr: [Fq; DEGREE],
-    quotient: [Fq; DEGREE],
-}
 
 impl RecursionSumcheckProver {
     pub fn gen<T: Transcript>(
@@ -157,27 +150,27 @@ impl RecursionSumcheckProver {
         let m_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
 
         let eq_x = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_x));
-        let eq_i = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_i));
+
+        // Create eq_i_table using explicit evaluations with our index convention
+        let padded_size = 1 << params.num_constraint_index_vars;
+        let mut eq_i_table = Vec::with_capacity(padded_size);
+        for i in 0..padded_size {
+            let i_bits = index_to_binary(i, params.num_constraint_index_vars);
+            let eq_i_val = EqPolynomial::<Fq>::mle(&r_i, &i_bits);
+            eq_i_table.push(eq_i_val);
+        }
 
         let mut constraint_bits = vec![false; params.num_constraints];
 
         for constraint in &constraint_system.constraints {
             constraint_bits[constraint.constraint_index] = constraint.bit;
-
-            #[cfg(test)]
-            if constraint.constraint_index < 5 {
-                eprintln!(
-                    "  Setting constraint_bits[{}] = {}",
-                    constraint.constraint_index, constraint.bit
-                );
-            }
         }
         Self {
             m_poly,
             g_poly: MultilinearPolynomial::LargeScalars(constraint_system.g_poly.clone()),
             constraint_bits,
             eq_x,
-            eq_i,
+            eq_i_table,
             r_x,
             r_i,
             eq_r_x: Fq::one(),
@@ -210,17 +203,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
             self.params.num_rounds()
         );
 
-        #[cfg(test)]
-        eprintln!(
-            "  compute_message: round={}, previous_claim={:?}, phase={}",
-            round,
-            previous_claim,
-            if round < self.params.num_constraint_vars {
-                "Phase1"
-            } else {
-                "Phase2"
-            }
-        );
 
         if round < self.params.num_constraint_vars {
             // Phase 1: Sum over constraint variables (x)
@@ -253,16 +235,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
                     "eq_x should be fully bound after Phase 1"
                 );
 
-                #[cfg(test)]
-                {
-                    eprintln!(
-                        "  After Phase 1: m_poly.len() = {} (expected = {})",
-                        self.m_poly.len(),
-                        1 << (self.params.num_constraint_index_vars + 2)
-                    );
-                    eprintln!("  Prover eq_r_x after Phase 1 = {:?}", self.eq_r_x);
-                    eprintln!("  (This should be eq(r_x, x_challenges) where x_challenges are the Phase 1 sumcheck challenges)");
-                }
 
                 // Build phase2_values from m_poly, eq_i, and constraint_bits
                 self.init_phase2_values();
@@ -276,19 +248,23 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
             // M layout: M(offset_bits, constraint_index_bits, x_bits)
             // After Phase 1, x_bits are bound. Now we bind constraint_index_bits.
             // offset_bits (2 bits, high-order) remain unbound → 4 final openings
-            self.eq_i.bind_parallel(r_j, BindingOrder::LowToHigh);
+            // Note: eq_i_table is not bound - it's precomputed at the start
             self.m_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-            #[cfg(debug_assertions)]
+            #[cfg(test)]
             {
                 let phase2_round = round - self.params.num_constraint_vars;
-                eprintln!("After binding Phase 2 round {}:", phase2_round);
-                eprintln!(
-                    "  m_poly.len() = {} (expected = {})",
-                    self.m_poly.len(),
-                    4 << (self.params.num_constraint_index_vars - phase2_round - 1)
-                );
-                eprintln!("  m_poly.num_vars = {}", self.m_poly.get_num_vars());
+                // Print final state after all Phase 2 rounds
+                if phase2_round == self.params.num_constraint_index_vars - 1 {
+                    eprintln!("\n=== FINAL PHASE 2 DEBUG ===");
+                    eprintln!("Final phase2_values.len() = {}", self.phase2_values.len());
+                    if self.phase2_values.len() <= 4 {
+                        eprintln!("Final phase2_values = {:?}", self.phase2_values);
+                    }
+                    eprintln!("Final eq_i_table.len() = {}", self.eq_i_table.len());
+                    eprintln!("Final m_poly.len() = {}", self.m_poly.len());
+                    eprintln!("===========================");
+                }
             }
         }
 
@@ -314,70 +290,68 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
         let rho_curr_val = self.m_poly.get_bound_coeff(RowOffset::RhoCurr as usize);
         let quotient_val = self.m_poly.get_bound_coeff(RowOffset::Quotient as usize);
 
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         {
-            eprintln!("\n=== PROVER cache_openings ===");
-            eprintln!("Final m_poly values after all sumcheck rounds:");
-            eprintln!("  base_val     = {:?}", base_val);
+            eprintln!("\n=== PROVER FINAL EVALUATION ===");
+            // Check what the final phase2_values should be
+            if self.phase2_values.len() == 1 {
+                eprintln!("Final phase2_values[0] = {:?}", self.phase2_values[0]);
+            }
+
+            // Compute what the verifier will compute
+            let (x_challenges, i_challenges) =
+                sumcheck_challenges.split_at(self.params.num_constraint_vars);
+
+            let g_val = if self.g_poly.len() == 1 {
+                self.g_poly.get_bound_coeff(0)
+            } else {
+                panic!("g_poly should be fully bound after Phase 1");
+            };
+
+            let r_i_fq: Vec<Fq> = i_challenges.iter().map(|c| (*c).into()).collect();
+            let bit_eval = self.compute_bit_mle_at_point(&r_i_fq);
+
+            let base_power = Fq::one() + (base_val - Fq::one()) * bit_eval;
+            let constraint_eval = rho_curr_val - rho_prev_val.square() * base_power - quotient_val * g_val;
+
+            let eq_r_x_val = EqPolynomial::<Fq>::mle(&self.r_x, x_challenges);
+            let eq_r_i_val = EqPolynomial::<Fq>::mle(&self.r_i, i_challenges);
+
+            let expected_final = eq_r_x_val * eq_r_i_val * constraint_eval;
+
+            eprintln!("Expected final claim = {:?}", expected_final);
+
+            // Debug: Let's check what eq(r_i, i_challenges) gives us
+            eprintln!("Debug values:");
+            eprintln!("  base_val = {:?}", base_val);
             eprintln!("  rho_prev_val = {:?}", rho_prev_val);
             eprintln!("  rho_curr_val = {:?}", rho_curr_val);
             eprintln!("  quotient_val = {:?}", quotient_val);
-            eprintln!("  m_poly.len() = {} (should be 4)", self.m_poly.len());
-
-            // Compute the same values as verifier for comparison
-            let (x_challenges_for_calc, i_challenges_for_calc) =
-                sumcheck_challenges.split_at(self.params.num_constraint_vars);
-
-            // g_val computation
-            // g_poly is already fully bound after Phase 1, so it's just a scalar
-            let g_val_computed = if self.g_poly.len() == 1 {
-                self.g_poly.get_bound_coeff(0)
-            } else {
-                let mut x_challenges_reversed = x_challenges_for_calc.to_vec();
-                x_challenges_reversed.reverse();
-                self.g_poly.evaluate(&x_challenges_reversed)
-            };
-
-            // bit_eval computation
-            let r_i_fq: Vec<Fq> = i_challenges_for_calc.iter().map(|c| (*c).into()).collect();
-            let bit_eval_computed = self.compute_bit_mle_at_point(&r_i_fq);
-
-            eprintln!("Additional computed values (prover side):");
-            eprintln!("  g_val        = {:?}", g_val_computed);
-            eprintln!("  bit_eval     = {:?}", bit_eval_computed);
-
-            // Compute constraint eval
-            let base_power = Fq::one() + (base_val - Fq::one()) * bit_eval_computed;
-            let constraint_eval =
-                rho_curr_val - rho_prev_val.square() * base_power - quotient_val * g_val_computed;
-
-            // Compute eq polynomials
-            let eq_r_x_computed = EqPolynomial::<Fq>::mle(&self.r_x, x_challenges_for_calc);
-            let eq_r_i_computed = EqPolynomial::<Fq>::mle(&self.r_i, i_challenges_for_calc);
-
-            let expected_claim_prover = eq_r_x_computed * eq_r_i_computed * constraint_eval;
-
-            eprintln!("Constraint evaluation (prover side):");
-            eprintln!("  base_power     = {:?}", base_power);
+            eprintln!("  g_val = {:?}", g_val);
+            eprintln!("  bit_eval = {:?}", bit_eval);
+            eprintln!("  base_power = {:?}", base_power);
             eprintln!("  constraint_eval = {:?}", constraint_eval);
-            eprintln!("  eq_r_x         = {:?}", eq_r_x_computed);
-            eprintln!("  eq_r_i         = {:?}", eq_r_i_computed);
-            eprintln!("  expected_claim = {:?}", expected_claim_prover);
+            eprintln!("  eq_r_x_val = {:?}", eq_r_x_val);
+            eprintln!("  eq_r_i_val = {:?}", eq_r_i_val);
 
-            // Add more debug info about the challenges
-            eprintln!("Challenge info:");
-            eprintln!(
-                "  x_challenges_for_calc.len() = {}",
-                x_challenges_for_calc.len()
-            );
-            eprintln!(
-                "  i_challenges_for_calc.len() = {}",
-                i_challenges_for_calc.len()
-            );
-            eprintln!("  r_x.len() = {}", self.r_x.len());
-            eprintln!("  r_i.len() = {}", self.r_i.len());
-            eprintln!("===========================\n");
+            // The issue might be that phase2_values[0] doesn't equal expected_final
+            // Let's check if they should be equal
+            if self.phase2_values.len() == 1 {
+                let phase2_final = self.phase2_values[0];
+                eprintln!("  phase2_values[0] = {:?}", phase2_final);
+                eprintln!("  Mismatch: phase2_values[0] != expected_final");
+
+                // Check if eq_r_x is the issue
+                eprintln!("  self.eq_r_x (from Phase 1) = {:?}", self.eq_r_x);
+                eprintln!("  eq_r_x_val (fresh compute) = {:?}", eq_r_x_val);
+                if self.eq_r_x != eq_r_x_val {
+                    eprintln!("  ERROR: eq_r_x values don't match!");
+                }
+            }
+
+            eprintln!("================================");
         }
+
 
         let (x_challenges, i_challenges) =
             sumcheck_challenges.split_at(self.params.num_constraint_vars);
@@ -395,12 +369,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
             // The offset bits need to be reversed from little-endian to big-endian
             offset_bits.reverse();
 
-            #[cfg(debug_assertions)]
-            {
-                eprintln!("PROVER appending opening for offset {:?}:", offset);
-                eprintln!("  offset_bits (after reverse) = {:?}", offset_bits);
-                eprintln!("  value = {:?}", value);
-            }
 
             // The polynomial has variables in storage order: [x_bits, i_bits, offset_bits] (little-endian)
             // MLE evaluate expects big-endian order: highest variable first
@@ -415,11 +383,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionSumcheckProver {
             // Construct opening point in big-endian order to match MLE expectations
             let opening_point = [&offset_bits[..], &reversed_i[..], &reversed_x[..]].concat();
 
-            #[cfg(debug_assertions)]
-            {
-                eprintln!("  Full opening_point = {:?}", opening_point);
-                eprintln!("  Length = {}", opening_point.len());
-            }
 
             accumulator.append_dense(
                 transcript,
@@ -450,6 +413,21 @@ fn offset_bits_to_challenges(offset: RowOffset) -> Vec<<Fq as JoltField>::Challe
     let bits = offset.to_bits(); // Returns [Fq; 2]
     bits.into_iter()
         .map(|bit| <Fq as JoltField>::Challenge::from(bit))
+        .collect()
+}
+
+/// Convert index to bit representation
+#[cfg(test)]
+fn index_to_bits(index: usize, num_bits: usize) -> Vec<<Fq as JoltField>::Challenge> {
+    (0..num_bits)
+        .map(|i| {
+            let bit = if (index >> i) & 1 == 1 {
+                Fq::one()
+            } else {
+                Fq::zero()
+            };
+            <Fq as JoltField>::Challenge::from(bit)
+        })
         .collect()
 }
 
@@ -500,13 +478,81 @@ impl RecursionSumcheckProver {
 
             let c_i = rho_curr - rho_prev * rho_prev * base_power - quotient * g_val;
 
-            // eq_i still has all i-bits unbound at this moment
-            let eq_i_val = self.eq_i.get_bound_coeff(i);
+            // Get eq(r_i, i) from precomputed table
+            let eq_i_val = self.eq_i_table[i];
 
             // Multiply by eq_r_x at Phase-2 entry
             let value = self.eq_r_x * eq_i_val * c_i;
 
             self.phase2_values.push(value);
+        }
+
+        #[cfg(test)]
+        {
+            // Compute the "intended" table directly to check if F̃ = F
+            let mut intended_values = Vec::with_capacity(padded_size);
+
+            for i in 0..padded_size {
+                // Get constraint values from m_poly (same as above)
+                let row = |offset: RowOffset| -> Fq {
+                    let offset_as_usize = offset as usize;
+                    let base_idx = (offset_as_usize << num_i_bits) | i;
+                    self.m_poly.get_bound_coeff(base_idx)
+                };
+
+                let base = row(RowOffset::Base);
+                let rho_prev = row(RowOffset::RhoPrev);
+                let rho_curr = row(RowOffset::RhoCurr);
+                let quotient = row(RowOffset::Quotient);
+
+                let bit = if i < self.params.num_constraints {
+                    self.constraint_bits[i]
+                } else {
+                    false
+                };
+
+                // Compute C_i(x_challenges)
+                let bit_as_field = if bit { Fq::one() } else { Fq::zero() };
+                let base_power = Fq::one() + (base - Fq::one()) * bit_as_field;
+                let c_i = rho_curr - rho_prev * rho_prev * base_power - quotient * g_val;
+
+                // Compute eq(r_i, i) - this should match what we stored in eq_i_table
+                let eq_i_val = self.eq_i_table[i];
+
+                // Double-check by computing from first principles
+                let i_bits = index_to_bits(i, self.params.num_constraint_index_vars);
+                let eq_i_from_scratch = EqPolynomial::<Fq>::mle(&self.r_i, &i_bits);
+
+                if eq_i_val != eq_i_from_scratch {
+                    eprintln!("WARNING: eq_i_table mismatch at index {}: table = {:?}, eval = {:?}",
+                             i, eq_i_val, eq_i_from_scratch);
+                }
+
+                // The intended value - use the correct eq_i computation
+                let intended = self.eq_r_x * eq_i_from_scratch * c_i;
+                intended_values.push(intended);
+            }
+
+            // Compare tables
+            let mut mismatch_found = false;
+            for i in 0..padded_size {
+                if self.phase2_values[i] != intended_values[i] {
+                    eprintln!("MISMATCH at index {}: actual = {:?}, intended = {:?}",
+                             i, self.phase2_values[i], intended_values[i]);
+                    mismatch_found = true;
+                    // Only print first few mismatches to avoid spam
+                    if i > 5 {
+                        eprintln!("... (further mismatches omitted)");
+                        break;
+                    }
+                }
+            }
+
+            if mismatch_found {
+                eprintln!("Phase 2 table mismatch detected! F̃ ≠ F");
+            } else {
+                eprintln!("Phase 2 table matches intended values ✓");
+            }
         }
     }
 
@@ -533,13 +579,14 @@ impl RecursionSumcheckProver {
     /// Compute the MLE of the bit vector evaluated at a specific point
     /// bit_eval = Σ_i eq(eval_point, i) * b_i
     pub fn compute_bit_mle_at_point(&self, eval_point: &[Fq]) -> Fq {
-        // Use EqPolynomial::evals to ensure consistent bit ordering
-        let eq_vals = EqPolynomial::<Fq>::evals(eval_point);
         let mut result = Fq::zero();
+        let padded_size = 1 << self.params.num_constraint_index_vars;
 
-        for (idx, &coeff) in eq_vals.iter().enumerate() {
+        for idx in 0..padded_size {
             if idx < self.constraint_bits.len() && self.constraint_bits[idx] {
-                result += coeff;
+                let idx_bits = index_to_binary(idx, self.params.num_constraint_index_vars);
+                let eq_val = EqPolynomial::<Fq>::mle(eval_point, &idx_bits);
+                result += eq_val;
             }
         }
         result
@@ -620,7 +667,7 @@ impl RecursionSumcheckProver {
                     let mut constraint_sum = Fq::zero();
 
                     for constraint_idx in 0..self.params.num_constraints {
-                        let eq_i_val = self.eq_i.get_bound_coeff(constraint_idx);
+                        let eq_i_val = self.eq_i_table[constraint_idx];
 
                         // Compute constraint evaluation at point t
                         let constraint_val = self.evaluate_constraint_at_point(
@@ -643,17 +690,13 @@ impl RecursionSumcheckProver {
         // Use standard polynomial interpolation without hints
         let poly = UniPoly::from_evals(&evals);
 
-        // Debug verification
+        // Keep H(0)+H(1) verification
         #[cfg(debug_assertions)]
         {
             let sum = poly.evaluate(&Fq::zero()) + poly.evaluate(&Fq::one());
-            eprintln!(
-                "Clean approach Phase1 - H(0)+H(1) = {:?}, expected = {:?}",
-                sum, previous_claim
-            );
             if sum != previous_claim {
                 eprintln!("WARNING: Phase 1 sumcheck relation not satisfied!");
-                eprintln!("  Evaluations at t=0,1,2,3,4: {:?}", evals);
+                eprintln!("  H(0)+H(1) = {:?}, expected = {:?}", sum, previous_claim);
             }
         }
 
@@ -696,15 +739,11 @@ impl RecursionSumcheckProver {
 
         #[cfg(debug_assertions)]
         {
-            let h0 = poly.evaluate(&Fq::zero());
-            let h1 = poly.evaluate(&Fq::one());
-            let sum = h0 + h1;
-            eprintln!(
-                "Phase2 round {} - H(0)+H(1) = {:?}, expected = {:?}",
-                phase2_round, sum, previous_claim
-            );
+            let sum = poly.evaluate(&Fq::zero()) + poly.evaluate(&Fq::one());
             if sum != previous_claim {
                 eprintln!("WARNING: Phase 2 sumcheck relation not satisfied!");
+                eprintln!("  Round {}: H(0)+H(1) = {:?}, expected = {:?}",
+                          phase2_round, sum, previous_claim);
             }
         }
 
@@ -848,13 +887,14 @@ impl RecursionSumcheckVerifier {
     /// Compute the MLE of the bit vector evaluated at a specific point
     /// bit_eval = Σ_i eq(eval_point, i) * b_i
     pub fn compute_bit_mle_at_point(&self, eval_point: &[Fq]) -> Fq {
-        // Use EqPolynomial::evals to ensure consistent bit ordering
-        let eq_vals = EqPolynomial::<Fq>::evals(eval_point);
         let mut result = Fq::zero();
+        let padded_size = 1 << self.params.num_constraint_index_vars;
 
-        for (idx, &coeff) in eq_vals.iter().enumerate() {
+        for idx in 0..padded_size {
             if idx < self.constraint_bits.len() && self.constraint_bits[idx] {
-                result += coeff;
+                let idx_bits = index_to_binary(idx, self.params.num_constraint_index_vars);
+                let eq_val = EqPolynomial::<Fq>::mle(eval_point, &idx_bits);
+                result += eq_val;
             }
         }
         result
@@ -908,18 +948,6 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionSumcheckVerifie
 
         let bit_eval = self.compute_bit_mle_at_point(&r_i_fq);
 
-        #[cfg(debug_assertions)]
-        {
-            eprintln!("\n=== VERIFIER expected_output_claim ===");
-            eprintln!("Values from accumulator:");
-            eprintln!("  base_val     = {:?}", base_val);
-            eprintln!("  rho_prev_val = {:?}", rho_prev_val);
-            eprintln!("  rho_curr_val = {:?}", rho_curr_val);
-            eprintln!("  quotient_val = {:?}", quotient_val);
-            eprintln!("Additional computed values:");
-            eprintln!("  g_val        = {:?}", g_val);
-            eprintln!("  bit_eval     = {:?}", bit_eval);
-        }
 
         // Compute constraint: C = ρ_curr - ρ_prev² × [1 + (base - 1) × bit_eval] - quotient × g
         let base_power = Fq::one() + (base_val - Fq::one()) * bit_eval;
@@ -931,16 +959,6 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionSumcheckVerifie
 
         let expected_claim = eq_r_x * eq_r_i * constraint_eval;
 
-        #[cfg(debug_assertions)]
-        {
-            eprintln!("Constraint evaluation:");
-            eprintln!("  base_power     = {:?}", base_power);
-            eprintln!("  constraint_eval = {:?}", constraint_eval);
-            eprintln!("  eq_r_x         = {:?}", eq_r_x);
-            eprintln!("  eq_r_i         = {:?}", eq_r_i);
-            eprintln!("  expected_claim = {:?}", expected_claim);
-            eprintln!("===========================\n");
-        }
 
         expected_claim
     }
@@ -967,11 +985,6 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionSumcheckVerifie
             let mut offset_bits = offset_bits_to_challenges(offset);
             offset_bits.reverse();
 
-            #[cfg(debug_assertions)]
-            {
-                eprintln!("VERIFIER appending opening for offset {:?}:", offset);
-                eprintln!("  offset_bits (after reverse) = {:?}", offset_bits);
-            }
             // The polynomial has variables in storage order: [x_bits, i_bits, offset_bits] (little-endian)
             // MLE evaluate expects big-endian order: highest variable first
             let mut reversed_x = x_challenges.to_vec();
@@ -980,11 +993,6 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionSumcheckVerifie
             reversed_i.reverse();
             let opening_point = [&offset_bits[..], &reversed_i[..], &reversed_x[..]].concat();
 
-            #[cfg(debug_assertions)]
-            {
-                eprintln!("  Full opening_point = {:?}", opening_point);
-                eprintln!("  Length = {}", opening_point.len());
-            }
 
             accumulator.append_dense(
                 transcript,
@@ -1004,7 +1012,7 @@ mod tests {
             commitment::{
                 commitment_scheme::CommitmentScheme,
                 dory::{DoryCommitmentScheme, DoryGlobals},
-                hyrax::{Hyrax, HyraxOpeningProof},
+                hyrax::Hyrax,
             },
             dense_mlpoly::DensePolynomial,
             multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
