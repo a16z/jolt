@@ -343,6 +343,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     fn init_phase(&mut self, phase: usize) {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
+        let m_mask = m - 1;
         // Condensation
         if phase != 0 {
             let span = tracing::span!(tracing::Level::INFO, "Update u_evals");
@@ -352,7 +353,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .zip(&mut self.u_evals)
                 .for_each(|(k, u_eval)| {
                     let (prefix, _) = k.split((self.params.phases - phase) * log_m);
-                    let k_bound: usize = prefix % m;
+                    let k_bound = prefix & m_mask;
                     *u_eval *= self.v[phase - 1][k_bound];
                 });
         }
@@ -394,6 +395,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     fn init_suffix_polys(&mut self, phase: usize) {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
+        let m_mask = m - 1;
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
 
@@ -419,7 +421,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                     let t = suffix.suffix_mle::<XLEN>(suffix_bits);
                                     if t != 0 {
                                         let u = self.u_evals[*j];
-                                        result[prefix_bits % m] += u.mul_u64_unreduced(t);
+                                        result[prefix_bits & m_mask] += u.mul_u64_unreduced(t);
                                     }
                                 }
                             }
@@ -477,6 +479,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     fn init_log_t_rounds(&mut self, gamma: F, gamma_sqr: F) {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
+        let m_mask = m - 1;
         // Drop stuff that's no longer needed
         drop_in_background_thread((
             std::mem::take(&mut self.u_evals),
@@ -493,7 +496,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     (0..self.params.phases)
                         .map(|phase| {
                             let (prefix, _) = k.split((self.params.phases - 1 - phase) * log_m);
-                            let k_bound: usize = prefix % m;
+                            let k_bound = prefix & m_mask;
                             self.v[phase][k_bound]
                         })
                         .product::<F>()
