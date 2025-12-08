@@ -902,7 +902,7 @@ impl Mmu {
                     _ => match (self.mstatus >> 17) & 1 {
                         0 => Ok(address),
                         _ => {
-                            let privilege_mode = get_privilege_mode((self.mstatus >> 9) & 3);
+                            let privilege_mode = get_privilege_mode((self.mstatus >> 11) & 3);
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
@@ -931,7 +931,7 @@ impl Mmu {
                     _ => match (self.mstatus >> 17) & 1 {
                         0 => Ok(address),
                         _ => {
-                            let privilege_mode = get_privilege_mode((self.mstatus >> 9) & 3);
+                            let privilege_mode = get_privilege_mode((self.mstatus >> 11) & 3);
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
@@ -1255,5 +1255,22 @@ mod test_mmu {
         let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.io_end + 1;
         // illegal write to inputs
         mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
+    }
+
+    #[test]
+    fn test_mprv_uses_mpp_machine_fast_path() {
+        let mut mmu = setup_mmu();
+
+        mmu.update_addressing_mode(AddressingMode::SV39);
+        mmu.update_privilege_mode(PrivilegeMode::Machine);
+
+        let mprv_bit: u64 = 1 << 17;
+        let mpp_machine: u64 = (get_privilege_mode(3) as u64) << 11;
+        mmu.update_mstatus(mprv_bit | mpp_machine);
+
+        let v_address = DRAM_BASE;
+        let result = mmu.translate_address(v_address, &MemoryAccessType::Read);
+
+        assert_eq!(result, Ok(v_address));
     }
 }
