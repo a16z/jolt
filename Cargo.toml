@@ -35,8 +35,6 @@ members = [
     "jolt-inlines/blake2",
     "jolt-inlines/blake3",
     "jolt-inlines/bigint",
-    "examples/attribute",
-    "examples/attribute/guest",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
