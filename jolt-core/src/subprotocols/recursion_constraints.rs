@@ -214,7 +214,6 @@ impl DoryMatrixBuilder {
         let num_constraints = self.rows_by_type[0].len();
         assert!(num_constraints > 0, "No constraints added");
 
-        // Verify all row types have the same number of constraints
         for poly_type in PolyType::all() {
             assert_eq!(
                 self.rows_by_type[poly_type as usize].len(),
@@ -229,14 +228,11 @@ impl DoryMatrixBuilder {
             "Number of bits must match number of constraints"
         );
 
-        // Pad constraints to power of 2
         let num_constraints_bits = (num_constraints as f64).log2().ceil() as usize;
         let num_constraints_padded = 1 << num_constraints_bits;
 
-        // Total rows = 4 * num_constraints_padded
         let num_rows = PolyType::NUM_TYPES * num_constraints_padded;
 
-        // Calculate number of s variables needed
         let num_s_vars = (num_rows as f64).log2().ceil() as usize;
         assert_eq!(1 << num_s_vars, num_rows); // Should be exact
 
@@ -249,12 +245,10 @@ impl DoryMatrixBuilder {
         for poly_type in PolyType::all() {
             let rows = &self.rows_by_type[poly_type as usize];
 
-            // For all row types, use as-is (no baking)
             for row in rows {
                 evaluations.extend_from_slice(row);
             }
 
-            // Pad this section to num_constraints_padded
             for _ in rows.len()..num_constraints_padded {
                 evaluations.extend_from_slice(&zero_row);
             }
@@ -271,7 +265,6 @@ impl DoryMatrixBuilder {
             evaluations,
         };
 
-        // Create constraint metadata
         let constraints: Vec<MatrixConstraint> = self
             .bits
             .into_iter()
@@ -324,12 +317,10 @@ impl ConstraintSystem {
     where
         T: Transcript,
     {
-        // Extract witnesses
         let (witnesses, hints) = <DoryCommitmentScheme as RecursionExt<Fr>>::witness_gen(
             proof, setup, transcript, point, evaluation, commitment,
         )?;
 
-        // Build matrix with new interleaved layout
         let mut builder = DoryMatrixBuilder::new(4); // 4 vars for Fq12
 
         for (_op_id, witness) in witnesses.gt_exp.iter() {
@@ -355,7 +346,6 @@ impl ConstraintSystem {
             if constraint.bit {
                 exponent_values[constraint.constraint_index] = Fq::one();
             }
-            // else it stays zero
         }
 
         let exponent_mle = DensePolynomial::new(exponent_values);
@@ -511,13 +501,11 @@ impl ConstraintSystem {
     fn evaluate_constraint(&self, constraint: &MatrixConstraint, x: &[Fq]) -> Fq {
         let idx = constraint.constraint_index;
 
-        // Get row indices using the layout
         let base_row = self.matrix.row_index(PolyType::Base, idx);
         let rho_prev_row = self.matrix.row_index(PolyType::RhoPrev, idx);
         let rho_curr_row = self.matrix.row_index(PolyType::RhoCurr, idx);
         let quotient_row = self.matrix.row_index(PolyType::Quotient, idx);
 
-        // Evaluate each row polynomial at x
         let base_eval = self.matrix.evaluate_row(base_row, x); // a(x)
         let rho_prev = self.matrix.evaluate_row(rho_prev_row, x);
         let rho_curr = self.matrix.evaluate_row(rho_curr_row, x);
@@ -546,9 +534,7 @@ impl ConstraintSystem {
         for constraint in &self.constraints {
             let idx = constraint.constraint_index;
 
-            // Check constraint over all x values in the hypercube
             for x_val in 0..num_x_points {
-                // Convert x_val to binary representation
                 let mut x_binary = Vec::with_capacity(self.matrix.num_constraint_vars);
                 let mut x = x_val;
                 for _ in 0..self.matrix.num_constraint_vars {
@@ -556,26 +542,7 @@ impl ConstraintSystem {
                     x >>= 1;
                 }
 
-                // Evaluate constraint C_i(x)
-                let base_row = self.matrix.row_index(PolyType::Base, idx);
-                let rho_prev_row = self.matrix.row_index(PolyType::RhoPrev, idx);
-                let rho_curr_row = self.matrix.row_index(PolyType::RhoCurr, idx);
-                let quotient_row = self.matrix.row_index(PolyType::Quotient, idx);
-
-                let base_eval = self.matrix.evaluate_row(base_row, &x_binary);
-                let rho_prev = self.matrix.evaluate_row(rho_prev_row, &x_binary);
-                let rho_curr = self.matrix.evaluate_row(rho_curr_row, &x_binary);
-                let quotient = self.matrix.evaluate_row(quotient_row, &x_binary);
-                let g_eval = self.g_poly.evaluate(&x_binary);
-
-                // Get the bit for this constraint
-                let bit = constraint.bit;
-                let bit_f = if bit { Fq::one() } else { Fq::zero() };
-
-                // Compute: ρ_curr(x) - ρ_prev(x)² × base(x)^{b_i} - quotient(x) × g(x)
-                // where base(x)^{b_i} = 1 + (base(x) - 1) * b_i
-                let base_power = Fq::one() + (base_eval - Fq::one()) * bit_f;
-                let constraint_eval = rho_curr - rho_prev.square() * base_power - quotient * g_eval;
+                let constraint_eval = self.evaluate_constraint(constraint, &x_binary);
 
                 assert!(
                     constraint_eval == Fq::zero(),

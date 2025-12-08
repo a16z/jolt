@@ -1399,8 +1399,6 @@ where
         // 2. Get the single committed opening
         let (_opening_id, (opening_point, opening_claim)) = committed_openings[0];
 
-        eprintln!("verify_single: opening_point.r.len() = {}", opening_point.r.len());
-
         // 3. Direct PCS verification (no sumcheck, no batching)
         PCS::verify(
             proof,

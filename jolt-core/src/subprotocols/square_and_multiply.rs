@@ -27,6 +27,108 @@ use ark_bn254::Fq;
 use ark_ff::{One, Zero};
 use rayon::prelude::*;
 
+/// Helper to append all virtual claims for a constraint
+fn append_constraint_virtual_claims<T: Transcript>(
+    accumulator: &mut ProverOpeningAccumulator<Fq>,
+    transcript: &mut T,
+    constraint_idx: usize,
+    sumcheck_id: SumcheckId,
+    opening_point: &OpeningPoint<BIG_ENDIAN, Fq>,
+    base_claim: Fq,
+    rho_prev_claim: Fq,
+    rho_curr_claim: Fq,
+    quotient_claim: Fq,
+) {
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionBase(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+        base_claim,
+    );
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionRhoPrev(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+        rho_prev_claim,
+    );
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionRhoCurr(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+        rho_curr_claim,
+    );
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionQuotient(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+        quotient_claim,
+    );
+}
+
+/// Helper to retrieve all virtual claims for a constraint
+fn get_constraint_virtual_claims(
+    accumulator: &VerifierOpeningAccumulator<Fq>,
+    constraint_idx: usize,
+    sumcheck_id: SumcheckId,
+) -> (Fq, Fq, Fq, Fq) {
+    let (_, base_claim) = accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RecursionBase(constraint_idx),
+        sumcheck_id,
+    );
+    let (_, rho_prev_claim) = accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RecursionRhoPrev(constraint_idx),
+        sumcheck_id,
+    );
+    let (_, rho_curr_claim) = accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RecursionRhoCurr(constraint_idx),
+        sumcheck_id,
+    );
+    let (_, quotient_claim) = accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RecursionQuotient(constraint_idx),
+        sumcheck_id,
+    );
+
+    (base_claim, rho_prev_claim, rho_curr_claim, quotient_claim)
+}
+
+/// Helper to append virtual opening points for a constraint (verifier side)
+fn append_constraint_virtual_openings<T: Transcript>(
+    accumulator: &mut VerifierOpeningAccumulator<Fq>,
+    transcript: &mut T,
+    constraint_idx: usize,
+    sumcheck_id: SumcheckId,
+    opening_point: &OpeningPoint<BIG_ENDIAN, Fq>,
+) {
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionBase(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+    );
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionRhoPrev(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+    );
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionRhoCurr(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+    );
+    accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::RecursionQuotient(constraint_idx),
+        sumcheck_id,
+        opening_point.clone(),
+    );
+}
+
 /// Individual polynomial data for a single constraint
 #[derive(Clone)]
 pub struct ConstraintPolynomials {
@@ -68,8 +170,8 @@ pub struct SquareAndMultiplyProver {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub params: SquareAndMultiplyParams,
 
-    /// Polynomial data for each constraint
-    pub constraint_polys: Vec<ConstraintPolynomials>,
+    /// Constraint bits for base^{b_i} evaluation
+    pub constraint_bits: Vec<bool>,
 
     /// g(x) polynomial for constraint evaluation
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -118,7 +220,6 @@ impl SquareAndMultiplyProver {
         g_poly: DensePolynomial<Fq>,
         transcript: &mut T,
     ) -> Self {
-        // Get random challenges
         let r_x: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_vars)
             .map(|_| transcript.challenge_scalar_optimized::<Fq>())
             .collect();
@@ -126,23 +227,23 @@ impl SquareAndMultiplyProver {
         let gamma = transcript.challenge_scalar_optimized::<Fq>();
 
         let eq_x = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_x));
-
-        // Convert to multilinear polynomials
+        let mut constraint_bits = Vec::new();
         let mut base_mlpoly = Vec::new();
         let mut rho_prev_mlpoly = Vec::new();
         let mut rho_curr_mlpoly = Vec::new();
         let mut quotient_mlpoly = Vec::new();
 
-        for poly in &constraint_polys {
-            base_mlpoly.push(MultilinearPolynomial::from(poly.base.clone()));
-            rho_prev_mlpoly.push(MultilinearPolynomial::from(poly.rho_prev.clone()));
-            rho_curr_mlpoly.push(MultilinearPolynomial::from(poly.rho_curr.clone()));
-            quotient_mlpoly.push(MultilinearPolynomial::from(poly.quotient.clone()));
+        for poly in constraint_polys {
+            constraint_bits.push(poly.bit);
+            base_mlpoly.push(MultilinearPolynomial::from(poly.base));
+            rho_prev_mlpoly.push(MultilinearPolynomial::from(poly.rho_prev));
+            rho_curr_mlpoly.push(MultilinearPolynomial::from(poly.rho_curr));
+            quotient_mlpoly.push(MultilinearPolynomial::from(poly.quotient));
         }
 
         Self {
             params,
-            constraint_polys,
+            constraint_bits,
             g_poly: MultilinearPolynomial::LargeScalars(g_poly),
             eq_x,
             r_x,
@@ -170,7 +271,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
     }
 
     fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<Fq>) -> Fq {
-        // For zero-check sumcheck, input claim is 0
         Fq::zero()
     }
 
@@ -183,7 +283,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
         let total_evals = (0..x_half)
             .into_par_iter()
             .map(|x_idx| {
-                // We'll use eval_with_hint, so only get DEGREE evaluations of eq and g
                 let eq_x_evals = self
                     .eq_x
                     .sumcheck_evals_array::<DEGREE>(x_idx, BindingOrder::LowToHigh);
@@ -192,12 +291,9 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
                     .sumcheck_evals_array::<DEGREE>(x_idx, BindingOrder::LowToHigh);
 
                 let mut x_evals = [Fq::zero(); DEGREE];
-
-                // Batch constraints using gamma - start from gamma (not 1)
                 let mut gamma_power = self.gamma;
 
-                for (i, poly) in self.constraint_polys.iter().enumerate() {
-                    // Use sumcheck_evals for the first DEGREE points
+                for i in 0..self.constraint_bits.len() {
                     let base_evals_hint = self.base_mlpoly[i]
                         .sumcheck_evals_array::<DEGREE>(x_idx, BindingOrder::LowToHigh);
                     let rho_prev_evals_hint = self.rho_prev_mlpoly[i]
@@ -207,10 +303,9 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
                     let quotient_evals_hint = self.quotient_mlpoly[i]
                         .sumcheck_evals_array::<DEGREE>(x_idx, BindingOrder::LowToHigh);
 
-                    // Compute constraint at each evaluation point (only up to DEGREE)
                     for t in 0..DEGREE {
                         // base^{b_i}: if bit is true, use base; else use 1
-                        let base_power = if poly.bit {
+                        let base_power = if self.constraint_bits[i] {
                             base_evals_hint[t]
                         } else {
                             Fq::one()
@@ -236,13 +331,11 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
                 },
             );
 
-        // Use eval_with_hint to interpolate and get the 5th evaluation using previous claim
         UniPoly::from_evals_and_hint(previous_claim, &total_evals)
     }
 
     #[tracing::instrument(skip_all, name = "SquareAndMultiply::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: <Fq as JoltField>::Challenge, round: usize) {
-        // Bind constraint variable
         self.eq_x.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.g_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -261,14 +354,13 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
 
         self.round = round + 1;
 
-        // After all rounds, store individual claims
         if self.round == self.params.num_constraint_vars {
             self.base_claims.clear();
             self.rho_prev_claims.clear();
             self.rho_curr_claims.clear();
             self.quotient_claims.clear();
 
-            for i in 0..self.constraint_polys.len() {
+            for i in 0..self.constraint_bits.len() {
                 self.base_claims
                     .push(self.base_mlpoly[i].get_bound_coeff(0));
                 self.rho_prev_claims
@@ -287,39 +379,18 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
         transcript: &mut T,
         sumcheck_challenges: &[<Fq as JoltField>::Challenge],
     ) {
-        // Append individual virtual polynomial claims for each constraint
         let opening_point = OpeningPoint::<BIG_ENDIAN, Fq>::new(sumcheck_challenges.to_vec());
 
-        for i in 0..self.constraint_polys.len() {
-            accumulator.append_virtual(
+        for i in 0..self.constraint_bits.len() {
+            append_constraint_virtual_claims(
+                accumulator,
                 transcript,
-                VirtualPolynomial::RecursionBase(i),
+                i,
                 self.params.sumcheck_id,
-                opening_point.clone(),
+                &opening_point,
                 self.base_claims[i],
-            );
-
-            accumulator.append_virtual(
-                transcript,
-                VirtualPolynomial::RecursionRhoPrev(i),
-                self.params.sumcheck_id,
-                opening_point.clone(),
                 self.rho_prev_claims[i],
-            );
-
-            accumulator.append_virtual(
-                transcript,
-                VirtualPolynomial::RecursionRhoCurr(i),
-                self.params.sumcheck_id,
-                opening_point.clone(),
                 self.rho_curr_claims[i],
-            );
-
-            accumulator.append_virtual(
-                transcript,
-                VirtualPolynomial::RecursionQuotient(i),
-                self.params.sumcheck_id,
-                opening_point.clone(),
                 self.quotient_claims[i],
             );
         }
@@ -335,10 +406,10 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct SquareAndMultiplyVerifier {
     pub params: SquareAndMultiplyParams,
+    pub r_x: Vec<<Fq as JoltField>::Challenge>,
     pub gamma: Fq,
     pub num_constraints: usize,
     pub constraint_bits: Vec<bool>,
-    pub r_x: Vec<<Fq as JoltField>::Challenge>,
 }
 
 impl SquareAndMultiplyVerifier {
@@ -347,19 +418,19 @@ impl SquareAndMultiplyVerifier {
         constraint_bits: Vec<bool>,
         transcript: &mut T,
     ) -> Self {
-        // Get r_x challenges
         let r_x: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_vars)
             .map(|_| transcript.challenge_scalar_optimized::<Fq>())
             .collect();
 
         let gamma = transcript.challenge_scalar_optimized::<Fq>();
+        let num_constraints = params.num_constraints;
 
         Self {
-            num_constraints: params.num_constraints,
             params,
-            gamma: gamma.into(),
-            constraint_bits,
             r_x,
+            gamma: gamma.into(),
+            num_constraints,
+            constraint_bits,
         }
     }
 }
@@ -384,7 +455,6 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
     ) -> Fq {
         use crate::poly::eq_poly::EqPolynomial;
 
-        // Compute eq(r_x, r*) where r* is the sumcheck challenge point
         let r_x_fq: Vec<Fq> = self.r_x.iter().map(|c| (*c).into()).collect();
         let r_star_fq: Vec<Fq> = sumcheck_challenges
             .iter()
@@ -392,10 +462,7 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
             .map(|c| (*c).into())
             .collect();
         let eq_eval = EqPolynomial::mle(&r_x_fq, &r_star_fq);
-
-        // Get g(r*) evaluation by computing MLE of g at r*
         let g_eval = {
-            // Create g polynomial and evaluate at r*
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
             use jolt_optimizations::get_g_mle;
@@ -405,27 +472,12 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
             g_poly.evaluate_dot_product(&r_star_fq)
         };
 
-        // Get individual virtual polynomial claims for each constraint and batch
         let mut total = Fq::zero();
         let mut gamma_power = self.gamma;
 
         for i in 0..self.num_constraints {
-            let (_, base_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionBase(i),
-                self.params.sumcheck_id,
-            );
-            let (_, rho_prev_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionRhoPrev(i),
-                self.params.sumcheck_id,
-            );
-            let (_, rho_curr_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionRhoCurr(i),
-                self.params.sumcheck_id,
-            );
-            let (_, quotient_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionQuotient(i),
-                self.params.sumcheck_id,
-            );
+            let (base_claim, rho_prev_claim, rho_curr_claim, quotient_claim) =
+                get_constraint_virtual_claims(accumulator, i, self.params.sumcheck_id);
 
             // Compute the constraint: ρ_{i+1} - ρ_i^2 * base^{b_i} - q_i * g(x)
             let base_power = if self.constraint_bits[i] {
@@ -451,37 +503,15 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
         transcript: &mut T,
         sumcheck_challenges: &[<Fq as JoltField>::Challenge],
     ) {
-        // Verifier populates opening points for virtual polynomial claims
-        // The claims themselves are already in the accumulator from expected_output_claim
         let opening_point = OpeningPoint::<BIG_ENDIAN, Fq>::new(sumcheck_challenges.to_vec());
 
         for i in 0..self.num_constraints {
-            accumulator.append_virtual(
+            append_constraint_virtual_openings(
+                accumulator,
                 transcript,
-                VirtualPolynomial::RecursionBase(i),
+                i,
                 self.params.sumcheck_id,
-                opening_point.clone(),
-            );
-
-            accumulator.append_virtual(
-                transcript,
-                VirtualPolynomial::RecursionRhoPrev(i),
-                self.params.sumcheck_id,
-                opening_point.clone(),
-            );
-
-            accumulator.append_virtual(
-                transcript,
-                VirtualPolynomial::RecursionRhoCurr(i),
-                self.params.sumcheck_id,
-                opening_point.clone(),
-            );
-
-            accumulator.append_virtual(
-                transcript,
-                VirtualPolynomial::RecursionQuotient(i),
-                self.params.sumcheck_id,
-                opening_point.clone(),
+                &opening_point,
             );
         }
     }

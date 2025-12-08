@@ -22,30 +22,17 @@ use tracing::trace_span;
 /// matrix. Given the number of variables in the polynomial, and the desired "aspect
 /// ratio", returns the column and row size of that matrix.
 pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize, usize) {
-    eprintln!(
-        "Hyrax matrix_dimensions: num_vars = {}, matrix_aspect_ratio = {}",
-        num_vars, matrix_aspect_ratio
-    );
-
-    let mut row_size = (num_vars / 2).pow2();
-    row_size = (row_size * matrix_aspect_ratio.sqrt()).next_power_of_two();
-
-    eprintln!(
-        "  row_size = {}, row_size.log_2() = {}",
-        row_size,
-        row_size.log_2()
-    );
-
     if num_vars == 0 {
         panic!("Hyrax matrix_dimensions called with num_vars = 0!");
     }
+
+    let mut row_size = (num_vars / 2).pow2();
+    row_size = (row_size * matrix_aspect_ratio.sqrt()).next_power_of_two();
 
     let right_num_vars = std::cmp::min(row_size.log_2(), num_vars - 1);
     row_size = right_num_vars.pow2();
     let left_num_vars = num_vars - right_num_vars;
     let col_size = left_num_vars.pow2();
-
-    eprintln!("  final: col_size = {}, row_size = {}", col_size, row_size);
 
     (col_size, row_size)
 }
@@ -501,12 +488,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> Commitmen
         _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        eprintln!(
-            "Hyrax prove: poly.num_vars() = {:?}, opening_point.len() = {}",
-            poly.get_num_vars(),
-            opening_point.len()
-        );
-
         let dense_poly_owned;
         let dense_poly = match poly {
             MultilinearPolynomial::LargeScalars(dense) => dense,
@@ -535,8 +516,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> Commitmen
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        eprintln!("Hyrax CommitmentScheme::verify: opening_point.len() = {}", opening_point.len());
-
         let opening_point_field: Vec<F> = opening_point
             .iter()
             .map(|challenge| (*challenge).into())
