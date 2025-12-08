@@ -4,7 +4,7 @@
 
 use crate::field::OptimizedMul;
 use crate::field::{tracked_ark::TrackedFr, JoltField};
-use crate::impl_field_ops_inline;
+//use crate::impl_field_ops_inline;
 use allocative::Allocative;
 use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
