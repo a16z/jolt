@@ -1,4 +1,5 @@
 use allocative::Allocative;
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
@@ -47,9 +48,6 @@ impl<F: JoltField> MultiquadraticPolynomial<F> {
     /// Layout is product-order with the last variable as the fastest-varying
     /// coordinate. For each 1D slice (f0, f1) along a new dimension we write
     /// (f(0), f(1), f(∞)) = (f0, f1, f1 - f0), so ∞ stores the slope.
-    ///
-    /// TODO: special-case dim ∈ {1,2,3} with hand-unrolled code to reduce
-    /// loop overhead on small windows.
     #[inline(always)]
     pub fn expand_linear_grid_to_multiquadratic(
         input: &[F],      // initial buffer (size 2^dim)
@@ -60,15 +58,13 @@ impl<F: JoltField> MultiquadraticPolynomial<F> {
         let in_size = 1usize << dim;
         let out_size = 3usize.pow(dim as u32);
 
-        assert_eq!(input.len(), in_size);
-        assert_eq!(output.len(), out_size);
-        assert_eq!(tmp.len(), out_size);
+        debug_assert_eq!(input.len(), in_size);
+        debug_assert_eq!(output.len(), out_size);
+        debug_assert_eq!(tmp.len(), out_size);
 
         match dim {
             0 => {
-                if !input.is_empty() {
-                    output[0] = input[0];
-                }
+                output[0] = input[0];
                 return;
             }
             1 => {
@@ -334,7 +330,7 @@ impl<F: JoltField> MultiquadraticPolynomial<F> {
         let offset = first_coord_val; // z_0 lives at the units place in base-3
 
         E_active
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(eq_active_idx, eq_active_val)| {
                 let mut index = offset;
