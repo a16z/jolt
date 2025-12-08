@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::{array, mem};
 
 use allocative::Allocative;
+use ark_std::Zero;
 use itertools::chain;
 use tracer::instruction::Cycle;
 
@@ -412,50 +413,75 @@ impl<F: JoltField> Phase1Prover<F> {
         let mut Q_0_for_r_prod = vec![F::zero(); 1 << prefix_n_vars];
         let mut Q_1_for_r_prod = vec![F::zero(); 1 << prefix_n_vars];
 
-        // TODO: Improve if necessary. Currently not great memory access pattern.
+        const BLOCK_SIZE: usize = 32;
         (
-            &mut Q_0_for_r_outer,
-            &mut Q_1_for_r_outer,
-            &mut Q_0_for_r_prod,
-            &mut Q_1_for_r_prod,
+            Q_0_for_r_outer.par_chunks_mut(BLOCK_SIZE),
+            Q_1_for_r_outer.par_chunks_mut(BLOCK_SIZE),
+            Q_0_for_r_prod.par_chunks_mut(BLOCK_SIZE),
+            Q_1_for_r_prod.par_chunks_mut(BLOCK_SIZE),
         )
             .into_par_iter()
             .enumerate()
             .for_each(
                 |(
-                    x0,
+                    chunk_i,
                     (
-                        Q_0_for_r_outer_sum,
-                        Q_1_for_r_outer_sum,
-                        Q_0_for_r_prod_sum,
-                        Q_1_for_r_prod_sum,
+                        Q_0_for_r_outer_chunk,
+                        Q_1_for_r_outer_chunk,
+                        Q_0_for_r_prod_chunk,
+                        Q_1_for_r_prod_chunk,
                     ),
                 )| {
-                    for x1 in 0..1 << suffix_n_vars {
-                        let x = x0 + (x1 << prefix_n_vars);
-                        let ShiftSumcheckCycleState {
-                            unexpanded_pc,
-                            pc,
-                            is_virtual,
-                            is_first_in_sequence,
-                            is_noop,
-                        } = ShiftSumcheckCycleState::new(&trace[x], bytecode_preprocessing);
+                    let chunk_len = Q_0_for_r_outer_chunk.len();
+                    let mut Q_0_for_r_outer_unreduced = [F::Unreduced::<9>::zero(); BLOCK_SIZE];
+                    let mut Q_1_for_r_outer_unreduced = [F::Unreduced::<9>::zero(); BLOCK_SIZE];
+                    let mut Q_0_for_r_prod_unreduced = [F::Unreduced::<5>::zero(); BLOCK_SIZE];
+                    let mut Q_1_for_r_prod_unreduced = [F::Unreduced::<5>::zero(); BLOCK_SIZE];
 
-                        let mut v = F::from_u64(unexpanded_pc) + params.gamma_powers[1].mul_u64(pc);
-                        if is_virtual {
-                            v += params.gamma_powers[2];
-                        }
-                        if is_first_in_sequence {
-                            v += params.gamma_powers[3];
-                        }
-                        *Q_0_for_r_outer_sum += v * suffix_0_for_r_outer[x1];
-                        *Q_1_for_r_outer_sum += v * suffix_1_for_r_outer[x1];
+                    for x_hi in 0..1 << suffix_n_vars {
+                        for i in 0..chunk_len {
+                            let x_lo = chunk_i * BLOCK_SIZE + i;
+                            let x = x_lo + (x_hi << prefix_n_vars);
+                            let ShiftSumcheckCycleState {
+                                unexpanded_pc,
+                                pc,
+                                is_virtual,
+                                is_first_in_sequence,
+                                is_noop,
+                            } = ShiftSumcheckCycleState::new(&trace[x], bytecode_preprocessing);
 
-                        // Q += suffix * (1 - is_noop)
-                        if !is_noop {
-                            *Q_0_for_r_prod_sum += suffix_0_for_r_prod[x1];
-                            *Q_1_for_r_prod_sum += suffix_1_for_r_prod[x1];
+                            let mut v =
+                                F::from_u64(unexpanded_pc) + params.gamma_powers[1].mul_u64(pc);
+                            if is_virtual {
+                                v += params.gamma_powers[2];
+                            }
+                            if is_first_in_sequence {
+                                v += params.gamma_powers[3];
+                            }
+                            Q_0_for_r_outer_unreduced[i] +=
+                                v.mul_unreduced::<9>(suffix_0_for_r_outer[x_hi]);
+                            Q_1_for_r_outer_unreduced[i] +=
+                                v.mul_unreduced::<9>(suffix_1_for_r_outer[x_hi]);
+
+                            // Q += suffix * (1 - is_noop)
+                            if !is_noop {
+                                Q_0_for_r_prod_unreduced[i] +=
+                                    *suffix_0_for_r_prod[x_hi].as_unreduced_ref();
+                                Q_1_for_r_prod_unreduced[i] +=
+                                    *suffix_1_for_r_prod[x_hi].as_unreduced_ref();
+                            }
                         }
+                    }
+
+                    for i in 0..chunk_len {
+                        Q_0_for_r_outer_chunk[i] =
+                            F::from_montgomery_reduce(Q_0_for_r_outer_unreduced[i]);
+                        Q_1_for_r_outer_chunk[i] =
+                            F::from_montgomery_reduce(Q_1_for_r_outer_unreduced[i]);
+                        Q_0_for_r_prod_chunk[i] =
+                            F::from_barrett_reduce(Q_0_for_r_prod_unreduced[i]);
+                        Q_1_for_r_prod_chunk[i] =
+                            F::from_barrett_reduce(Q_1_for_r_prod_unreduced[i]);
                     }
                 },
             );
@@ -593,6 +619,12 @@ impl<F: JoltField> Phase2Prover<F> {
                     is_noop_eval,
                     trace_chunk,
                 )| {
+                    let mut unexpanded_pc_eval_unreduced = F::Unreduced::<5>::zero();
+                    let mut pc_eval_unreduced = F::Unreduced::<6>::zero();
+                    let mut is_virtual_eval_unreduced = F::Unreduced::<5>::zero();
+                    let mut is_first_in_sequence_eval_unreduced = F::Unreduced::<5>::zero();
+                    let mut is_noop_eval_unreduced = F::Unreduced::<5>::zero();
+
                     for (i, cycle) in trace_chunk.iter().enumerate() {
                         let ShiftSumcheckCycleState {
                             unexpanded_pc,
@@ -602,18 +634,25 @@ impl<F: JoltField> Phase2Prover<F> {
                             is_noop,
                         } = ShiftSumcheckCycleState::new(cycle, bytecode_preprocessing);
                         let eq_eval = eq_evals[i];
-                        *unexpanded_pc_eval += eq_eval.mul_u64(unexpanded_pc);
-                        *pc_eval += eq_eval.mul_u64(pc);
+                        unexpanded_pc_eval_unreduced += eq_eval.mul_u64_unreduced(unexpanded_pc);
+                        pc_eval_unreduced += eq_eval.mul_u64_unreduced(pc);
                         if is_virtual {
-                            *is_virtual_eval += eq_eval;
+                            is_virtual_eval_unreduced += *eq_eval.as_unreduced_ref();
                         }
                         if is_first_in_sequence {
-                            *is_first_in_sequence_eval += eq_eval;
+                            is_first_in_sequence_eval_unreduced += *eq_eval.as_unreduced_ref();
                         }
                         if is_noop {
-                            *is_noop_eval += eq_eval;
+                            is_noop_eval_unreduced += *eq_eval.as_unreduced_ref();
                         }
                     }
+
+                    *unexpanded_pc_eval = F::from_barrett_reduce(unexpanded_pc_eval_unreduced);
+                    *pc_eval = F::from_barrett_reduce(pc_eval_unreduced);
+                    *is_virtual_eval = F::from_barrett_reduce(is_virtual_eval_unreduced);
+                    *is_first_in_sequence_eval =
+                        F::from_barrett_reduce(is_first_in_sequence_eval_unreduced);
+                    *is_noop_eval = F::from_barrett_reduce(is_noop_eval_unreduced);
                 },
             );
 

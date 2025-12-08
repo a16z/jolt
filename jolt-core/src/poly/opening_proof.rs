@@ -171,6 +171,7 @@ pub enum SumcheckId {
     InstructionHammingWeight,
     InstructionReadRaf,
     InstructionRaVirtualization,
+    InstructionClaimReduction,
     RamReadWriteChecking,
     RamRafEvaluation,
     RamHammingWeight,
