@@ -32,6 +32,8 @@ unsafe impl Sync for SharedWitnessData {}
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
+    TrustedAdvice,
+    UntrustedAdvice,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -172,6 +174,7 @@ impl CommittedPolynomial {
     /// Generate witness data and compute tier 1 commitment for a single row
     pub fn stream_witness_and_commit_rows<F, PCS>(
         &self,
+        poly_idx: usize,
         setup: &PCS::ProverSetup,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         row_cycles: &[tracer::instruction::Cycle],
@@ -237,6 +240,7 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => panic!("We don't stream commit trusted or untrusted advice polynomials"), // TODO any better error handling?
         }
     }
 
@@ -380,8 +384,9 @@ impl CommittedPolynomial {
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
+                CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => panic!("We don't generate witness batch for trusted or untrusted advice polynomials"), // TODO any better error handling?
             }
-        }
+        }        
         results
     }
 
@@ -464,6 +469,7 @@ impl CommittedPolynomial {
                     one_hot_params.k_chunk,
                 ))
             }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => panic!("We don't generate witness for trusted or untrusted advice polynomials"), // TODO any better error handling?
         }
     }
 

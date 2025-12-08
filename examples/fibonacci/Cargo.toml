@@ -8,4 +8,5 @@ jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
 tracing-subscriber = "0.3"
 tracing = "0.1"
 guest = { package = "fibonacci-guest", path = "./guest" }
+rand = "0.9"
 

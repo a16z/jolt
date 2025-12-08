@@ -37,7 +37,7 @@ use crate::zkvm::{
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
-    witness::AllCommittedPolynomials,
+    witness::{AllCommittedPolynomials, CommittedPolynomial},
     ProverDebugInfo, Serializable,
 };
 use crate::{
@@ -172,14 +172,23 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .append_serializable(trusted_advice_commitment);
         }
 
+        tracing::info!("DEBUGG: Verifying stage 1");
         self.verify_stage1()?;
+        tracing::info!("DEBUGG: Verifying stage 2");
         self.verify_stage2()?;
+        tracing::info!("DEBUGG: Verifying stage 3");
         self.verify_stage3()?;
+        tracing::info!("DEBUGG: Verifying stage 4");
         self.verify_stage4()?;
+        tracing::info!("DEBUGG: Verifying stage 5");
         self.verify_stage5()?;
+        tracing::info!("DEBUGG: Verifying stage 6");
         self.verify_stage6()?;
+        tracing::info!("DEBUGG: Verifying trusted advice opening proofs");
         self.verify_trusted_advice_opening_proofs()?;
+        tracing::info!("DEBUGG: Verifying untrusted advice opening proofs");
         self.verify_untrusted_advice_opening_proofs()?;
+        tracing::info!("DEBUGG: Verifying stage 7");
         self.verify_stage7()?;
 
         Ok(())
@@ -470,12 +479,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             commitments_map.insert(*polynomial, commitment.clone());
         }
 
+        // Add trusted advice commitment if present
+        if let Some(trusted_commitment) = &self.trusted_advice_commitment {
+            commitments_map.insert(CommittedPolynomial::TrustedAdvice, trusted_commitment.clone());
+        }
+
         self.opening_accumulator
             .reduce_and_verify(
                 &self.preprocessing.generators,
                 &mut commitments_map,
                 &self.proof.reduced_opening_proof,
                 &mut self.transcript,
+                self.trusted_advice_commitment.is_some(),
             )
             .context("Stage 7")?;
 
