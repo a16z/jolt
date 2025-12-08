@@ -33,6 +33,7 @@ use crate::zkvm::{
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
+        claim_reductions::InstructionLookupsClaimReductionSumcheckVerifier,
         instruction_input::InstructionInputSumcheckVerifier, outer::OuterRemainingSumcheckVerifier,
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
@@ -237,6 +238,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
+        let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckVerifier::new(
+            self.proof.trace_length.log_2(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
@@ -245,6 +251,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &ram_raf_evaluation,
                 &ram_read_write_checking,
                 &ram_output_check,
+                &instruction_claim_reduction,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
