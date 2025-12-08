@@ -48,55 +48,54 @@ pub fn compute_constraint_formula(
     rho_curr - rho_prev.square() * base_power - quotient * g_val
 }
 
-/// Row type offsets for the interleaved matrix layout.
-/// Layout: row = offset * num_constraints_padded + constraint_index
-/// This puts offset bits HIGH-order so they remain unbound after Phase 2 of recursion sum-check.
+/// Polynomial types stored in the matrix
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-pub enum RowOffset {
+pub enum PolyType {
     Base = 0,
     RhoPrev = 1,
     RhoCurr = 2,
     Quotient = 3,
 }
 
-impl RowOffset {
-    pub const NUM_OFFSETS: usize = 4;
-    pub const NUM_OFFSET_BITS: usize = 2;
+impl PolyType {
+    pub const NUM_TYPES: usize = 4;
 
-    pub fn all() -> [RowOffset; 4] {
+    pub fn all() -> [PolyType; 4] {
         [
-            RowOffset::Base,
-            RowOffset::RhoPrev,
-            RowOffset::RhoCurr,
-            RowOffset::Quotient,
+            PolyType::Base,
+            PolyType::RhoPrev,
+            PolyType::RhoCurr,
+            PolyType::Quotient,
         ]
     }
 
-    pub fn to_bits(self) -> [Fq; 2] {
-        let val = self as usize;
-        [
-            if val & 1 == 1 { Fq::one() } else { Fq::zero() },
-            if val & 2 == 2 { Fq::one() } else { Fq::zero() },
-        ]
+    /// Get polynomial type from row index
+    pub fn from_row_index(row_idx: usize, num_constraints: usize) -> Self {
+        match row_idx / num_constraints {
+            0 => PolyType::Base,
+            1 => PolyType::RhoPrev,
+            2 => PolyType::RhoCurr,
+            3 => PolyType::Quotient,
+            _ => panic!("Invalid row index"),
+        }
     }
 }
 
 /// Giant multilinear matrix M(s, x) that stores all Dory polynomials in a single structure.
 ///
-/// Layout: M(offset_bits, constraint_bits, x_bits)
-/// - offset_bits: 2 bits (high-order in row dimension) for row type [Base, RhoPrev, RhoCurr, Quotient]
-/// - constraint_bits: log2(num_constraints_padded) bits for constraint index
-/// - x_bits: 4 bits (low-order) for Fq12 constraint variables
-///
-/// Row index = offset * num_constraints_padded + constraint_index
-/// This layout ensures offset bits are high-order, so they remain unbound after Phase 2.
+/// Layout: M(s, x) where s is the row index and x are the constraint variables
+/// Physical layout: rows are organized as [all base] [all rho_prev] [all rho_curr] [all quotient]
+/// Row index = poly_type * num_constraints_padded + constraint_index
 pub struct DoryMultilinearMatrix {
-    /// Number of constraint index variables (log2(num_constraints_padded))
-    pub num_constraint_index_vars: usize,
+    /// Number of s variables (log2(num_rows))
+    pub num_s_vars: usize,
 
     /// Number of constraint variables (x) - fixed at 4 for Fq12
     pub num_constraint_vars: usize,
+
+    /// Number of constraint index variables (bits needed to index constraints)
+    pub num_constraint_index_vars: usize,
 
     /// Number of constraints (before padding)
     pub num_constraints: usize,
@@ -107,7 +106,7 @@ pub struct DoryMultilinearMatrix {
     /// Total number of rows: 4 * num_constraints_padded
     pub num_rows: usize,
 
-    /// Total M variables: num_constraint_index_vars + 2 (offset) + num_constraint_vars
+    /// Total M variables: num_s_vars + num_constraint_vars
     pub num_vars: usize,
 
     /// Flattened storage: rows concatenated together
@@ -117,14 +116,9 @@ pub struct DoryMultilinearMatrix {
 }
 
 impl DoryMultilinearMatrix {
-    /// Get row index for a given offset and constraint index
-    pub fn row_index(&self, offset: RowOffset, constraint_idx: usize) -> usize {
-        (offset as usize) * self.num_constraints_padded + constraint_idx
-    }
-
-    /// Total number of row index variables (constraint_index_vars + offset_bits)
-    pub fn num_row_vars(&self) -> usize {
-        self.num_constraint_index_vars + RowOffset::NUM_OFFSET_BITS
+    /// Get row index for a given polynomial type and constraint index
+    pub fn row_index(&self, poly_type: PolyType, constraint_idx: usize) -> usize {
+        (poly_type as usize) * self.num_constraints_padded + constraint_idx
     }
 
     /// Get the storage offset for accessing a specific row's polynomial
@@ -141,16 +135,15 @@ impl DoryMultilinearMatrix {
         poly.evaluate(constraint_vars)
     }
 
-    /// Evaluate M(row_vars, x) where row_vars select the row and x is the evaluation point
-    pub fn evaluate(&self, row_vars: &[Fq], constraint_vars: &[Fq]) -> Fq {
-        let num_row_vars = self.num_row_vars();
-        assert_eq!(row_vars.len(), num_row_vars);
+    /// Evaluate M(s, x) where s selects the row and x is the evaluation point
+    pub fn evaluate(&self, s_vars: &[Fq], constraint_vars: &[Fq]) -> Fq {
+        assert_eq!(s_vars.len(), self.num_s_vars);
         assert_eq!(constraint_vars.len(), self.num_constraint_vars);
 
         let mut result = Fq::zero();
         for row in 0..self.num_rows {
-            let row_binary = index_to_binary(row, num_row_vars);
-            let eq_eval = EqPolynomial::mle(&row_binary, row_vars);
+            let row_binary = index_to_binary(row, self.num_s_vars);
+            let eq_eval = EqPolynomial::mle(&row_binary, s_vars);
 
             let row_poly_eval = self.evaluate_row(row, constraint_vars);
             result += eq_eval * row_poly_eval;
@@ -159,17 +152,14 @@ impl DoryMultilinearMatrix {
     }
 }
 
-/// Builder for constructing the giant multilinear matrix with interleaved layout.
+/// Builder for constructing the giant multilinear matrix.
 ///
-/// Layout: row = offset * num_constraints_padded + constraint_index
-/// - Rows [0, n): base polynomials (offset=0)
-/// - Rows [n, 2n): rho_prev polynomials (offset=1)
-/// - Rows [2n, 3n): rho_curr polynomials (offset=2)
-/// - Rows [3n, 4n): quotient polynomials (offset=3)
+/// Physical layout: rows are organized as [all base] [all rho_prev] [all rho_curr] [all quotient]
+/// Row index = poly_type * num_constraints_padded + constraint_index
 pub struct DoryMatrixBuilder {
     num_constraint_vars: usize,
-    /// Rows grouped by offset type: [base_rows, rho_prev_rows, rho_curr_rows, quotient_rows]
-    rows_by_offset: [Vec<Vec<Fq>>; 4],
+    /// Rows grouped by polynomial type: [base_rows, rho_prev_rows, rho_curr_rows, quotient_rows]
+    rows_by_type: [Vec<Vec<Fq>>; 4],
     /// Bits for each constraint
     bits: Vec<bool>,
 }
@@ -178,7 +168,7 @@ impl DoryMatrixBuilder {
     pub fn new(num_constraint_vars: usize) -> Self {
         Self {
             num_constraint_vars,
-            rows_by_offset: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            rows_by_type: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             bits: Vec::new(),
         }
     }
@@ -198,22 +188,22 @@ impl DoryMatrixBuilder {
         for step in 0..n {
             // Base: always store a(x), independent of bit
             let base_row = base_mle.clone();
-            self.rows_by_offset[RowOffset::Base as usize].push(base_row);
+            self.rows_by_type[PolyType::Base as usize].push(base_row);
 
             // RhoPrev: ρ_step
             let rho_prev = witness.rho_mles[step].clone();
             assert_eq!(rho_prev.len(), 1 << self.num_constraint_vars);
-            self.rows_by_offset[RowOffset::RhoPrev as usize].push(rho_prev);
+            self.rows_by_type[PolyType::RhoPrev as usize].push(rho_prev);
 
             // RhoCurr: ρ_{step+1}
             let rho_curr = witness.rho_mles[step + 1].clone();
             assert_eq!(rho_curr.len(), 1 << self.num_constraint_vars);
-            self.rows_by_offset[RowOffset::RhoCurr as usize].push(rho_curr);
+            self.rows_by_type[PolyType::RhoCurr as usize].push(rho_curr);
 
             // Quotient: Q_step
             let quotient = witness.quotient_mles[step].clone();
             assert_eq!(quotient.len(), 1 << self.num_constraint_vars);
-            self.rows_by_offset[RowOffset::Quotient as usize].push(quotient);
+            self.rows_by_type[PolyType::Quotient as usize].push(quotient);
 
             // Store bit for this constraint
             self.bits.push(witness.bits[step]);
@@ -221,16 +211,16 @@ impl DoryMatrixBuilder {
     }
 
     pub fn build(self) -> (DoryMultilinearMatrix, Vec<MatrixConstraint>) {
-        let num_constraints = self.rows_by_offset[0].len();
+        let num_constraints = self.rows_by_type[0].len();
         assert!(num_constraints > 0, "No constraints added");
 
         // Verify all row types have the same number of constraints
-        for offset in RowOffset::all() {
+        for poly_type in PolyType::all() {
             assert_eq!(
-                self.rows_by_offset[offset as usize].len(),
+                self.rows_by_type[poly_type as usize].len(),
                 num_constraints,
                 "Row type {:?} has wrong number of constraints",
-                offset
+                poly_type
             );
         }
         assert_eq!(
@@ -239,41 +229,45 @@ impl DoryMatrixBuilder {
             "Number of bits must match number of constraints"
         );
 
-        // Pad to power of 2
-        let num_constraint_index_vars = (num_constraints as f64).log2().ceil() as usize;
-        let num_constraints_padded = 1 << num_constraint_index_vars;
+        // Pad constraints to power of 2
+        let num_constraints_bits = (num_constraints as f64).log2().ceil() as usize;
+        let num_constraints_padded = 1 << num_constraints_bits;
 
         // Total rows = 4 * num_constraints_padded
-        let num_rows = RowOffset::NUM_OFFSETS * num_constraints_padded;
+        let num_rows = PolyType::NUM_TYPES * num_constraints_padded;
+
+        // Calculate number of s variables needed
+        let num_s_vars = (num_rows as f64).log2().ceil() as usize;
+        assert_eq!(1 << num_s_vars, num_rows); // Should be exact
+
         let row_size = 1 << self.num_constraint_vars;
         let zero_row = vec![Fq::zero(); row_size];
 
         let mut evaluations = Vec::with_capacity(num_rows * row_size);
 
         // Layout: rows are organized as [all base] [all rho_prev] [all rho_curr] [all quotient]
-        for offset in RowOffset::all() {
-            let rows = &self.rows_by_offset[offset as usize];
+        for poly_type in PolyType::all() {
+            let rows = &self.rows_by_type[poly_type as usize];
 
             // For all row types, use as-is (no baking)
             for row in rows {
                 evaluations.extend_from_slice(row);
             }
 
-            // Pad this offset section to num_constraints_padded
+            // Pad this section to num_constraints_padded
             for _ in rows.len()..num_constraints_padded {
                 evaluations.extend_from_slice(&zero_row);
             }
         }
 
         let matrix = DoryMultilinearMatrix {
-            num_constraint_index_vars,
+            num_s_vars,
             num_constraint_vars: self.num_constraint_vars,
+            num_constraint_index_vars: num_constraints_bits,
             num_constraints,
             num_constraints_padded,
             num_rows,
-            num_vars: num_constraint_index_vars
-                + RowOffset::NUM_OFFSET_BITS
-                + self.num_constraint_vars,
+            num_vars: num_s_vars + self.num_constraint_vars,
             evaluations,
         };
 
@@ -381,57 +375,147 @@ impl ConstraintSystem {
         self.constraints.len()
     }
 
-    /// Number of constraint index variables (for binding in Phase 2)
-    pub fn num_constraint_index_vars(&self) -> usize {
-        self.matrix.num_constraint_index_vars
+    /// Number of s variables (for binding in Phase 2)
+    pub fn num_s_vars(&self) -> usize {
+        self.matrix.num_s_vars
     }
 
-    /// Total variables: x (4) + constraint_index + offset (2)
+    /// Total variables: s + x
     pub fn num_vars(&self) -> usize {
         self.matrix.num_vars
     }
 
-    /// Evaluate the constraint system at a point in MLE variable order
-    ///
-    /// Point structure (little-endian): [x_vars (4), i_vars (num_constraint_index_vars), offset_bits (2)]
-    ///
-    /// F(x, i, offset) = Σ_j eq(i, j) * C_j(x)
-    /// where C_j(x) = ρ_curr(x) - ρ_prev(x)² × base(x)^{b_j} - quotient(x) × g(x)
-    ///
-    /// Note: offset bits are not used in constraint evaluation - they only affect which
-    /// row polynomials are accessed in PCS openings. For constraint verification,
-    /// we use all 4 row types (base, rho_prev, rho_curr, quotient) for each constraint.
-    pub fn evaluate(&self, point: &[Fq]) -> Fq {
-        let num_x_vars = self.matrix.num_constraint_vars;
-        let num_i_vars = self.num_constraint_index_vars();
+    /// Extract constraint polynomials for square-and-multiply sumcheck (Phase 1)
+    pub fn extract_constraint_polynomials(&self) -> Vec<crate::subprotocols::square_and_multiply::ConstraintPolynomials> {
+        let mut polys = Vec::new();
+        let num_constraint_vars = self.matrix.num_constraint_vars;
+        let row_size = 1 << num_constraint_vars;
 
-        // Split point: [x_vars, i_vars, offset_bits]
-        let (x_vars, rest) = point.split_at(num_x_vars);
-        let (i_vars, _offset_bits) = rest.split_at(num_i_vars);
+        for (idx, constraint) in self.constraints.iter().enumerate() {
+            // Extract polynomial data from the matrix for each constraint
+            let base = self.extract_row_poly(PolyType::Base, idx, row_size);
+            let rho_prev = self.extract_row_poly(PolyType::RhoPrev, idx, row_size);
+            let rho_curr = self.extract_row_poly(PolyType::RhoCurr, idx, row_size);
+            let quotient = self.extract_row_poly(PolyType::Quotient, idx, row_size);
+
+            polys.push(crate::subprotocols::square_and_multiply::ConstraintPolynomials {
+                base,
+                rho_prev,
+                rho_curr,
+                quotient,
+                bit: constraint.bit,
+                constraint_index: constraint.constraint_index,
+            });
+        }
+
+        polys
+    }
+
+    /// Helper to extract a row polynomial from the matrix
+    fn extract_row_poly(&self, poly_type: PolyType, constraint_idx: usize, row_size: usize) -> Vec<Fq> {
+        let type_start = (poly_type as usize) * self.matrix.num_constraints_padded * row_size;
+        let row_start = type_start + constraint_idx * row_size;
+        let row_end = row_start + row_size;
+        self.matrix.evaluations[row_start..row_end].to_vec()
+    }
+
+    /// Evaluate μ at a given point s
+    /// This is used for testing/debugging - the actual evaluation should use the multilinear polynomial
+    pub fn evaluate_mu_at_binary_point(
+        base_claim: Fq,
+        rho_prev_claim: Fq,
+        rho_curr_claim: Fq,
+        quotient_claim: Fq,
+        s_binary: &[Fq],
+        num_constraints_padded: usize,
+    ) -> Fq {
+        // Convert binary point to index (for testing only)
+        let mut s_index = 0usize;
+        for (i, &bit) in s_binary.iter().enumerate() {
+            if bit == Fq::one() {
+                s_index |= 1 << i;
+            }
+        }
+
+        // Determine which polynomial type this row index corresponds to
+        let poly_type = PolyType::from_row_index(s_index, num_constraints_padded);
+
+        match poly_type {
+            PolyType::Base => base_claim,
+            PolyType::RhoPrev => rho_prev_claim,
+            PolyType::RhoCurr => rho_curr_claim,
+            PolyType::Quotient => quotient_claim,
+        }
+    }
+
+    /// Evaluate the constraint system for Phase 1 sumcheck
+    ///
+    /// Takes only x variables and evaluates F(x) = Σ_i γ^i * C_i(x)
+    /// This is used in the square-and-multiply sumcheck.
+    pub fn evaluate_constraints_batched(&self, x_vars: &[Fq], gamma: Fq) -> Fq {
+        assert_eq!(x_vars.len(), self.matrix.num_constraint_vars);
 
         let mut result = Fq::zero();
+        let mut gamma_power = gamma;
 
         for constraint in self.constraints.iter() {
-            let i_binary = index_to_binary(constraint.constraint_index, num_i_vars);
-            let eq_eval = EqPolynomial::mle(&i_binary, i_vars);
-
             let constraint_eval = self.evaluate_constraint(constraint, x_vars);
-            result += eq_eval * constraint_eval;
+            result += gamma_power * constraint_eval;
+            gamma_power *= gamma;
         }
 
         result
     }
 
-    /// Evaluate a single constraint C_i(x) using the new matrix layout.
-    /// Row indices are computed from constraint_index.
+    /// Evaluate the full constraint system at a point (for testing)
+    ///
+    /// Point structure: [x_vars, s_vars]
+    /// Returns F(x, s) where s selects which constraint to evaluate
+    pub fn evaluate(&self, point: &[Fq]) -> Fq {
+        let num_x_vars = self.matrix.num_constraint_vars;
+        let num_s_vars = self.matrix.num_s_vars;
+
+        assert_eq!(point.len(), num_x_vars + num_s_vars);
+
+        // Split point: [x_vars, s_vars]
+        let (x_vars, s_vars) = point.split_at(num_x_vars);
+
+        // We only evaluate constraints here, not the matrix rows
+        // So we need to map s to constraint index
+        let num_constraint_bits = (self.num_constraints() as f64).log2().ceil() as usize;
+        let num_constraints_padded = 1 << num_constraint_bits;
+
+        let mut result = Fq::zero();
+
+        // For each constraint, check if s selects it
+        for constraint in self.constraints.iter() {
+            // s encodes both poly type and constraint index
+            // For constraint evaluation, we treat all poly types of a constraint the same
+            let constraint_padded_idx = constraint.constraint_index;
+
+            // Check all 4 row indices that correspond to this constraint
+            for poly_type in PolyType::all() {
+                let row_idx = (poly_type as usize) * num_constraints_padded + constraint_padded_idx;
+                let row_binary = index_to_binary(row_idx, num_s_vars);
+                let eq_eval = EqPolynomial::mle(&row_binary, s_vars);
+
+                let constraint_eval = self.evaluate_constraint(constraint, x_vars);
+                result += eq_eval * constraint_eval;
+            }
+        }
+
+        result
+    }
+
+    /// Evaluate a single constraint C_i(x) using the matrix layout.
     fn evaluate_constraint(&self, constraint: &MatrixConstraint, x: &[Fq]) -> Fq {
         let idx = constraint.constraint_index;
 
-        // Get row indices using the new layout
-        let base_row = self.matrix.row_index(RowOffset::Base, idx);
-        let rho_prev_row = self.matrix.row_index(RowOffset::RhoPrev, idx);
-        let rho_curr_row = self.matrix.row_index(RowOffset::RhoCurr, idx);
-        let quotient_row = self.matrix.row_index(RowOffset::Quotient, idx);
+        // Get row indices using the layout
+        let base_row = self.matrix.row_index(PolyType::Base, idx);
+        let rho_prev_row = self.matrix.row_index(PolyType::RhoPrev, idx);
+        let rho_curr_row = self.matrix.row_index(PolyType::RhoCurr, idx);
+        let quotient_row = self.matrix.row_index(PolyType::Quotient, idx);
 
         // Evaluate each row polynomial at x
         let base_eval = self.matrix.evaluate_row(base_row, x); // a(x)
@@ -449,13 +533,9 @@ impl ConstraintSystem {
         rho_curr - rho_prev.square() * base_power - quotient * g_eval
     }
 
-    /// Evaluate the exponent MLE Σ_i b_i eq(z, i) at a point in index-variable space.
-    ///
-    /// `i_point` is in the same variable order as used for `num_constraint_index_vars`.
-    pub fn exponent_eval_at(&self, i_point: &[Fq]) -> Fq {
-        // MLE semantics: exponent_mle is defined on {0,1}^{num_i_bits}
-        // and DensePolynomial::evaluate expects the point in the same convention as g_poly
-        self.exponent_mle.evaluate(i_point)
+    /// Evaluate the exponent MLE at a constraint index point
+    pub fn exponent_eval_at(&self, constraint_index_point: &[Fq]) -> Fq {
+        self.exponent_mle.evaluate(constraint_index_point)
     }
 
     #[cfg(test)]
@@ -477,10 +557,10 @@ impl ConstraintSystem {
                 }
 
                 // Evaluate constraint C_i(x)
-                let base_row = self.matrix.row_index(RowOffset::Base, idx);
-                let rho_prev_row = self.matrix.row_index(RowOffset::RhoPrev, idx);
-                let rho_curr_row = self.matrix.row_index(RowOffset::RhoCurr, idx);
-                let quotient_row = self.matrix.row_index(RowOffset::Quotient, idx);
+                let base_row = self.matrix.row_index(PolyType::Base, idx);
+                let rho_prev_row = self.matrix.row_index(PolyType::RhoPrev, idx);
+                let rho_curr_row = self.matrix.row_index(PolyType::RhoCurr, idx);
+                let quotient_row = self.matrix.row_index(PolyType::Quotient, idx);
 
                 let base_eval = self.matrix.evaluate_row(base_row, &x_binary);
                 let rho_prev = self.matrix.evaluate_row(rho_prev_row, &x_binary);

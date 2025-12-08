@@ -530,6 +530,11 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
+    // Recursion protocol virtual polynomials - indexed by constraint index
+    RecursionBase(usize),      // a(x) values for constraint i
+    RecursionRhoPrev(usize),   // ρ_j values for constraint i
+    RecursionRhoCurr(usize),   // ρ_{j+1} values for constraint i
+    RecursionQuotient(usize),  // Q_j values for constraint i
 }
 
 pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock::new(|| {
@@ -571,6 +576,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::RamValInit,
         VirtualPolynomial::RamValFinal,
         VirtualPolynomial::RamHammingWeight,
+        // Note: Recursion virtual polynomials are not included here as they are indexed
     ];
     for flag in CircuitFlags::iter() {
         polynomials.push(VirtualPolynomial::OpFlags(flag));

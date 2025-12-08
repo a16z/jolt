@@ -173,11 +173,14 @@ pub enum SumcheckId {
     BytecodeReadRaf,
     BytecodeBooleanity,
     BytecodeHammingWeight,
-    RecursionZeroCheck,
-    RecursionBase,
-    RecursionRhoPrev,
-    RecursionRhoCurr,
-    RecursionQuotient,
+    RecursionZeroCheck, // Keep for backward compatibility
+    RecursionBase,      // Keep for backward compatibility
+    RecursionRhoPrev,   // Keep for backward compatibility
+    RecursionRhoCurr,   // Keep for backward compatibility
+    RecursionQuotient,  // Keep for backward compatibility
+    // New recursion protocol sumcheck IDs
+    SquareAndMultiply,       // Phase 1: constraint verification
+    RecursionVirtualization, // Phase 2: virtualization check
     OpeningReduction,
 }
 
