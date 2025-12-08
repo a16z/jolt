@@ -1013,6 +1013,44 @@ where
 
         (sumcheck_proof, r_sumcheck, claims)
     }
+
+    /// Proves a single opening directly without reduction.
+    /// This function requires that the accumulator contains exactly one opening.
+    /// The polynomial must be provided via a HashMap similar to reduce_and_prove.
+    pub fn prove_single<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        &mut self,
+        polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut ProofTranscript,
+    ) -> Result<PCS::Proof, ProofVerifyError> {
+        // 1. Find all committed polynomial openings (ignore virtual ones)
+        let committed_openings: Vec<_> = self.openings.iter()
+            .filter(|(id, _)| matches!(id, OpeningId::Committed(_, _)))
+            .collect();
+
+        // Check exactly one committed opening
+        if committed_openings.len() != 1 {
+            return Err(ProofVerifyError::InternalError);
+        }
+
+        // 2. Get the single committed opening and polynomial ID
+        let (opening_id, (opening_point, _opening_claim)) = committed_openings[0];
+
+        let poly_id = match opening_id {
+            OpeningId::Committed(poly_id, _) => poly_id,
+            _ => unreachable!("Already filtered for committed polynomials"),
+        };
+
+        // 3. Get the polynomial from the provided map
+        let polynomial = polynomials
+            .get(poly_id)
+            .ok_or(ProofVerifyError::InternalError)?;
+
+        // 4. Direct PCS proof (no sumcheck, no batching, no hints)
+        let proof = PCS::prove(pcs_setup, polynomial, &opening_point.r, None, transcript);
+
+        Ok(proof)
+    }
 }
 
 impl<F> Default for VerifierOpeningAccumulator<F>
@@ -1107,12 +1145,17 @@ where
             );
         }
 
+        let key = OpeningId::Committed(polynomial, sumcheck);
         let claim = self
             .openings
-            .get(&OpeningId::Committed(polynomial, sumcheck))
+            .get(&key)
             .unwrap()
             .1;
         transcript.append_scalar(&claim);
+
+        // Update the opening point in the map (similar to append_virtual)
+        let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
+        self.openings.insert(key, (opening_point_struct, claim));
 
         self.sumchecks
             .push(OpeningProofReductionSumcheckVerifier::new(
@@ -1331,6 +1374,41 @@ where
             instances,
             &mut VerifierOpeningAccumulator::new(self.log_T),
             transcript,
+        )
+    }
+
+    /// Verifies a single opening directly without reduction.
+    /// This function requires that the accumulator contains exactly one opening.
+    pub fn verify_single<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        proof: &PCS::Proof,
+        commitment: PCS::Commitment,
+        pcs_setup: &PCS::VerifierSetup,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        // 1. Find all committed polynomial openings (ignore virtual ones)
+        let committed_openings: Vec<_> = self.openings.iter()
+            .filter(|(id, _)| matches!(id, OpeningId::Committed(_, _)))
+            .collect();
+
+        // Check exactly one committed opening
+        if committed_openings.len() != 1 {
+            return Err(ProofVerifyError::InvalidOpeningProof);
+        }
+
+        // 2. Get the single committed opening
+        let (_opening_id, (opening_point, opening_claim)) = committed_openings[0];
+
+        eprintln!("verify_single: opening_point.r.len() = {}", opening_point.r.len());
+
+        // 3. Direct PCS verification (no sumcheck, no batching)
+        PCS::verify(
+            proof,
+            pcs_setup,
+            transcript,
+            &opening_point.r,
+            opening_claim,
+            &commitment,
         )
     }
 }

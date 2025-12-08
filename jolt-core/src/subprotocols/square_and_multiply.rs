@@ -512,9 +512,9 @@ mod tests {
 
         // Initialize Dory globals
         DoryGlobals::reset();
-        DoryGlobals::initialize(1 << 2, 1 << 2);
+        DoryGlobals::initialize(1 << 4, 1 << 4);
 
-        let num_vars = 4; // For Fq12
+        let num_vars = 8; // For Fq12
         let mut rng = thread_rng();
 
         // Setup Dory prover and verifier
@@ -578,8 +578,8 @@ mod tests {
         );
 
         // Create prover accumulator for Phase 1
-        // log_T is typically the log of the trace length
-        let log_T = 20; // Reasonable default for testing
+        // log_T should match the constraint system size
+        let log_T = constraint_system.num_vars();
         let mut prover_accumulator = ProverOpeningAccumulator::<Fq>::new(log_T);
 
         // Run Phase 1 sumcheck
@@ -599,7 +599,7 @@ mod tests {
 
         // ============ VERIFICATION ============
 
-        // Create verifier accumulator
+        // Create verifier accumulator with same log_T
         let mut verifier_accumulator = VerifierOpeningAccumulator::<Fq>::new(log_T);
 
         // Populate virtual polynomial claims in verifier accumulator from prover
@@ -718,5 +718,104 @@ mod tests {
             r_phase2_ver.len(),
             "Phase 2 challenge lengths should match"
         );
+
+        println!("\n============ FINAL STEP: Opening Proof with Hyrax ============");
+
+        // Import necessary types for Hyrax PCS
+        use crate::poly::commitment::hyrax::{Hyrax, HyraxCommitment};
+        use ark_grumpkin::Projective as GrumpkinProjective;
+        use std::collections::HashMap;
+
+        // Create polynomial map for opening proof
+        let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<Fq>> =
+            HashMap::new();
+
+        // Add the constraint matrix polynomial
+        let matrix_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
+        polynomials_map.insert(
+            CommittedPolynomial::DoryConstraintMatrix,
+            matrix_poly.clone(),
+        );
+
+        // Create empty hints map for Hyrax (doesn't need hints)
+        let opening_hints: HashMap<CommittedPolynomial, ()> = HashMap::new();
+
+        // Setup Hyrax with RATIO=2 (standard for Hyrax)
+        const RATIO: usize = 1;
+        type HyraxPCS = Hyrax<RATIO, GrumpkinProjective>;
+
+        // Setup prover generators
+        println!(
+            "constraint_system.matrix.num_vars = {}",
+            constraint_system.matrix.num_vars
+        );
+        let prover_setup = <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_prover(
+            constraint_system.matrix.num_vars
+        );
+
+        // Create polynomial map for prove_single
+        let matrix_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
+        let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<Fq>> =
+            HashMap::new();
+        polynomials_map.insert(
+            CommittedPolynomial::DoryConstraintMatrix,
+            matrix_poly.clone(),
+        );
+
+        // Run prove_single for the single opening from Phase 2
+        let opening_proof = prover_accumulator
+            .prove_single::<Blake2bTranscript, HyraxPCS>(
+                polynomials_map,
+                &prover_setup,
+                &mut prover_transcript,
+            )
+            .expect("prove_single should succeed");
+
+        println!("Opening proof generated successfully");
+
+        // Create commitments map for verifier
+        let mut commitments_map: HashMap<
+            CommittedPolynomial,
+            HyraxCommitment<RATIO, GrumpkinProjective>,
+        > = HashMap::new();
+
+        // Commit to the matrix polynomial using Hyrax (reuse matrix_poly from above)
+        let (matrix_commitment, _) =
+            <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::commit(
+                &matrix_poly,
+                &prover_setup,
+            );
+        commitments_map.insert(CommittedPolynomial::DoryConstraintMatrix, matrix_commitment);
+
+        // Setup verifier
+        let verifier_setup = <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_verifier(
+            &prover_setup
+        );
+
+        // Get the matrix commitment for verify_single
+        let matrix_commitment = commitments_map
+            .get(&CommittedPolynomial::DoryConstraintMatrix)
+            .expect("Matrix commitment should exist")
+            .clone();
+
+        // Verify the single opening proof
+        let verification_result = verifier_accumulator
+            .verify_single::<Blake2bTranscript, HyraxPCS>(
+                &opening_proof,
+                matrix_commitment,
+                &verifier_setup,
+                &mut verifier_transcript,
+            );
+
+        assert!(
+            verification_result.is_ok(),
+            "Opening proof verification should succeed: {:?}",
+            verification_result.err()
+        );
+
+        println!("\n✅ Full two-phase recursion protocol with Hyrax PCS completed successfully!");
+        println!("   - Phase 1: Square-and-Multiply sumcheck ✓");
+        println!("   - Phase 2: Virtualization sumcheck ✓");
+        println!("   - Opening proof with Hyrax PCS ✓");
     }
 }
