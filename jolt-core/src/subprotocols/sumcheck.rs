@@ -32,6 +32,12 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -48,7 +54,6 @@ impl BatchedSumcheck {
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
@@ -182,6 +187,12 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -199,7 +210,6 @@ impl BatchedSumcheck {
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
