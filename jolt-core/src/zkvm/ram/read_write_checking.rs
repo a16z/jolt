@@ -7,7 +7,7 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::sparse_matrix_poly::SparseMatrixPolynomial;
@@ -28,7 +28,6 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
@@ -49,6 +48,75 @@ use tracer::instruction::Cycle;
 
 /// Degree bound of the sumcheck round polynomials in [`RamReadWriteCheckingVerifier`].
 const DEGREE_BOUND: usize = 3;
+
+pub struct RamReadWriteCheckingParams<F: JoltField> {
+    K: usize,
+    T: usize,
+    gamma: F,
+    r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+impl<F: JoltField> RamReadWriteCheckingParams<F> {
+    pub fn new(
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+        one_hot_params: &OneHotParams,
+        trace_length: usize,
+    ) -> Self {
+        let gamma = transcript.challenge_scalar();
+        let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamReadValue,
+            SumcheckId::SpartanOuter,
+        );
+        RamReadWriteCheckingParams {
+            K: one_hot_params.ram_k,
+            T: trace_length,
+            gamma,
+            r_cycle_stage_1,
+        }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.K.log_2() + self.T.log_2()
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, rv_input_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamReadValue,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, wv_input_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+        rv_input_claim + self.gamma * wv_input_claim
+    }
+
+    fn normalize_opening_point(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        // Cycle variables are bound low-to-high
+        let r_cycle = sumcheck_challenges[..self.T.log_2()]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
+        // Address variables are bound low-to-high
+        let r_address = sumcheck_challenges[self.T.log_2()..]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
+        [r_address, r_cycle].concat().into()
+    }
+}
 
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
@@ -74,13 +142,6 @@ struct DataBuffers<F: JoltField> {
     dirty_indices: Vec<usize>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
-pub struct ReadWriteSumcheckClaims<F: JoltField> {
-    pub val_claim: F,
-    ra_claim: F,
-    inc_claim: F,
-}
-
 #[derive(Allocative)]
 pub struct RamReadWriteCheckingProver<F: JoltField> {
     val_init: Vec<F>,
@@ -92,34 +153,19 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
     #[allocative(skip)]
-    params: ReadWriteCheckingParams<F>,
+    params: RamReadWriteCheckingParams<F>,
 }
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
-    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::gen")]
-    pub fn gen(
-        initial_memory_state: &[u64],
+    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::initialize")]
+    pub fn initialize(
+        params: RamReadWriteCheckingParams<F>,
+        trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        trace: &[Cycle],
-        one_hot_params: &OneHotParams,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        initial_ram_state: &[u64],
     ) -> Self {
-        let params = ReadWriteCheckingParams::new(
-            trace.len(),
-            one_hot_params,
-            opening_accumulator,
-            transcript,
-        );
-
-        let r_prime = opening_accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamReadValue,
-                SumcheckId::SpartanOuter,
-            )
-            .0;
-
+        let r_prime = &params.r_cycle_stage_1;
         let eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
         let inc = CommittedPolynomial::RamInc.generate_witness(
             bytecode_preprocessing,
@@ -128,12 +174,12 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             None,
         );
         let sparse_matrix = SparseMatrixPolynomial::new(trace, memory_layout);
-        let val_init = initial_memory_state
+        let val_init = initial_ram_state
             .par_iter()
             .map(|x| F::from_u64(*x))
             .collect();
 
-        Self {
+        RamReadWriteCheckingProver {
             sparse_matrix,
             val_init,
             eq_r_prime,
@@ -337,16 +383,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteCheckingProver<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::compute_message")]
@@ -373,7 +411,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamVal,
@@ -405,40 +443,31 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
 }
 
 pub struct RamReadWriteCheckingVerifier<F: JoltField> {
-    params: ReadWriteCheckingParams<F>,
+    pub params: RamReadWriteCheckingParams<F>,
 }
 
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     pub fn new(
-        trace_len: usize,
-        one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        one_hot_params: &OneHotParams,
+        trace_length: usize,
     ) -> Self {
-        Self {
-            params: ReadWriteCheckingParams::new(
-                trace_len,
-                one_hot_params,
-                opening_accumulator,
-                transcript,
-            ),
-        }
+        let params = RamReadWriteCheckingParams::new(
+            opening_accumulator,
+            transcript,
+            one_hot_params,
+            trace_length,
+        );
+        RamReadWriteCheckingVerifier { params }
     }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RamReadWriteCheckingVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -446,7 +475,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r = self.params.get_opening_point(sumcheck_challenges);
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(self.params.K.log_2());
 
         let eq_eval_cycle = EqPolynomial::mle_endian(&self.params.r_cycle_stage_1, &r_cycle);
@@ -472,7 +501,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamVal,
@@ -493,68 +522,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
         );
-    }
-}
-
-struct ReadWriteCheckingParams<F: JoltField> {
-    K: usize,
-    T: usize,
-    gamma: F,
-    r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
-}
-
-impl<F: JoltField> ReadWriteCheckingParams<F> {
-    pub fn new(
-        trace_len: usize,
-        one_hot_params: &OneHotParams,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-    ) -> Self {
-        let gamma = transcript.challenge_scalar();
-        let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamReadValue,
-            SumcheckId::SpartanOuter,
-        );
-        Self {
-            K: one_hot_params.ram_k,
-            T: trace_len,
-            gamma,
-            r_cycle_stage_1,
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.K.log_2() + self.T.log_2()
-    }
-
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, rv_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamReadValue,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, wv_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamWriteValue,
-            SumcheckId::SpartanOuter,
-        );
-        rv_input_claim + self.gamma * wv_input_claim
-    }
-
-    fn get_opening_point(
-        &self,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        // Cycle variables are bound low-to-high
-        let r_cycle = sumcheck_challenges[..self.T.log_2()]
-            .iter()
-            .rev()
-            .cloned()
-            .collect::<Vec<_>>();
-        // Address variables are bound low-to-high
-        let r_address = sumcheck_challenges[self.T.log_2()..]
-            .iter()
-            .rev()
-            .cloned()
-            .collect::<Vec<_>>();
-        [r_address, r_cycle].concat().into()
     }
 }
