@@ -8,4 +8,3 @@ mod cycle_major;
 
 pub use address_major::ReadWriteMatrixAddressMajor;
 pub use cycle_major::{ReadWriteEntry, ReadWriteMatrixCycleMajor};
-

@@ -650,4 +650,3 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
         (ra.into(), val.into())
     }
 }
-

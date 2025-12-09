@@ -249,11 +249,8 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
             }
 
             // Determine even/odd column ranges
-            let (even_start, even_end, odd_start, odd_end) = if is_even {
-                (i, j, j, k)
-            } else {
-                (j, k, i, j)
-            };
+            let (even_start, even_end, odd_start, odd_end) =
+                if is_even { (i, j, j, k) } else { (j, k, i, j) };
 
             let mut ei = even_start;
             let mut oi = odd_start;
@@ -265,16 +262,28 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
             let mut odd_checkpoint = self.val_init.get_bound_coeff(odd_col_idx);
 
             while ei < even_end || oi < odd_end {
-                let even_row = if ei < even_end { Some(self.rows[ei]) } else { None };
-                let odd_row = if oi < odd_end { Some(self.rows[oi]) } else { None };
+                let even_row = if ei < even_end {
+                    Some(self.rows[ei])
+                } else {
+                    None
+                };
+                let odd_row = if oi < odd_end {
+                    Some(self.rows[oi])
+                } else {
+                    None
+                };
 
                 match (even_row, odd_row) {
                     (Some(er), Some(or)) if er == or => {
                         // Both columns have entry at same row
-                        let merged_val = self.vals[ei] + r.mul_0_optimized(self.vals[oi] - self.vals[ei]);
-                        let merged_rs1 = Self::merge_register_index(self.rs1_ras[ei], self.rs1_ras[oi]);
-                        let merged_rs2 = Self::merge_register_index(self.rs2_ras[ei], self.rs2_ras[oi]);
-                        let merged_rd = Self::merge_register_index(self.rd_was[ei], self.rd_was[oi]);
+                        let merged_val =
+                            self.vals[ei] + r.mul_0_optimized(self.vals[oi] - self.vals[ei]);
+                        let merged_rs1 =
+                            Self::merge_register_index(self.rs1_ras[ei], self.rs1_ras[oi]);
+                        let merged_rs2 =
+                            Self::merge_register_index(self.rs2_ras[ei], self.rs2_ras[oi]);
+                        let merged_rd =
+                            Self::merge_register_index(self.rd_was[ei], self.rd_was[oi]);
 
                         new_rows.push(er);
                         new_cols.push(col_pair);
@@ -290,7 +299,8 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
                     }
                     (Some(er), Some(or)) if er < or => {
                         // Even only
-                        let merged_val = self.vals[ei] + r.mul_0_optimized(odd_checkpoint - self.vals[ei]);
+                        let merged_val =
+                            self.vals[ei] + r.mul_0_optimized(odd_checkpoint - self.vals[ei]);
                         // Even column's register index stays (divided by 2 via table)
                         // Odd is implicit (no access), so stays NO_ACCESS if even had no access
                         let merged_rs1 = Self::merge_register_index(self.rs1_ras[ei], NO_ACCESS);
@@ -309,7 +319,8 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
                     }
                     (Some(_), Some(or)) => {
                         // Odd only (er > or)
-                        let merged_val = even_checkpoint + r.mul_0_optimized(self.vals[oi] - even_checkpoint);
+                        let merged_val =
+                            even_checkpoint + r.mul_0_optimized(self.vals[oi] - even_checkpoint);
                         let merged_rs1 = Self::merge_register_index(NO_ACCESS, self.rs1_ras[oi]);
                         let merged_rs2 = Self::merge_register_index(NO_ACCESS, self.rs2_ras[oi]);
                         let merged_rd = Self::merge_register_index(NO_ACCESS, self.rd_was[oi]);
@@ -326,7 +337,8 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
                     }
                     (Some(er), None) => {
                         // Even only (no odd remaining)
-                        let merged_val = self.vals[ei] + r.mul_0_optimized(odd_checkpoint - self.vals[ei]);
+                        let merged_val =
+                            self.vals[ei] + r.mul_0_optimized(odd_checkpoint - self.vals[ei]);
                         let merged_rs1 = Self::merge_register_index(self.rs1_ras[ei], NO_ACCESS);
                         let merged_rs2 = Self::merge_register_index(self.rs2_ras[ei], NO_ACCESS);
                         let merged_rd = Self::merge_register_index(self.rd_was[ei], NO_ACCESS);
@@ -343,7 +355,8 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
                     }
                     (None, Some(or)) => {
                         // Odd only (no even remaining)
-                        let merged_val = even_checkpoint + r.mul_0_optimized(self.vals[oi] - even_checkpoint);
+                        let merged_val =
+                            even_checkpoint + r.mul_0_optimized(self.vals[oi] - even_checkpoint);
                         let merged_rs1 = Self::merge_register_index(NO_ACCESS, self.rs1_ras[oi]);
                         let merged_rs2 = Self::merge_register_index(NO_ACCESS, self.rs2_ras[oi]);
                         let merged_rd = Self::merge_register_index(NO_ACCESS, self.rd_was[oi]);
@@ -384,8 +397,8 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
     fn merge_register_index(even_idx: u8, odd_idx: u8) -> u8 {
         match (even_idx == NO_ACCESS, odd_idx == NO_ACCESS) {
             (true, true) => NO_ACCESS,
-            (false, true) => even_idx,   // Keep original index!
-            (true, false) => odd_idx,    // Keep original index!
+            (false, true) => even_idx, // Keep original index!
+            (true, false) => odd_idx,  // Keep original index!
             (false, false) => {
                 // Both have access - shouldn't happen for same access type at same row
                 // (rs1 only reads one register per cycle)
@@ -412,7 +425,8 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
             "Must bind all address variables before materializing"
         );
         debug_assert_eq!(
-            self.eq_table.len(), K,
+            self.eq_table.len(),
+            K,
             "eq_table should have K={K} entries after all bindings"
         );
 
@@ -447,7 +461,14 @@ impl<F: JoltField> From<RegisterMatrixCycleMajor<F>> for RegisterMatrixAddressMa
     fn from(cycle_major: RegisterMatrixCycleMajor<F>) -> Self {
         let n = cycle_major.entries.len();
         let num_row_bits = if n > 0 {
-            cycle_major.entries.iter().map(|e| e.row).max().unwrap_or(0).next_power_of_two().trailing_zeros() as usize
+            cycle_major
+                .entries
+                .iter()
+                .map(|e| e.row)
+                .max()
+                .unwrap_or(0)
+                .next_power_of_two()
+                .trailing_zeros() as usize
         } else {
             0
         };
@@ -479,9 +500,21 @@ impl<F: JoltField> From<RegisterMatrixCycleMajor<F>> for RegisterMatrixAddressMa
             vals.push(entry.val_coeff);
 
             // Store register index if accessed, NO_ACCESS otherwise
-            rs1_ras.push(if entry.rs1_ra.is_some() { entry.col } else { NO_ACCESS });
-            rs2_ras.push(if entry.rs2_ra.is_some() { entry.col } else { NO_ACCESS });
-            rd_was.push(if entry.rd_wa.is_some() { entry.col } else { NO_ACCESS });
+            rs1_ras.push(if entry.rs1_ra.is_some() {
+                entry.col
+            } else {
+                NO_ACCESS
+            });
+            rs2_ras.push(if entry.rs2_ra.is_some() {
+                entry.col
+            } else {
+                NO_ACCESS
+            });
+            rd_was.push(if entry.rd_wa.is_some() {
+                entry.col
+            } else {
+                NO_ACCESS
+            });
         }
 
         // Build val_final from last entry in each column
@@ -546,19 +579,19 @@ mod tests {
         // Only even has access - keeps ORIGINAL index (not divided by 2!)
         assert_eq!(
             RegisterMatrixAddressMajorOptimized::<Fr>::merge_register_index(10, NO_ACCESS),
-            10  // NOT 5!
+            10 // NOT 5!
         );
 
         // Only odd has access - keeps ORIGINAL index
         assert_eq!(
             RegisterMatrixAddressMajorOptimized::<Fr>::merge_register_index(NO_ACCESS, 11),
-            11  // NOT 5!
+            11 // NOT 5!
         );
 
         // Both have access (shouldn't happen for same access type, but just in case)
         assert_eq!(
             RegisterMatrixAddressMajorOptimized::<Fr>::merge_register_index(10, 11),
-            10  // Keeps even's index
+            10 // Keeps even's index
         );
     }
 
@@ -578,8 +611,8 @@ mod tests {
         eq_table.update(r0);
 
         assert_eq!(eq_table.len(), 2);
-        assert_eq!(eq_table[0], Fr::one() - r0_f);  // (1-r_0) for even registers
-        assert_eq!(eq_table[1], r0_f);               // r_0 for odd registers
+        assert_eq!(eq_table[0], Fr::one() - r0_f); // (1-r_0) for even registers
+        assert_eq!(eq_table[1], r0_f); // r_0 for odd registers
 
         // After binding r_1: length 4
         let r1: <Fr as JoltField>::Challenge = 5u128.into();
@@ -610,17 +643,17 @@ mod tests {
 
         // Original register 4 (binary: 100) -> lowest bit is 0 (even)
         // Original register 5 (binary: 101) -> lowest bit is 1 (odd)
-        let mask = eq_table.len() - 1;  // = 1
-        assert_eq!(eq_table[4 & mask], Fr::one() - r0_f);  // eq_table[0]
-        assert_eq!(eq_table[5 & mask], r0_f);              // eq_table[1]
+        let mask = eq_table.len() - 1; // = 1
+        assert_eq!(eq_table[4 & mask], Fr::one() - r0_f); // eq_table[0]
+        assert_eq!(eq_table[5 & mask], r0_f); // eq_table[1]
 
         // After another binding
         let r1: <Fr as JoltField>::Challenge = 5u128.into();
         let r1_f = Fr::one() * r1;
         eq_table.update(r1);
 
-        let mask = eq_table.len() - 1;  // = 3
-        // Register 4 = 0b100, lowest 2 bits = 00
+        let mask = eq_table.len() - 1; // = 3
+                                       // Register 4 = 0b100, lowest 2 bits = 00
         assert_eq!(eq_table[4 & mask], (Fr::one() - r0_f) * (Fr::one() - r1_f));
         // Register 5 = 0b101, lowest 2 bits = 01
         assert_eq!(eq_table[5 & mask], r0_f * (Fr::one() - r1_f));

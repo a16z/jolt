@@ -18,8 +18,8 @@ use crate::poly::unipoly::UniPoly;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::ram::remap_address;
 
-use super::cycle_major::ReadWriteMatrixCycleMajor;
 use super::super::ColIndex;
+use super::cycle_major::ReadWriteMatrixCycleMajor;
 
 /// Represents the ra(k, j) and Val(k, j) polynomials for the RAM
 /// read/write-checking sumcheck in address-major (column-major) order.
@@ -1176,4 +1176,3 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixAddressMajor<F, I> {
         (ra.into(), val.into())
     }
 }
-

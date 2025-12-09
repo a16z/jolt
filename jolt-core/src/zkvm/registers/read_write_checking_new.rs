@@ -727,8 +727,16 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
                 // Merge even/odd entries by row
                 // Compute evaluations at x=0 and x=2 (for degree-2 polynomial)
                 while ei < mid || oi < end {
-                    let even_row = if ei < mid { Some(matrix.rows[ei]) } else { None };
-                    let odd_row = if oi < end { Some(matrix.rows[oi]) } else { None };
+                    let even_row = if ei < mid {
+                        Some(matrix.rows[ei])
+                    } else {
+                        None
+                    };
+                    let odd_row = if oi < end {
+                        Some(matrix.rows[oi])
+                    } else {
+                        None
+                    };
 
                     match (even_row, odd_row) {
                         (Some(er), Some(or)) if er == or => {

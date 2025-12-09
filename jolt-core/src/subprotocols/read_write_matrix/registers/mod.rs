@@ -10,4 +10,3 @@ mod cycle_major;
 pub use address_major::RegisterMatrixAddressMajor;
 pub use address_major_optimized::RegisterMatrixAddressMajorOptimized;
 pub use cycle_major::{RegisterEntry, RegisterMatrixCycleMajor};
-
