@@ -1557,7 +1557,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         DEGREE_BOUND
     }
 

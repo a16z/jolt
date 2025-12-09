@@ -45,7 +45,7 @@ impl<F: JoltField> HammingBooleanityParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for HammingBooleanityParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         DEGREE_BOUND
     }
 

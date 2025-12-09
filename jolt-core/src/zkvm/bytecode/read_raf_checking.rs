@@ -359,7 +359,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
 
             agg_round_poly
         } else {
-            let degree = <Self as SumcheckInstanceProver<F, T>>::degree(self);
+            let degree = <Self as SumcheckInstanceProver<F, T>>::degree(self, round);
 
             let out_len = self.gruen_eq_polys[0].E_out_current().len();
             let in_len = self.gruen_eq_polys[0].E_in_current().len();
@@ -1170,8 +1170,12 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
-    fn degree(&self) -> usize {
-        self.d + 1
+    fn degree(&self, round: usize) -> usize {
+        if round < self.log_K {
+            2 // ra and Val are multilinear in k
+        } else {
+            self.d + 1 // eq and each ra_i are multilinear in j
+        }
     }
 
     fn num_rounds(&self) -> usize {

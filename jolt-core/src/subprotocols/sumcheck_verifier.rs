@@ -11,9 +11,9 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
         )
     }
 
-    /// Returns the maximum degree of the sumcheck polynomial.
-    fn degree(&self) -> usize {
-        self.get_params().degree()
+    /// Returns the degree of the univriate polynomial sent in the given round of sumcheck
+    fn degree(&self, round: usize) -> usize {
+        self.get_params().degree(round)
     }
 
     /// Returns the number of rounds/variables in this sumcheck instance.
@@ -44,8 +44,8 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
 }
 
 pub trait SumcheckInstanceParams<F: JoltField> {
-    /// Returns the maximum degree of the sumcheck polynomial.
-    fn degree(&self) -> usize;
+    /// Returns the degree of the univriate polynomial sent in the given round of sumcheck
+    fn degree(&self, round: usize) -> usize;
 
     /// Returns the number of rounds/variables in this sumcheck instance.
     fn num_rounds(&self) -> usize;

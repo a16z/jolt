@@ -116,14 +116,16 @@ impl<F: JoltField> RamRaSumcheckParams<F> {
 
 impl<F: JoltField> SumcheckInstanceParams<F> for RamRaSumcheckParams<F> {
     /// Returns the degree of the sumcheck round polynomials.
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         self.d + 1
     }
 
+    /// The total number of rounds in this sumcheck
     fn num_rounds(&self) -> usize {
         self.T.log_2()
     }
 
+    /// The claimed sum proven by this sumcheck instance
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
         let (_, ra_claim_val) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
@@ -141,6 +143,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamRaSumcheckParams<F> {
             + self.gamma_powers[2] * ra_claim_raf
     }
 
+    /// Converts the vector of sumcheck challenges into a big-endian opening point
     fn normalize_opening_point(
         &self,
         challenges: &[<F as JoltField>::Challenge],
@@ -219,8 +222,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaSumcheck
     }
 
     #[tracing::instrument(skip_all, name = "RamRaVirtualizationProver::compute_message")]
-    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        let degree = self.params.degree();
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        let degree = self.params.degree(round);
         let ra_i_polys = &self.ra_i_polys;
         let eq_poly = &self.eq_poly;
 
