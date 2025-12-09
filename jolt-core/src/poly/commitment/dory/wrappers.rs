@@ -278,7 +278,7 @@ impl Valid for ArkGTCompressed {
         self.0
              .0
             .check()
-            .map_err(|e| SerializationError::InvalidData(format!("{:?}", e)))?;
+            .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
         Ok(())
     }
 }
@@ -293,11 +293,11 @@ impl DorySerialize for ArkGTCompressed {
             Compress::Yes => self
                 .0
                 .serialize_compressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{}", e))),
+                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
             Compress::No => self
                 .0
                 .serialize_uncompressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{}", e))),
+                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
         }
     }
 
@@ -317,14 +317,14 @@ impl DoryDeserialize for ArkGTCompressed {
     ) -> Result<Self, SerializationError> {
         let inner = match compress {
             Compress::Yes => ark_bn254::CompressedFq12::deserialize_compressed(reader)
-                .map_err(|e| SerializationError::InvalidData(format!("{}", e)))?,
+                .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?,
             Compress::No => ark_bn254::CompressedFq12::deserialize_uncompressed(reader)
-                .map_err(|e| SerializationError::InvalidData(format!("{}", e)))?,
+                .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?,
         };
 
         let res = Self(inner);
         if matches!(validate, Validate::Yes) {
-            Valid::check(&res).map_err(|e| SerializationError::InvalidData(format!("{:?}", e)))?;
+            Valid::check(&res).map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
         }
 
         Ok(res)
@@ -387,15 +387,13 @@ pub fn ark_to_jolt(ark: &ArkFr) -> Fr {
 }
 
 impl MultilinearPolynomial<Fr> {
-    fn tier_1_commit<E: PairingCurve, _M1: DoryRoutines<E::G1>>(
+    fn tier_1_commit<E: PairingCurve>(
         &self,
         _nu: usize,
         sigma: usize,
         setup: &ProverSetup<E>,
     ) -> Result<Vec<E::G1>, DoryError>
     where
-        E: PairingCurve,
-        _M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
         let num_cols = 1 << sigma;
@@ -435,7 +433,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         _M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
-        let row_commitments = self.tier_1_commit::<E, _M1>(nu, sigma, setup)?;
+        let row_commitments = self.tier_1_commit::<E>(nu, sigma, setup)?;
         let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
 
@@ -453,7 +451,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
-        let row_commitments = self.tier_1_commit::<E, M1>(nu, sigma, setup)?;
+        let row_commitments = self.tier_1_commit::<E>(nu, sigma, setup)?;
         let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let commitment = E::multi_pair_g2_setup_compressed(&row_commitments, g2_bases);
 

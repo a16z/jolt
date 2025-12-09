@@ -26,9 +26,6 @@ use crate::{
     zkvm::{config::OneHotParams, witness::AllCommittedPolynomials},
 };
 
-const COMPRESSED_SERIALIZATION_FLAG: u8 = 1;
-const UNCOMPRESSED_SERIALIZATION_FLAG: u8 = 0;
-
 pub struct JoltUncompressedProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,

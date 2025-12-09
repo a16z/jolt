@@ -660,31 +660,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         Some(poly)
     }
 
-    fn generate_and_commit_untrusted_advice(&mut self) -> Option<PCS::Commitment> {
-        let poly = self.generate_and_commit_untrusted_advice_helper()?;
-        let (commitment, _hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript.append_serializable(&commitment);
-
-        self.advice.untrusted_advice_polynomial = Some(poly);
-
-        Some(commitment)
-    }
-
-    fn generate_and_commit_untrusted_advice_compressed(
-        &mut self,
-    ) -> Option<PCS::CompressedCommitment>
-    where
-        PCS: CompressedCommitmentScheme<Field = F>,
-    {
-        let poly = self.generate_and_commit_untrusted_advice_helper()?;
-        let (commitment, _hint) = PCS::commit_compressed(&poly, &self.preprocessing.generators);
-        self.transcript.append_serializable(&commitment);
-
-        self.advice.trusted_advice_polynomial = Some(poly);
-
-        Some(commitment)
-    }
-
     fn generate_and_commit_trusted_advice(&mut self) {
         if self.program_io.trusted_advice.is_empty() {
             return;
@@ -1361,7 +1336,7 @@ mod tests {
     use crate::field::JoltField;
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
-    use crate::zkvm::prover::{JoltProofCompressionFlag, JoltProverPreprocessing};
+    use crate::zkvm::prover::JoltProverPreprocessing;
     use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
     use crate::zkvm::{RV64IMACCompressedVerifier, RV64IMACProver, RV64IMACVerifier};
     use ark_bn254::Fr;

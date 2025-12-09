@@ -39,7 +39,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
     JoltDevice,
     Option<ProverDebugInfo<F, FS, PCS>>,
 ) {
-    use crate::zkvm::prover::{JoltCpuProver, JoltProofCompressionFlag};
+    use crate::zkvm::prover::JoltCpuProver;
 
     let prover = JoltCpuProver::gen_from_elf(
         preprocessing,

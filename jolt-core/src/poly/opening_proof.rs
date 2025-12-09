@@ -1025,7 +1025,7 @@ where
     )]
     pub fn reduce_and_prove_compressed<
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: CompressedCommitmentScheme<Field = F>,
     >(
         &mut self,
         polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
@@ -1034,8 +1034,6 @@ where
         transcript: &mut ProofTranscript,
         streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> CompressedReducedOpeningProof<F, PCS, ProofTranscript>
-    where
-        PCS: CompressedCommitmentScheme,
     {
         #[cfg(not(test))]
         let (sumcheck_proof, sumcheck_claims, r_sumcheck, joint_poly, hint) =
