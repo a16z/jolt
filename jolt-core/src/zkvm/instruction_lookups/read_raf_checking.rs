@@ -97,13 +97,13 @@ const DEGREE_BOUND: usize = 3;
 
 pub struct ReadRafSumcheckParams<F: JoltField> {
     /// γ and its square (γ^2) used for batching rv/branch/raf components.
-    gamma: F,
-    gamma_sqr: F,
+    pub gamma: F,
+    pub gamma_sqr: F,
     /// log2(T): number of cycle variables (last rounds bind cycles).
-    log_T: usize,
+    pub log_T: usize,
     /// Number of phases for instruction lookups.
-    phases: usize,
-    r_reduction: OpeningPoint<BIG_ENDIAN, F>,
+    pub phases: usize,
+    pub r_reduction: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {

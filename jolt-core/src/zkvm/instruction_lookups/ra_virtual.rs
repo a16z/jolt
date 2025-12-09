@@ -41,9 +41,9 @@ use tracer::instruction::Cycle;
 // - ra_claim is the claimed evaluation of the virtual read-access polynomial from the read-raf sumcheck.
 
 pub struct InstructionRaSumcheckParams<F: JoltField> {
-    r_address: OpeningPoint<BIG_ENDIAN, F>,
-    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
-    one_hot_params: OneHotParams,
+    pub r_address: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+    pub one_hot_params: OneHotParams,
 }
 
 impl<F: JoltField> InstructionRaSumcheckParams<F> {

@@ -45,10 +45,10 @@ const DEGREE_BOUND: usize = 2;
 
 #[derive(Default)]
 pub struct ShiftSumcheckParams<F: JoltField> {
-    gamma_powers: [F; 5],
-    n_cycle_vars: usize, // = log(T)
-    r_outer: OpeningPoint<BIG_ENDIAN, F>,
-    r_product: OpeningPoint<BIG_ENDIAN, F>,
+    pub gamma_powers: [F; 5],
+    pub n_cycle_vars: usize, // = log(T)
+    pub r_outer: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_product: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> ShiftSumcheckParams<F> {

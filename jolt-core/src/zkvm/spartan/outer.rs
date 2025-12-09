@@ -316,11 +316,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
 pub struct OuterRemainingSumcheckParams<F: JoltField> {
     /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
     /// Total number of rounds is `1 + num_cycles_bits`
-    num_cycles_bits: usize,
+    pub num_cycles_bits: usize,
     /// Verifier challenge for univariate skip round
-    r0: F::Challenge,
+    pub r0: F::Challenge,
     /// The tau vector (length 1 + n_cycle_vars), available to prover and verifier
-    tau: Vec<F::Challenge>,
+    pub tau: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> OuterRemainingSumcheckParams<F> {

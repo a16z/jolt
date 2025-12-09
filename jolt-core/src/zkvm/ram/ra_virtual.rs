@@ -45,14 +45,14 @@ use rayon::prelude::*;
 
 #[derive(Allocative)]
 pub struct RamRaSumcheckParams<F: JoltField> {
-    gamma_powers: [F; 3],
+    pub gamma_powers: [F; 3],
     /// Random challenge r_cycle
-    r_cycle: [Vec<F::Challenge>; 3],
-    r_address_chunks: Vec<Vec<F::Challenge>>,
+    pub r_cycle: [Vec<F::Challenge>; 3],
+    pub r_address_chunks: Vec<Vec<F::Challenge>>,
     /// Number of decomposition parts
-    d: usize,
+    pub d: usize,
     /// Length of the trace
-    T: usize,
+    pub T: usize,
 }
 
 impl<F: JoltField> RamRaSumcheckParams<F> {

@@ -61,8 +61,8 @@ pub struct ValEvaluationSumcheckParams<F: JoltField> {
     pub T: usize,
     /// Ram K parameter.
     pub K: usize,
-    r_address: OpeningPoint<BIG_ENDIAN, F>,
-    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_address: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheckParams<F> {

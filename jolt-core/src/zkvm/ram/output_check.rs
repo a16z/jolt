@@ -49,9 +49,9 @@ use tracer::JoltDevice;
 const OUTPUT_SUMCHECK_DEGREE_BOUND: usize = 3;
 
 pub struct OutputSumcheckParams<F: JoltField> {
-    K: usize,
-    r_address: Vec<F::Challenge>,
-    program_io: JoltDevice,
+    pub K: usize,
+    pub r_address: Vec<F::Challenge>,
+    pub program_io: JoltDevice,
 }
 
 impl<F: JoltField> OutputSumcheckParams<F> {

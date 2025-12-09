@@ -52,8 +52,8 @@ const DEGREE_BOUND: usize = 3;
 
 #[derive(Allocative)]
 pub struct RegistersValEvaluationSumcheckParams<F: JoltField> {
-    r_address: OpeningPoint<BIG_ENDIAN, F>,
-    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_address: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> RegistersValEvaluationSumcheckParams<F> {
@@ -94,7 +94,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersValEvaluationSumcheckP
 }
 
 #[derive(Allocative)]
-pub(crate) struct ValEvaluationSumcheckProver<F: JoltField> {
+pub struct ValEvaluationSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: RaPolynomial<u8, F>,
     lt: LtPolynomial<F>,

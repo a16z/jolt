@@ -29,10 +29,10 @@ const DEGREE_BOUND: usize = 2;
 
 #[derive(Allocative, Clone)]
 pub struct InstructionLookupsClaimReductionSumcheckParams<F: JoltField> {
-    gamma: F,
-    gamma_sqr: F,
-    n_cycle_vars: usize,
-    r_spartan: OpeningPoint<BIG_ENDIAN, F>,
+    pub gamma: F,
+    pub gamma_sqr: F,
+    pub n_cycle_vars: usize,
+    pub r_spartan: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> InstructionLookupsClaimReductionSumcheckParams<F> {

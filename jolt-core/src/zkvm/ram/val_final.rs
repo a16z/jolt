@@ -37,7 +37,7 @@ const VAL_FINAL_SUMCHECK_DEGREE_BOUND: usize = 2;
 
 pub struct ValFinalSumcheckParams<F: JoltField> {
     pub T: usize,
-    r_address: Vec<F::Challenge>,
+    pub r_address: Vec<F::Challenge>,
     pub val_init_eval: F,
 }
 

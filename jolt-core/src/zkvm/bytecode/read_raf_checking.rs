@@ -604,27 +604,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
 
 pub struct ReadRafSumcheckParams<F: JoltField> {
     /// Index `i` stores `gamma^i`.
-    gamma_powers: Vec<F>,
+    pub gamma_powers: Vec<F>,
     /// RLC of stage rv_claims and RAF claims (per Stage1/Stage3) used as the sumcheck LHS.
-    input_claim: F,
+    pub input_claim: F,
     /// RaParams
-    one_hot_params: OneHotParams,
+    pub one_hot_params: OneHotParams,
     /// Bytecode length.
-    K: usize,
+    pub K: usize,
     /// log2(K) and log2(T) used to determine round counts.
-    log_K: usize,
-    log_T: usize,
+    pub log_K: usize,
+    pub log_T: usize,
     /// Number of address chunks (and RA polynomials in the product).
-    d: usize,
+    pub d: usize,
     /// Stage Val polynomials evaluated over address vars.
-    val_polys: [MultilinearPolynomial<F>; N_STAGES],
+    pub val_polys: [MultilinearPolynomial<F>; N_STAGES],
     /// Stage rv claims.
-    rv_claims: [F; N_STAGES],
-    raf_claim: F,
-    raf_shift_claim: F,
+    pub rv_claims: [F; N_STAGES],
+    pub raf_claim: F,
+    pub raf_shift_claim: F,
     /// Identity polynomial over address vars used to inject RAF contributions.
-    int_poly: IdentityPolynomial<F>,
-    r_cycles: [Vec<F::Challenge>; N_STAGES],
+    pub int_poly: IdentityPolynomial<F>,
+    pub r_cycles: [Vec<F::Challenge>; N_STAGES],
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {

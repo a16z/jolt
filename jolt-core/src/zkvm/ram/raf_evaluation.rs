@@ -44,10 +44,10 @@ const DEGREE_BOUND: usize = 2;
 
 pub struct RafEvaluationSumcheckParams<F: JoltField> {
     /// log K (number of rounds)
-    log_K: usize,
+    pub log_K: usize,
     /// Start address for unmap polynomial
-    start_address: u64,
-    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+    pub start_address: u64,
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> RafEvaluationSumcheckParams<F> {
