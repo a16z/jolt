@@ -8,13 +8,15 @@
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
-    poly::{commitment::dory::{DoryContext, DoryGlobals}, multilinear_polynomial::PolynomialEvaluation, rlc_polynomial::{RLCPolynomial, RLCStreamingData}},
+    poly::{commitment::dory::{ArkFr, DoryContext, DoryGlobals}, multilinear_polynomial::PolynomialEvaluation, rlc_polynomial::{RLCPolynomial, RLCStreamingData}},
     zkvm::{config::OneHotParams, witness::AllCommittedPolynomials},
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_std::log2;
+use dory::backends::ArkworksPolynomial;
+use crate::poly::commitment::dory::jolt_to_ark;
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 #[cfg(test)]
@@ -920,6 +922,8 @@ where
                 (0..len).map(|i: usize| ta_poly.get_coeff(i)).collect()
             });
 
+            tracing::info!("DEBUGG: this shit here trusted_advice_coeffs={:?}", trusted_advice_coeffs);
+
             let rlc = RLCPolynomial::linear_combination(
                 poly_ids.clone(),
                 poly_arcs.clone(),
@@ -943,6 +947,8 @@ where
                 .and_then(|s| opening_hints.get(&s.polynomial).cloned());
             let test_trusted_advice_hint: Option<PCS::OpeningProofHint> = 
                 opening_hints.get(&CommittedPolynomial::TrustedAdvice).cloned();
+            
+            tracing::info!("DEBUGG: test_trusted_advice_hint={:?}", test_trusted_advice_hint);
             
 
             let mut hints: Vec<PCS::OpeningProofHint> = rlc_map.clone()
@@ -1009,7 +1015,9 @@ where
             .map(|((coeff, claim), opening)| {
                 if opening.polynomial == CommittedPolynomial::TrustedAdvice {
                     let poly = trusted_advice_poly_for_verification.clone().unwrap();
-                    let trusted_advice_gamma = gamma_powers[self.sumchecks.len() - 1];
+                    let trusted_advice_gamma = coeff;
+                    // let mut _r_sumcheck = r_sumcheck.clone();
+                    // _r_sumcheck.reverse();
                     
                     let previous_context = DoryGlobals::current_context();
                 
@@ -1017,18 +1025,18 @@ where
                     let main_columns = log2(DoryGlobals::get_num_columns()) as usize;
                     let main_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
                     let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-                    let trusted_advice_columns = 4;
-                    let trusted_advice_rows = 2;
+                    let trusted_advice_columns = log2(DoryGlobals::get_num_columns()) as usize;
+                    let trusted_advice_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
 
                     tracing::info!("DEBUGGG:main_columns={}, trusted_advice_columns={}", main_columns, trusted_advice_columns);
                     tracing::info!("DEBUGGG:main_rows={}, trusted_advice_rows={}", main_rows, trusted_advice_rows);
                     let _ctx = DoryGlobals::with_context(previous_context);
 
-                    let r_columns = &r_sumcheck[..main_columns];
-                    let r_rows = &r_sumcheck[main_columns..];
+                    let r_rows = &r_sumcheck[..main_rows];
+                    let r_columns = &r_sumcheck[main_rows..];
 
-                    let mut r_eval: F = r_rows[trusted_advice_rows..].iter().map(|r| F::one() - r).product();
-                    r_eval *= r_columns[trusted_advice_columns..].iter().map(|r| F::one() - r).product::<F>();
+                    let mut r_eval: F = r_rows[..(r_rows.len() - trusted_advice_rows)].iter().map(|r| F::one() - r).product();
+                    r_eval *= r_columns[..(r_columns.len() - trusted_advice_columns)].iter().map(|r| F::one() - r).product::<F>();
                     tracing::info!("multiplying r_rows from {} to {} and r_columns from {} to {}", trusted_advice_rows, r_rows.len(), trusted_advice_columns, r_columns.len());
                     tracing::info!("then it means, from {} to {} and from {} to {}", trusted_advice_rows + main_columns, r_sumcheck.len(), trusted_advice_columns, r_columns.len());
                     let poly_num_vars = poly.get_num_vars();
@@ -1036,17 +1044,109 @@ where
                         poly_num_vars, r_sumcheck.len(), log_K);
                     
 
-                    let eval_point: Vec<_> = r_sumcheck[..trusted_advice_columns]
+                    let mut eval_point: Vec<_> = 
+                    r_rows[(r_rows.len() - trusted_advice_rows)..]
+
                         .iter()
-                        .chain(&r_sumcheck[main_columns..main_columns + trusted_advice_rows])
+                        .chain(
+                    &r_columns[(r_columns.len() - trusted_advice_columns)..]
+
+                        )
                         .copied()
                         .collect();
+                    // eval_point.reverse();
                     tracing::info!("Evaluating trusted advice: poly_num_vars={}, eval_point={:?}, log_K={}", 
                         poly_num_vars, eval_point, log_K);
+                    
+                    tracing::info!("trusted advice poly coefficients: {:?}", (0..256).map(|i| poly.get_coeff(i)).collect::<Vec<_>>());
                     let claim = poly.evaluate(&eval_point);
+
+                    // let zero_point: Vec<F> = vec![F::zero(); 8];
+                    // let zero_eval = PolynomialEvaluation::evaluate::<F>(&poly, &zero_point);
+                    // tracing::info!("zero_eval={:?}", zero_eval);
+
+
+                    // let mut one_point: Vec<F> = vec![F::zero(); 8];
+                    // one_point[7] = F::one();
+
+
+                    // let mut two_point: Vec<F> = vec![F::zero(); 8];
+                    // two_point[6] = F::one();
+
+                    // let mut three_point: Vec<F> = vec![F::zero(); 8];
+                    // three_point[7] = F::one();
+                    // three_point[6] = F::one();
+
+
+                    // let eval0_point = &[<F as JoltField>::Challenge::from(0u128); 8];
+                    // let eval0 = poly.evaluate(eval0_point);
+                    // let one = <F as JoltField>::Challenge::from(1u128);
+                    
+                    // // DEBUG: Verify Challenge::from(1) representation
+                    // let one_as_field: F = one.clone().into();
+                    // let actual_one = F::one();
+                    // tracing::info!("DEBUG Challenge conversion: Challenge::from(1u128) as F = {:?}", one_as_field);
+                    // tracing::info!("DEBUG F::one() = {:?}", actual_one);
+                    // tracing::info!("DEBUG Are they equal? {}", one_as_field == actual_one);
+                    // tracing::info!("DEBUG eval0_point={:?}", eval0_point);
+                    // // 2^128 = 340282366920938463463374607431768211456
+                    // // let eval1_point = eval0 + F::one();
+
+
+                    // let zero_eval = PolynomialEvaluation::evaluate::<F>(&poly, &zero_point);
+                    // tracing::info!("zero_eval={:?}", zero_eval);
+                    // let one_eval = PolynomialEvaluation::evaluate::<F>(&poly, &one_point);
+                    // tracing::info!("one_eval={:?}", one_eval);
+                    // let two_eval = PolynomialEvaluation::evaluate::<F>(&poly, &two_point);
+                    // tracing::info!("two_eval={:?}", two_eval);
+                    // let three_eval = PolynomialEvaluation::evaluate::<F>(&poly, &three_point);
+                    // tracing::info!("three_eval={:?}", three_eval);
+                    
+                    // let mut eval1_point = eval0_point.clone();
+                    // eval1_point[0] = one.clone();
+                    // let eval1 = poly.evaluate(&eval1_point);
+
+
+                    // let mut eval2_point = eval0_point.clone();
+                    // eval2_point[1] = one.clone();
+                    // let eval2 = poly.evaluate(&eval2_point);
+
+                    // let mut eval3_point = eval0_point.clone();
+                    // eval3_point[2] = one.clone();
+                    // let eval3 = poly.evaluate(&eval3_point);
+
+                    // let mut eval4_point = eval0_point.clone();
+                    // eval4_point[3] = one.clone();
+                    // let eval4 = poly.evaluate(&eval4_point);
+
+                    // let mut eval5_point = eval0_point.clone();
+                    // eval5_point[4] = one.clone();
+                    // let eval5 = poly.evaluate(&eval5_point);
+
+                    // let mut eval6_point = eval0_point.clone();
+                    // eval6_point[5] = one.clone();
+                    // let eval6 = poly.evaluate(&eval6_point);
+
+                    // let mut eval7_point = eval0_point.clone();
+                    // eval7_point[6] = one.clone();
+                    // let eval7 = poly.evaluate(&eval7_point);
+
+                    // let mut eval8_point = eval0_point.clone();
+                    // eval8_point[7] = one.clone();
+                    // let eval8 = poly.evaluate(&eval8_point);
+
+                    // tracing::info!("eval0={:?}, eval1={:?}, eval2={:?}, eval3={:?}, eval4={:?}, eval5={:?}, eval6={:?}, eval7={:?}, eval8={:?}", 
+                        // eval0, eval1, eval2, eval3, eval4, eval5, eval6, eval7, eval8);
+
+                    // DEBUG: Compare what value we're actually using
+                    // If Challenge::from(1u128) correctly represents 1, then one_as_field should equal actual_one
+                    // If they differ, Challenge has a bug in its representation
+
+                    // tracing::info!("eval0={:?}, eval1={:?}, eval1_point={:?}", eval0, eval1, eval1_point);
                     let trusted_advice_contribution = claim * r_eval;
                     tracing::info!("Trusted advice contribution={:?}, gamma={:?}, r_eval={:?}, claim={:?}", 
                         trusted_advice_contribution, trusted_advice_gamma, r_eval, claim);   
+                    tracing::info!("r_sumcheck: {:?}", r_sumcheck);
                     trusted_advice_contribution * coeff
                 } else {
                     let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
@@ -1099,8 +1199,8 @@ where
         //     let main_columns = log2(DoryGlobals::get_num_columns()) as usize;
         //     let main_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
         //     let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-        //     let trusted_advice_columns = 4;
-        //     let trusted_advice_rows = 2;
+        //     let trusted_advice_columns = log2(DoryGlobals::get_num_columns()) as usize;
+        //     let trusted_advice_rows = log2(DoryGlobals::get_max_num_rows()) as usize;
 
         //     tracing::info!("DEBUGGG:main_columns={}, trusted_advice_columns={}", main_columns, trusted_advice_columns);
         //     tracing::info!("DEBUGGG:main_rows={}, trusted_advice_rows={}", main_rows, trusted_advice_rows);
@@ -1112,7 +1212,7 @@ where
         //         (ta_poly, ram_ra_0_poly, ram_ra_poly_id, test_ram_ra_hint, test_trusted_advice_hint) {
         //         tracing::info!("TEST: Got TrustedAdvice and RamRa(0)");
                 
-        //         let trusted_advice_coeffs = (0..ta.get_num_vars()).map(|index| ta.get_coeff(index)).collect::<Vec<_>>();
+        //         let trusted_advice_coeffs = (0..ta.len()).map(|index| ta.get_coeff(index)).collect::<Vec<_>>();
 
         //         tracing::info!("TEST: trusted_advice_poly={:?}", trusted_advice_coeffs);
 
@@ -1135,7 +1235,7 @@ where
         //             vec![poly_id],
         //             vec![ram_ra.clone()],
         //             &[F::one()],
-        //             trusted_advice_coeffs,
+        //             trusted_advice_coeffs.clone(),
         //             trusted_advice_rows,
         //             trusted_advice_columns,
         //             *trusted_advice_gamma,
@@ -1150,7 +1250,7 @@ where
 
                 
         //         // Evaluation point: all ones (use same type as r_sumcheck)
-        //         let point_ones: Vec<F::Challenge> = (0..16).map(|i| i.into()).collect();
+        //         let point_ones: Vec<F::Challenge> = (0..(main_columns + main_rows)).map(|i| F::Challenge::from(i as u128)).collect();
         //         tracing::info!("TEST: point_ones len = {}", point_ones.len());
                 
                 
@@ -1163,6 +1263,8 @@ where
         //             &[ta_commitment, ram_ra_commitment],
         //             &test_coeffs
         //         );
+        //         tracing::info!("TEST: ta_hint={:?}", ta_hint);
+
         //         let test_hint = PCS::combine_hints(
         //             vec![ta_hint, ram_ra_hint],
         //             &test_coeffs
@@ -1179,7 +1281,7 @@ where
         //         );
         //         tracing::info!("TEST: Created proof");
         //         let e2 = ram_ra.evaluate(&point_ones);
-        //         tracing::info!("TESTT: e2={:?}", e2);
+        //         tracing::info!("TESTT: e2={:?}, point_ones={:?}", e2, point_ones);
 
 
         //         // Convert ram_ra (OneHot) to dense coefficients and write to file
@@ -1193,14 +1295,14 @@ where
         //                 }
         //             }
         //             // Write dense coefficients to file as array
-        //             // use std::io::Write;
-        //             // let mut file = std::fs::File::create("ram_ra_dense_coeffs.txt").unwrap();
-        //             // writeln!(file, "// K={}, T={}, total={}", K, T, dense_coeffs.len()).unwrap();
-        //             // let coeffs_str: Vec<String> = dense_coeffs.iter()
-        //             //     .map(|c| if *c == F::zero() { "0".to_string() } else { "1".to_string() })
-        //             //     .collect();
-        //             // writeln!(file, "[{}]", coeffs_str.join(", ")).unwrap();
-        //             // tracing::info!("TEST: Wrote ram_ra dense coeffs to ram_ra_dense_coeffs.txt (K={}, T={})", K, T);
+        //             use std::io::Write;
+        //             let mut file = std::fs::File::create("ram_ra_dense_coeffs.txt").unwrap();
+        //             writeln!(file, "// K={}, T={}, total={}", K, T, dense_coeffs.len()).unwrap();
+        //             let coeffs_str: Vec<String> = dense_coeffs.iter()
+        //                 .map(|c| if *c == F::zero() { "0".to_string() } else { "1".to_string() })
+        //                 .collect();
+        //             writeln!(file, "[{}]", coeffs_str.join(", ")).unwrap();
+        //             tracing::info!("TEST: Wrote ram_ra dense coeffs to ram_ra_dense_coeffs.txt (K={}, T={})", K, T);
 
         //             let dense_poly = MultilinearPolynomial::from(dense_coeffs);
 
@@ -1227,18 +1329,43 @@ where
         //         tracing::info!("Evaluating trusted advice: eval_point={:?}, log_K={}", 
         //             eval_point, log_K);
 
-                
+
+        //         // let x = ArkworksPolynomial::new(
+        //         //     trusted_advice_coeffs.iter()
+        //         //     .rev()  // Reverse the order for Dory
+        //         //     .map(|p: &F| {
+        //         //         // let f_val: ark_bn254::Fr = p;
+        //         //         jolt_to_ark(p)
+        //         //     })
+        //         //         .collect()
+        //         // );
+
+
+        //         // // Dory uses the opposite endian-ness as Jolt
+        //         // let ark_point: Vec<ArkFr> = point_ones
+        //         // .iter()
+        //         // .rev()  // Reverse the order for Dory
+        //         // .map(|p| {
+        //         //     let f_val: ark_bn254::Fr = (*p).into();
+        //         //     jolt_to_ark(&f_val)
+        //         // })
+        //         // .collect();
+
 
                 
 
+                
 
 
-        //         let e1 = ta.evaluate(&eval_point) * r_eval;
+
+        //         let e1 = ta.evaluate(&eval_point);
+        //         tracing::info!("TEST: e1={:?}", e1);
+        //         let e1 = e1 * r_eval;
+
         //         let rlc_eval = e1 * test_coeffs[0] + e2 * test_coeffs[1];
 
         //         tracing::info!("TEST: rlc_eval={:?}", rlc_eval);
         //         tracing::info!("TEST: test_coeffs={:?}", test_coeffs);
-        //         tracing::info!("TEST: e1={:?}", e1);
         //         tracing::info!("TEST: e2={:?}", e2);
                 
         //         // Verify
@@ -1313,13 +1440,15 @@ where
         };
 
         tracing::info!("DEBUGG:joint_commitment={:?}", joint_commitment);
+        tracing::info!("DEBUGG: joint_eval={:?}", joint_eval);
 
         // Verify the proof we just generated
         let verifier_setup = PCS::setup_verifier(pcs_setup);
         // Hardcoded joint_eval for testing: 74325131861447406551584993840719898333018882016364728917667493218058685740040
-        // let hardcoded_joint_eval: F = F::from_bytes(&[
-        //     0xF8, 0xD9, 0x08, 0xEE, 0xC3, 0xCA, 0xCE, 0x24, 0xE6, 0xF7, 0xD8, 0xAA, 0xA1, 0x80, 0x9F, 0xAA, 0x51, 0x19, 0x97, 0xA1, 0x6A, 0x86, 0x38, 0x5B, 0x88, 0x2E, 0x08, 0xE2, 0xAD, 0x0F, 0x5E, 0x20        ]);
-        // tracing::info!("DEBUGG: hardcoded_joint_eval={:?}", hardcoded_joint_eval);
+        let hardcoded_joint_eval: F = F::from_bytes(&[
+            0xC0, 0xD1, 0xDF, 0x01, 0xB7, 0x5C, 0xEA, 0x90, 0x25, 0x85, 0x4D, 0x6C, 0xEF, 0x8D, 0x01, 0xC4, 0x5F, 0x56, 0xB0, 0x97, 0x05, 0xDF, 0x1B, 0xE0, 0x30, 0x2A, 0x27, 0x03, 0xD9, 0x08, 0x93, 0x02
+            ]);
+        tracing::info!("DEBUGG: hardcoded_joint_eval={:?}", hardcoded_joint_eval);
         PCS::verify(
             &joint_opening_proof,
             &verifier_setup,
@@ -1331,7 +1460,6 @@ where
         )
         .expect("Self-verification of joint opening proof failed");
         tracing::info!("Self-verification passed");
-        tracing::info!("DEBUGG: joint_eval={:?}", joint_eval);
     // }
 
         ReducedOpeningProof {

@@ -378,9 +378,9 @@ impl<F: JoltField> RLCPolynomial<F> {
         //     .collect();
         
         // Add trusted advice contribution to result
-        // for (r, ta) in result.iter_mut().zip(ta_contribution.iter()) {
-        //     *r += *ta;
-        // }
+        for (r, ta) in result.iter_mut().zip(ta_contribution.iter()) {
+            *r += *ta;
+        }
         let x = result[0];
 
         // Compute the vector-matrix product for one-hot polynomials (linear space)

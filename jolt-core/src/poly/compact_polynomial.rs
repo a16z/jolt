@@ -62,8 +62,10 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     pub fn split_eq_evaluate(&self, r_len: usize, eq_one: &[F], eq_two: &[F]) -> F {
         const PARALLEL_THRESHOLD: usize = 16;
         if r_len < PARALLEL_THRESHOLD {
+            tracing::info!("evaluate_split_eq_serial");
             self.evaluate_split_eq_serial(eq_one, eq_two)
         } else {
+            tracing::info!("evaluate_split_eq_parallel");
             self.evaluate_split_eq_parallel(eq_one, eq_two)
         }
     }
@@ -87,12 +89,17 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
         eval
     }
     fn evaluate_split_eq_serial(&self, eq_one: &[F], eq_two: &[F]) -> F {
+        tracing::info!("Hereeeeee evaluate_split_eq_serial");
         let eval: F = (0..eq_one.len())
             .map(|x1| {
                 let partial_sum = (0..eq_two.len())
                     .map(|x2| {
                         let idx = x1 * eq_two.len() + x2;
-                        self.coeffs[idx].field_mul(eq_two[x2])
+                        let v = self.coeffs[idx].field_mul(eq_two[x2]);
+                        if !v.is_zero() {
+                            tracing::info!("idx={}, x1={}, x2={}, v={:?}, eq_two[x2]={:?}, eq_one[x1]={:?}, self.coeffs[idx]={:?}", idx, x1, x2, v, eq_two[x2], eq_one[x1], self.coeffs[idx].to_field::<F>());
+                        }
+                        v
                     })
                     .fold(F::zero(), |acc, val| acc + val);
                 OptimizedMul::mul_01_optimized(partial_sum, eq_one[x1])

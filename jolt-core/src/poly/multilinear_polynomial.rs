@@ -713,10 +713,16 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::U64Scalars(poly) => {
+                tracing::info!("generating eq_one and eq_two");
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                tracing::info!("r2={:?}, r1={:?}", r2.iter().map(|x| (*x).into()).collect::<Vec<F>>(), r1.iter().map(|x| (*x).into()).collect::<Vec<F>>());
+
+                let eq_one = EqPolynomial::evals(r2);
+                tracing::info!("eq_one={:?}", eq_one);
+
+                let eq_two = EqPolynomial::evals(r1);
+                tracing::info!("eq_two={:?}", eq_two);
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }

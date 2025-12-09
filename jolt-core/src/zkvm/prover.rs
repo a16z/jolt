@@ -489,7 +489,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
-        self.advice.trusted_advice_polynomial = Some(poly);
+        self.advice.trusted_advice_polynomial = Some(poly.clone());
+        tracing::info!("DEBUGG: trusted_advice_poly num_vars = {} and poly = {:?}", poly.clone().get_num_vars(), poly.clone());
         self.transcript
             .append_serializable(self.advice.trusted_advice_commitment.as_ref().unwrap());
 

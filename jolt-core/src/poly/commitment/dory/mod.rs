@@ -15,6 +15,6 @@ pub use commitment_scheme::DoryCommitmentScheme;
 pub use dory_globals::{DoryContext, DoryGlobals};
 pub use jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 pub use wrappers::{
-    ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
+    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
     JoltFieldWrapper, BN254,
 };
