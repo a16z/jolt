@@ -42,7 +42,7 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator},
+    poly::opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::sumcheck_verifier::SumcheckInstanceVerifier,
     transcripts::Transcript,
@@ -420,7 +420,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
-        use crate::poly::opening_proof::SumcheckId;
         if let Some(ref commitment) = self.trusted_advice_commitment {
             // Verify at RamValEvaluation point
             let Some(ref proof) = self.proof.trusted_advice_val_evaluation_proof else {

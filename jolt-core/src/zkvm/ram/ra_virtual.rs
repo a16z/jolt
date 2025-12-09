@@ -108,7 +108,7 @@ impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
             .collect();
 
         // Create eq polynomial with Gruen optimization for r_cycle_reduced
-        let eq_poly = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
+        let eq_poly = GruenSplitEqPolynomial::new(&params.r_cycle.r, BindingOrder::LowToHigh);
 
         // Create ra_i polynomials for each decomposition chunk
         let ra_i_polys: Vec<RaPolynomial<u16, F>> = (0..params.d)
@@ -229,7 +229,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r_cycle_final = get_opening_point::<F>(sumcheck_challenges);
 
         // Compute eq(r_cycle_reduced, r_cycle_final)
-        let eq_eval = EqPolynomial::<F>::mle_endian(&self.params.r_cycle_opening, &r_cycle_final);
+        let eq_eval = EqPolynomial::<F>::mle_endian(&self.params.r_cycle, &r_cycle_final);
 
         // Compute product eq_eval * ∏_{i=0}^{d-1} ra_i_claim
         let ra_claim_prod: F = (0..self.params.d)
@@ -268,15 +268,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
 /// Shared parameters between prover and verifier.
 struct RaVirtualParams<F: JoltField> {
-    /// r_cycle_reduced from RA reduction sumcheck (for prover)
-    r_cycle: Vec<F::Challenge>,
-    /// r_cycle_reduced as OpeningPoint (for verifier's mle_endian)
-    r_cycle_opening: OpeningPoint<BIG_ENDIAN, F>,
+    /// r_cycle_reduced from RA reduction sumcheck
+    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     /// r_address_reduced split into chunks according to one-hot decomposition
     r_address_chunks: Vec<Vec<F::Challenge>>,
     /// Number of decomposition chunks
     d: usize,
-    /// Length of the trace (T)
+    /// log_2(T) - number of cycle variables
     log_T: usize,
 }
 
@@ -293,14 +291,13 @@ impl<F: JoltField> RaVirtualParams<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
 
         // Split the opening point into address and cycle parts
-        let (r_address, r_cycle_opening) = r.split_at(log_K);
+        let (r_address, r_cycle) = r.split_at(log_K);
 
         // Split r_address into chunks according to one-hot decomposition
         let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(&r_address.r);
 
         Self {
-            r_cycle: r_cycle_opening.r.clone(),
-            r_cycle_opening,
+            r_cycle,
             r_address_chunks,
             d: one_hot_params.ram_d,
             log_T: trace_len.log_2(),

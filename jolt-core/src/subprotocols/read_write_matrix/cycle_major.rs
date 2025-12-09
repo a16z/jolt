@@ -618,11 +618,11 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
             MultilinearPolynomial::LargeScalars(poly) => &poly.Z,
             _ => panic!("val_init must be LargeScalars"),
         };
-        for (k, &v) in val_init_coeffs.iter().enumerate() {
-            for t in 0..T_prime {
-                val[k * T_prime + t] = v;
-            }
-        }
+        val.par_chunks_mut(T_prime)
+            .zip(val_init_coeffs.par_iter())
+            .for_each(|(chunk, &v)| {
+                chunk.fill(v);
+            });
 
         // Update ra and val at positions where we have entries.
         // Index is col * T_prime + row (address-major layout).
