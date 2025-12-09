@@ -6,7 +6,7 @@ use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
-use crate::zkvm::proof_serialization::JoltProof;
+use crate::zkvm::proof_serialization::JoltUncompressedProof;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
 use crate::zkvm::verifier::JoltVerifierPreprocessing;
@@ -37,7 +37,7 @@ pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Trans
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
-    proof: JoltProof<F, PCS, FS>,
+    proof: JoltUncompressedProof<F, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
 ) -> Result<(), ProofVerifyError> {
     use common::jolt_device::JoltDevice;

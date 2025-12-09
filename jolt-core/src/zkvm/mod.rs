@@ -2,17 +2,17 @@ use std::fs::File;
 
 use crate::{
     field::JoltField,
-    poly::opening_proof::ProverOpeningAccumulator,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme, commitment::dory::DoryCommitmentScheme,
+        commitment::{commitment_scheme::CommitmentScheme, dory::DoryCommitmentScheme},
+        opening_proof::ProverOpeningAccumulator,
     },
-    transcripts::Blake2bTranscript,
-    transcripts::Transcript,
+    transcripts::{Blake2bTranscript, Transcript},
+    zkvm::verifier::JoltCompressedVerifier,
 };
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
-use proof_serialization::JoltProof;
+use proof_serialization::JoltUncompressedProof;
 use prover::JoltCpuProver;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -134,7 +134,9 @@ pub fn fiat_shamir_preamble(
 
 pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
-pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACCompressedVerifier<'a> =
+    JoltCompressedVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACProof = JoltUncompressedProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
 pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Gets the byte size of the serialized data
@@ -159,7 +161,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
     /// Serializes the data to a byte vector
     fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
-        let mut buffer = Vec::new();
+        let mut buffer: Vec<u8> = Vec::new();
         self.serialize_compressed(&mut buffer)?;
         Ok(buffer)
     }

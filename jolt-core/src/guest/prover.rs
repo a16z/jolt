@@ -4,7 +4,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
-use crate::zkvm::proof_serialization::JoltProof;
+use crate::zkvm::proof_serialization::JoltUncompressedProof;
 use crate::zkvm::{prover::JoltProverPreprocessing, ProverDebugInfo};
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
@@ -35,7 +35,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
 ) -> (
-    JoltProof<F, PCS, FS>,
+    JoltUncompressedProof<F, PCS, FS>,
     JoltDevice,
     Option<ProverDebugInfo<F, FS, PCS>>,
 ) {

@@ -4,6 +4,7 @@ mod tests {
     use super::super::*;
     use crate::field::JoltField;
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+    use crate::poly::commitment::dory::setup::{DoryProverSetup, DoryVerifierSetup};
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
     use crate::transcripts::{Blake2bTranscript, Transcript};
@@ -16,8 +17,8 @@ mod tests {
     fn test_commitment_scheme_with_poly(
         poly: MultilinearPolynomial<Fr>,
         poly_type_name: &str,
-        prover_setup: &ArkworksProverSetup,
-        verifier_setup: &ArkworksVerifierSetup,
+        prover_setup: &DoryProverSetup,
+        verifier_setup: &DoryVerifierSetup,
     ) {
         let num_vars = poly.get_num_vars();
 
@@ -58,7 +59,7 @@ mod tests {
         );
     }
 
-    fn setup_dory_for_test(num_vars: usize) -> (ArkworksProverSetup, ArkworksVerifierSetup) {
+    fn setup_dory_for_test(num_vars: usize) -> (DoryProverSetup, DoryVerifierSetup) {
         // Reset globals to ensure clean state
         DoryGlobals::reset();
 
