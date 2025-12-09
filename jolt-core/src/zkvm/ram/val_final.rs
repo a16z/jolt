@@ -126,7 +126,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         VAL_FINAL_SUMCHECK_DEGREE_BOUND
     }
 

@@ -59,7 +59,7 @@ impl<F: JoltField> InstructionInputParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         DEGREE_BOUND
     }
 

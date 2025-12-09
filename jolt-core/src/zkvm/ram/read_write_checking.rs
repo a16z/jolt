@@ -78,7 +78,7 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         DEGREE_BOUND
     }
 

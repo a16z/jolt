@@ -401,7 +401,7 @@ where
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for Opening<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         OPENING_SUMCHECK_DEGREE
     }
 

@@ -165,17 +165,25 @@ impl BatchedSumcheck {
         (SumcheckInstanceProof::new(compressed_polys), r_sumcheck)
     }
 
+    /// Verify a batched sumcheck proof.
+    /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
+    /// as the oracle is not passed in. Expected that the caller will implement.
+    ///
+    /// # Parameters
+    /// * `proof` - The sumcheck proof to verify
+    /// * `sumcheck_instances` - Vector of sumcheck instance verifiers to batch
+    /// * `opening_accumulator` - Accumulator for polynomial opening claims
+    /// * `transcript` - The proof transcript for Fiat-Shamir
+    ///
+    /// # Returns
+    /// * `Ok(Vec<F::Challenge>)` - Vector of challenge points from all sumcheck rounds if verification succeeds
+    /// * `Err(ProofVerifyError)` - Error if verification fails
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        let max_degree = sumcheck_instances
-            .iter()
-            .map(|sumcheck| sumcheck.degree())
-            .max()
-            .unwrap();
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -193,7 +201,7 @@ impl BatchedSumcheck {
         //   = A * \sum_y \sum_x P(x) + B * \sum_{x, y} Q(x, y)
         //   = A * \sum_y claim_a + B * claim_b
         //   = A * 2^N * claim_a + B * claim_b
-        let claim: F = sumcheck_instances
+        let mut claim: F = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
@@ -204,8 +212,44 @@ impl BatchedSumcheck {
             })
             .sum();
 
-        let (output_claim, r_sumcheck) =
-            proof.verify(claim, max_num_rounds, max_degree, transcript)?;
+        let mut r_sumcheck: Vec<F::Challenge> = Vec::new();
+
+        // verify that there is a univariate polynomial for each round
+        assert_eq!(proof.compressed_polys.len(), max_num_rounds);
+        for round in 0..proof.compressed_polys.len() {
+            let remaining_rounds = max_num_rounds - round;
+            let max_degree = sumcheck_instances
+                .iter()
+                .filter_map(|sumcheck| {
+                    let num_rounds = sumcheck.num_rounds();
+                    if remaining_rounds > num_rounds {
+                        None
+                    } else {
+                        let offset = max_num_rounds - sumcheck.num_rounds();
+                        Some(sumcheck.degree(round - offset))
+                    }
+                })
+                .max()
+                .unwrap();
+
+            // verify degree bound
+            if proof.compressed_polys[round].degree() > max_degree {
+                return Err(ProofVerifyError::InvalidInputLength(
+                    max_degree,
+                    proof.compressed_polys[round].degree(),
+                ));
+            }
+
+            // append the prover's message to the transcript
+            proof.compressed_polys[round].append_to_transcript(transcript);
+
+            //derive the verifier's challenge for the next round
+            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+            r_sumcheck.push(r_i);
+
+            // evaluate the claimed degree-ell polynomial at r_i using the hint
+            claim = proof.compressed_polys[round].eval_from_hint(&claim, &r_i);
+        }
 
         let expected_output_claim = sumcheck_instances
             .iter()
@@ -227,7 +271,7 @@ impl BatchedSumcheck {
             })
             .sum();
 
-        if output_claim != expected_output_claim {
+        if claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
@@ -249,53 +293,5 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             compressed_polys,
             _marker: PhantomData,
         }
-    }
-
-    /// Verify this sumcheck proof.
-    /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
-    /// as the oracle is not passed in. Expected that the caller will implement.
-    ///
-    /// Params
-    /// - `claim`: Claimed evaluation
-    /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
-    /// - `degree_bound`: Maximum allowed degree of the combined univariate polynomial
-    /// - `transcript`: Fiat-shamir transcript
-    ///
-    /// Returns (e, r)
-    /// - `e`: Claimed evaluation at random point
-    /// - `r`: Evaluation point
-    pub fn verify(
-        &self,
-        claim: F,
-        num_rounds: usize,
-        degree_bound: usize,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
-        let mut e = claim;
-        let mut r: Vec<F::Challenge> = Vec::new();
-
-        // verify that there is a univariate polynomial for each round
-        assert_eq!(self.compressed_polys.len(), num_rounds);
-        for i in 0..self.compressed_polys.len() {
-            // verify degree bound
-            if self.compressed_polys[i].degree() > degree_bound {
-                return Err(ProofVerifyError::InvalidInputLength(
-                    degree_bound,
-                    self.compressed_polys[i].degree(),
-                ));
-            }
-
-            // append the prover's message to the transcript
-            self.compressed_polys[i].append_to_transcript(transcript);
-
-            //derive the verifier's challenge for the next round
-            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-            r.push(r_i);
-
-            // evaluate the claimed degree-ell polynomial at r_i using the hint
-            e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
-        }
-
-        Ok((e, r))
     }
 }

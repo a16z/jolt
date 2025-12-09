@@ -77,7 +77,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
         ra_claim
     }
 
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         self.one_hot_params.instruction_d + 1
     }
 

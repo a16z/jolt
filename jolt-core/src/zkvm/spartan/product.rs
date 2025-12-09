@@ -120,7 +120,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
         acc
     }
 
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         PRODUCT_VIRTUAL_FIRST_ROUND_POLY_DEGREE_BOUND
     }
 
@@ -374,7 +374,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
         self.n_cycle_vars
     }
 
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         PRODUCT_VIRTUAL_REMAINDER_DEGREE
     }
 

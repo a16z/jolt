@@ -85,7 +85,7 @@ impl<F: JoltField> OuterUniSkipParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         OUTER_FIRST_ROUND_POLY_DEGREE_BOUND
     }
 
@@ -357,7 +357,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
         OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle).match_endianness()
     }
 
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         OUTER_REMAINING_DEGREE_BOUND
     }
 

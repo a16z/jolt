@@ -69,7 +69,7 @@ impl<F: JoltField> RegistersValEvaluationSumcheckParams<F> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for RegistersValEvaluationSumcheckParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         DEGREE_BOUND
     }
 

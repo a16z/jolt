@@ -169,7 +169,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Result<(), ProofVerifyError> {
-        let degree_bound = sumcheck_instance.degree();
+        let degree_bound = sumcheck_instance.degree(0);
         // Degree check for the high-degree first polynomial
         if proof.uni_poly.degree() > degree_bound {
             return Err(ProofVerifyError::InvalidInputLength(

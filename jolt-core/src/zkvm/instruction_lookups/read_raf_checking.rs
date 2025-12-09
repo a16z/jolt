@@ -92,9 +92,6 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // - Last log(T) rounds bind cycle vars producing a degree-3 univariate with the required previous-round claim.
 // - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
 
-/// Degree bound of the sumcheck round polynomials in [`ReadRafSumcheckVerifier`].
-const DEGREE_BOUND: usize = 3;
-
 pub struct ReadRafSumcheckParams<F: JoltField> {
     /// γ and its square (γ^2) used for batching rv/branch/raf components.
     pub gamma: F,
@@ -157,8 +154,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
         rv_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
     }
 
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
+    fn degree(&self, round: usize) -> usize {
+        if round < LOG_K {
+            2 // ra and Val are multilinear in k
+        } else {
+            3 // eq, ra, and flags are multilinear in j
+        }
     }
 
     fn normalize_opening_point(

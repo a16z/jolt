@@ -73,7 +73,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
         lookup_output_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
     }
 
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         DEGREE_BOUND
     }
 

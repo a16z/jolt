@@ -50,7 +50,7 @@ pub struct BooleanitySumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
-    fn degree(&self) -> usize {
+    fn degree(&self, _round: usize) -> usize {
         DEGREE_BOUND
     }
 
