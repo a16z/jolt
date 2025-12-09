@@ -318,32 +318,24 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
         // Build lookup_indices_by_table fully in parallel
         // Create a vector for each table in parallel
-        let lookup_indices_by_table: Vec<Vec<usize>> = {
-            let span = tracing::span!(tracing::Level::INFO, "build lookup_indices_by_table");
-            let _guard = span.enter();
-            cycle_data
-                .par_iter()
-                .with_min_len(4096)
-                .fold(
-                    || vec![Vec::new(); num_tables],
-                    |mut buckets, data| {
-                        if let Some(table) = data.table {
-                            let t_idx = LookupTables::<XLEN>::enum_index(&table);
-                            buckets[t_idx].push(data.idx);
-                        }
-                        buckets
-                    },
-                )
-                .reduce(
-                    || vec![Vec::new(); num_tables],
-                    |mut a, mut b| {
-                        for (a_bucket, b_bucket) in a.iter_mut().zip(b.iter_mut()) {
-                            a_bucket.append(b_bucket);
-                        }
-                        a
-                    },
-                )
-        };
+        let lookup_indices_by_table: Vec<Vec<usize>> = (0..num_tables)
+            .into_par_iter()
+            .map(|t_idx| {
+                // Each table gets its own parallel collection
+                cycle_data
+                    .par_iter()
+                    .filter_map(|data| {
+                        data.table.and_then(|t| {
+                            if LookupTables::<XLEN>::enum_index(&t) == t_idx {
+                                Some(data.idx)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
         drop_in_background_thread(cycle_data);
         drop(_guard);
         drop(span);
