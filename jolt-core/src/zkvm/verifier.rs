@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
+use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
 use crate::zkvm::{
     bytecode::{
         self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
@@ -20,16 +21,15 @@ use crate::zkvm::{
     r1cs::key::UniformSpartanKey,
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
-        output_check::OutputSumcheckVerifier, output_check::ValFinalSumcheckVerifier,
-        ra_reduction::RamRaReductionSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
+        output_check::OutputSumcheckVerifier,
+        ra_virtual::RaSumcheckVerifier as RamRaSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
         verifier_accumulate_advice, RAMPreprocessing,
     },
     registers::{
-        // OLD: read_write_checking::RegistersReadWriteCheckingVerifier,
-        read_write_checking_new::RegistersReadWriteCheckingVerifierNew,
+        read_write_checking::RegistersReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
@@ -187,18 +187,19 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage1(&mut self) -> Result<(), anyhow::Error> {
-        let spartan_outer_uni_skip_state = verify_stage1_uni_skip(
+        let uni_skip_params = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
+            &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 1 univariate skip first round")?;
 
-        let n_cycle_vars = self.proof.trace_length.log_2();
         let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
-            n_cycle_vars,
-            &spartan_outer_uni_skip_state,
             self.spartan_key,
+            self.proof.trace_length,
+            uni_skip_params,
+            &self.opening_accumulator,
         );
 
         let _r_stage1 = BatchedSumcheck::verify(
@@ -213,17 +214,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage2(&mut self) -> Result<(), anyhow::Error> {
-        let product_virtual_uni_skip_state = verify_stage2_uni_skip(
+        let uni_skip_params = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
-            &self.spartan_key,
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 2 univariate skip first round")?;
 
         let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
-            self.proof.trace_length.log_2(),
-            &product_virtual_uni_skip_state,
+            self.proof.trace_length,
+            uni_skip_params,
+            &self.opening_accumulator,
         );
         let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
             &self.program_io.memory_layout,
@@ -231,15 +232,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
         );
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
-            self.proof.trace_length,
-            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.one_hot_params,
+            self.proof.trace_length,
         );
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
         let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckVerifier::new(
-            self.proof.trace_length.log_2(),
+            self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -285,10 +286,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
-        // NEW: Use the new register read-write checking verifier
-        let n_cycle_vars = self.proof.trace_length.log_2();
-        let registers_read_write_checking = RegistersReadWriteCheckingVerifierNew::new(
-            n_cycle_vars,
+        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
+            self.proof.trace_length.log_2(),
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -299,10 +298,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-            ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length),
         );
         let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
-            self.proof.trace_length.log_2(),
+            self.proof.trace_length,
             &self.one_hot_params,
             &mut self.transcript,
         );
@@ -344,23 +342,28 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     fn verify_stage5(&mut self) -> Result<(), anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let registers_val_evaluation = RegistersValEvaluationSumcheckVerifier::new(n_cycle_vars);
-        let ram_hamming_booleanity = HammingBooleanitySumcheckVerifier::new(n_cycle_vars);
-        let ram_ra_reduction = RamRaReductionSumcheckVerifier::new(
+        let registers_val_evaluation =
+            RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
+        let ram_ra_virtual = RamRaSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_read_raf =
-            LookupsReadRafSumcheckVerifier::new(n_cycle_vars, &mut self.transcript);
+        let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(
+            n_cycle_vars,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let _r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             vec![
                 &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &ram_hamming_booleanity,
-                &ram_ra_reduction,
+                &ram_ra_virtual,
                 &lookups_read_raf,
             ],
             &mut self.opening_accumulator,
@@ -381,14 +384,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
         let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::new_ra_one_hot_verifiers(
-            n_cycle_vars,
+            self.proof.trace_length,
             &self.one_hot_params,
+            &self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_hamming_weight =
-            ram::new_ra_hamming_weight_verifier(&self.one_hot_params, &mut self.transcript);
-        let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
-            self.proof.trace_length,
+        let ram_hamming_weight = ram::new_ra_hamming_weight_verifier(
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
@@ -397,8 +398,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             LookupsRaSumcheckVerifier::new(&self.one_hot_params, &self.opening_accumulator);
         let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
             instruction_lookups::new_ra_one_hot_verifiers(
-                n_cycle_vars,
+                self.proof.trace_length,
                 &self.one_hot_params,
+                &self.opening_accumulator,
                 &mut self.transcript,
             );
 
@@ -409,7 +411,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &bytecode_hamming_weight,
                 &bytecode_booleanity,
                 &ram_hamming_weight,
-                &ram_ra_virtual,
                 &lookups_ra_virtual,
                 &lookups_ra_booleanity,
                 &lookups_rs_hamming_weight,
@@ -423,18 +424,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
-        use crate::poly::opening_proof::SumcheckId;
         if let Some(ref commitment) = self.trusted_advice_commitment {
-            // Verify at RamValEvaluation point
-            let Some(ref proof) = self.proof.trusted_advice_val_evaluation_proof else {
-                return Err(anyhow::anyhow!(
-                    "Trusted advice val evaluation proof not found"
-                ));
+            let Some(ref proof) = self.proof.trusted_advice_proof else {
+                return Err(anyhow::anyhow!("Trusted advice proof not found"));
             };
-            let Some((point, eval)) = self
-                .opening_accumulator
-                .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
-            else {
+            let Some((point, eval)) = self.opening_accumulator.get_trusted_advice_opening() else {
                 return Err(anyhow::anyhow!("Trusted advice opening not found"));
             };
             PCS::verify(
@@ -448,51 +442,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .map_err(|e| {
                 anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}")
             })?;
-
-            // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
-            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
-                let Some(ref proof_val_final) = self.proof.trusted_advice_val_final_proof else {
-                    return Err(anyhow::anyhow!("Trusted advice val final proof not found"));
-                };
-                let Some((point_val_final, eval_val_final)) = self
-                    .opening_accumulator
-                    .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                else {
-                    return Err(anyhow::anyhow!(
-                        "Trusted advice val final opening not found"
-                    ));
-                };
-                PCS::verify(
-                    proof_val_final,
-                    &self.preprocessing.generators,
-                    &mut self.transcript,
-                    &point_val_final.r,
-                    &eval_val_final,
-                    commitment,
-                )
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Trusted advice val final opening proof verification failed: {e:?}"
-                    )
-                })?;
-            }
         }
 
         Ok(())
     }
 
     fn verify_untrusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
-        use crate::poly::opening_proof::SumcheckId;
+        // Verify untrusted_advice opening proofs
         if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
-            // Verify at RamValEvaluation point
-            let Some(ref proof) = self.proof.untrusted_advice_val_evaluation_proof else {
-                return Err(anyhow::anyhow!(
-                    "Untrusted advice val evaluation proof not found"
-                ));
+            let Some(ref proof) = self.proof.untrusted_advice_proof else {
+                return Err(anyhow::anyhow!("Untrusted advice proof not found"));
             };
-            let Some((point, eval)) = self
-                .opening_accumulator
-                .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
+            let Some((point, eval)) = self.opening_accumulator.get_untrusted_advice_opening()
             else {
                 return Err(anyhow::anyhow!("Untrusted advice opening not found"));
             };
@@ -507,36 +468,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .map_err(|e| {
                 anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
             })?;
-
-            // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
-            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
-                let Some(ref proof_val_final) = self.proof.untrusted_advice_val_final_proof else {
-                    return Err(anyhow::anyhow!(
-                        "Untrusted advice val final proof not found"
-                    ));
-                };
-                let Some((point_val_final, eval_val_final)) = self
-                    .opening_accumulator
-                    .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                else {
-                    return Err(anyhow::anyhow!(
-                        "Untrusted advice val final opening not found"
-                    ));
-                };
-                PCS::verify(
-                    proof_val_final,
-                    &self.preprocessing.generators,
-                    &mut self.transcript,
-                    &point_val_final.r,
-                    &eval_val_final,
-                    commitment,
-                )
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Untrusted advice val final opening proof verification failed: {e:?}"
-                    )
-                })?;
-            }
         }
 
         Ok(())

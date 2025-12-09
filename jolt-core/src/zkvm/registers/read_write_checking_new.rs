@@ -80,6 +80,76 @@ enum Phase {
     Materialized,
 }
 
+/// Parameters for the register read-write checking sumcheck.
+///
+/// Created by the prover/verifier before the actual sumcheck computation.
+/// Contains all data derived from the transcript and opening accumulator.
+pub struct RegistersReadWriteCheckingParams<F: JoltField> {
+    /// Batching challenge gamma.
+    pub gamma: F,
+    /// gamma^3 for stage 3 batching.
+    pub gamma_cub: F,
+    /// Number of cycle variables (log(T)).
+    pub n_cycle_vars: usize,
+    /// Opening point for stage 1.
+    pub r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
+    /// Opening point for stage 3.
+    pub r_cycle_stage_3: OpeningPoint<BIG_ENDIAN, F>,
+    /// Initial claim for stage 1.
+    pub claim_stage_1: F,
+    /// Initial claim for stage 3.
+    pub claim_stage_3: F,
+}
+
+impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
+    /// Create new parameters from the opening accumulator and transcript.
+    ///
+    /// This samples the batching challenge and retrieves opening points/claims.
+    pub fn new(
+        n_cycle_vars: usize,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        // Sample batching challenge
+        let gamma: F = transcript.challenge_scalar();
+        let gamma_cub = gamma.square() * gamma;
+
+        // Get opening points and claims from accumulator
+        let (r_cycle_stage_1, rs1_rv_claim_stage_1) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let (r_cycle_stage_3, rs1_rv_claim_stage_3) = opening_accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::Rs1Value,
+                SumcheckId::InstructionInputVirtualization,
+            );
+        let (_, rd_wv_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, rs2_rv_claim_stage_1) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+        let (_, rs2_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+
+        // Compute initial claims
+        let claim_stage_1 =
+            rd_wv_claim + gamma * (rs1_rv_claim_stage_1 + gamma * rs2_rv_claim_stage_1);
+        let claim_stage_3 = rs1_rv_claim_stage_3 + gamma * rs2_rv_claim_stage_3;
+
+        Self {
+            gamma,
+            gamma_cub,
+            n_cycle_vars,
+            r_cycle_stage_1,
+            r_cycle_stage_3,
+            claim_stage_1,
+            claim_stage_3,
+        }
+    }
+}
+
 /// Number of cycle variables to bind in Phase 1 (using CycleMajor sparse matrix).
 ///
 /// # Supported configurations
@@ -159,47 +229,28 @@ pub struct RegistersReadWriteCheckingProverNew<F: JoltField> {
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
-    /// Create a new prover from execution trace.
-    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProverNew::gen")]
-    pub fn gen(
+    /// Initialize the prover from pre-computed parameters and trace data.
+    ///
+    /// This is the main initialization method. Use [`RegistersReadWriteCheckingParams::new`]
+    /// to create the parameters first, then call this method.
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProverNew::initialize")]
+    pub fn initialize(
+        params: RegistersReadWriteCheckingParams<F>,
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
         let T = trace.len();
-        let n_cycle_vars = T.log_2();
+        let n_cycle_vars = params.n_cycle_vars;
         let phase1_rounds = phase1_num_rounds(T);
         let phase2_rounds = phase2_num_rounds(T);
 
-        // Sample batching challenge
-        let gamma: F = transcript.challenge_scalar();
-        let gamma_cub = gamma.square() * gamma;
-
-        // Get opening points and claims from accumulator
-        let (r_cycle_stage_1, rs1_rv_claim_stage_1) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (r_cycle_stage_3, rs1_rv_claim_stage_3) = opening_accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs1Value,
-                SumcheckId::InstructionInputVirtualization,
-            );
-        let (_, rd_wv_claim) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWriteValue,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, rs2_rv_claim_stage_1) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        let (_, rs2_rv_claim_stage_3) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-
-        // Compute initial claims
-        let claim_stage_1 =
-            rd_wv_claim + gamma * (rs1_rv_claim_stage_1 + gamma * rs2_rv_claim_stage_1);
-        let claim_stage_3 = rs1_rv_claim_stage_3 + gamma * rs2_rv_claim_stage_3;
+        let gamma = params.gamma;
+        let gamma_cub = params.gamma_cub;
+        let r_cycle_stage_1 = params.r_cycle_stage_1;
+        let r_cycle_stage_3 = params.r_cycle_stage_3;
+        let claim_stage_1 = params.claim_stage_1;
+        let claim_stage_3 = params.claim_stage_3;
 
         // Build cycle-major matrix from trace
         let cycle_major = RegisterMatrixCycleMajor::from_trace(trace);
@@ -312,6 +363,26 @@ impl<F: JoltField> RegistersReadWriteCheckingProverNew<F> {
             r_cycle_stage_1,
             r_cycle_stage_3,
         }
+    }
+
+    /// Convenience method: create parameters and initialize in one call.
+    ///
+    /// Equivalent to calling [`RegistersReadWriteCheckingParams::new`] followed by
+    /// [`Self::initialize`].
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProverNew::gen")]
+    pub fn gen(
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        opening_accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let params = RegistersReadWriteCheckingParams::new(
+            trace.len().log_2(),
+            opening_accumulator,
+            transcript,
+        );
+        Self::initialize(params, trace, bytecode_preprocessing, memory_layout)
     }
 
     /// Total number of sumcheck rounds.

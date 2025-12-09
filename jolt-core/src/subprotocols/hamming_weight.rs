@@ -16,7 +16,8 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
@@ -24,6 +25,44 @@ use crate::{
 
 /// Degree bound of the sumcheck round polynomials in [`HammingWeightSumcheckVerifier`].
 const DEGREE_BOUND: usize = 1;
+
+pub struct HammingWeightSumcheckParams<F: JoltField> {
+    pub d: usize,
+    pub num_rounds: usize,
+    pub gamma_powers: Vec<F>,
+    pub polynomial_types: Vec<CommittedPolynomial>,
+    pub sumcheck_id: SumcheckId,
+    pub r_cycle: Vec<F::Challenge>,
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightSumcheckParams<F> {
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        if self.sumcheck_id == SumcheckId::RamHammingWeight {
+            let (_, hamming_booleanity_claim) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamHammingWeight,
+                SumcheckId::RamHammingBooleanity,
+            );
+            hamming_booleanity_claim * self.gamma_powers.iter().sum::<F>()
+        } else {
+            self.gamma_powers.iter().sum()
+        }
+    }
+
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
 
 #[derive(Allocative)]
 pub struct HammingWeightSumcheckProver<F: JoltField> {
@@ -40,16 +79,8 @@ impl<F: JoltField> HammingWeightSumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for HammingWeightSumcheckProver<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "HammingWeightSumcheckProver::compute_message", fields(variant = ?self.params.sumcheck_id))]
@@ -87,17 +118,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for HammingWeight
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = get_opening_point::<F>(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let claims: Vec<F> = self.ra.iter().map(|ra| ra.final_sumcheck_claim()).collect();
-
-        let r_cycle = self.params.get_r_cycle(accumulator);
 
         accumulator.append_sparse(
             transcript,
             self.params.polynomial_types.clone(),
             self.params.sumcheck_id,
             opening_point.r,
-            r_cycle,
+            self.params.r_cycle.clone(),
             claims,
         );
     }
@@ -121,16 +150,8 @@ impl<F: JoltField> HammingWeightSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for HammingWeightSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -159,12 +180,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = self.params.get_r_cycle(accumulator);
-        let r = get_opening_point::<F>(sumcheck_challenges)
+        let r = self
+            .params
+            .normalize_opening_point(sumcheck_challenges)
             .r
             .iter()
             .cloned()
-            .chain(r_cycle.iter().cloned())
+            .chain(self.params.r_cycle.iter().cloned())
             .collect::<Vec<_>>();
 
         accumulator.append_sparse(
@@ -174,48 +196,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             r,
         );
     }
-}
-
-pub struct HammingWeightSumcheckParams<F: JoltField> {
-    pub d: usize,
-    pub num_rounds: usize,
-    pub gamma_powers: Vec<F>,
-    pub polynomial_types: Vec<CommittedPolynomial>,
-    pub sumcheck_id: SumcheckId,
-    pub virtual_poly: Option<VirtualPolynomial>,
-    pub r_cycle_sumcheck_id: SumcheckId,
-}
-
-impl<F: JoltField> HammingWeightSumcheckParams<F> {
-    pub fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    pub fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        if self.sumcheck_id == SumcheckId::RamHammingWeight {
-            let (_, hamming_booleanity_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamHammingWeight,
-                SumcheckId::RamHammingBooleanity,
-            );
-            hamming_booleanity_claim * self.gamma_powers.iter().sum::<F>()
-        } else {
-            self.gamma_powers.iter().sum()
-        }
-    }
-
-    fn get_r_cycle(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F::Challenge> {
-        let virtual_poly = self
-            .virtual_poly
-            .expect("virtual_poly must be set for hamming weight");
-        accumulator
-            .get_virtual_polynomial_opening(virtual_poly, self.r_cycle_sumcheck_id)
-            .0
-            .r
-    }
-}
-
-fn get_opening_point<F: JoltField>(
-    sumcheck_challenges: &[F::Challenge],
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }
