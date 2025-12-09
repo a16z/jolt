@@ -8,6 +8,7 @@ mod dory_globals;
 mod jolt_dory_routines;
 pub mod recursion;
 mod wrappers;
+mod gt_mul_witness;
 
 #[cfg(test)]
 mod tests;

@@ -1,4 +1,5 @@
 pub mod booleanity;
+pub mod gt_mul;
 pub mod hamming_weight;
 pub mod mles_product_sum;
 pub mod recursion_constraints;
@@ -12,6 +13,7 @@ pub mod univariate_skip;
 pub use booleanity::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
 };
+pub use gt_mul::{GtMulParams, GtMulProver, GtMulVerifier};
 pub use hamming_weight::{
     HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
 };

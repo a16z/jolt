@@ -179,7 +179,8 @@ pub enum SumcheckId {
     RecursionRhoCurr,   // Keep for backward compatibility
     RecursionQuotient,  // Keep for backward compatibility
     // New recursion protocol sumcheck IDs
-    SquareAndMultiply,       // Phase 1: constraint verification
+    SquareAndMultiply,       // Phase 1: GT exp constraint verification
+    GtMul,                   // GT multiplication constraint verification
     RecursionVirtualization, // Phase 2: virtualization check
     OpeningReduction,
 }

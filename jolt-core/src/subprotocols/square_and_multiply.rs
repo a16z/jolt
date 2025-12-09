@@ -18,7 +18,8 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        recursion_constraints::ConstraintType, sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
     zkvm::witness::VirtualPolynomial,
@@ -173,6 +174,9 @@ pub struct SquareAndMultiplyProver {
     /// Constraint bits for base^{b_i} evaluation
     pub constraint_bits: Vec<bool>,
 
+    /// Global constraint indices for each constraint
+    pub constraint_indices: Vec<usize>,
+
     /// g(x) polynomial for constraint evaluation
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub g_poly: MultilinearPolynomial<Fq>,
@@ -228,6 +232,7 @@ impl SquareAndMultiplyProver {
 
         let eq_x = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_x));
         let mut constraint_bits = Vec::new();
+        let mut constraint_indices = Vec::new();
         let mut base_mlpoly = Vec::new();
         let mut rho_prev_mlpoly = Vec::new();
         let mut rho_curr_mlpoly = Vec::new();
@@ -235,6 +240,7 @@ impl SquareAndMultiplyProver {
 
         for poly in constraint_polys {
             constraint_bits.push(poly.bit);
+            constraint_indices.push(poly.constraint_index);
             base_mlpoly.push(MultilinearPolynomial::from(poly.base));
             rho_prev_mlpoly.push(MultilinearPolynomial::from(poly.rho_prev));
             rho_curr_mlpoly.push(MultilinearPolynomial::from(poly.rho_curr));
@@ -244,6 +250,7 @@ impl SquareAndMultiplyProver {
         Self {
             params,
             constraint_bits,
+            constraint_indices,
             g_poly: MultilinearPolynomial::LargeScalars(g_poly),
             eq_x,
             r_x,
@@ -385,7 +392,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
             append_constraint_virtual_claims(
                 accumulator,
                 transcript,
-                i,
+                self.constraint_indices[i], // Use global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
                 self.base_claims[i],
@@ -410,12 +417,14 @@ pub struct SquareAndMultiplyVerifier {
     pub gamma: Fq,
     pub num_constraints: usize,
     pub constraint_bits: Vec<bool>,
+    pub constraint_indices: Vec<usize>,
 }
 
 impl SquareAndMultiplyVerifier {
     pub fn new<T: Transcript>(
         params: SquareAndMultiplyParams,
         constraint_bits: Vec<bool>,
+        constraint_indices: Vec<usize>,
         transcript: &mut T,
     ) -> Self {
         let r_x: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_vars)
@@ -431,6 +440,7 @@ impl SquareAndMultiplyVerifier {
             gamma: gamma.into(),
             num_constraints,
             constraint_bits,
+            constraint_indices,
         }
     }
 }
@@ -477,7 +487,11 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
 
         for i in 0..self.num_constraints {
             let (base_claim, rho_prev_claim, rho_curr_claim, quotient_claim) =
-                get_constraint_virtual_claims(accumulator, i, self.params.sumcheck_id);
+                get_constraint_virtual_claims(
+                    accumulator,
+                    self.constraint_indices[i],
+                    self.params.sumcheck_id,
+                );
 
             // Compute the constraint: ρ_{i+1} - ρ_i^2 * base^{b_i} - q_i * g(x)
             let base_power = if self.constraint_bits[i] {
@@ -509,7 +523,7 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
             append_constraint_virtual_openings(
                 accumulator,
                 transcript,
-                i,
+                self.constraint_indices[i],
                 self.params.sumcheck_id,
                 &opening_point,
             );
@@ -542,9 +556,9 @@ mod tests {
 
         // Initialize Dory globals
         DoryGlobals::reset();
-        DoryGlobals::initialize(1 << 4, 1 << 4);
+        DoryGlobals::initialize(1 << 2, 1 << 2);
 
-        let num_vars = 8; // For Fq12
+        let num_vars = 4; // For Fq12
         let mut rng = thread_rng();
 
         // Setup Dory prover and verifier
@@ -588,42 +602,104 @@ mod tests {
 
         let num_constraints = constraint_system.num_constraints();
 
+        // Debug: Print constraint system info
+        let num_gt_exp = constraint_system
+            .constraints
+            .iter()
+            .filter(|c| matches!(c.constraint_type, ConstraintType::GtExp { .. }))
+            .count();
+        let num_gt_mul = constraint_system
+            .constraints
+            .iter()
+            .filter(|c| matches!(c.constraint_type, ConstraintType::GtMul))
+            .count();
+
+
         // Create transcripts for the two-phase protocol
         let mut prover_transcript = Blake2bTranscript::new(b"two_phase_recursion");
         let mut verifier_transcript = Blake2bTranscript::new(b"two_phase_recursion");
 
-        // Extract constraint polynomials and g polynomial
-        let constraint_polys = constraint_system.extract_constraint_polynomials();
+        // Extract g polynomial
         let g_poly = constraint_system.g_poly.clone();
 
-        // ============ PHASE 1: Square-and-Multiply Sumcheck ============
+        // ============ PHASE 1: Constraint Sumchecks ============
 
-        // Create Phase 1 prover
-        let params1 = SquareAndMultiplyParams::new(num_constraints);
-        let phase1_prover = SquareAndMultiplyProver::new(
-            params1.clone(),
-            constraint_polys,
-            g_poly,
-            &mut prover_transcript,
-        );
+        // Extract GT exp constraints for square-and-multiply
+        let gt_exp_constraint_polys = constraint_system.extract_constraint_polynomials();
 
         // Create prover accumulator for Phase 1
         // log_T should match the constraint system size
         let log_T = constraint_system.num_vars();
         let mut prover_accumulator = ProverOpeningAccumulator::<Fq>::new(log_T);
 
-        // Run Phase 1 sumcheck
-        let mut phase1_prover = phase1_prover;
-        let phase1_instances: Vec<&mut dyn SumcheckInstanceProver<Fq, Blake2bTranscript>> =
-            vec![&mut phase1_prover];
+        // Create provers based on what constraints we have
+        let mut gamma = Fq::zero();
+
+        // Prepare square-and-multiply prover if we have GT exp constraints
+        let mut sq_mul_prover = if !gt_exp_constraint_polys.is_empty() {
+            let params_sq_mul = SquareAndMultiplyParams::new(gt_exp_constraint_polys.len());
+            let prover = SquareAndMultiplyProver::new(
+                params_sq_mul.clone(),
+                gt_exp_constraint_polys,
+                g_poly.clone(),
+                &mut prover_transcript,
+            );
+            gamma = prover.gamma; // Save gamma for later
+            Some(prover)
+        } else {
+            None
+        };
+
+        // Prepare GT mul prover if we have GT mul constraints
+        let gt_mul_constraints = constraint_system.extract_gt_mul_constraints();
+        let mut gt_mul_prover = if !gt_mul_constraints.is_empty() {
+            use crate::subprotocols::gt_mul::{
+                GtMulConstraintPolynomials, GtMulParams, GtMulProver,
+            };
+
+            let mut gt_mul_polys = Vec::new();
+            for (idx, lhs, rhs, result, quotient) in gt_mul_constraints {
+                gt_mul_polys.push(GtMulConstraintPolynomials {
+                    lhs,
+                    rhs,
+                    result,
+                    quotient,
+                    constraint_index: idx,
+                });
+            }
+
+            let params_gt_mul = GtMulParams::new(gt_mul_polys.len());
+            let prover = GtMulProver::<Blake2bTranscript>::new(
+                params_gt_mul,
+                gt_mul_polys,
+                g_poly.clone(),
+                &mut prover_transcript,
+            );
+            if gamma == Fq::zero() {
+                gamma = prover.gamma; // Use GT mul gamma if no square-and-multiply
+            }
+            Some(prover)
+        } else {
+            None
+        };
+
+        // Run Phase 1 sumcheck with all provers
+        let mut phase1_instances: Vec<&mut dyn SumcheckInstanceProver<Fq, Blake2bTranscript>> =
+            Vec::new();
+
+        if let Some(ref mut prover) = sq_mul_prover {
+            phase1_instances.push(prover);
+        }
+
+        if let Some(ref mut prover) = gt_mul_prover {
+            phase1_instances.push(prover);
+        }
+
         let (phase1_proof, r_phase1) = BatchedSumcheck::prove(
             phase1_instances,
             &mut prover_accumulator,
             &mut prover_transcript,
         );
-
-        // Get gamma from Phase 1
-        let gamma = phase1_prover.gamma;
 
         // ============ PHASE 2: Virtualization Sumcheck ============
 
@@ -640,36 +716,77 @@ mod tests {
                 .insert(key.clone(), (OpeningPoint::default(), *claim));
         }
 
-        // Get constraint bits for verifier
-        let constraint_bits: Vec<bool> = constraint_system
+        // Count GT exp and GT mul constraints
+        let num_gt_exp = constraint_system
             .constraints
             .iter()
-            .map(|c| c.bit)
-            .collect();
+            .filter(|c| matches!(c.constraint_type, ConstraintType::GtExp { .. }))
+            .count();
+        let num_gt_mul = constraint_system
+            .constraints
+            .iter()
+            .filter(|c| matches!(c.constraint_type, ConstraintType::GtMul))
+            .count();
 
-        // Create Phase 1 verifier
-        let phase1_verifier = SquareAndMultiplyVerifier::new(
-            params1,
-            constraint_bits.clone(),
-            &mut verifier_transcript,
-        );
+        // Create verifiers based on what constraints we have
+        let mut phase1_ver_instances: Vec<
+            Box<dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>>,
+        > = Vec::new();
 
-        // Verify Phase 1
-        let phase1_ver_instances: Vec<&dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>> =
-            vec![&phase1_verifier];
+        // Add square-and-multiply verifier if we have GT exp constraints
+        if num_gt_exp > 0 {
+            // Get constraint bits and indices for verifier (only GT exp constraints have bits)
+            let (constraint_bits, constraint_indices): (Vec<bool>, Vec<usize>) = constraint_system
+                .constraints
+                .iter()
+                .filter_map(|c| match &c.constraint_type {
+                    ConstraintType::GtExp { bit } => Some((*bit, c.constraint_index)),
+                    ConstraintType::GtMul => None,
+                })
+                .unzip();
+
+            let params_sq_mul = SquareAndMultiplyParams::new(num_gt_exp);
+            let verifier = SquareAndMultiplyVerifier::new(
+                params_sq_mul,
+                constraint_bits,
+                constraint_indices,
+                &mut verifier_transcript,
+            );
+            phase1_ver_instances.push(Box::new(verifier));
+        }
+
+        // Add GT mul verifier if we have GT mul constraints
+        if num_gt_mul > 0 {
+            use crate::subprotocols::gt_mul::{GtMulParams, GtMulVerifier};
+
+            // Get constraint indices for GT mul constraints
+            let constraint_indices: Vec<usize> = constraint_system
+                .constraints
+                .iter()
+                .filter_map(|c| match &c.constraint_type {
+                    ConstraintType::GtMul => Some(c.constraint_index),
+                    ConstraintType::GtExp { .. } => None,
+                })
+                .collect();
+
+            let params_gt_mul = GtMulParams::new(num_gt_mul);
+            let verifier =
+                GtMulVerifier::new(params_gt_mul, constraint_indices, &mut verifier_transcript);
+            phase1_ver_instances.push(Box::new(verifier));
+        }
+
+        // Verify Phase 1 with all verifiers
+        let phase1_ver_instances_refs: Vec<&dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>> =
+            phase1_ver_instances.iter().map(|v| &**v).collect();
 
         let r_phase1_ver = BatchedSumcheck::verify(
             &phase1_proof,
-            phase1_ver_instances,
+            phase1_ver_instances_refs,
             &mut verifier_accumulator,
             &mut verifier_transcript,
         )
         .expect("Phase 1 verification should succeed");
 
-        println!("Phase 1 sumcheck proof generated and verified successfully");
-        println!("Number of constraints: {}", num_constraints);
-        println!("Number of rounds: {}", r_phase1.len());
-        println!("Gamma: {:?}", gamma);
 
         // ============ PHASE 2: Virtualization Sumcheck ============
 
@@ -709,8 +826,6 @@ mod tests {
             &mut prover_transcript,
         );
 
-        println!("\nPhase 2 sumcheck proof generated successfully");
-        println!("Number of rounds: {}", r_phase2.len());
 
         // Add Phase 2 dense polynomial claims to verifier accumulator
         // In a real proof, these would come from proof.opening_claims
@@ -722,10 +837,17 @@ mod tests {
             }
         }
 
+        // Get all constraint types for Phase 2 verifier
+        let constraint_types: Vec<ConstraintType> = constraint_system
+            .constraints
+            .iter()
+            .map(|c| c.constraint_type.clone())
+            .collect();
+
         // Create Phase 2 verifier
         let phase2_verifier = RecursionVirtualizationVerifier::new(
             phase2_params,
-            constraint_bits.clone(),
+            constraint_types,
             &mut verifier_transcript,
             r_phase1_ver.clone(), // x_star from Phase 1 verification
             gamma,
@@ -749,7 +871,6 @@ mod tests {
             "Phase 2 challenge lengths should match"
         );
 
-        println!("\n============ FINAL STEP: Opening Proof with Hyrax ============");
 
         // Import necessary types for Hyrax PCS
         use crate::poly::commitment::hyrax::{Hyrax, HyraxCommitment};
@@ -768,17 +889,13 @@ mod tests {
         );
 
         // Create empty hints map for Hyrax (doesn't need hints)
-        let opening_hints: HashMap<CommittedPolynomial, ()> = HashMap::new();
+        let _opening_hints: HashMap<CommittedPolynomial, ()> = HashMap::new();
 
         // Setup Hyrax with RATIO=2 (standard for Hyrax)
         const RATIO: usize = 1;
         type HyraxPCS = Hyrax<RATIO, GrumpkinProjective>;
 
         // Setup prover generators
-        println!(
-            "constraint_system.matrix.num_vars = {}",
-            constraint_system.matrix.num_vars
-        );
         let prover_setup = <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_prover(
             constraint_system.matrix.num_vars
         );
@@ -801,7 +918,6 @@ mod tests {
             )
             .expect("prove_single should succeed");
 
-        println!("Opening proof generated successfully");
 
         // Create commitments map for verifier
         let mut commitments_map: HashMap<
@@ -843,9 +959,5 @@ mod tests {
             verification_result.err()
         );
 
-        println!("\n✅ Full two-phase recursion protocol with Hyrax PCS completed successfully!");
-        println!("   - Phase 1: Square-and-Multiply sumcheck ✓");
-        println!("   - Phase 2: Virtualization sumcheck ✓");
-        println!("   - Opening proof with Hyrax PCS ✓");
     }
 }

@@ -25,7 +25,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        recursion_constraints::ConstraintSystem, sumcheck_prover::SumcheckInstanceProver,
+        recursion_constraints::{ConstraintSystem, ConstraintType, PolyType}, sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -35,26 +35,41 @@ use ark_bn254::Fq;
 use ark_ff::Zero;
 use rayon::prelude::*;
 
+/// Virtual claims for all constraint types
+pub struct VirtualClaims {
+    // GT exp claims
+    pub base_claims: Vec<Fq>,
+    pub rho_prev_claims: Vec<Fq>,
+    pub rho_curr_claims: Vec<Fq>,
+    pub quotient_claims: Vec<Fq>,
+    // GT mul claims
+    pub mul_lhs_claims: Vec<Fq>,
+    pub mul_rhs_claims: Vec<Fq>,
+    pub mul_result_claims: Vec<Fq>,
+    pub mul_quotient_claims: Vec<Fq>,
+}
+
 /// Compute v = Σ_i eq(r_s,i) · v_i for the virtualization protocol
 /// This is shared by both prover and verifier
 fn compute_virtualization_claim(
     params: &RecursionVirtualizationParams,
     eq_evals: &[Fq],
-    base_claims: &[Fq],
-    rho_prev_claims: &[Fq],
-    rho_curr_claims: &[Fq],
-    quotient_claims: &[Fq],
+    claims: &VirtualClaims,
 ) -> Fq {
     // Build μ evaluations from Phase 1 claims
     let mu_size = 1 << params.num_s_vars;
     let mut mu_evals = vec![Fq::zero(); mu_size];
 
-    // Fill μ following the matrix layout
+    // Fill μ following the matrix layout with 8 polynomial types
     for i in 0..params.num_constraints {
-        mu_evals[0 * params.num_constraints_padded + i] = base_claims[i];
-        mu_evals[1 * params.num_constraints_padded + i] = rho_prev_claims[i];
-        mu_evals[2 * params.num_constraints_padded + i] = rho_curr_claims[i];
-        mu_evals[3 * params.num_constraints_padded + i] = quotient_claims[i];
+        mu_evals[(PolyType::Base as usize) * params.num_constraints_padded + i] = claims.base_claims[i];
+        mu_evals[(PolyType::RhoPrev as usize) * params.num_constraints_padded + i] = claims.rho_prev_claims[i];
+        mu_evals[(PolyType::RhoCurr as usize) * params.num_constraints_padded + i] = claims.rho_curr_claims[i];
+        mu_evals[(PolyType::Quotient as usize) * params.num_constraints_padded + i] = claims.quotient_claims[i];
+        mu_evals[(PolyType::MulLhs as usize) * params.num_constraints_padded + i] = claims.mul_lhs_claims[i];
+        mu_evals[(PolyType::MulRhs as usize) * params.num_constraints_padded + i] = claims.mul_rhs_claims[i];
+        mu_evals[(PolyType::MulResult as usize) * params.num_constraints_padded + i] = claims.mul_result_claims[i];
+        mu_evals[(PolyType::MulQuotient as usize) * params.num_constraints_padded + i] = claims.mul_quotient_claims[i];
     }
 
     // Compute the inner product: Σ_s eq(r_s, s) * μ(s)
@@ -130,11 +145,8 @@ pub struct RecursionVirtualizationProver {
     /// Gamma coefficient from Phase 1
     pub gamma: Fq,
 
-    /// Individual virtual claims from Phase 1 for each constraint
-    pub base_claims: Vec<Fq>,
-    pub rho_prev_claims: Vec<Fq>,
-    pub rho_curr_claims: Vec<Fq>,
-    pub quotient_claims: Vec<Fq>,
+    /// Virtual claims from Phase 1 for all constraints
+    pub virtual_claims: VirtualClaims,
 
     /// Current round
     pub round: usize,
@@ -172,34 +184,78 @@ impl RecursionVirtualizationProver {
             "M polynomial should only have s variables after binding r_x_prev"
         );
 
-        let mut base_claims = Vec::new();
-        let mut rho_prev_claims = Vec::new();
-        let mut rho_curr_claims = Vec::new();
-        let mut quotient_claims = Vec::new();
+        // Initialize claim vectors with zeros
+        let mut base_claims = vec![Fq::zero(); params.num_constraints];
+        let mut rho_prev_claims = vec![Fq::zero(); params.num_constraints];
+        let mut rho_curr_claims = vec![Fq::zero(); params.num_constraints];
+        let mut quotient_claims = vec![Fq::zero(); params.num_constraints];
+        let mut mul_lhs_claims = vec![Fq::zero(); params.num_constraints];
+        let mut mul_rhs_claims = vec![Fq::zero(); params.num_constraints];
+        let mut mul_result_claims = vec![Fq::zero(); params.num_constraints];
+        let mut mul_quotient_claims = vec![Fq::zero(); params.num_constraints];
 
-        for i in 0..params.num_constraints {
-            let (_, base_claim) = phase1_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionBase(i),
-                SumcheckId::SquareAndMultiply,
-            );
-            let (_, rho_prev_claim) = phase1_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionRhoPrev(i),
-                SumcheckId::SquareAndMultiply,
-            );
-            let (_, rho_curr_claim) = phase1_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionRhoCurr(i),
-                SumcheckId::SquareAndMultiply,
-            );
-            let (_, quotient_claim) = phase1_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionQuotient(i),
-                SumcheckId::SquareAndMultiply,
-            );
+        // Collect claims based on constraint type
+        for (i, constraint) in constraint_system.constraints.iter().enumerate() {
+            match constraint.constraint_type {
+                ConstraintType::GtExp { .. } => {
+                    let (_, base_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionBase(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
+                    let (_, rho_prev_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionRhoPrev(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
+                    let (_, rho_curr_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionRhoCurr(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
+                    let (_, quotient_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionQuotient(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
 
-            base_claims.push(base_claim);
-            rho_prev_claims.push(rho_prev_claim);
-            rho_curr_claims.push(rho_curr_claim);
-            quotient_claims.push(quotient_claim);
+                    base_claims[i] = base_claim;
+                    rho_prev_claims[i] = rho_prev_claim;
+                    rho_curr_claims[i] = rho_curr_claim;
+                    quotient_claims[i] = quotient_claim;
+                }
+                ConstraintType::GtMul => {
+                    let (_, lhs_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulLhs(i),
+                        SumcheckId::GtMul,
+                    );
+                    let (_, rhs_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulRhs(i),
+                        SumcheckId::GtMul,
+                    );
+                    let (_, result_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulResult(i),
+                        SumcheckId::GtMul,
+                    );
+                    let (_, quotient_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulQuotient(i),
+                        SumcheckId::GtMul,
+                    );
+
+                    mul_lhs_claims[i] = lhs_claim;
+                    mul_rhs_claims[i] = rhs_claim;
+                    mul_result_claims[i] = result_claim;
+                    mul_quotient_claims[i] = quotient_claim;
+                }
+            }
         }
+
+        let virtual_claims = VirtualClaims {
+            base_claims,
+            rho_prev_claims,
+            rho_curr_claims,
+            quotient_claims,
+            mul_lhs_claims,
+            mul_rhs_claims,
+            mul_result_claims,
+            mul_quotient_claims,
+        };
 
         Self {
             params,
@@ -208,10 +264,7 @@ impl RecursionVirtualizationProver {
             r_x_prev,
             r_s,
             gamma,
-            base_claims,
-            rho_prev_claims,
-            rho_curr_claims,
-            quotient_claims,
+            virtual_claims,
             round: 0,
             num_constraint_vars: constraint_system.matrix.num_constraint_vars,
         }
@@ -236,10 +289,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
         compute_virtualization_claim(
             &self.params,
             &eq_evals,
-            &self.base_claims,
-            &self.rho_prev_claims,
-            &self.rho_curr_claims,
-            &self.quotient_claims,
+            &self.virtual_claims,
         )
     }
 
@@ -249,11 +299,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
         let num_s_remaining = self.eq_r_s.get_num_vars();
         let s_half = 1 << (num_s_remaining - 1);
 
-        if num_s_remaining == 1 {
-            eprintln!("=== FINAL ROUND DEBUG (round {}) ===", round);
-            eprintln!("num_s_remaining = {}", num_s_remaining);
-            eprintln!("previous_claim = {:?}", previous_claim);
-        }
 
         // Step 3: Sumcheck on Σ_s eq(r_s,s) · M(s,r_x) = v
         // M is already bound by r_x, so we're summing over s variables
@@ -336,13 +381,13 @@ pub struct RecursionVirtualizationVerifier {
     pub r_x_prev: Vec<<Fq as JoltField>::Challenge>,
     pub r_s: Vec<<Fq as JoltField>::Challenge>,
     pub gamma: Fq,
-    pub constraint_bits: Vec<bool>,
+    pub constraint_types: Vec<ConstraintType>,
 }
 
 impl RecursionVirtualizationVerifier {
     pub fn new<T: Transcript>(
         params: RecursionVirtualizationParams,
-        constraint_bits: Vec<bool>,
+        constraint_types: Vec<ConstraintType>,
         transcript: &mut T,
         r_x_prev: Vec<<Fq as JoltField>::Challenge>,
         gamma: Fq,
@@ -356,7 +401,7 @@ impl RecursionVirtualizationVerifier {
             r_x_prev,
             r_s,
             gamma,
-            constraint_bits,
+            constraint_types,
         }
     }
 }
@@ -371,36 +416,78 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
     }
 
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<Fq>) -> Fq {
-        let mut base_claims = Vec::with_capacity(self.params.num_constraints);
-        let mut rho_prev_claims = Vec::with_capacity(self.params.num_constraints);
-        let mut rho_curr_claims = Vec::with_capacity(self.params.num_constraints);
-        let mut quotient_claims = Vec::with_capacity(self.params.num_constraints);
+        // Initialize claim vectors with zeros
+        let mut base_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut rho_prev_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut rho_curr_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut quotient_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut mul_lhs_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut mul_rhs_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut mul_result_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut mul_quotient_claims = vec![Fq::zero(); self.params.num_constraints];
 
-        for i in 0..self.params.num_constraints {
-            let (_, base_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionBase(i),
-                SumcheckId::SquareAndMultiply,
-            );
-            base_claims.push(base_claim);
+        // Collect claims based on constraint type
+        for (i, constraint_type) in self.constraint_types.iter().enumerate() {
+            match constraint_type {
+                ConstraintType::GtExp { .. } => {
+                    let (_, base_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionBase(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
+                    let (_, rho_prev_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionRhoPrev(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
+                    let (_, rho_curr_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionRhoCurr(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
+                    let (_, quotient_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionQuotient(i),
+                        SumcheckId::SquareAndMultiply,
+                    );
 
-            let (_, rho_prev_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionRhoPrev(i),
-                SumcheckId::SquareAndMultiply,
-            );
-            rho_prev_claims.push(rho_prev_claim);
+                    base_claims[i] = base_claim;
+                    rho_prev_claims[i] = rho_prev_claim;
+                    rho_curr_claims[i] = rho_curr_claim;
+                    quotient_claims[i] = quotient_claim;
+                }
+                ConstraintType::GtMul => {
+                    let (_, lhs_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulLhs(i),
+                        SumcheckId::GtMul,
+                    );
+                    let (_, rhs_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulRhs(i),
+                        SumcheckId::GtMul,
+                    );
+                    let (_, result_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulResult(i),
+                        SumcheckId::GtMul,
+                    );
+                    let (_, quotient_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionMulQuotient(i),
+                        SumcheckId::GtMul,
+                    );
 
-            let (_, rho_curr_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionRhoCurr(i),
-                SumcheckId::SquareAndMultiply,
-            );
-            rho_curr_claims.push(rho_curr_claim);
-
-            let (_, quotient_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RecursionQuotient(i),
-                SumcheckId::SquareAndMultiply,
-            );
-            quotient_claims.push(quotient_claim);
+                    mul_lhs_claims[i] = lhs_claim;
+                    mul_rhs_claims[i] = rhs_claim;
+                    mul_result_claims[i] = result_claim;
+                    mul_quotient_claims[i] = quotient_claim;
+                }
+            }
         }
+
+        let virtual_claims = VirtualClaims {
+            base_claims,
+            rho_prev_claims,
+            rho_curr_claims,
+            quotient_claims,
+            mul_lhs_claims,
+            mul_rhs_claims,
+            mul_result_claims,
+            mul_quotient_claims,
+        };
 
         let r_s_fq: Vec<Fq> = self.r_s.iter().map(|c| (*c).into()).collect();
         let eq_evals = EqPolynomial::<Fq>::evals(&r_s_fq);
@@ -408,10 +495,7 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
         compute_virtualization_claim(
             &self.params,
             &eq_evals,
-            &base_claims,
-            &rho_prev_claims,
-            &rho_curr_claims,
-            &quotient_claims,
+            &virtual_claims,
         )
     }
 

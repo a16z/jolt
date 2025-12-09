@@ -531,10 +531,15 @@ pub enum VirtualPolynomial {
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
     // Recursion protocol virtual polynomials - indexed by constraint index
-    RecursionBase(usize),      // a(x) values for constraint i
-    RecursionRhoPrev(usize),   // ρ_j values for constraint i
-    RecursionRhoCurr(usize),   // ρ_{j+1} values for constraint i
-    RecursionQuotient(usize),  // Q_j values for constraint i
+    RecursionBase(usize),      // a(x) values for constraint i (GT exp)
+    RecursionRhoPrev(usize),   // ρ_j values for constraint i (GT exp)
+    RecursionRhoCurr(usize),   // ρ_{j+1} values for constraint i (GT exp)
+    RecursionQuotient(usize),  // Q_j values for constraint i (GT exp)
+    // GT multiplication virtual polynomials - indexed by constraint index
+    RecursionMulLhs(usize),    // Left operand a(x) for GT mul constraint i
+    RecursionMulRhs(usize),    // Right operand b(x) for GT mul constraint i
+    RecursionMulResult(usize), // Result c(x) for GT mul constraint i
+    RecursionMulQuotient(usize), // Quotient Q(x) for GT mul constraint i
 }
 
 pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock::new(|| {

@@ -6,7 +6,7 @@ use crate::{
         commitment::{
             commitment_scheme::RecursionExt,
             dory::{
-                recursion::JoltGtExpWitness, ArkDoryProof, ArkworksVerifierSetup,
+                recursion::{JoltGtExpWitness, JoltGtMulWitness}, ArkDoryProof, ArkworksVerifierSetup,
                 DoryCommitmentScheme,
             },
         },
@@ -52,21 +52,32 @@ pub fn compute_constraint_formula(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
 pub enum PolyType {
+    // GT Exponentiation polynomials
     Base = 0,
     RhoPrev = 1,
     RhoCurr = 2,
     Quotient = 3,
+
+    // GT Multiplication polynomials
+    MulLhs = 4,
+    MulRhs = 5,
+    MulResult = 6,
+    MulQuotient = 7,
 }
 
 impl PolyType {
-    pub const NUM_TYPES: usize = 4;
+    pub const NUM_TYPES: usize = 8;
 
-    pub fn all() -> [PolyType; 4] {
+    pub fn all() -> [PolyType; 8] {
         [
             PolyType::Base,
             PolyType::RhoPrev,
             PolyType::RhoCurr,
             PolyType::Quotient,
+            PolyType::MulLhs,
+            PolyType::MulRhs,
+            PolyType::MulResult,
+            PolyType::MulQuotient,
         ]
     }
 
@@ -77,6 +88,10 @@ impl PolyType {
             1 => PolyType::RhoPrev,
             2 => PolyType::RhoCurr,
             3 => PolyType::Quotient,
+            4 => PolyType::MulLhs,
+            5 => PolyType::MulRhs,
+            6 => PolyType::MulResult,
+            7 => PolyType::MulQuotient,
             _ => panic!("Invalid row index"),
         }
     }
@@ -154,22 +169,22 @@ impl DoryMultilinearMatrix {
 
 /// Builder for constructing the giant multilinear matrix.
 ///
-/// Physical layout: rows are organized as [all base] [all rho_prev] [all rho_curr] [all quotient]
+/// Physical layout: rows are organized by polynomial type
 /// Row index = poly_type * num_constraints_padded + constraint_index
 pub struct DoryMatrixBuilder {
     num_constraint_vars: usize,
-    /// Rows grouped by polynomial type: [base_rows, rho_prev_rows, rho_curr_rows, quotient_rows]
-    rows_by_type: [Vec<Vec<Fq>>; 4],
-    /// Bits for each constraint
-    bits: Vec<bool>,
+    /// Rows grouped by polynomial type
+    rows_by_type: [Vec<Vec<Fq>>; 8],
+    /// Constraint types for each constraint
+    constraint_types: Vec<ConstraintType>,
 }
 
 impl DoryMatrixBuilder {
     pub fn new(num_constraint_vars: usize) -> Self {
         Self {
             num_constraint_vars,
-            rows_by_type: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
-            bits: Vec::new(),
+            rows_by_type: [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            constraint_types: Vec::new(),
         }
     }
 
@@ -205,9 +220,50 @@ impl DoryMatrixBuilder {
             assert_eq!(quotient.len(), 1 << self.num_constraint_vars);
             self.rows_by_type[PolyType::Quotient as usize].push(quotient);
 
-            // Store bit for this constraint
-            self.bits.push(witness.bits[step]);
+            // Add empty rows for GT mul types to maintain consistent indexing
+            let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
+            self.rows_by_type[PolyType::MulLhs as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::MulRhs as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::MulResult as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::MulQuotient as usize].push(zero_row);
+
+            // Store constraint type for this constraint
+            self.constraint_types.push(ConstraintType::GtExp { bit: witness.bits[step] });
         }
+    }
+
+    /// Add constraint from a GT multiplication witness.
+    /// Creates one constraint using:
+    /// - lhs: the left operand a
+    /// - rhs: the right operand b
+    /// - result: the product c = a * b
+    /// - quotient: Q such that a(x) * b(x) - c(x) = Q(x) * g(x)
+    pub fn add_gt_mul_witness(&mut self, witness: &JoltGtMulWitness) {
+        let lhs_mle = fq12_to_multilinear_evals(&witness.lhs);
+        let rhs_mle = fq12_to_multilinear_evals(&witness.rhs);
+        let result_mle = fq12_to_multilinear_evals(&witness.result);
+        let quotient_mle = witness.quotient_mle.clone();
+
+        assert_eq!(lhs_mle.len(), 1 << self.num_constraint_vars);
+        assert_eq!(rhs_mle.len(), 1 << self.num_constraint_vars);
+        assert_eq!(result_mle.len(), 1 << self.num_constraint_vars);
+        assert_eq!(quotient_mle.len(), 1 << self.num_constraint_vars);
+
+        // Add rows for GT mul polynomials (keeping GT exp rows empty)
+        self.rows_by_type[PolyType::MulLhs as usize].push(lhs_mle);
+        self.rows_by_type[PolyType::MulRhs as usize].push(rhs_mle);
+        self.rows_by_type[PolyType::MulResult as usize].push(result_mle);
+        self.rows_by_type[PolyType::MulQuotient as usize].push(quotient_mle);
+
+        // Add empty rows for GT exp types to maintain consistent indexing
+        let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
+        self.rows_by_type[PolyType::Base as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::RhoCurr as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::Quotient as usize].push(zero_row);
+
+        // Store constraint type
+        self.constraint_types.push(ConstraintType::GtMul);
     }
 
     pub fn build(self) -> (DoryMultilinearMatrix, Vec<MatrixConstraint>) {
@@ -223,9 +279,9 @@ impl DoryMatrixBuilder {
             );
         }
         assert_eq!(
-            self.bits.len(),
+            self.constraint_types.len(),
             num_constraints,
-            "Number of bits must match number of constraints"
+            "Number of constraint types must match number of constraints"
         );
 
         let num_constraints_bits = (num_constraints as f64).log2().ceil() as usize;
@@ -266,17 +322,26 @@ impl DoryMatrixBuilder {
         };
 
         let constraints: Vec<MatrixConstraint> = self
-            .bits
+            .constraint_types
             .into_iter()
             .enumerate()
-            .map(|(idx, bit)| MatrixConstraint {
+            .map(|(idx, constraint_type)| MatrixConstraint {
                 constraint_index: idx,
-                bit,
+                constraint_type,
             })
             .collect();
 
         (matrix, constraints)
     }
+}
+
+/// Type of constraint
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstraintType {
+    /// GT exponentiation constraint with its bit value
+    GtExp { bit: bool },
+    /// GT multiplication constraint
+    GtMul,
 }
 
 /// Constraint metadata for matrix-based evaluation.
@@ -285,8 +350,8 @@ impl DoryMatrixBuilder {
 pub struct MatrixConstraint {
     /// Index of this constraint (0 to num_constraints-1)
     pub constraint_index: usize,
-    /// Bit value for this step (exponent bit)
-    pub bit: bool,
+    /// Type of constraint (GT exp or GT mul)
+    pub constraint_type: ConstraintType,
 }
 
 /// Constraint system using a giant multilinear matrix for all witness polynomials
@@ -327,6 +392,10 @@ impl ConstraintSystem {
             builder.add_gt_exp_witness(witness);
         }
 
+        for (_op_id, witness) in witnesses.gt_mul.iter() {
+            builder.add_gt_mul_witness(witness);
+        }
+
         let (matrix, constraints) = builder.build();
         let g_poly = DensePolynomial::new(get_g_mle());
 
@@ -336,15 +405,17 @@ impl ConstraintSystem {
         //   exp(z) = Σ_i b_i * eq(z, i)
         //
         // But we store it as values on {0,1}^{num_constraint_index_vars}, i.e. a dense table:
-        //   values[j] = b_j for 0 <= j < num_constraints
-        //             = 0    for padding indices
+        //   values[j] = b_j for 0 <= j < num_constraints (only for GT exp constraints)
+        //             = 0    for padding indices and GT mul constraints
         let num_i_bits = matrix.num_constraint_index_vars;
         let size = 1 << num_i_bits;
         let mut exponent_values = vec![Fq::zero(); size];
 
         for constraint in &constraints {
-            if constraint.bit {
-                exponent_values[constraint.constraint_index] = Fq::one();
+            if let ConstraintType::GtExp { bit } = constraint.constraint_type {
+                if bit {
+                    exponent_values[constraint.constraint_index] = Fq::one();
+                }
             }
         }
 
@@ -376,29 +447,54 @@ impl ConstraintSystem {
     }
 
     /// Extract constraint polynomials for square-and-multiply sumcheck (Phase 1)
+    /// Only returns GT exp constraints
     pub fn extract_constraint_polynomials(&self) -> Vec<crate::subprotocols::square_and_multiply::ConstraintPolynomials> {
         let mut polys = Vec::new();
         let num_constraint_vars = self.matrix.num_constraint_vars;
         let row_size = 1 << num_constraint_vars;
 
         for (idx, constraint) in self.constraints.iter().enumerate() {
-            // Extract polynomial data from the matrix for each constraint
-            let base = self.extract_row_poly(PolyType::Base, idx, row_size);
-            let rho_prev = self.extract_row_poly(PolyType::RhoPrev, idx, row_size);
-            let rho_curr = self.extract_row_poly(PolyType::RhoCurr, idx, row_size);
-            let quotient = self.extract_row_poly(PolyType::Quotient, idx, row_size);
+            if let ConstraintType::GtExp { bit } = constraint.constraint_type {
+                // Extract polynomial data from the matrix for each constraint
+                let base = self.extract_row_poly(PolyType::Base, idx, row_size);
+                let rho_prev = self.extract_row_poly(PolyType::RhoPrev, idx, row_size);
+                let rho_curr = self.extract_row_poly(PolyType::RhoCurr, idx, row_size);
+                let quotient = self.extract_row_poly(PolyType::Quotient, idx, row_size);
 
-            polys.push(crate::subprotocols::square_and_multiply::ConstraintPolynomials {
-                base,
-                rho_prev,
-                rho_curr,
-                quotient,
-                bit: constraint.bit,
-                constraint_index: constraint.constraint_index,
-            });
+                polys.push(crate::subprotocols::square_and_multiply::ConstraintPolynomials {
+                    base,
+                    rho_prev,
+                    rho_curr,
+                    quotient,
+                    bit,
+                    constraint_index: constraint.constraint_index,
+                });
+            }
         }
 
         polys
+    }
+
+    /// Extract GT mul constraint data for gt_mul sumcheck
+    pub fn extract_gt_mul_constraints(&self) -> Vec<(usize, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>)> {
+        let mut constraints = Vec::new();
+        let num_constraint_vars = self.matrix.num_constraint_vars;
+        let row_size = 1 << num_constraint_vars;
+
+
+        for (idx, constraint) in self.constraints.iter().enumerate() {
+            if let ConstraintType::GtMul = constraint.constraint_type {
+                let lhs = self.extract_row_poly(PolyType::MulLhs, idx, row_size);
+                let rhs = self.extract_row_poly(PolyType::MulRhs, idx, row_size);
+                let result = self.extract_row_poly(PolyType::MulResult, idx, row_size);
+                let quotient = self.extract_row_poly(PolyType::MulQuotient, idx, row_size);
+
+
+                constraints.push((constraint.constraint_index, lhs, rhs, result, quotient));
+            }
+        }
+
+        constraints
     }
 
     /// Helper to extract a row polynomial from the matrix
@@ -435,6 +531,10 @@ impl ConstraintSystem {
             PolyType::RhoPrev => rho_prev_claim,
             PolyType::RhoCurr => rho_curr_claim,
             PolyType::Quotient => quotient_claim,
+            PolyType::MulLhs => Fq::zero(), // GT mul types not used in this context
+            PolyType::MulRhs => Fq::zero(),
+            PolyType::MulResult => Fq::zero(),
+            PolyType::MulQuotient => Fq::zero(),
         }
     }
 
@@ -500,25 +600,41 @@ impl ConstraintSystem {
     /// Evaluate a single constraint C_i(x) using the matrix layout.
     fn evaluate_constraint(&self, constraint: &MatrixConstraint, x: &[Fq]) -> Fq {
         let idx = constraint.constraint_index;
-
-        let base_row = self.matrix.row_index(PolyType::Base, idx);
-        let rho_prev_row = self.matrix.row_index(PolyType::RhoPrev, idx);
-        let rho_curr_row = self.matrix.row_index(PolyType::RhoCurr, idx);
-        let quotient_row = self.matrix.row_index(PolyType::Quotient, idx);
-
-        let base_eval = self.matrix.evaluate_row(base_row, x); // a(x)
-        let rho_prev = self.matrix.evaluate_row(rho_prev_row, x);
-        let rho_curr = self.matrix.evaluate_row(rho_curr_row, x);
-        let quotient = self.matrix.evaluate_row(quotient_row, x);
         let g_eval = self.g_poly.evaluate(x);
 
-        let bit = constraint.bit;
-        let bit_f = if bit { Fq::one() } else { Fq::zero() };
+        match constraint.constraint_type {
+            ConstraintType::GtExp { bit } => {
+                let base_row = self.matrix.row_index(PolyType::Base, idx);
+                let rho_prev_row = self.matrix.row_index(PolyType::RhoPrev, idx);
+                let rho_curr_row = self.matrix.row_index(PolyType::RhoCurr, idx);
+                let quotient_row = self.matrix.row_index(PolyType::Quotient, idx);
 
-        // a(x)^{b_i} = 1 + (a(x) - 1) * b_i
-        let base_power = Fq::one() + (base_eval - Fq::one()) * bit_f;
+                let base_eval = self.matrix.evaluate_row(base_row, x); // a(x)
+                let rho_prev = self.matrix.evaluate_row(rho_prev_row, x);
+                let rho_curr = self.matrix.evaluate_row(rho_curr_row, x);
+                let quotient = self.matrix.evaluate_row(quotient_row, x);
 
-        rho_curr - rho_prev.square() * base_power - quotient * g_eval
+                let bit_f = if bit { Fq::one() } else { Fq::zero() };
+                // a(x)^{b_i} = 1 + (a(x) - 1) * b_i
+                let base_power = Fq::one() + (base_eval - Fq::one()) * bit_f;
+
+                rho_curr - rho_prev.square() * base_power - quotient * g_eval
+            }
+            ConstraintType::GtMul => {
+                let lhs_row = self.matrix.row_index(PolyType::MulLhs, idx);
+                let rhs_row = self.matrix.row_index(PolyType::MulRhs, idx);
+                let result_row = self.matrix.row_index(PolyType::MulResult, idx);
+                let quotient_row = self.matrix.row_index(PolyType::MulQuotient, idx);
+
+                let lhs_eval = self.matrix.evaluate_row(lhs_row, x);
+                let rhs_eval = self.matrix.evaluate_row(rhs_row, x);
+                let result_eval = self.matrix.evaluate_row(result_row, x);
+                let quotient_eval = self.matrix.evaluate_row(quotient_row, x);
+
+                // GT mul constraint: lhs * rhs - result - quotient * g
+                lhs_eval * rhs_eval - result_eval - quotient_eval * g_eval
+            }
+        }
     }
 
     /// Evaluate the exponent MLE at a constraint index point
@@ -554,10 +670,6 @@ impl ConstraintSystem {
             }
         }
 
-        println!(
-            "All {} constraints verified to be 0 over the hypercube!",
-            self.constraints.len()
-        );
     }
 }
 

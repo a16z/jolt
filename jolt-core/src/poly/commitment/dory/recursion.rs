@@ -17,6 +17,7 @@ use super::{
     wrappers::{
         ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkworksVerifierSetup, JoltToDoryTranscript,
     },
+    gt_mul_witness::MultiplicationSteps,
 };
 use crate::poly::commitment::commitment_scheme::RecursionExt;
 use crate::utils::errors::ProofVerifyError;
@@ -38,6 +39,22 @@ pub struct JoltGtExpWitness {
 }
 
 impl WitnessResult<ArkGT> for JoltGtExpWitness {
+    fn result(&self) -> Option<&ArkGT> {
+        Some(&self.ark_result)
+    }
+}
+
+/// GTMul witness following the MultiplicationSteps pattern
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltGtMulWitness {
+    pub lhs: Fq12,              // Left operand (a)
+    pub rhs: Fq12,              // Right operand (b)
+    pub result: Fq12,           // Product (c = a × b)
+    pub quotient_mle: Vec<Fq>,  // Quotient polynomial Q(x)
+    ark_result: ArkGT,          // For WitnessResult trait
+}
+
+impl WitnessResult<ArkGT> for JoltGtMulWitness {
     fn result(&self) -> Option<&ArkGT> {
         Some(&self.ark_result)
     }
@@ -81,7 +98,7 @@ impl WitnessBackend for JoltWitness {
     type GtExpWitness = JoltGtExpWitness;
     type G1ScalarMulWitness = UnimplementedWitness<ArkG1>;
     type G2ScalarMulWitness = UnimplementedWitness<ArkG2>;
-    type GtMulWitness = UnimplementedWitness<ArkGT>;
+    type GtMulWitness = JoltGtMulWitness;
     type PairingWitness = UnimplementedWitness<ArkGT>;
     type MultiPairingWitness = UnimplementedWitness<ArkGT>;
     type MsmG1Witness = UnimplementedWitness<ArkG1>;
@@ -134,11 +151,27 @@ impl WitnessGenerator<JoltWitness, BN254> for JoltWitnessGenerator {
     }
 
     fn generate_gt_mul(
-        _lhs: &<BN254 as PairingCurve>::GT,
-        _rhs: &<BN254 as PairingCurve>::GT,
-        _result: &<BN254 as PairingCurve>::GT,
-    ) -> UnimplementedWitness<ArkGT> {
-        UnimplementedWitness::new("GT multiplication")
+        lhs: &<BN254 as PairingCurve>::GT,
+        rhs: &<BN254 as PairingCurve>::GT,
+        result: &<BN254 as PairingCurve>::GT,
+    ) -> JoltGtMulWitness {
+        let lhs_fq12 = lhs.0;
+        let rhs_fq12 = rhs.0;
+
+        let mul_steps = MultiplicationSteps::new(lhs_fq12, rhs_fq12);
+
+        debug_assert_eq!(
+            mul_steps.result, result.0,
+            "MultiplicationSteps result doesn't match expected result"
+        );
+
+        JoltGtMulWitness {
+            lhs: mul_steps.lhs,
+            rhs: mul_steps.rhs,
+            result: mul_steps.result,
+            quotient_mle: mul_steps.quotient_mle,
+            ark_result: *result,
+        }
     }
 
     fn generate_pairing(
