@@ -67,7 +67,13 @@ impl<F: JoltField> LtPolynomial<F> {
     }
 }
 
-/// Evaluates `LT(r, j)` for all `j` in the hypercube.
+/// Returns the MLE of `LT(j, r)` evaluated at all Boolean `j ∈ {0,1}^n`.
+///
+/// The less-than MLE is defined as:
+///   `LT(x, y) = Σ_i (1 - x_i) · y_i · eq(x[i+1:], y[i+1:])`
+/// where the sum runs from MSB to LSB.
+///
+/// This function computes `[LT(0, r), LT(1, r), ..., LT(2^n - 1, r)]`.
 fn lt_evals<F: JoltField>(r: &OpeningPoint<BIG_ENDIAN, F>) -> Vec<F> {
     let mut evals: Vec<F> = vec![F::zero(); 1 << r.len()];
     for (i, r) in r.r.iter().rev().enumerate() {
