@@ -20,7 +20,7 @@ use crate::{
             dory::{DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{ProverOpeningAccumulator, ReducedOpeningProof},
+        opening_proof::{OpeningReductionState, ProverOpeningAccumulator},
         rlc_polynomial::RLCStreamingData,
     },
     pprof_scope,
@@ -134,6 +134,13 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
+    /// State from Stage 7 (batch opening sumcheck) for Stage 8 (Dory opening)
+    opening_reduction_state: Option<OpeningReductionState<F>>,
+    /// Polynomials generated in Stage 7 for Stage 8
+    polynomials_for_opening: Option<HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
+    /// Joint commitment for testing (computed in Stage 7, used in proof for verification)
+    #[cfg(test)]
+    joint_commitment_for_test: Option<PCS::Commitment>,
 }
 
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
@@ -278,6 +285,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 preprocessing.bytecode.code_size,
                 ram_K,
             ),
+            opening_reduction_state: None,
+            polynomials_for_opening: None,
+            #[cfg(test)]
+            joint_commitment_for_test: None,
         }
     }
 
@@ -310,10 +321,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage4_sumcheck_proof = self.prove_stage4();
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
-        tracing::info!("Stage 7 proving");
         let trusted_advice_proof = self.prove_trusted_advice();
         let untrusted_advice_proof = self.prove_untrusted_advice();
-        let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
+        let stage7_sumcheck_proof = self.prove_stage7();
+        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
         assert!(
@@ -334,6 +345,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(test))]
         let debug_info = None;
 
+        let opening_state = self.opening_reduction_state.as_ref().unwrap();
         let proof = JoltProof {
             opening_claims: Claims(self.opening_accumulator.openings.clone()),
             commitments,
@@ -348,7 +360,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             stage6_sumcheck_proof,
             trusted_advice_proof,
             untrusted_advice_proof,
-            reduced_opening_proof,
+            stage7_sumcheck_proof,
+            stage7_sumcheck_claims: opening_state.sumcheck_claims.clone(),
+            joint_opening_proof,
+            #[cfg(test)]
+            joint_commitment_for_test: self.joint_commitment_for_test.clone(),
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
@@ -1034,16 +1050,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             })
     }
 
+    /// Stage 7: Batch opening reduction sumcheck.
+    /// Generates witness polynomials, runs the sumcheck, and stores state for Stage 8.
     #[tracing::instrument(skip_all)]
-    fn prove_stage7(
-        &mut self,
-        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
+    fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+        tracing::info!("Stage 7 proving (batch opening reduction sumcheck)");
+
         let _guard = (
             DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
             AllCommittedPolynomials::initialize(&self.one_hot_params),
         );
 
+        // Generate witness polynomials
         let all_polys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
         let polynomials_map = CommittedPolynomial::generate_witness_batch(
@@ -1056,21 +1074,97 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
+        // Prepare sumcheck
+        self.opening_accumulator
+            .prepare_for_sumcheck(&polynomials_map);
+
+        // Run sumcheck
+        let (sumcheck_proof, r_sumcheck) = self
+            .opening_accumulator
+            .prove_batch_opening_sumcheck(&mut self.transcript);
+
+        // Finalize sumcheck (caches claims, derives gamma, cleans up)
+        let state = self
+            .opening_accumulator
+            .finalize_batch_opening_sumcheck(r_sumcheck, &mut self.transcript);
+
+        // Compute joint commitment for testing using streaming RLC
+        #[cfg(test)]
+        {
+            let streaming_data = Arc::new(RLCStreamingData {
+                bytecode: self.preprocessing.bytecode.clone(),
+                memory_layout: self.preprocessing.memory_layout.clone(),
+            });
+            self.joint_commitment_for_test = Some(
+                self.opening_accumulator
+                    .compute_joint_commitment_for_test::<PCS>(
+                        &polynomials_map,
+                        &state,
+                        &self.preprocessing.generators,
+                        Some((
+                            self.lazy_trace.clone(),
+                            streaming_data,
+                            self.one_hot_params.clone(),
+                        )),
+                    ),
+            );
+        }
+
+        // Store state and polynomials for Stage 8
+        self.opening_reduction_state = Some(state);
+        self.polynomials_for_opening = Some(polynomials_map);
+
+        sumcheck_proof
+    }
+
+    /// Stage 8: Dory batch opening proof.
+    /// Uses the state from Stage 7 to build the RLC polynomial and prove the opening.
+    #[tracing::instrument(skip_all)]
+    fn prove_stage8(
+        &mut self,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> PCS::Proof {
+        tracing::info!("Stage 8 proving (Dory batch opening)");
+
+        let _guard = (
+            DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
+            AllCommittedPolynomials::initialize(&self.one_hot_params),
+        );
+
+        let state = self
+            .opening_reduction_state
+            .as_ref()
+            .expect("Stage 7 must be called before Stage 8");
+
+        let polynomials = self
+            .polynomials_for_opening
+            .take()
+            .expect("Stage 7 must be called before Stage 8");
+
         let streaming_data = Arc::new(RLCStreamingData {
             bytecode: self.preprocessing.bytecode.clone(),
             memory_layout: self.preprocessing.memory_layout.clone(),
         });
 
-        self.opening_accumulator.reduce_and_prove(
-            polynomials_map,
+        // Build RLC polynomial and combined hint
+        let (joint_poly, hint) = self.opening_accumulator.build_rlc_polynomial::<PCS>(
+            polynomials,
             opening_proof_hints,
-            &self.preprocessing.generators,
-            &mut self.transcript,
+            state,
             Some((
                 self.lazy_trace.clone(),
                 streaming_data,
                 self.one_hot_params.clone(),
             )),
+        );
+
+        // Dory opening proof
+        PCS::prove(
+            &self.preprocessing.generators,
+            &joint_poly,
+            &state.r_sumcheck,
+            Some(hint),
+            &mut self.transcript,
         )
     }
 }

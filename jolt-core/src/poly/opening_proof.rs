@@ -15,6 +15,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use itertools::Itertools;
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 #[cfg(test)]
@@ -24,9 +25,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 use tracer::LazyTraceIterator;
-
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::Itertools;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
@@ -289,11 +287,11 @@ where
 {
     prover_state: ProverOpening<F>,
     /// Represents the polynomial opened.
-    polynomial: CommittedPolynomial,
+    pub polynomial: CommittedPolynomial,
     /// The ID of the sumcheck these openings originated from
     sumcheck_id: SumcheckId,
     opening: Opening<F>,
-    sumcheck_claim: Option<F>,
+    pub sumcheck_claim: Option<F>,
     log_T: usize,
 }
 
@@ -390,7 +388,7 @@ where
         };
     }
 
-    fn cache_sumcheck_claim(&mut self) {
+    pub fn cache_sumcheck_claim(&mut self) {
         debug_assert!(self.sumcheck_claim.is_none());
         let claim = match &mut self.prover_state {
             ProverOpening::Dense(opening) => opening.final_sumcheck_claim(),
@@ -535,7 +533,7 @@ where
     eq_cycle_map: HashMap<Vec<F::Challenge>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
-    log_T: usize,
+    pub log_T: usize,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -567,15 +565,13 @@ pub trait OpeningAccumulator<F: JoltField> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
-pub struct ReducedOpeningProof<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> {
-    pub sumcheck_proof: SumcheckInstanceProof<F, T>,
+/// Intermediate state between Stage 7 (batch opening reduction sumcheck) and Stage 8 (Dory opening).
+/// Stored in prover/verifier state to bridge the two stages.
+#[derive(Clone)]
+pub struct OpeningReductionState<F: JoltField> {
+    pub r_sumcheck: Vec<F::Challenge>,
+    pub gamma_powers: Vec<F>,
     pub sumcheck_claims: Vec<F>,
-    joint_opening_proof: PCS::Proof,
-    #[cfg(test)]
-    joint_poly: MultilinearPolynomial<F>,
-    #[cfg(test)]
-    joint_commitment: PCS::Commitment,
 }
 
 impl<F> Default for ProverOpeningAccumulator<F>
@@ -793,17 +789,15 @@ where
             .insert(OpeningId::TrustedAdvice, (opening_point, claim));
     }
 
-    /// Reduces the multiple openings accumulated into a single opening proof,
-    /// using a single sumcheck.
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
-    pub fn reduce_and_prove<T: Transcript, PCS: CommitmentScheme<Field = F>>(
+    // ========== Stage 7: Batch Opening Reduction Sumcheck ==========
+
+    /// Prepares sumcheck instances for the batch opening reduction.
+    /// Must be called before `prove_batch_opening_sumcheck`.
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::prepare_for_sumcheck")]
+    pub fn prepare_for_sumcheck(
         &mut self,
-        mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        pcs_setup: &PCS::ProverSetup,
-        transcript: &mut T,
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
-    ) -> ReducedOpeningProof<F, PCS, T> {
+        polynomials: &HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+    ) {
         tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
             self.sumchecks.len()
@@ -819,8 +813,6 @@ where
         // Populate dense_polynomial_map
         for sumcheck in self.sumchecks.iter() {
             if let ProverOpening::Dense(_) = &sumcheck.prover_state {
-                // If not already in `dense_polynomial_map`, create shared polynomial
-                // and insert it into the map.
                 self.dense_polynomial_map
                     .entry(sumcheck.polynomial)
                     .or_insert_with(|| {
@@ -831,114 +823,20 @@ where
         }
 
         self.sumchecks.par_iter_mut().for_each(|sumcheck| {
-            sumcheck.prepare_sumcheck(&polynomials, &self.dense_polynomial_map);
+            sumcheck.prepare_sumcheck(polynomials, &self.dense_polynomial_map);
         });
-
-        drop(_enter);
-
-        // Use sumcheck reduce many openings to one
-        let (sumcheck_proof, mut r_sumcheck, sumcheck_claims) =
-            self.prove_batch_opening_reduction(transcript);
-        let log_K = r_sumcheck.len() - self.log_T;
-        r_sumcheck[..log_K].reverse();
-        r_sumcheck[log_K..].reverse();
-
-        transcript.append_scalars(&sumcheck_claims);
-
-        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
-
-        // Combines the individual polynomials into the RLC that will be used for the
-        // batched opening proof.
-        let (joint_poly, hint) = {
-            let mut rlc_map = BTreeMap::new();
-            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
-                    *value += *gamma;
-                } else {
-                    rlc_map.insert(sumcheck.polynomial, *gamma);
-                }
-            }
-
-            let (poly_ids, coeffs, polys): (
-                Vec<CommittedPolynomial>,
-                Vec<F>,
-                Vec<MultilinearPolynomial<F>>,
-            ) = rlc_map
-                .iter()
-                .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
-                .multiunzip();
-
-            let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
-                polys.into_iter().map(Arc::new).collect();
-
-            let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
-                poly_ids.clone(),
-                poly_arcs.clone(),
-                &coeffs,
-                streaming_context,
-            ));
-
-            let hints: Vec<PCS::OpeningProofHint> = rlc_map
-                .into_keys()
-                .map(|k| opening_hints.remove(&k).unwrap())
-                .collect();
-            debug_assert!(
-                opening_hints.is_empty(),
-                "Commitments to {:?} are not used",
-                opening_hints.keys()
-            );
-            // Compute the opening proof hint for the reduced opening by homomorphically combining
-            // the hints for the individual sumchecks.
-            let hint = PCS::combine_hints(hints, &coeffs);
-
-            #[cfg(test)]
-            let joint_poly = (joint_poly, poly_ids, poly_arcs, coeffs);
-
-            (joint_poly, hint)
-        };
-
-        #[cfg(test)]
-        let joint_commitment = {
-            let (joint_poly_ref, poly_ids, poly_arcs, coeffs) = &joint_poly;
-            let materialized_poly = match joint_poly_ref {
-                MultilinearPolynomial::RLC(rlc) => {
-                    MultilinearPolynomial::RLC(rlc.materialize(poly_ids, poly_arcs, coeffs))
-                }
-                _ => joint_poly_ref.clone(),
-            };
-            PCS::commit(&materialized_poly, pcs_setup).0
-        };
-
-        #[cfg(test)]
-        let joint_poly = joint_poly.0;
-
-        #[cfg(not(test))]
-        {
-            let sumchecks = std::mem::take(&mut self.sumchecks);
-            crate::utils::thread::drop_in_background_thread(sumchecks);
-        }
-
-        // Reduced opening proof
-        let joint_opening_proof =
-            PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, Some(hint), transcript);
-
-        ReducedOpeningProof {
-            sumcheck_proof,
-            sumcheck_claims,
-            joint_opening_proof,
-            #[cfg(test)]
-            joint_poly,
-            #[cfg(test)]
-            joint_commitment,
-        }
     }
 
-    /// Proves the sumcheck used to prove the reduction of many openings into one.
-    #[tracing::instrument(skip_all)]
-    pub fn prove_batch_opening_reduction<T: Transcript>(
+    /// Proves the batch opening reduction sumcheck (Stage 7).
+    /// Returns the sumcheck proof and challenges.
+    #[tracing::instrument(
+        skip_all,
+        name = "ProverOpeningAccumulator::prove_batch_opening_sumcheck"
+    )]
+    pub fn prove_batch_opening_sumcheck<T: Transcript>(
         &mut self,
         transcript: &mut T,
-    ) -> (SumcheckInstanceProof<F, T>, Vec<F::Challenge>, Vec<F>) {
+    ) -> (SumcheckInstanceProof<F, T>, Vec<F::Challenge>) {
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("Opening accumulator", &(*self));
@@ -966,7 +864,24 @@ where
             write_flamegraph_svg(flamegraph, "stage7_end_flamechart.svg");
         }
 
-        let claims: Vec<_> = self
+        (sumcheck_proof, r_sumcheck)
+    }
+
+    /// Finalizes the batch opening reduction sumcheck.
+    /// Caches claims, appends them to transcript, derives gamma powers,
+    /// and cleans up sumcheck instances.
+    /// Returns the state needed for Stage 8.
+    #[tracing::instrument(
+        skip_all,
+        name = "ProverOpeningAccumulator::finalize_batch_opening_sumcheck"
+    )]
+    pub fn finalize_batch_opening_sumcheck<T: Transcript>(
+        &mut self,
+        r_sumcheck: Vec<F::Challenge>,
+        transcript: &mut T,
+    ) -> OpeningReductionState<F> {
+        // Cache claims from sumchecks
+        let sumcheck_claims: Vec<F> = self
             .sumchecks
             .iter_mut()
             .map(|opening| {
@@ -975,7 +890,140 @@ where
             })
             .collect();
 
-        (sumcheck_proof, r_sumcheck, claims)
+        // Adjust r_sumcheck endianness
+        let mut r_sumcheck = r_sumcheck;
+        let log_K = r_sumcheck.len() - self.log_T;
+        r_sumcheck[..log_K].reverse();
+        r_sumcheck[log_K..].reverse();
+
+        // Append claims and derive gamma powers
+        transcript.append_scalars(&sumcheck_claims);
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
+
+        // Drop sumchecks in background - they're no longer needed
+        #[cfg(not(test))]
+        {
+            let sumchecks = std::mem::take(&mut self.sumchecks);
+            crate::utils::thread::drop_in_background_thread(sumchecks);
+        }
+
+        OpeningReductionState {
+            r_sumcheck,
+            gamma_powers,
+            sumcheck_claims,
+        }
+    }
+
+    // ========== Stage 8: Dory Batch Opening Proof ==========
+
+    /// Builds the RLC polynomial and combined hint for the batch opening proof.
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::build_rlc_polynomial")]
+    pub fn build_rlc_polynomial<PCS: CommitmentScheme<Field = F>>(
+        &self,
+        mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        state: &OpeningReductionState<F>,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+    ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
+        let mut rlc_map = BTreeMap::new();
+        for (gamma, sumcheck) in state.gamma_powers.iter().zip(self.sumchecks.iter()) {
+            if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
+                *value += *gamma;
+            } else {
+                rlc_map.insert(sumcheck.polynomial, *gamma);
+            }
+        }
+
+        let (poly_ids, coeffs, polys): (
+            Vec<CommittedPolynomial>,
+            Vec<F>,
+            Vec<MultilinearPolynomial<F>>,
+        ) = rlc_map
+            .iter()
+            .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
+            .multiunzip();
+
+        let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
+            polys.into_iter().map(Arc::new).collect();
+
+        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
+            poly_ids.clone(),
+            poly_arcs,
+            &coeffs,
+            streaming_context,
+        ));
+
+        let hints: Vec<PCS::OpeningProofHint> = rlc_map
+            .into_keys()
+            .map(|k| opening_hints.remove(&k).unwrap())
+            .collect();
+        debug_assert!(
+            opening_hints.is_empty(),
+            "Commitments to {:?} are not used",
+            opening_hints.keys()
+        );
+
+        let hint = PCS::combine_hints(hints, &coeffs);
+
+        (joint_poly, hint)
+    }
+
+    /// Computes the joint commitment for testing purposes.
+    /// If streaming_context is provided, uses RLC streaming; otherwise uses homomorphic combination.
+    #[cfg(test)]
+    pub fn compute_joint_commitment_for_test<PCS: CommitmentScheme<Field = F>>(
+        &self,
+        polynomials: &HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        state: &OpeningReductionState<F>,
+        pcs_setup: &PCS::ProverSetup,
+        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+    ) -> PCS::Commitment {
+        let mut rlc_map = BTreeMap::new();
+        for (gamma, sumcheck) in state.gamma_powers.iter().zip(self.sumchecks.iter()) {
+            if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
+                *value += *gamma;
+            } else {
+                rlc_map.insert(sumcheck.polynomial, *gamma);
+            }
+        }
+
+        if streaming_context.is_some() {
+            // Use RLC streaming with materialization
+            let (poly_ids, coeffs, polys): (
+                Vec<CommittedPolynomial>,
+                Vec<F>,
+                Vec<MultilinearPolynomial<F>>,
+            ) = rlc_map
+                .iter()
+                .map(|(k, v)| (*k, *v, polynomials.get(k).unwrap().clone()))
+                .multiunzip();
+
+            let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
+                polys.into_iter().map(Arc::new).collect();
+
+            let rlc = RLCPolynomial::linear_combination(
+                poly_ids.clone(),
+                poly_arcs.clone(),
+                &coeffs,
+                streaming_context,
+            );
+            let materialized_rlc = rlc.materialize(&poly_ids, &poly_arcs, &coeffs);
+            let joint_poly = MultilinearPolynomial::RLC(materialized_rlc);
+
+            PCS::commit(&joint_poly, pcs_setup).0
+        } else {
+            // Use homomorphic combination of commitments
+            let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
+                .iter()
+                .map(|(k, v)| {
+                    let poly = polynomials.get(k).unwrap();
+                    let (commitment, _) = PCS::commit(poly, pcs_setup);
+                    (*v, commitment)
+                })
+                .unzip();
+
+            PCS::combine_commitments(&commitments, &coeffs)
+        }
     }
 }
 
@@ -1189,96 +1237,24 @@ where
         }
     }
 
-    /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
-    /// and a single opening proof) indeed proves the openings accumulated.
-    pub fn reduce_and_verify<T: Transcript, PCS: CommitmentScheme<Field = F>>(
-        &mut self,
-        pcs_setup: &PCS::VerifierSetup,
-        commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
-        reduced_opening_proof: &ReducedOpeningProof<F, PCS, T>,
-        transcript: &mut T,
-    ) -> Result<(), ProofVerifyError> {
+    // ========== Stage 7: Batch Opening Reduction Sumcheck ==========
+
+    /// Prepares the verifier for the batch opening reduction sumcheck.
+    /// Populates sumcheck claims from the proof.
+    pub fn prepare_for_sumcheck(&mut self, sumcheck_claims: &[F]) {
         #[cfg(test)]
         if let Some(prover_openings) = &self.prover_opening_accumulator {
             assert_eq!(prover_openings.len(), self.len());
         }
 
-        let num_sumcheck_rounds = self
-            .sumchecks
-            .iter()
-            .map(|opening| SumcheckInstanceVerifier::<F, T>::num_rounds(opening))
-            .max()
-            .unwrap();
-
         self.sumchecks
             .iter_mut()
-            .zip(reduced_opening_proof.sumcheck_claims.iter())
+            .zip(sumcheck_claims.iter())
             .for_each(|(opening, claim)| opening.sumcheck_claim = Some(*claim));
-
-        // Verify the sumcheck
-        let mut r_sumcheck =
-            self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
-        let log_K = r_sumcheck.len() - self.log_T;
-        r_sumcheck[..log_K].reverse();
-        r_sumcheck[log_K..].reverse();
-
-        transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
-
-        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
-
-        // Compute the commitment for the reduced opening proof by homomorphically combining
-        // the commitments of the individual polynomials.
-        let joint_commitment = {
-            let mut rlc_map = HashMap::new();
-            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
-                    *value += *gamma;
-                } else {
-                    rlc_map.insert(sumcheck.polynomial, *gamma);
-                }
-            }
-
-            let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-                .into_iter()
-                .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
-                .unzip();
-            debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
-
-            PCS::combine_commitments(&commitments, &coeffs)
-        };
-
-        #[cfg(test)]
-        assert_eq!(
-            joint_commitment, reduced_opening_proof.joint_commitment,
-            "joint commitment mismatch"
-        );
-
-        // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
-        let joint_claim: F = gamma_powers
-            .iter()
-            .zip(reduced_opening_proof.sumcheck_claims.iter())
-            .zip(self.sumchecks.iter())
-            .map(|((coeff, claim), opening)| {
-                let r_slice = &r_sumcheck
-                    [..num_sumcheck_rounds - SumcheckInstanceVerifier::<F, T>::num_rounds(opening)];
-                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
-                *coeff * claim * lagrange_eval
-            })
-            .sum();
-
-        // Verify the reduced opening proof
-        PCS::verify(
-            &reduced_opening_proof.joint_opening_proof,
-            pcs_setup,
-            transcript,
-            &r_sumcheck,
-            &joint_claim,
-            &joint_commitment,
-        )
     }
 
-    /// Verifies the sumcheck proven in `ProverOpeningAccumulator::prove_batch_opening_reduction`.
-    fn verify_batch_opening_reduction<T: Transcript>(
+    /// Verifies the batch opening reduction sumcheck (Stage 7).
+    pub fn verify_batch_opening_sumcheck<T: Transcript>(
         &self,
         sumcheck_proof: &SumcheckInstanceProof<F, T>,
         transcript: &mut T,
@@ -1296,6 +1272,101 @@ where
             instances,
             &mut VerifierOpeningAccumulator::new(self.log_T),
             transcript,
+        )
+    }
+
+    /// Finalizes the batch opening reduction sumcheck verification.
+    /// Returns the state needed for Stage 8.
+    pub fn finalize_batch_opening_sumcheck<T: Transcript>(
+        &self,
+        r_sumcheck: Vec<F::Challenge>,
+        sumcheck_claims: &[F],
+        transcript: &mut T,
+    ) -> OpeningReductionState<F> {
+        // Adjust r_sumcheck endianness
+        let mut r_sumcheck = r_sumcheck;
+        let log_K = r_sumcheck.len() - self.log_T;
+        r_sumcheck[..log_K].reverse();
+        r_sumcheck[log_K..].reverse();
+
+        // Append claims and derive gamma powers
+        transcript.append_scalars(sumcheck_claims);
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
+
+        OpeningReductionState {
+            r_sumcheck,
+            gamma_powers,
+            sumcheck_claims: sumcheck_claims.to_vec(),
+        }
+    }
+
+    // ========== Stage 8: Dory Batch Opening Verification ==========
+
+    /// Computes the joint commitment by homomorphically combining individual commitments.
+    pub fn compute_joint_commitment<PCS: CommitmentScheme<Field = F>>(
+        &self,
+        commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
+        state: &OpeningReductionState<F>,
+    ) -> PCS::Commitment {
+        let mut rlc_map = HashMap::new();
+        for (gamma, sumcheck) in state.gamma_powers.iter().zip(self.sumchecks.iter()) {
+            if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
+                *value += *gamma;
+            } else {
+                rlc_map.insert(sumcheck.polynomial, *gamma);
+            }
+        }
+
+        let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
+            .into_iter()
+            .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
+            .unzip();
+        debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
+
+        PCS::combine_commitments(&commitments, &coeffs)
+    }
+
+    /// Computes the joint claim for the batch opening verification.
+    pub fn compute_joint_claim<T: Transcript>(&self, state: &OpeningReductionState<F>) -> F {
+        let num_sumcheck_rounds = self
+            .sumchecks
+            .iter()
+            .map(|opening| SumcheckInstanceVerifier::<F, T>::num_rounds(opening))
+            .max()
+            .unwrap();
+
+        state
+            .gamma_powers
+            .iter()
+            .zip(state.sumcheck_claims.iter())
+            .zip(self.sumchecks.iter())
+            .map(|((coeff, claim), opening)| {
+                let r_slice = &state.r_sumcheck
+                    [..num_sumcheck_rounds - SumcheckInstanceVerifier::<F, T>::num_rounds(opening)];
+                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                *coeff * claim * lagrange_eval
+            })
+            .sum()
+    }
+
+    /// Verifies the joint opening proof (Stage 8).
+    pub fn verify_joint_opening<T: Transcript, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        pcs_setup: &PCS::VerifierSetup,
+        joint_opening_proof: &PCS::Proof,
+        joint_commitment: &PCS::Commitment,
+        state: &OpeningReductionState<F>,
+        transcript: &mut T,
+    ) -> Result<(), ProofVerifyError> {
+        let joint_claim = self.compute_joint_claim::<T>(state);
+
+        PCS::verify(
+            joint_opening_proof,
+            pcs_setup,
+            transcript,
+            &state.r_sumcheck,
+            &joint_claim,
+            joint_commitment,
         )
     }
 }

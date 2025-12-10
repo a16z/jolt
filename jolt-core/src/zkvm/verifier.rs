@@ -43,7 +43,7 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator},
+    poly::opening_proof::{OpeningPoint, OpeningReductionState, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::sumcheck_verifier::SumcheckInstanceVerifier,
     transcripts::Transcript,
@@ -69,6 +69,8 @@ pub struct JoltVerifier<
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
+    /// State from Stage 7 (batch opening sumcheck) for Stage 8 (Dory opening)
+    opening_reduction_state: Option<OpeningReductionState<F>>,
 }
 
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
@@ -135,6 +137,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             opening_accumulator,
             spartan_key,
             one_hot_params,
+            opening_reduction_state: None,
         })
     }
 
@@ -182,6 +185,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_trusted_advice_opening_proofs()?;
         self.verify_untrusted_advice_opening_proofs()?;
         self.verify_stage7()?;
+        self.verify_stage8()?;
 
         Ok(())
     }
@@ -423,6 +427,71 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         Ok(())
     }
 
+    /// Stage 7: Batch opening reduction sumcheck verification.
+    fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
+        // Prepare - populate sumcheck claims
+        self.opening_accumulator
+            .prepare_for_sumcheck(&self.proof.stage7_sumcheck_claims);
+
+        // Verify sumcheck
+        let r_sumcheck = self
+            .opening_accumulator
+            .verify_batch_opening_sumcheck(&self.proof.stage7_sumcheck_proof, &mut self.transcript)
+            .context("Stage 7")?;
+
+        // Finalize and store state for Stage 8
+        let state = self.opening_accumulator.finalize_batch_opening_sumcheck(
+            r_sumcheck,
+            &self.proof.stage7_sumcheck_claims,
+            &mut self.transcript,
+        );
+
+        self.opening_reduction_state = Some(state);
+
+        Ok(())
+    }
+
+    /// Stage 8: Dory batch opening verification.
+    fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
+        let state = self
+            .opening_reduction_state
+            .as_ref()
+            .expect("Stage 7 must be called before Stage 8");
+
+        // Build commitments map
+        let mut commitments_map = HashMap::new();
+        for (polynomial, commitment) in
+            AllCommittedPolynomials::iter().zip_eq(&self.proof.commitments)
+        {
+            commitments_map.insert(*polynomial, commitment.clone());
+        }
+
+        // Compute joint commitment
+        let joint_commitment = self
+            .opening_accumulator
+            .compute_joint_commitment::<PCS>(&mut commitments_map, state);
+
+        // Test assertion
+        #[cfg(test)]
+        if let Some(ref prover_joint_commitment) = self.proof.joint_commitment_for_test {
+            assert_eq!(
+                joint_commitment, *prover_joint_commitment,
+                "joint commitment mismatch"
+            );
+        }
+
+        // Verify joint opening
+        self.opening_accumulator
+            .verify_joint_opening::<ProofTranscript, PCS>(
+                &self.preprocessing.generators,
+                &self.proof.joint_opening_proof,
+                &joint_commitment,
+                state,
+                &mut self.transcript,
+            )
+            .context("Stage 8")
+    }
+
     fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
         if let Some(ref commitment) = self.trusted_advice_commitment {
             let Some(ref proof) = self.proof.trusted_advice_proof else {
@@ -469,27 +538,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
             })?;
         }
-
-        Ok(())
-    }
-
-    fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
-        // Batch-prove all openings (Stage 7)
-        let mut commitments_map = HashMap::new();
-        for (polynomial, commitment) in
-            AllCommittedPolynomials::iter().zip_eq(&self.proof.commitments)
-        {
-            commitments_map.insert(*polynomial, commitment.clone());
-        }
-
-        self.opening_accumulator
-            .reduce_and_verify(
-                &self.preprocessing.generators,
-                &mut commitments_map,
-                &self.proof.reduced_opening_proof,
-                &mut self.transcript,
-            )
-            .context("Stage 7")?;
 
         Ok(())
     }
