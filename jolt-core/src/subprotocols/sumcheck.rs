@@ -149,6 +149,10 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        for sumcheck in sumcheck_instances.iter_mut() {
+            sumcheck.finalize();
+        }
+
         for sumcheck in sumcheck_instances.iter() {
             // If a sumcheck instance has fewer than `max_num_rounds`,
             // we wait until there are <= `sumcheck.num_rounds()` left

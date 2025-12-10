@@ -602,6 +602,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
     }
 }
 
+#[derive(Clone)]
 pub struct ReadRafSumcheckParams<F: JoltField> {
     /// Index `i` stores `gamma^i`.
     pub gamma_powers: Vec<F>,
