@@ -15,11 +15,11 @@
 
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::subprotocols::read_write_matrix::merge_utils::{bind_optional, linear_interpolate};
 use crate::utils::math::Math;
 use allocative::Allocative;
 use num::Integer;
 use rayon::prelude::*;
-use std::cmp::Ordering;
 use tracer::instruction::Cycle;
 
 use common::constants::REGISTER_COUNT;
@@ -102,8 +102,11 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
     pub fn from_trace(trace: &[Cycle]) -> Self {
         let t_size = trace.len();
 
-        // Build entries: for each cycle, identify unique registers and their access types
-        let mut entries: Vec<RegisterEntry<F>> = trace
+        // Build entries: for each cycle, identify unique registers and their access types.
+        // We iterate cycles in order, and within each cycle we will sort registers by index,
+        // so the resulting entries vector is already sorted by (row, col) and does not need
+        // any global sort.
+        let entries: Vec<RegisterEntry<F>> = trace
             .par_iter()
             .enumerate()
             .flat_map_iter(|(j, cycle)| {
@@ -116,7 +119,7 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                 type RegAccess<F> = (u8, Option<F>, Option<F>, Option<F>, u64, u64);
                 let mut regs: Vec<RegAccess<F>> = Vec::with_capacity(3);
 
-                // Helper to add or merge access
+                // Helper to add or merge access for a register within this cycle
                 let mut add_access =
                     |reg: u8, is_rs1: bool, is_rs2: bool, is_rd: bool, val: u64, next: u64| {
                         if let Some(entry) = regs.iter_mut().find(|(r, _, _, _, _, _)| *r == reg) {
@@ -129,7 +132,7 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                             if is_rd {
                                 entry.3 = Some(F::one());
                             }
-                            // Update next_val if this is a write
+                            // Update next_val if this is a write: post-write value at this cycle
                             if is_rd {
                                 entry.5 = next;
                             }
@@ -145,12 +148,18 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                         }
                     };
 
-                // Add rs1 access
+                // Add rs1 access (read-only: prev == next == value at this cycle)
                 add_access(rs1_reg, true, false, false, rs1_val, rs1_val);
                 // Add rs2 access
                 add_access(rs2_reg, false, true, false, rs2_val, rs2_val);
                 // Add rd access (write)
                 add_access(rd_reg, false, false, true, rd_pre_val, rd_post_val);
+
+                // Ensure registers are in increasing order for this cycle so that the
+                // global entries vector is sorted by (row, col) without a global sort.
+                regs.sort_unstable_by(|(reg_a, _, _, _, _, _), (reg_b, _, _, _, _, _)| {
+                    reg_a.cmp(reg_b)
+                });
 
                 regs.into_iter()
                     .map(
@@ -159,6 +168,7 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                             col: reg,
                             prev_val: prev,
                             next_val: next,
+                            // val_coeff stores the value *before* any access at this cycle.
                             val_coeff: F::from_u64(prev),
                             rs1_ra,
                             rs2_ra,
@@ -167,13 +177,6 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
                     )
             })
             .collect();
-
-        // Sort by (row, col)
-        entries.par_sort_by(|a, b| a.row.cmp(&b.row).then(a.col.cmp(&b.col)));
-
-        // Now we need to fix prev_val and next_val to point to the correct
-        // adjacent entries in the same column. This requires a second pass.
-        Self::fix_prev_next_vals(&mut entries, t_size);
 
         // Initial values for all registers (all zeros)
         let val_init: Vec<F> = vec![F::zero(); K];
@@ -186,78 +189,20 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
         }
     }
 
-    /// Fix prev_val and next_val to correctly reference adjacent entries in the same column.
-    ///
-    /// After construction, prev_val/next_val contain the register value at that cycle.
-    /// We need them to point to the value at the previous/next cycle that accesses
-    /// this same register, for correct binding interpolation.
-    fn fix_prev_next_vals(entries: &mut [RegisterEntry<F>], _t_size: usize) {
-        // Group entries by column, then fix prev/next within each group
-        // For now, use a simpler approach: sort by (col, row), fix, then re-sort by (row, col)
-
-        entries.par_sort_by(|a, b| a.col.cmp(&b.col).then(a.row.cmp(&b.row)));
-
-        // Process each column group
-        let mut i = 0;
-        while i < entries.len() {
-            let col = entries[i].col;
-            let group_start = i;
-
-            // Find end of this column group
-            while i < entries.len() && entries[i].col == col {
-                i += 1;
-            }
-            let group_end = i;
-
-            // Fix prev/next within this group
-            // First entry's prev_val should be 0 (initial register value)
-            entries[group_start].prev_val = 0;
-
-            for idx in group_start..group_end - 1 {
-                // Current entry's next_val = next entry's prev_val (before its cycle)
-                // But we actually want the value AFTER current cycle
-                // The next entry's val_coeff was set to prev (value before its cycle)
-                // So current.next_val should be what next sees as its prev
-                let current_next = entries[idx].next_val; // Already set to post-write value
-                entries[idx + 1].prev_val = current_next;
-            }
-
-            // Last entry's next_val stays as the post-write value (already correct)
-        }
-
-        // Re-sort by (row, col) for cycle-major order
-        entries.par_sort_by(|a, b| a.row.cmp(&b.row).then(a.col.cmp(&b.col)));
-    }
-
     /// Bind a cycle variable using the random challenge `r`.
     ///
     /// This merges entries at adjacent rows (2k and 2k+1) with the same column.
     /// Val coefficients are interpolated, and each RA coefficient binds independently.
     #[tracing::instrument(skip_all, name = "RegisterMatrixCycleMajor::bind")]
     pub fn bind(&mut self, r: F::Challenge) {
-        // Group entries by row/2 (adjacent row pairs)
-        // Then bind each pair
-        let row_pairs: Vec<_> = self
-            .entries
-            .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
-            .map(|pair| {
-                let pivot = pair.partition_point(|e| e.row.is_even());
-                let (even_row, odd_row) = pair.split_at(pivot);
-                (even_row, odd_row)
-            })
-            .collect();
+        // Group entries by row/2 (adjacent row pairs) and bind them sequentially.
+        // We preallocate a single output buffer and reuse it for all row pairs to
+        // avoid many small allocations.
+        let mut bound_entries: Vec<RegisterEntry<F>> = Vec::with_capacity(self.entries.len());
 
-        // Compute output size (dry run)
-        let output_sizes: Vec<usize> = row_pairs
-            .par_iter()
-            .map(|(even, odd)| Self::bind_rows_dry_run(even, odd))
-            .collect();
-
-        let total_size: usize = output_sizes.iter().sum();
-        let mut bound_entries: Vec<RegisterEntry<F>> = Vec::with_capacity(total_size);
-
-        // Actual binding
-        for (even_row, odd_row) in row_pairs {
+        for pair in self.entries.chunk_by(|a, b| a.row / 2 == b.row / 2) {
+            let pivot = pair.partition_point(|e| e.row.is_even());
+            let (even_row, odd_row) = pair.split_at(pivot);
             Self::bind_rows(even_row, odd_row, r, &mut bound_entries);
         }
 
@@ -265,41 +210,9 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
         self.num_row_bits -= 1;
     }
 
-    /// Dry run to compute how many entries the bound result will have.
-    fn bind_rows_dry_run(even: &[RegisterEntry<F>], odd: &[RegisterEntry<F>]) -> usize {
-        // Count unique columns across both rows
-        let mut count = 0;
-        let mut ei = 0;
-        let mut oi = 0;
-
-        while ei < even.len() || oi < odd.len() {
-            match (even.get(ei), odd.get(oi)) {
-                (Some(e), Some(o)) => match e.col.cmp(&o.col) {
-                    Ordering::Equal => {
-                        ei += 1;
-                        oi += 1;
-                    }
-                    Ordering::Less => {
-                        ei += 1;
-                    }
-                    Ordering::Greater => {
-                        oi += 1;
-                    }
-                },
-                (Some(_), None) => {
-                    ei += 1;
-                }
-                (None, Some(_)) => {
-                    oi += 1;
-                }
-                (None, None) => break,
-            }
-            count += 1;
-        }
-        count
-    }
-
     /// Bind adjacent rows and append results to output.
+    ///
+    /// Uses `TwoPointerMerge` to iterate over column-aligned entry pairs.
     fn bind_rows(
         even: &[RegisterEntry<F>],
         odd: &[RegisterEntry<F>],
@@ -312,108 +225,100 @@ impl<F: JoltField> RegisterMatrixCycleMajor<F> {
             .or_else(|| odd.first().map(|o| o.row / 2))
             .unwrap_or(0);
 
+        // Manual two-pointer merge by column. Both `even` and `odd` are individually
+        // sorted by `col`, so we can avoid constructing a `TwoPointerMerge` iterator
+        // for each row pair, which significantly reduces overhead when Phase 1
+        // binds all cycle variables.
         let mut ei = 0;
         let mut oi = 0;
 
         while ei < even.len() || oi < odd.len() {
-            let even_entry = even.get(ei);
-            let odd_entry = odd.get(oi);
-
-            match (even_entry, odd_entry) {
-                (Some(e), Some(o)) if e.col == o.col => {
-                    out.push(Self::bind_entry_pair(Some(e), Some(o), r, new_row));
+            if ei < even.len() && oi < odd.len() {
+                let e = &even[ei];
+                let o = &odd[oi];
+                if e.col == o.col {
+                    out.push(Self::bind_entry_both(e, o, r, new_row));
                     ei += 1;
                     oi += 1;
-                }
-                (Some(e), Some(o)) if e.col < o.col => {
-                    out.push(Self::bind_entry_pair(Some(e), None, r, new_row));
+                } else if e.col < o.col {
+                    out.push(Self::bind_entry_even_only(e, r, new_row));
                     ei += 1;
-                }
-                (Some(_), Some(o)) => {
-                    out.push(Self::bind_entry_pair(None, Some(o), r, new_row));
+                } else {
+                    out.push(Self::bind_entry_odd_only(o, r, new_row));
                     oi += 1;
                 }
-                (Some(e), None) => {
-                    out.push(Self::bind_entry_pair(Some(e), None, r, new_row));
-                    ei += 1;
-                }
-                (None, Some(o)) => {
-                    out.push(Self::bind_entry_pair(None, Some(o), r, new_row));
-                    oi += 1;
-                }
-                (None, None) => break,
+            } else if ei < even.len() {
+                let e = &even[ei];
+                out.push(Self::bind_entry_even_only(e, r, new_row));
+                ei += 1;
+            } else {
+                let o = &odd[oi];
+                out.push(Self::bind_entry_odd_only(o, r, new_row));
+                oi += 1;
             }
         }
     }
 
-    /// Bind a pair of entries (even and/or odd) at the same column.
-    fn bind_entry_pair(
-        even: Option<&RegisterEntry<F>>,
-        odd: Option<&RegisterEntry<F>>,
+    /// Bind two entries at the same column (both explicit).
+    #[inline]
+    fn bind_entry_both(
+        e: &RegisterEntry<F>,
+        o: &RegisterEntry<F>,
         r: F::Challenge,
         new_row: usize,
     ) -> RegisterEntry<F> {
-        match (even, odd) {
-            (Some(e), Some(o)) => {
-                debug_assert_eq!(e.col, o.col);
-                RegisterEntry {
-                    row: new_row,
-                    col: e.col,
-                    prev_val: e.prev_val,
-                    next_val: o.next_val,
-                    val_coeff: e.val_coeff + r.mul_0_optimized(o.val_coeff - e.val_coeff),
-                    rs1_ra: Self::bind_optional_ra(e.rs1_ra, o.rs1_ra, r),
-                    rs2_ra: Self::bind_optional_ra(e.rs2_ra, o.rs2_ra, r),
-                    rd_wa: Self::bind_optional_ra(e.rd_wa, o.rd_wa, r),
-                }
-            }
-            (Some(e), None) => {
-                // Implicit odd: val = next_val, all RAs = None
-                let implicit_odd_val = F::from_u64(e.next_val);
-                RegisterEntry {
-                    row: new_row,
-                    col: e.col,
-                    prev_val: e.prev_val,
-                    next_val: e.next_val,
-                    val_coeff: e.val_coeff + r.mul_0_optimized(implicit_odd_val - e.val_coeff),
-                    rs1_ra: e.rs1_ra.map(|ra| (F::one() - r).mul_1_optimized(ra)),
-                    rs2_ra: e.rs2_ra.map(|ra| (F::one() - r).mul_1_optimized(ra)),
-                    rd_wa: e.rd_wa.map(|ra| (F::one() - r).mul_1_optimized(ra)),
-                }
-            }
-            (None, Some(o)) => {
-                // Implicit even: val = prev_val, all RAs = None
-                let implicit_even_val = F::from_u64(o.prev_val);
-                RegisterEntry {
-                    row: new_row,
-                    col: o.col,
-                    prev_val: o.prev_val,
-                    next_val: o.next_val,
-                    val_coeff: implicit_even_val
-                        + r.mul_0_optimized(o.val_coeff - implicit_even_val),
-                    rs1_ra: o.rs1_ra.map(|ra| r.mul_1_optimized(ra)),
-                    rs2_ra: o.rs2_ra.map(|ra| r.mul_1_optimized(ra)),
-                    rd_wa: o.rd_wa.map(|ra| r.mul_1_optimized(ra)),
-                }
-            }
-            (None, None) => panic!("bind_entry_pair called with both entries None"),
+        debug_assert_eq!(e.col, o.col);
+        RegisterEntry {
+            row: new_row,
+            col: e.col,
+            prev_val: e.prev_val,
+            next_val: o.next_val,
+            val_coeff: linear_interpolate(e.val_coeff, o.val_coeff, r),
+            rs1_ra: bind_optional(e.rs1_ra, o.rs1_ra, r),
+            rs2_ra: bind_optional(e.rs2_ra, o.rs2_ra, r),
+            rd_wa: bind_optional(e.rd_wa, o.rd_wa, r),
         }
     }
 
-    /// Bind optional RA coefficients.
-    ///
-    /// # Binding Rules
-    /// - `(Some(e), Some(o))`: Linear interpolation `e + r*(o - e)`
-    /// - `(Some(e), None)`: Implicit odd is 0, so `(1-r)*e`
-    /// - `(None, Some(o))`: Implicit even is 0, so `r*o`
-    /// - `(None, None)`: Both implicit 0, result is `None`
+    /// Bind an even entry with implicit odd (val = next_val, all RAs = None).
     #[inline]
-    fn bind_optional_ra(even: Option<F>, odd: Option<F>, r: F::Challenge) -> Option<F> {
-        match (even, odd) {
-            (Some(e), Some(o)) => Some(e + r.mul_0_optimized(o - e)),
-            (Some(e), None) => Some((F::one() - r).mul_1_optimized(e)),
-            (None, Some(o)) => Some(r.mul_1_optimized(o)),
-            (None, None) => None,
+    fn bind_entry_even_only(
+        e: &RegisterEntry<F>,
+        r: F::Challenge,
+        new_row: usize,
+    ) -> RegisterEntry<F> {
+        let implicit_odd_val = F::from_u64(e.next_val);
+        let one_minus_r = F::one() - r;
+        RegisterEntry {
+            row: new_row,
+            col: e.col,
+            prev_val: e.prev_val,
+            next_val: e.next_val,
+            val_coeff: linear_interpolate(e.val_coeff, implicit_odd_val, r),
+            rs1_ra: e.rs1_ra.map(|ra| one_minus_r.mul_1_optimized(ra)),
+            rs2_ra: e.rs2_ra.map(|ra| one_minus_r.mul_1_optimized(ra)),
+            rd_wa: e.rd_wa.map(|ra| one_minus_r.mul_1_optimized(ra)),
+        }
+    }
+
+    /// Bind an odd entry with implicit even (val = prev_val, all RAs = None).
+    #[inline]
+    fn bind_entry_odd_only(
+        o: &RegisterEntry<F>,
+        r: F::Challenge,
+        new_row: usize,
+    ) -> RegisterEntry<F> {
+        let implicit_even_val = F::from_u64(o.prev_val);
+        let r_f: F = F::one() * r;
+        RegisterEntry {
+            row: new_row,
+            col: o.col,
+            prev_val: o.prev_val,
+            next_val: o.next_val,
+            val_coeff: linear_interpolate(implicit_even_val, o.val_coeff, r),
+            rs1_ra: o.rs1_ra.map(|ra| r_f.mul_1_optimized(ra)),
+            rs2_ra: o.rs2_ra.map(|ra| r_f.mul_1_optimized(ra)),
+            rd_wa: o.rd_wa.map(|ra| r_f.mul_1_optimized(ra)),
         }
     }
 
@@ -540,57 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bind_optional_ra_both_present() {
-        // When both even and odd are present, interpolate: e + r*(o - e)
-        let even = Some(F::from(3u64));
-        let odd = Some(F::from(7u64));
-        let r: <F as JoltField>::Challenge = 2u128.into(); // r = 2
-
-        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
-        // Expected: e + r*(o - e) = 3 + 2*(7-3) using field ops
-        let expected = F::from(3u64) + r * (F::from(7u64) - F::from(3u64));
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn test_bind_optional_ra_even_only() {
-        // When only even is present, implicit odd = 0, so (1-r)*e
-        let even = Some(F::from(5u64));
-        let odd = None;
-        let r: <F as JoltField>::Challenge = 3u128.into(); // r = 3
-
-        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
-        // Expected: (1-r)*e
-        let expected = (F::one() - r) * F::from(5u64);
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn test_bind_optional_ra_odd_only() {
-        // When only odd is present, implicit even = 0, so r*o
-        let even = None;
-        let odd = Some(F::from(4u64));
-        let r: <F as JoltField>::Challenge = 2u128.into(); // r = 2
-
-        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
-        // Expected: r*o
-        let expected = r * F::from(4u64);
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn test_bind_optional_ra_both_none() {
-        // When both are None, result is None
-        let even: Option<F> = None;
-        let odd: Option<F> = None;
-        let r: <F as JoltField>::Challenge = 5u128.into();
-
-        let result = RegisterMatrixCycleMajor::<F>::bind_optional_ra(even, odd, r);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_bind_entry_pair_both_present() {
+    fn test_bind_entry_both() {
         // Test binding when both even and odd entries exist at the same column
         let even = make_entry(
             0,
@@ -605,7 +460,7 @@ mod tests {
         let odd = make_entry(1, 5, 20, 30, F::from(20u64), None, Some(F::one()), None);
         let r: <F as JoltField>::Challenge = 2u128.into();
 
-        let result = RegisterMatrixCycleMajor::bind_entry_pair(Some(&even), Some(&odd), r, 0);
+        let result = RegisterMatrixCycleMajor::bind_entry_both(&even, &odd, r, 0);
 
         assert_eq!(result.row, 0);
         assert_eq!(result.col, 5);
@@ -617,12 +472,12 @@ mod tests {
     }
 
     #[test]
-    fn test_bind_entry_pair_even_only() {
+    fn test_bind_entry_even_only() {
         // Test binding when only even entry exists
         let even = make_entry(0, 5, 10, 20, F::from(10u64), Some(F::one()), None, None);
         let r: <F as JoltField>::Challenge = 2u128.into();
 
-        let result = RegisterMatrixCycleMajor::bind_entry_pair(Some(&even), None, r, 0);
+        let result = RegisterMatrixCycleMajor::bind_entry_even_only(&even, r, 0);
 
         assert_eq!(result.row, 0);
         assert_eq!(result.col, 5);
@@ -635,12 +490,12 @@ mod tests {
     }
 
     #[test]
-    fn test_bind_entry_pair_odd_only() {
+    fn test_bind_entry_odd_only() {
         // Test binding when only odd entry exists
         let odd = make_entry(1, 5, 10, 20, F::from(20u64), None, Some(F::one()), None);
         let r: <F as JoltField>::Challenge = 2u128.into();
 
-        let result = RegisterMatrixCycleMajor::bind_entry_pair(None, Some(&odd), r, 0);
+        let result = RegisterMatrixCycleMajor::bind_entry_odd_only(&odd, r, 0);
 
         assert_eq!(result.row, 0);
         assert_eq!(result.col, 5);
@@ -651,23 +506,6 @@ mod tests {
         // rs2_ra: r*1
         let expected_rs2 = r * F::one();
         assert_eq!(result.rs2_ra, Some(expected_rs2));
-    }
-
-    #[test]
-    fn test_bind_rows_dry_run() {
-        // Test counting merged entries
-        let even = vec![
-            make_entry(0, 3, 0, 0, F::one(), Some(F::one()), None, None),
-            make_entry(0, 5, 0, 0, F::one(), None, Some(F::one()), None),
-        ];
-        let odd = vec![
-            make_entry(1, 4, 0, 0, F::one(), None, None, Some(F::one())),
-            make_entry(1, 5, 0, 0, F::one(), Some(F::one()), None, None),
-        ];
-
-        // Columns: 3 (even only), 4 (odd only), 5 (both) = 3 entries
-        let count = RegisterMatrixCycleMajor::<F>::bind_rows_dry_run(&even, &odd);
-        assert_eq!(count, 3);
     }
 
     #[test]

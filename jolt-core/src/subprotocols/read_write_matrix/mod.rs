@@ -43,8 +43,12 @@ use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use num::Integer;
 use std::fmt::Debug;
 
+pub mod merge_utils;
 pub mod ram;
 pub mod registers;
+
+// Re-export merge utilities for convenience
+pub use merge_utils::{bind_optional, linear_interpolate, MergeItem, TwoPointerMerge};
 
 // Re-export the main types for convenience
 pub use ram::{ReadWriteEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor};

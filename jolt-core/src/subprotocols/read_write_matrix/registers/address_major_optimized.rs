@@ -44,10 +44,15 @@
 
 use allocative::Allocative;
 use common::constants::REGISTER_COUNT;
+use num::Integer;
 use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::subprotocols::read_write_matrix::merge_utils::{
+    linear_interpolate, MergeItem, TwoPointerMerge,
+};
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 
@@ -59,6 +64,9 @@ const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
 /// Sentinel value indicating "no access" for register indices.
 /// Valid register indices are 0-127, so 255 is safe to use as sentinel.
 const NO_ACCESS: u8 = u8::MAX;
+
+/// Chunk type returned when merging a single column pair in the optimized matrix.
+type OptimizedColumnPairChunk<F> = (Vec<usize>, Vec<u8>, Vec<F>, Vec<u8>, Vec<u8>, Vec<u8>);
 
 /// Memory-optimized address-major sparse matrix for registers.
 ///
@@ -129,6 +137,177 @@ impl<F: JoltField> Default for RegisterMatrixAddressMajorOptimized<F> {
 }
 
 impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
+    /// Create an optimized address-major register matrix **directly from the trace**.
+    ///
+    /// This is the primary constructor for the **address-first** configuration
+    /// (phase1 = 0, phase2 = LOG_K). It mirrors the semantics of:
+    ///
+    /// - [`RegisterMatrixCycleMajor::from_trace`] followed by
+    /// - [`RegisterMatrixAddressMajorOptimized::from`],
+    ///
+    /// but avoids materializing the intermediate cycle-major representation.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. For each cycle, build entries for each unique register touched by rs1/rs2/rd.
+    ///    - `val_coeff` = value *before* any access at that cycle (prev_val)
+    ///    - `next_val`  = value *after* all accesses at that cycle
+    /// 2. Sort entries by `(col, row)` for address-major order.
+    /// 3. Build SoA vectors and compact RA/WA flags (`u8` with `NO_ACCESS` sentinel).
+    /// 4. Compute `val_final[k]` = final value of register `k` after all cycles.
+    #[tracing::instrument(skip_all, name = "RegisterMatrixAddressMajorOptimized::from_trace")]
+    pub fn from_trace(trace: &[Cycle]) -> Self {
+        println!("RegisterMatrixAddressMajorOptimized::from_trace");
+        let t_size = trace.len();
+
+        if t_size == 0 {
+            // No cycles: all registers stay at their initial value (zero).
+            let val_init_vec: Vec<F> = vec![F::zero(); K];
+            let mut eq_table = ExpandingTable::new(K, BindingOrder::LowToHigh);
+            eq_table.reset(F::one());
+            return Self {
+                rows: Vec::new(),
+                cols: Vec::new(),
+                vals: Vec::new(),
+                rs1_ras: Vec::new(),
+                rs2_ras: Vec::new(),
+                rd_was: Vec::new(),
+                eq_table,
+                val_init: MultilinearPolynomial::from(val_init_vec.clone()),
+                val_final: MultilinearPolynomial::from(val_init_vec),
+                num_row_bits: 0,
+                num_col_bits: LOG_K,
+            };
+        }
+
+        // Step 1: build per-(cycle, register) entries in parallel.
+        //
+        // We intentionally mirror the logic of `RegisterMatrixCycleMajor::from_trace`
+        // so that the resulting data is semantically identical to constructing a
+        // cycle-major matrix and then converting it to this optimized format.
+        //
+        // Temporary entry format:
+        //   (row, col, prev_val, next_val, has_rs1, has_rs2, has_rd)
+        type TmpEntry = (usize, u8, u64, u64, bool, bool, bool);
+
+        let mut entries: Vec<TmpEntry> = trace
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(j, cycle)| {
+                let (rs1_reg, rs1_val) = cycle.rs1_read();
+                let (rs2_reg, rs2_val) = cycle.rs2_read();
+                let (rd_reg, rd_pre_val, rd_post_val) = cycle.rd_write();
+
+                // Collect unique registers accessed in this cycle.
+                // Format: (reg, has_rs1, has_rs2, has_rd, prev_val, next_val)
+                type RegAccess = (u8, bool, bool, bool, u64, u64);
+                let mut regs: Vec<RegAccess> = Vec::with_capacity(3);
+
+                // Helper to add or merge access for a register within this cycle.
+                let mut add_access =
+                    |reg: u8, is_rs1: bool, is_rs2: bool, is_rd: bool, val: u64, next: u64| {
+                        if let Some(entry) = regs.iter_mut().find(|(r, ..)| *r == reg) {
+                            if is_rs1 {
+                                entry.1 = true;
+                            }
+                            if is_rs2 {
+                                entry.2 = true;
+                            }
+                            if is_rd {
+                                entry.3 = true;
+                                // For writes, the post-write value is the final value
+                                // of this register at this cycle.
+                                entry.5 = next;
+                            }
+                        } else {
+                            regs.push((reg, is_rs1, is_rs2, is_rd, val, next));
+                        }
+                    };
+
+                // rs1: read-only, prev == next == value at this cycle.
+                add_access(rs1_reg, true, false, false, rs1_val, rs1_val);
+                // rs2: read-only.
+                add_access(rs2_reg, false, true, false, rs2_val, rs2_val);
+                // rd: write, prev_val -> next_val.
+                add_access(rd_reg, false, false, true, rd_pre_val, rd_post_val);
+
+                // Ensure registers are in increasing order for this cycle.
+                regs.sort_unstable_by(|(reg_a, ..), (reg_b, ..)| reg_a.cmp(reg_b));
+
+                regs.into_iter()
+                    .map(move |(reg, has_rs1, has_rs2, has_rd, prev, next)| {
+                        (j, reg, prev, next, has_rs1, has_rs2, has_rd)
+                    })
+            })
+            .collect();
+
+        // Step 2: sort by (col, row) for address-major order.
+        entries.par_sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+
+        let n = entries.len();
+
+        // Compute number of cycle bits: log2 of T (rounded up to next power of two).
+        let num_row_bits = {
+            let t = t_size.next_power_of_two();
+            t.trailing_zeros() as usize
+        };
+
+        // Step 3: build SoA vectors and compact RA/WA flags.
+        let mut rows = Vec::with_capacity(n);
+        let mut cols = Vec::with_capacity(n);
+        let mut vals = Vec::with_capacity(n);
+        let mut rs1_ras = Vec::with_capacity(n);
+        let mut rs2_ras = Vec::with_capacity(n);
+        let mut rd_was = Vec::with_capacity(n);
+
+        for (row, col, prev, _next, has_rs1, has_rs2, has_rd) in &entries {
+            rows.push(*row);
+            cols.push(*col);
+            // val_coeff stores the value before any access at this cycle.
+            vals.push(F::from_u64(*prev));
+
+            // Compact RA/WA encoding: original register index or NO_ACCESS.
+            rs1_ras.push(if *has_rs1 { *col } else { NO_ACCESS });
+            rs2_ras.push(if *has_rs2 { *col } else { NO_ACCESS });
+            rd_was.push(if *has_rd { *col } else { NO_ACCESS });
+        }
+
+        // Step 4: build val_init (all zeros for registers) and val_final.
+        let val_init_vec: Vec<F> = vec![F::zero(); K];
+        let mut val_final_vec: Vec<F> = val_init_vec.clone();
+
+        // For each register, val_final[k] is the last next_val seen for that column.
+        let mut i = 0;
+        while i < n {
+            let col = entries[i].1 as usize;
+            let mut last = i;
+            while last + 1 < n && entries[last + 1].1 == entries[i].1 {
+                last += 1;
+            }
+            let next_val = entries[last].3;
+            val_final_vec[col] = F::from_u64(next_val);
+            i = last + 1;
+        }
+
+        // Initialize eq_table: starts with 1 entry (value = 1), will expand as we bind.
+        let mut eq_table = ExpandingTable::new(K, BindingOrder::LowToHigh);
+        eq_table.reset(F::one());
+
+        Self {
+            rows,
+            cols,
+            vals,
+            rs1_ras,
+            rs2_ras,
+            rd_was,
+            eq_table,
+            val_init: MultilinearPolynomial::from(val_init_vec),
+            val_final: MultilinearPolynomial::from(val_final_vec),
+            num_row_bits,
+            num_col_bits: LOG_K,
+        }
+    }
+
     /// Number of non-zero sparse entries.
     #[inline]
     pub fn nnz(&self) -> usize {
@@ -187,6 +366,21 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
         }
     }
 
+    /// Helper to get next val inside parallel closure.
+    #[inline]
+    fn get_next_val_static(
+        cols: &[u8],
+        vals: &[F],
+        val_final: &MultilinearPolynomial<F>,
+        i: usize,
+    ) -> F {
+        if i + 1 < cols.len() && cols[i + 1] == cols[i] {
+            vals[i + 1]
+        } else {
+            val_final.get_bound_coeff(cols[i] as usize)
+        }
+    }
+
     /// Bind one address variable with challenge `r`.
     ///
     /// This updates:
@@ -219,163 +413,31 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
             return;
         }
 
-        let n = self.nnz();
-        let mut new_rows = Vec::with_capacity(n);
-        let mut new_cols = Vec::with_capacity(n);
-        let mut new_vals = Vec::with_capacity(n);
-        let mut new_rs1_ras = Vec::with_capacity(n);
-        let mut new_rs2_ras = Vec::with_capacity(n);
-        let mut new_rd_was = Vec::with_capacity(n);
+        // 1. Identify ranges for each column pair
+        let pair_ranges = Self::find_column_pair_ranges(&self.cols);
 
-        let mut i = 0;
-        while i < n {
-            let col = self.cols[i];
-            let col_pair = col / 2;
-            let is_even = col % 2 == 0;
+        // 2. Process column pairs in parallel
+        let chunks: Vec<_> = pair_ranges
+            .into_par_iter()
+            .map(|(pair_start, pair_end)| self.merge_single_column_pair(pair_start, pair_end, r))
+            .collect();
 
-            // Find extent of entries in this column
-            let mut j = i;
-            while j < n && self.cols[j] == col {
-                j += 1;
-            }
+        // 3. Merge chunks
+        let total_len: usize = chunks.iter().map(|c| c.0.len()).sum();
+        let mut new_rows = Vec::with_capacity(total_len);
+        let mut new_cols = Vec::with_capacity(total_len);
+        let mut new_vals = Vec::with_capacity(total_len);
+        let mut new_rs1_ras = Vec::with_capacity(total_len);
+        let mut new_rs2_ras = Vec::with_capacity(total_len);
+        let mut new_rd_was = Vec::with_capacity(total_len);
 
-            // Check for paired column entries
-            let paired_col = if is_even { col + 1 } else { col - 1 };
-            let mut k = j;
-            if is_even && k < n && self.cols[k] == paired_col {
-                while k < n && self.cols[k] == paired_col {
-                    k += 1;
-                }
-            }
-
-            // Determine even/odd column ranges
-            let (even_start, even_end, odd_start, odd_end) =
-                if is_even { (i, j, j, k) } else { (j, k, i, j) };
-
-            let mut ei = even_start;
-            let mut oi = odd_start;
-
-            // Initialize checkpoints for implicit values
-            let even_col_idx = (col_pair * 2) as usize;
-            let odd_col_idx = even_col_idx + 1;
-            let mut even_checkpoint = self.val_init.get_bound_coeff(even_col_idx);
-            let mut odd_checkpoint = self.val_init.get_bound_coeff(odd_col_idx);
-
-            while ei < even_end || oi < odd_end {
-                let even_row = if ei < even_end {
-                    Some(self.rows[ei])
-                } else {
-                    None
-                };
-                let odd_row = if oi < odd_end {
-                    Some(self.rows[oi])
-                } else {
-                    None
-                };
-
-                match (even_row, odd_row) {
-                    (Some(er), Some(or)) if er == or => {
-                        // Both columns have entry at same row
-                        let merged_val =
-                            self.vals[ei] + r.mul_0_optimized(self.vals[oi] - self.vals[ei]);
-                        let merged_rs1 =
-                            Self::merge_register_index(self.rs1_ras[ei], self.rs1_ras[oi]);
-                        let merged_rs2 =
-                            Self::merge_register_index(self.rs2_ras[ei], self.rs2_ras[oi]);
-                        let merged_rd =
-                            Self::merge_register_index(self.rd_was[ei], self.rd_was[oi]);
-
-                        new_rows.push(er);
-                        new_cols.push(col_pair);
-                        new_vals.push(merged_val);
-                        new_rs1_ras.push(merged_rs1);
-                        new_rs2_ras.push(merged_rs2);
-                        new_rd_was.push(merged_rd);
-
-                        even_checkpoint = self.get_next_val(ei);
-                        odd_checkpoint = self.get_next_val(oi);
-                        ei += 1;
-                        oi += 1;
-                    }
-                    (Some(er), Some(or)) if er < or => {
-                        // Even only
-                        let merged_val =
-                            self.vals[ei] + r.mul_0_optimized(odd_checkpoint - self.vals[ei]);
-                        // Even column's register index stays (divided by 2 via table)
-                        // Odd is implicit (no access), so stays NO_ACCESS if even had no access
-                        let merged_rs1 = Self::merge_register_index(self.rs1_ras[ei], NO_ACCESS);
-                        let merged_rs2 = Self::merge_register_index(self.rs2_ras[ei], NO_ACCESS);
-                        let merged_rd = Self::merge_register_index(self.rd_was[ei], NO_ACCESS);
-
-                        new_rows.push(er);
-                        new_cols.push(col_pair);
-                        new_vals.push(merged_val);
-                        new_rs1_ras.push(merged_rs1);
-                        new_rs2_ras.push(merged_rs2);
-                        new_rd_was.push(merged_rd);
-
-                        even_checkpoint = self.get_next_val(ei);
-                        ei += 1;
-                    }
-                    (Some(_), Some(or)) => {
-                        // Odd only (er > or)
-                        let merged_val =
-                            even_checkpoint + r.mul_0_optimized(self.vals[oi] - even_checkpoint);
-                        let merged_rs1 = Self::merge_register_index(NO_ACCESS, self.rs1_ras[oi]);
-                        let merged_rs2 = Self::merge_register_index(NO_ACCESS, self.rs2_ras[oi]);
-                        let merged_rd = Self::merge_register_index(NO_ACCESS, self.rd_was[oi]);
-
-                        new_rows.push(or);
-                        new_cols.push(col_pair);
-                        new_vals.push(merged_val);
-                        new_rs1_ras.push(merged_rs1);
-                        new_rs2_ras.push(merged_rs2);
-                        new_rd_was.push(merged_rd);
-
-                        odd_checkpoint = self.get_next_val(oi);
-                        oi += 1;
-                    }
-                    (Some(er), None) => {
-                        // Even only (no odd remaining)
-                        let merged_val =
-                            self.vals[ei] + r.mul_0_optimized(odd_checkpoint - self.vals[ei]);
-                        let merged_rs1 = Self::merge_register_index(self.rs1_ras[ei], NO_ACCESS);
-                        let merged_rs2 = Self::merge_register_index(self.rs2_ras[ei], NO_ACCESS);
-                        let merged_rd = Self::merge_register_index(self.rd_was[ei], NO_ACCESS);
-
-                        new_rows.push(er);
-                        new_cols.push(col_pair);
-                        new_vals.push(merged_val);
-                        new_rs1_ras.push(merged_rs1);
-                        new_rs2_ras.push(merged_rs2);
-                        new_rd_was.push(merged_rd);
-
-                        even_checkpoint = self.get_next_val(ei);
-                        ei += 1;
-                    }
-                    (None, Some(or)) => {
-                        // Odd only (no even remaining)
-                        let merged_val =
-                            even_checkpoint + r.mul_0_optimized(self.vals[oi] - even_checkpoint);
-                        let merged_rs1 = Self::merge_register_index(NO_ACCESS, self.rs1_ras[oi]);
-                        let merged_rs2 = Self::merge_register_index(NO_ACCESS, self.rs2_ras[oi]);
-                        let merged_rd = Self::merge_register_index(NO_ACCESS, self.rd_was[oi]);
-
-                        new_rows.push(or);
-                        new_cols.push(col_pair);
-                        new_vals.push(merged_val);
-                        new_rs1_ras.push(merged_rs1);
-                        new_rs2_ras.push(merged_rs2);
-                        new_rd_was.push(merged_rd);
-
-                        odd_checkpoint = self.get_next_val(oi);
-                        oi += 1;
-                    }
-                    (None, None) => break,
-                }
-            }
-
-            i = k.max(j);
+        for (rows, cols, vals, rs1, rs2, rd) in chunks {
+            new_rows.extend(rows);
+            new_cols.extend(cols);
+            new_vals.extend(vals);
+            new_rs1_ras.extend(rs1);
+            new_rs2_ras.extend(rs2);
+            new_rd_was.extend(rd);
         }
 
         self.rows = new_rows;
@@ -384,6 +446,115 @@ impl<F: JoltField> RegisterMatrixAddressMajorOptimized<F> {
         self.rs1_ras = new_rs1_ras;
         self.rs2_ras = new_rs2_ras;
         self.rd_was = new_rd_was;
+    }
+
+    /// Find ranges of entries that belong to the same column pair.
+    fn find_column_pair_ranges(cols: &[u8]) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+        let mut idx = 0;
+        let n = cols.len();
+
+        while idx < n {
+            let col_pair = cols[idx] / 2;
+            let start = idx;
+            while idx < n && cols[idx] / 2 == col_pair {
+                idx += 1;
+            }
+            ranges.push((start, idx));
+        }
+        ranges
+    }
+
+    /// Merge a single column pair (indices pair_start..pair_end).
+    fn merge_single_column_pair(
+        &self,
+        pair_start: usize,
+        pair_end: usize,
+        r: F::Challenge,
+    ) -> OptimizedColumnPairChunk<F> {
+        let len = pair_end - pair_start;
+        let mut chunk_rows = Vec::with_capacity(len);
+        let mut chunk_cols = Vec::with_capacity(len);
+        let mut chunk_vals = Vec::with_capacity(len);
+        let mut chunk_rs1 = Vec::with_capacity(len);
+        let mut chunk_rs2 = Vec::with_capacity(len);
+        let mut chunk_rd = Vec::with_capacity(len);
+
+        let col_pair = self.cols[pair_start] / 2;
+        let even_col_idx = (col_pair * 2) as usize;
+        let odd_col_idx = even_col_idx + 1;
+
+        // Split into even and odd columns within this range
+        let pivot = (pair_start..pair_end)
+            .find(|&idx| self.cols[idx].is_odd())
+            .unwrap_or(pair_end);
+
+        // Create index-based views
+        let even_indices: Vec<usize> = (pair_start..pivot).collect();
+        let odd_indices: Vec<usize> = (pivot..pair_end).collect();
+
+        // Initialize checkpoints for implicit values
+        let mut even_checkpoint = self.val_init.get_bound_coeff(even_col_idx);
+        let mut odd_checkpoint = self.val_init.get_bound_coeff(odd_col_idx);
+
+        // Use TwoPointerMerge to iterate by row
+        let merge = TwoPointerMerge::new(&even_indices, &odd_indices, |&idx| self.rows[idx]);
+
+        for item in merge {
+            match item {
+                MergeItem::Both {
+                    even: &ei,
+                    odd: &oi,
+                } => {
+                    let row = self.rows[ei];
+                    chunk_rows.push(row);
+                    chunk_cols.push(col_pair);
+                    chunk_vals.push(linear_interpolate(self.vals[ei], self.vals[oi], r));
+                    chunk_rs1.push(Self::merge_register_index(
+                        self.rs1_ras[ei],
+                        self.rs1_ras[oi],
+                    ));
+                    chunk_rs2.push(Self::merge_register_index(
+                        self.rs2_ras[ei],
+                        self.rs2_ras[oi],
+                    ));
+                    chunk_rd.push(Self::merge_register_index(self.rd_was[ei], self.rd_was[oi]));
+
+                    even_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, ei);
+                    odd_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, oi);
+                }
+                MergeItem::EvenOnly(&ei) => {
+                    let row = self.rows[ei];
+                    chunk_rows.push(row);
+                    chunk_cols.push(col_pair);
+                    chunk_vals.push(linear_interpolate(self.vals[ei], odd_checkpoint, r));
+                    chunk_rs1.push(Self::merge_register_index(self.rs1_ras[ei], NO_ACCESS));
+                    chunk_rs2.push(Self::merge_register_index(self.rs2_ras[ei], NO_ACCESS));
+                    chunk_rd.push(Self::merge_register_index(self.rd_was[ei], NO_ACCESS));
+
+                    even_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, ei);
+                }
+                MergeItem::OddOnly(&oi) => {
+                    let row = self.rows[oi];
+                    chunk_rows.push(row);
+                    chunk_cols.push(col_pair);
+                    chunk_vals.push(linear_interpolate(even_checkpoint, self.vals[oi], r));
+                    chunk_rs1.push(Self::merge_register_index(NO_ACCESS, self.rs1_ras[oi]));
+                    chunk_rs2.push(Self::merge_register_index(NO_ACCESS, self.rs2_ras[oi]));
+                    chunk_rd.push(Self::merge_register_index(NO_ACCESS, self.rd_was[oi]));
+
+                    odd_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, oi);
+                }
+            }
+        }
+
+        (
+            chunk_rows, chunk_cols, chunk_vals, chunk_rs1, chunk_rs2, chunk_rd,
+        )
     }
 
     /// Merge two register indices when binding a variable.

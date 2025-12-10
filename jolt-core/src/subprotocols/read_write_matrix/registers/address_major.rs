@@ -28,6 +28,9 @@
 use super::cycle_major::RegisterMatrixCycleMajor;
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::subprotocols::read_write_matrix::merge_utils::{
+    bind_optional, linear_interpolate, MergeItem, TwoPointerMerge,
+};
 use allocative::Allocative;
 use num::Integer;
 use rayon::prelude::*;
@@ -38,6 +41,16 @@ use common::constants::REGISTER_COUNT;
 const K: usize = REGISTER_COUNT as usize;
 #[allow(dead_code)]
 const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
+
+/// Chunk type returned when binding a single column pair.
+type ColumnPairChunk<F> = (
+    Vec<usize>,
+    Vec<u8>,
+    Vec<F>,
+    Vec<Option<F>>,
+    Vec<Option<F>>,
+    Vec<Option<F>>,
+);
 
 /// Address-major (column-major) sparse matrix for register read/write checking.
 ///
@@ -107,6 +120,21 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
         }
     }
 
+    /// Helper to get next val inside parallel closure.
+    #[inline]
+    fn get_next_val_static(
+        cols: &[u8],
+        vals: &[F],
+        val_final: &MultilinearPolynomial<F>,
+        i: usize,
+    ) -> F {
+        if i + 1 < cols.len() && cols[i + 1] == cols[i] {
+            vals[i + 1]
+        } else {
+            val_final.get_bound_coeff(cols[i] as usize)
+        }
+    }
+
     /// Bind one address (column) variable using random challenge `r`.
     ///
     /// Merges entries at adjacent columns (2k and 2k+1) with the same row.
@@ -121,126 +149,32 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
         // NOTE: We process entries BEFORE binding val_init/val_final because
         // we need the original (unbound) checkpoint values.
 
-        let mut new_rows = Vec::with_capacity(self.rows.len());
-        let mut new_cols = Vec::with_capacity(self.rows.len());
-        let mut new_vals = Vec::with_capacity(self.rows.len());
-        let mut new_rs1_ras: Vec<Option<F>> = Vec::with_capacity(self.rows.len());
-        let mut new_rs2_ras: Vec<Option<F>> = Vec::with_capacity(self.rows.len());
-        let mut new_rd_was: Vec<Option<F>> = Vec::with_capacity(self.rows.len());
+        // 1. Identify ranges for each column pair
+        let pair_ranges = Self::find_column_pair_ranges(&self.cols);
 
-        let mut i = 0;
-        while i < self.rows.len() {
-            let col_pair = self.cols[i] / 2;
-            let even_col_idx = (2 * col_pair) as usize;
+        // 2. Process column pairs in parallel
+        let chunks: Vec<_> = pair_ranges
+            .into_par_iter()
+            .map(|(pair_start, pair_end)| self.bind_column_pair(pair_start, pair_end, r))
+            .collect();
 
-            // Find all entries in this column pair
-            let pair_start = i;
-            while i < self.rows.len() && self.cols[i] / 2 == col_pair {
-                i += 1;
-            }
-            let pair_end = i;
+        // 3. Merge chunks
+        let total_len: usize = chunks.iter().map(|c| c.0.len()).sum();
 
-            // Split into even and odd columns within this range
-            let pivot = (pair_start..pair_end)
-                .find(|&idx| self.cols[idx].is_odd())
-                .unwrap_or(pair_end);
+        let mut new_rows = Vec::with_capacity(total_len);
+        let mut new_cols = Vec::with_capacity(total_len);
+        let mut new_vals = Vec::with_capacity(total_len);
+        let mut new_rs1_ras = Vec::with_capacity(total_len);
+        let mut new_rs2_ras = Vec::with_capacity(total_len);
+        let mut new_rd_was = Vec::with_capacity(total_len);
 
-            let even_range = pair_start..pivot;
-            let odd_range = pivot..pair_end;
-
-            // Initialize checkpoints from val_init (BEFORE any binding)
-            let mut even_checkpoint = self.val_init.get_bound_coeff(even_col_idx);
-            let mut odd_checkpoint = self.val_init.get_bound_coeff(even_col_idx + 1);
-
-            // Two-pointer merge by row with checkpoint tracking
-            let mut ei = even_range.start;
-            let mut oi = odd_range.start;
-
-            while ei < even_range.end && oi < odd_range.end {
-                let row_e = self.rows[ei];
-                let row_o = self.rows[oi];
-
-                if row_e == row_o {
-                    // Both columns have this row - merge
-                    let new_val = self.vals[ei] + r.mul_0_optimized(self.vals[oi] - self.vals[ei]);
-                    new_rows.push(row_e);
-                    new_cols.push(col_pair);
-                    new_vals.push(new_val);
-                    new_rs1_ras.push(Self::bind_optional_ra(
-                        self.rs1_ras[ei],
-                        self.rs1_ras[oi],
-                        r,
-                    ));
-                    new_rs2_ras.push(Self::bind_optional_ra(
-                        self.rs2_ras[ei],
-                        self.rs2_ras[oi],
-                        r,
-                    ));
-                    new_rd_was.push(Self::bind_optional_ra(self.rd_was[ei], self.rd_was[oi], r));
-
-                    // Update checkpoints
-                    even_checkpoint = self.get_next_val(ei);
-                    odd_checkpoint = self.get_next_val(oi);
-                    ei += 1;
-                    oi += 1;
-                } else if row_e < row_o {
-                    // Only even column has this row - use odd_checkpoint for implicit odd value
-                    let val_even = self.vals[ei];
-                    let new_val = val_even + r.mul_0_optimized(odd_checkpoint - val_even);
-                    new_rows.push(row_e);
-                    new_cols.push(col_pair);
-                    new_vals.push(new_val);
-                    new_rs1_ras.push(self.rs1_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
-                    new_rs2_ras.push(self.rs2_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
-                    new_rd_was.push(self.rd_was[ei].map(|wa| (F::one() - r).mul_1_optimized(wa)));
-
-                    // Update even checkpoint
-                    even_checkpoint = self.get_next_val(ei);
-                    ei += 1;
-                } else {
-                    // Only odd column has this row - use even_checkpoint for implicit even value
-                    let val_odd = self.vals[oi];
-                    let new_val = even_checkpoint + r.mul_0_optimized(val_odd - even_checkpoint);
-                    new_rows.push(row_o);
-                    new_cols.push(col_pair);
-                    new_vals.push(new_val);
-                    new_rs1_ras.push(self.rs1_ras[oi].map(|ra| r.mul_1_optimized(ra)));
-                    new_rs2_ras.push(self.rs2_ras[oi].map(|ra| r.mul_1_optimized(ra)));
-                    new_rd_was.push(self.rd_was[oi].map(|wa| r.mul_1_optimized(wa)));
-
-                    // Update odd checkpoint
-                    odd_checkpoint = self.get_next_val(oi);
-                    oi += 1;
-                }
-            }
-
-            // Remaining even-only entries
-            while ei < even_range.end {
-                let row_e = self.rows[ei];
-                let val_even = self.vals[ei];
-                let new_val = val_even + r.mul_0_optimized(odd_checkpoint - val_even);
-                new_rows.push(row_e);
-                new_cols.push(col_pair);
-                new_vals.push(new_val);
-                new_rs1_ras.push(self.rs1_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
-                new_rs2_ras.push(self.rs2_ras[ei].map(|ra| (F::one() - r).mul_1_optimized(ra)));
-                new_rd_was.push(self.rd_was[ei].map(|wa| (F::one() - r).mul_1_optimized(wa)));
-                ei += 1;
-            }
-
-            // Remaining odd-only entries
-            while oi < odd_range.end {
-                let row_o = self.rows[oi];
-                let val_odd = self.vals[oi];
-                let new_val = even_checkpoint + r.mul_0_optimized(val_odd - even_checkpoint);
-                new_rows.push(row_o);
-                new_cols.push(col_pair);
-                new_vals.push(new_val);
-                new_rs1_ras.push(self.rs1_ras[oi].map(|ra| r.mul_1_optimized(ra)));
-                new_rs2_ras.push(self.rs2_ras[oi].map(|ra| r.mul_1_optimized(ra)));
-                new_rd_was.push(self.rd_was[oi].map(|wa| r.mul_1_optimized(wa)));
-                oi += 1;
-            }
+        for (rows, cols, vals, rs1, rs2, rd) in chunks {
+            new_rows.extend(rows);
+            new_cols.extend(cols);
+            new_vals.extend(vals);
+            new_rs1_ras.extend(rs1);
+            new_rs2_ras.extend(rs2);
+            new_rd_was.extend(rd);
         }
 
         // Now bind val_init and val_final AFTER processing entries
@@ -256,15 +190,112 @@ impl<F: JoltField> RegisterMatrixAddressMajor<F> {
         self.num_col_bits -= 1;
     }
 
-    /// Bind optional RA coefficients.
-    #[inline]
-    fn bind_optional_ra(even: Option<F>, odd: Option<F>, r: F::Challenge) -> Option<F> {
-        match (even, odd) {
-            (Some(e), Some(o)) => Some(e + r.mul_0_optimized(o - e)),
-            (Some(e), None) => Some((F::one() - r).mul_1_optimized(e)),
-            (None, Some(o)) => Some(r.mul_1_optimized(o)),
-            (None, None) => None,
+    /// Find ranges of entries that belong to the same column pair.
+    fn find_column_pair_ranges(cols: &[u8]) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+        let mut idx = 0;
+        let n = cols.len();
+
+        while idx < n {
+            let col_pair = cols[idx] / 2;
+            let start = idx;
+            while idx < n && cols[idx] / 2 == col_pair {
+                idx += 1;
+            }
+            ranges.push((start, idx));
         }
+        ranges
+    }
+
+    /// Bind a single column pair (indices pair_start..pair_end).
+    ///
+    /// Returns the bound entries as SoA tuple.
+    fn bind_column_pair(
+        &self,
+        pair_start: usize,
+        pair_end: usize,
+        r: F::Challenge,
+    ) -> ColumnPairChunk<F> {
+        let len = pair_end - pair_start;
+        let mut chunk_rows = Vec::with_capacity(len);
+        let mut chunk_cols = Vec::with_capacity(len);
+        let mut chunk_vals = Vec::with_capacity(len);
+        let mut chunk_rs1 = Vec::with_capacity(len);
+        let mut chunk_rs2 = Vec::with_capacity(len);
+        let mut chunk_rd = Vec::with_capacity(len);
+
+        let col_pair = self.cols[pair_start] / 2;
+        let even_col_idx = (2 * col_pair) as usize;
+
+        // Split into even and odd columns within this range
+        let pivot = (pair_start..pair_end)
+            .find(|&idx| self.cols[idx].is_odd())
+            .unwrap_or(pair_end);
+
+        // Create index-based "entry" views for even and odd
+        let even_indices: Vec<usize> = (pair_start..pivot).collect();
+        let odd_indices: Vec<usize> = (pivot..pair_end).collect();
+
+        // Initialize checkpoints from val_init (BEFORE any binding)
+        let mut even_checkpoint = self.val_init.get_bound_coeff(even_col_idx);
+        let mut odd_checkpoint = self.val_init.get_bound_coeff(even_col_idx + 1);
+
+        let one_minus_r = F::one() - r;
+        let r_f: F = F::one() * r;
+
+        // Use TwoPointerMerge to iterate by row
+        let merge = TwoPointerMerge::new(&even_indices, &odd_indices, |&idx| self.rows[idx]);
+
+        for item in merge {
+            match item {
+                MergeItem::Both {
+                    even: &ei,
+                    odd: &oi,
+                } => {
+                    let row = self.rows[ei];
+                    chunk_rows.push(row);
+                    chunk_cols.push(col_pair);
+                    chunk_vals.push(linear_interpolate(self.vals[ei], self.vals[oi], r));
+                    chunk_rs1.push(bind_optional(self.rs1_ras[ei], self.rs1_ras[oi], r));
+                    chunk_rs2.push(bind_optional(self.rs2_ras[ei], self.rs2_ras[oi], r));
+                    chunk_rd.push(bind_optional(self.rd_was[ei], self.rd_was[oi], r));
+
+                    // Update checkpoints
+                    even_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, ei);
+                    odd_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, oi);
+                }
+                MergeItem::EvenOnly(&ei) => {
+                    let row = self.rows[ei];
+                    chunk_rows.push(row);
+                    chunk_cols.push(col_pair);
+                    chunk_vals.push(linear_interpolate(self.vals[ei], odd_checkpoint, r));
+                    chunk_rs1.push(self.rs1_ras[ei].map(|ra| one_minus_r.mul_1_optimized(ra)));
+                    chunk_rs2.push(self.rs2_ras[ei].map(|ra| one_minus_r.mul_1_optimized(ra)));
+                    chunk_rd.push(self.rd_was[ei].map(|wa| one_minus_r.mul_1_optimized(wa)));
+
+                    even_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, ei);
+                }
+                MergeItem::OddOnly(&oi) => {
+                    let row = self.rows[oi];
+                    chunk_rows.push(row);
+                    chunk_cols.push(col_pair);
+                    chunk_vals.push(linear_interpolate(even_checkpoint, self.vals[oi], r));
+                    chunk_rs1.push(self.rs1_ras[oi].map(|ra| r_f.mul_1_optimized(ra)));
+                    chunk_rs2.push(self.rs2_ras[oi].map(|ra| r_f.mul_1_optimized(ra)));
+                    chunk_rd.push(self.rd_was[oi].map(|wa| r_f.mul_1_optimized(wa)));
+
+                    odd_checkpoint =
+                        Self::get_next_val_static(&self.cols, &self.vals, &self.val_final, oi);
+                }
+            }
+        }
+
+        (
+            chunk_rows, chunk_cols, chunk_vals, chunk_rs1, chunk_rs2, chunk_rd,
+        )
     }
 
     /// Materialize into dense polynomial vectors.
@@ -491,29 +522,31 @@ mod tests {
     }
 
     #[test]
-    fn test_bind_optional_ra_function() {
+    fn test_bind_optional_function() {
+        use crate::subprotocols::read_write_matrix::merge_utils::bind_optional;
+
         // Test the helper function independently using the proper challenge type
         let even = Some(F::from(10u64));
         let odd = Some(F::from(20u64));
         let r: <F as JoltField>::Challenge = 3u128.into();
 
-        let result = RegisterMatrixAddressMajor::<F>::bind_optional_ra(even, odd, r);
+        let result = bind_optional(even, odd, r);
         // e + r*(o - e) = 10 + r*(20-10)
         let expected = F::from(10u64) + r * (F::from(20u64) - F::from(10u64));
         assert_eq!(result, Some(expected));
 
         // Even only: (1-r)*e
-        let result_even = RegisterMatrixAddressMajor::<F>::bind_optional_ra(even, None, r);
+        let result_even = bind_optional::<F>(even, None, r);
         let expected_even = (F::one() - r) * F::from(10u64);
         assert_eq!(result_even, Some(expected_even));
 
         // Odd only: r*o
-        let result_odd = RegisterMatrixAddressMajor::<F>::bind_optional_ra(None, odd, r);
+        let result_odd = bind_optional::<F>(None, odd, r);
         let expected_odd = r * F::from(20u64);
         assert_eq!(result_odd, Some(expected_odd));
 
         // Both None
-        let result_none = RegisterMatrixAddressMajor::<F>::bind_optional_ra(None, None, r);
+        let result_none = bind_optional::<F>(None, None, r);
         assert_eq!(result_none, None);
     }
 

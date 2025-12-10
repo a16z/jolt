@@ -52,7 +52,7 @@ use crate::{
             val_final::{ValFinalSumcheckParams, ValFinalSumcheckProver},
         },
         registers::{
-            read_write_checking::RegistersReadWriteCheckingParams,
+            read_write_checking_new::RegistersReadWriteCheckingParams,
             val_evaluation::RegistersValEvaluationSumcheckParams,
         },
         spartan::{
@@ -90,7 +90,7 @@ use crate::{
             read_write_checking::RamReadWriteCheckingProver, RAMPreprocessing,
         },
         registers::{
-            read_write_checking::RegistersReadWriteCheckingProver,
+            read_write_checking_new::RegistersReadWriteCheckingProverNew,
             val_evaluation::ValEvaluationSumcheckProver as RegistersValEvaluationSumcheckProver,
         },
         spartan::{
@@ -744,7 +744,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_val_final_params =
             ValFinalSumcheckParams::new_from_prover(self.trace.len(), &self.opening_accumulator);
 
-        let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
+        let registers_read_write_checking = RegistersReadWriteCheckingProverNew::initialize(
             registers_read_write_checking_params,
             &self.trace,
             &self.preprocessing.bytecode,
