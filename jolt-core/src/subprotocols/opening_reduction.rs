@@ -280,11 +280,16 @@ where
 
     fn cache_openings(
         &self,
-        _accumulator: &mut ProverOpeningAccumulator<F>,
+        accumulator: &mut ProverOpeningAccumulator<F>,
         _transcript: &mut T,
         _sumcheck_challenges: &[F::Challenge],
     ) {
-        // Nothing to cache.
+        // Cache the final sumcheck claim in the accumulator
+        let claim = match &self.prover_state {
+            ProverOpening::Dense(opening) => opening.final_sumcheck_claim(),
+            ProverOpening::OneHot(opening) => opening.final_sumcheck_claim(),
+        };
+        accumulator.cache_opening_reduction_claim(self.polynomial, claim);
     }
 
     #[cfg(feature = "allocative")]

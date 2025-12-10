@@ -212,6 +212,9 @@ where
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
     pub log_T: usize,
+    pub opening_reduction_state: Option<OpeningReductionState<F>>,
+    pub polynomials_for_opening: Option<HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
+    pub cached_opening_claims: Vec<(CommittedPolynomial, F)>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -227,6 +230,8 @@ where
     #[cfg(test)]
     prover_opening_accumulator: Option<ProverOpeningAccumulator<F>>,
     log_T: usize,
+    /// State from Stage 7 (batch opening sumcheck) for Stage 8 (Dory opening)
+    pub opening_reduction_state: Option<OpeningReductionState<F>>,
 }
 
 pub trait OpeningAccumulator<F: JoltField> {
@@ -245,7 +250,7 @@ pub trait OpeningAccumulator<F: JoltField> {
 
 /// Intermediate state between Stage 7 (batch opening reduction sumcheck) and Stage 8 (Dory opening).
 /// Stored in prover/verifier state to bridge the two stages.
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct OpeningReductionState<F: JoltField> {
     pub r_sumcheck: Vec<F::Challenge>,
     pub gamma_powers: Vec<F>,
@@ -311,9 +316,16 @@ where
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
-            // #[cfg(test)]
-            // joint_commitment: None,
+            opening_reduction_state: None,
+            polynomials_for_opening: None,
+            cached_opening_claims: vec![],
         }
+    }
+
+    /// Caches an opening claim from the opening reduction sumcheck.
+    /// Called from `OpeningProofReductionSumcheckProver::cache_openings`.
+    pub fn cache_opening_reduction_claim(&mut self, polynomial: CommittedPolynomial, claim: F) {
+        self.cached_opening_claims.push((polynomial, claim));
     }
 
     pub fn len(&self) -> usize {
@@ -521,17 +533,17 @@ where
             write_flamegraph_svg(flamegraph, "stage7_start_flamechart.svg");
         }
 
-        let instances = self
-            .sumchecks
+        // Temporarily take sumchecks so we can pass self to BatchedSumcheck::prove
+        let mut sumchecks = std::mem::take(&mut self.sumchecks);
+        let instances = sumchecks
             .iter_mut()
             .map(|opening| opening as &mut _)
             .collect();
 
-        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(
-            instances,
-            &mut ProverOpeningAccumulator::new(self.log_T),
-            transcript,
-        );
+        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, self, transcript);
+
+        // Restore sumchecks (with cached claims from cache_openings)
+        self.sumchecks = sumchecks;
 
         #[cfg(feature = "allocative")]
         {
@@ -544,7 +556,7 @@ where
     }
 
     /// Finalizes the batch opening reduction sumcheck.
-    /// Caches claims, appends them to transcript, derives gamma powers,
+    /// Uses cached claims from `cache_openings`, appends them to transcript, derives gamma powers,
     /// and cleans up sumcheck instances.
     /// Returns the state needed for Stage 8.
     #[tracing::instrument(
@@ -556,15 +568,11 @@ where
         r_sumcheck: Vec<F::Challenge>,
         transcript: &mut T,
     ) -> OpeningReductionState<F> {
-        // Cache claims and extract polynomial labels from sumchecks
-        let (sumcheck_claims, polynomials): (Vec<F>, Vec<CommittedPolynomial>) = self
-            .sumchecks
-            .iter_mut()
-            .map(|opening| {
-                opening.cache_sumcheck_claim();
-                (opening.sumcheck_claim.unwrap(), opening.polynomial)
-            })
-            .unzip();
+        // Extract claims and polynomials from cached opening claims (populated by cache_openings)
+        let (polynomials, sumcheck_claims): (Vec<CommittedPolynomial>, Vec<F>) =
+            std::mem::take(&mut self.cached_opening_claims)
+                .into_iter()
+                .unzip();
 
         // Adjust r_sumcheck endianness
         let mut r_sumcheck = r_sumcheck;
@@ -574,7 +582,7 @@ where
 
         // Append claims and derive gamma powers
         transcript.append_scalars(&sumcheck_claims);
-        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(sumcheck_claims.len());
 
         // Drop sumchecks in background - they're no longer needed
         #[cfg(not(test))]
@@ -750,6 +758,7 @@ where
             #[cfg(test)]
             prover_opening_accumulator: None,
             log_T,
+            opening_reduction_state: None,
         }
     }
 

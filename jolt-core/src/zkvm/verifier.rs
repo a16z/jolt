@@ -43,7 +43,7 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::opening_proof::{OpeningPoint, OpeningReductionState, VerifierOpeningAccumulator},
+    poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::sumcheck_verifier::SumcheckInstanceVerifier,
     transcripts::Transcript,
@@ -69,8 +69,6 @@ pub struct JoltVerifier<
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
-    /// State from Stage 7 (batch opening sumcheck) for Stage 8 (Dory opening)
-    opening_reduction_state: Option<OpeningReductionState<F>>,
 }
 
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
@@ -137,7 +135,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             opening_accumulator,
             spartan_key,
             one_hot_params,
-            opening_reduction_state: None,
         })
     }
 
@@ -439,14 +436,14 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .verify_batch_opening_sumcheck(&self.proof.stage7_sumcheck_proof, &mut self.transcript)
             .context("Stage 7")?;
 
-        // Finalize and store state for Stage 8
+        // Finalize and store state in accumulator for Stage 8
         let state = self.opening_accumulator.finalize_batch_opening_sumcheck(
             r_sumcheck,
             &self.proof.stage7_sumcheck_claims,
             &mut self.transcript,
         );
 
-        self.opening_reduction_state = Some(state);
+        self.opening_accumulator.opening_reduction_state = Some(state);
 
         Ok(())
     }
@@ -454,6 +451,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     /// Stage 8: Dory batch opening verification.
     fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
         let state = self
+            .opening_accumulator
             .opening_reduction_state
             .as_ref()
             .expect("Stage 7 must be called before Stage 8");
