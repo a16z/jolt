@@ -368,6 +368,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
             log_k_chunk: self.one_hot_params.log_k_chunk,
+            lookups_ra_virtual_log_k_chunk: self.one_hot_params.lookups_ra_virtual_log_k_chunk,
         };
 
         let prove_duration = start.elapsed();
@@ -826,6 +827,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let lookups_read_raf_params = InstructionReadRafParams::new(
             self.trace.len().log_2(),
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -911,8 +913,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_ra_virtual_params =
-            InstructionRaSumcheckParams::new(&self.one_hot_params, &self.opening_accumulator);
+        let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let lookups_hamming_weight_params = instruction_lookups::ra_hamming_weight_params(
             &self.one_hot_params,
             &self.opening_accumulator,

@@ -403,7 +403,7 @@ pub enum VirtualPolynomial {
     LookupOutput,
     InstructionRaf,
     InstructionRafFlag,
-    InstructionRa,
+    InstructionRa(usize),
     RegistersVal,
     RamAddress,
     RamRa,
