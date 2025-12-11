@@ -327,7 +327,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         jlen: usize,
         klen: usize,
         offset: usize,
-        parallel: bool,
         scaled_w: &[[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]],
     ) {
         let preprocess = &self.bytecode_preprocessing;
@@ -341,139 +340,43 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
         debug_assert_eq!(acc_bz_first.len(), jlen);
         debug_assert_eq!(acc_bz_second.len(), jlen);
 
-        // Reset accumulators
-        if !parallel {
-            for j in 0..jlen {
-                acc_az[j] = Acc5U::zero();
-                acc_bz_first[j] = Acc6S::zero();
-                acc_bz_second[j] = Acc7S::zero();
-            }
-        } else {
-            acc_az
-                .par_iter_mut()
-                .zip(acc_bz_first.par_iter_mut())
-                .zip(acc_bz_second.par_iter_mut())
-                .for_each(|((a, b), c)| {
-                    *a = Acc5U::zero();
-                    *b = Acc6S::zero();
-                    *c = Acc7S::zero();
-                });
-        }
+        acc_az
+            .par_iter_mut()
+            .zip(acc_bz_first.par_iter_mut())
+            .zip(acc_bz_second.par_iter_mut())
+            .for_each(|((a, b), c)| {
+                *a = Acc5U::zero();
+                *b = Acc6S::zero();
+                *c = Acc7S::zero();
+            });
 
-        if !parallel {
-            // Sequential traversal: iterate over j first and then k so that we
-            // walk consecutive cycles in memory (full_idx increases by 1 inside
-            // the inner loop).
-            if klen >= 2 {
-                for j in 0..jlen {
-                    // Process k in pairs
-                    let mut k = 0;
-                    while k < klen {
-                        let full_idx = offset + j * klen + k;
-                        let current_step_idx = full_idx >> 1;
-                        // Since k starts at 0 and increments by 2, and offset is even,
-                        // full_idx is even. full_idx maps to Group 1, full_idx+1 to Group 2.
-                        // Both share current_step_idx.
+        // Parallel traversal over j for the linear-time prover.
+        // Each worker owns disjoint accumulators for a fixed j, so there
+        // are no data races. We reuse the precomputed scaled Lagrange weights
+        // per k from `scaled_w`, avoiding redundant tensor products.
+        acc_az
+            .par_iter_mut()
+            .zip(acc_bz_first.par_iter_mut())
+            .zip(acc_bz_second.par_iter_mut())
+            .enumerate()
+            .for_each(|(j, ((acc_az_j, acc_bz_first_j), acc_bz_second_j))| {
+                for k in 0..klen {
+                    let full_idx = offset + j * klen + k;
+                    let current_step_idx = full_idx >> 1;
+                    let selector = (full_idx & 1) == 1;
 
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    let row_inputs =
+                        R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    let w_k = &scaled_w[k];
 
-                        // First group (k)
-                        let w_k = &scaled_w[k];
-                        eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
-
-                        // Second group (k+1)
-                        let w_k_next = &scaled_w[k + 1];
-                        eval.fmadd_second_group_at_r(
-                            w_k_next,
-                            &mut acc_az[j],
-                            &mut acc_bz_second[j],
-                        );
-
-                        k += 2;
-                    }
-                }
-            } else {
-                // klen == 1. Iterate j in pairs if possible.
-                let mut j = 0;
-                while j < jlen {
-                    // Check if we can process a pair (j, j+1).
-                    // This requires jlen >= 2.
-                    if j + 1 < jlen {
-                        let full_idx = offset + j; // k=0 implied
-                        let current_step_idx = full_idx >> 1;
-
-                        // full_idx is even (assuming offset even).
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        let w_k = &scaled_w[0];
-
-                        // First group (j)
-                        eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
-
-                        // Second group (j+1)
-                        eval.fmadd_second_group_at_r(
-                            w_k,
-                            &mut acc_az[j + 1],
-                            &mut acc_bz_second[j + 1],
-                        );
-
-                        j += 2;
+                    if !selector {
+                        eval.fmadd_first_group_at_r(w_k, acc_az_j, acc_bz_first_j);
                     } else {
-                        // Fallback for single/last item
-                        let full_idx = offset + j;
-                        let current_step_idx = full_idx >> 1;
-                        let selector = (full_idx & 1) == 1;
-
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        let w_k = &scaled_w[0];
-
-                        if !selector {
-                            eval.fmadd_first_group_at_r(w_k, &mut acc_az[j], &mut acc_bz_first[j]);
-                        } else {
-                            eval.fmadd_second_group_at_r(
-                                w_k,
-                                &mut acc_az[j],
-                                &mut acc_bz_second[j],
-                            );
-                        }
-                        j += 1;
+                        eval.fmadd_second_group_at_r(w_k, acc_az_j, acc_bz_second_j);
                     }
                 }
-            }
-        } else {
-            // Parallel traversal over j for the linear-time prover.
-            // Each worker owns disjoint accumulators for a fixed j, so there
-            // are no data races. We reuse the precomputed scaled Lagrange weights
-            // per k from `scaled_w`, avoiding redundant tensor products.
-            acc_az
-                .par_iter_mut()
-                .zip(acc_bz_first.par_iter_mut())
-                .zip(acc_bz_second.par_iter_mut())
-                .enumerate()
-                .for_each(|(j, ((acc_az_j, acc_bz_first_j), acc_bz_second_j))| {
-                    for k in 0..klen {
-                        let full_idx = offset + j * klen + k;
-                        let current_step_idx = full_idx >> 1;
-                        let selector = (full_idx & 1) == 1;
-
-                        let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                        let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                        let w_k = &scaled_w[k];
-
-                        if !selector {
-                            eval.fmadd_first_group_at_r(w_k, acc_az_j, acc_bz_first_j);
-                        } else {
-                            eval.fmadd_second_group_at_r(w_k, acc_az_j, acc_bz_second_j);
-                        }
-                    }
-                });
-        }
+            });
 
         // Final reductions: reduce accumulators and write to output slices.
         // Each chunk writes to disjoint indices, so parallel iteration is safe.
@@ -574,7 +477,6 @@ impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheck
                         jlen,
                         klen,
                         i * jlen * klen,
-                        false,
                         &scaled_w,
                     );
 

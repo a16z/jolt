@@ -415,7 +415,7 @@ impl ExperimentalSchedule {
         #[cfg(debug_assertions)]
         {
             let total: usize = streaming_window_sizes.iter().sum();
-            eprintln!(
+            tracing::debug!(
                 "three_pass_half_split: {num_rounds} rounds, H={half}, r={r:.2}, sizes={streaming_window_sizes:?}, total={total}"
             );
         }

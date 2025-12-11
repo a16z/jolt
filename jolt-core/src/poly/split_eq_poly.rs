@@ -626,6 +626,7 @@ mod tests {
         assert_eq!(e_prime_out.len(), split_eq.E_out_current().len());
         assert_eq!(e_prime_in.len(), split_eq.E_in_current().len());
     }
+
     #[test]
     fn bind_low_high() {
         const NUM_VARS: usize = 10;
