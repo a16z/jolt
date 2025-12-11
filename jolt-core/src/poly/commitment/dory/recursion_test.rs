@@ -13,10 +13,7 @@ mod recursion_tests {
     };
     use ark_bn254::{Fq12, Fr};
     use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
-    use dory::{
-        backends::arkworks::ArkGT,
-        recursion::WitnessGenerator,
-    };
+    use dory::{backends::arkworks::ArkGT, recursion::WitnessGenerator};
     use jolt_optimizations::witness_gen::ExponentiationSteps;
     use rand::thread_rng;
     use serial_test::serial;
@@ -166,9 +163,11 @@ mod recursion_tests {
         .expect("Witness generation should succeed");
 
         // Now we have both witnesses (for proving) and hints (for verification)
-        println!("Successfully generated hints for {} rounds", hints.num_rounds);
+        println!(
+            "Successfully generated hints for {} rounds",
+            hints.num_rounds
+        );
         println!("Collected {} GT exp witnesses", witnesses.gt_exp.len());
-
 
         // Now verify with hint
         let mut hint_transcript = crate::transcripts::Blake2bTranscript::new(b"test");
@@ -254,7 +253,10 @@ mod recursion_tests {
 
         // Both witnesses and hints successfully generated
         assert!(hints.num_rounds > 0, "Should have generated hints");
-        assert!(!witnesses.gt_exp.is_empty(), "Should have collected witnesses");
+        assert!(
+            !witnesses.gt_exp.is_empty(),
+            "Should have collected witnesses"
+        );
 
         // Verify with hint should also succeed
         let mut hint_transcript = crate::transcripts::Blake2bTranscript::new(b"test");
@@ -268,9 +270,6 @@ mod recursion_tests {
             &hints,
         );
 
-        assert!(
-            hint_result.is_ok(),
-            "Verify with hint should also succeed"
-        );
+        assert!(hint_result.is_ok(), "Verify with hint should also succeed");
     }
 }

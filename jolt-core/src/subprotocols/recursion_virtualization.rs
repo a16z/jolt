@@ -25,7 +25,8 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        recursion_constraints::{ConstraintSystem, ConstraintType, PolyType}, sumcheck_prover::SumcheckInstanceProver,
+        recursion_constraints::{ConstraintSystem, ConstraintType, PolyType},
+        sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -62,14 +63,22 @@ fn compute_virtualization_claim(
 
     // Fill μ following the matrix layout with 8 polynomial types
     for i in 0..params.num_constraints {
-        mu_evals[(PolyType::Base as usize) * params.num_constraints_padded + i] = claims.base_claims[i];
-        mu_evals[(PolyType::RhoPrev as usize) * params.num_constraints_padded + i] = claims.rho_prev_claims[i];
-        mu_evals[(PolyType::RhoCurr as usize) * params.num_constraints_padded + i] = claims.rho_curr_claims[i];
-        mu_evals[(PolyType::Quotient as usize) * params.num_constraints_padded + i] = claims.quotient_claims[i];
-        mu_evals[(PolyType::MulLhs as usize) * params.num_constraints_padded + i] = claims.mul_lhs_claims[i];
-        mu_evals[(PolyType::MulRhs as usize) * params.num_constraints_padded + i] = claims.mul_rhs_claims[i];
-        mu_evals[(PolyType::MulResult as usize) * params.num_constraints_padded + i] = claims.mul_result_claims[i];
-        mu_evals[(PolyType::MulQuotient as usize) * params.num_constraints_padded + i] = claims.mul_quotient_claims[i];
+        mu_evals[(PolyType::Base as usize) * params.num_constraints_padded + i] =
+            claims.base_claims[i];
+        mu_evals[(PolyType::RhoPrev as usize) * params.num_constraints_padded + i] =
+            claims.rho_prev_claims[i];
+        mu_evals[(PolyType::RhoCurr as usize) * params.num_constraints_padded + i] =
+            claims.rho_curr_claims[i];
+        mu_evals[(PolyType::Quotient as usize) * params.num_constraints_padded + i] =
+            claims.quotient_claims[i];
+        mu_evals[(PolyType::MulLhs as usize) * params.num_constraints_padded + i] =
+            claims.mul_lhs_claims[i];
+        mu_evals[(PolyType::MulRhs as usize) * params.num_constraints_padded + i] =
+            claims.mul_rhs_claims[i];
+        mu_evals[(PolyType::MulResult as usize) * params.num_constraints_padded + i] =
+            claims.mul_result_claims[i];
+        mu_evals[(PolyType::MulQuotient as usize) * params.num_constraints_padded + i] =
+            claims.mul_quotient_claims[i];
     }
 
     // Compute the inner product: Σ_s eq(r_s, s) * μ(s)
@@ -243,6 +252,9 @@ impl RecursionVirtualizationProver {
                     mul_result_claims[i] = result_claim;
                     mul_quotient_claims[i] = quotient_claim;
                 }
+                ConstraintType::G1ScalarMul { .. } => {
+                    // G1 scalar multiplication constraints don't have Phase 1 virtual polynomial openings yet
+                }
             }
         }
 
@@ -286,11 +298,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
             _ => panic!("Expected eq_r_s to be LargeScalars variant"),
         };
 
-        compute_virtualization_claim(
-            &self.params,
-            &eq_evals,
-            &self.virtual_claims,
-        )
+        compute_virtualization_claim(&self.params, &eq_evals, &self.virtual_claims)
     }
 
     #[tracing::instrument(skip_all, name = "RecursionVirtualization::compute_message")]
@@ -298,7 +306,6 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
         const DEGREE: usize = 2;
         let num_s_remaining = self.eq_r_s.get_num_vars();
         let s_half = 1 << (num_s_remaining - 1);
-
 
         // Step 3: Sumcheck on Σ_s eq(r_s,s) · M(s,r_x) = v
         // M is already bound by r_x, so we're summing over s variables
@@ -475,6 +482,9 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
                     mul_result_claims[i] = result_claim;
                     mul_quotient_claims[i] = quotient_claim;
                 }
+                ConstraintType::G1ScalarMul { .. } => {
+                    // TODO: Handle G1 scalar multiplication virtual claims
+                }
             }
         }
 
@@ -492,11 +502,7 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
         let r_s_fq: Vec<Fq> = self.r_s.iter().map(|c| (*c).into()).collect();
         let eq_evals = EqPolynomial::<Fq>::evals(&r_s_fq);
 
-        compute_virtualization_claim(
-            &self.params,
-            &eq_evals,
-            &virtual_claims,
-        )
+        compute_virtualization_claim(&self.params, &eq_evals, &virtual_claims)
     }
 
     fn expected_output_claim(

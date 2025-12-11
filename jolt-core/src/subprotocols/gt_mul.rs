@@ -156,7 +156,7 @@ pub struct GtMulParams {
 impl GtMulParams {
     pub fn new(num_constraints: usize) -> Self {
         Self {
-            num_constraint_vars: 4, // Fixed for Fq12
+            num_constraint_vars: 8, // Fixed for Fq12
             num_constraints,
             sumcheck_id: SumcheckId::GtMul,
         }
@@ -235,7 +235,6 @@ impl<T: Transcript> GtMulProver<T> {
         let mut rhs_mlpoly = Vec::new();
         let mut result_mlpoly = Vec::new();
         let mut quotient_mlpoly = Vec::new();
-
 
         for poly in constraint_polys {
             constraint_indices.push(poly.constraint_index);
@@ -474,9 +473,17 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for GtMulVerifier {
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
             use jolt_optimizations::get_g_mle;
+            use crate::subprotocols::recursion_constraints::DoryMatrixBuilder;
 
+            // Get 4-var g polynomial and pad to 8 vars
+            let g_mle_4var = get_g_mle();
+            let g_mle_8var = if r_star_fq.len() == 8 {
+                DoryMatrixBuilder::pad_4var_to_8var(&g_mle_4var)
+            } else {
+                g_mle_4var
+            };
             let g_poly =
-                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(get_g_mle()));
+                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_8var));
             g_poly.evaluate_dot_product(&r_star_fq)
         };
 

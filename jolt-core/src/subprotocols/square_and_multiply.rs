@@ -157,7 +157,7 @@ pub struct SquareAndMultiplyParams {
 impl SquareAndMultiplyParams {
     pub fn new(num_constraints: usize) -> Self {
         Self {
-            num_constraint_vars: 4, // Fixed for Fq12
+            num_constraint_vars: 8, // Fixed for Fq12
             num_constraints,
             sumcheck_id: SumcheckId::SquareAndMultiply,
         }
@@ -476,9 +476,17 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
             use jolt_optimizations::get_g_mle;
+            use crate::subprotocols::recursion_constraints::DoryMatrixBuilder;
 
+            // Get 4-var g polynomial and pad to 8 vars
+            let g_mle_4var = get_g_mle();
+            let g_mle_8var = if r_star_fq.len() == 8 {
+                DoryMatrixBuilder::pad_4var_to_8var(&g_mle_4var)
+            } else {
+                g_mle_4var
+            };
             let g_poly =
-                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(get_g_mle()));
+                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_8var));
             g_poly.evaluate_dot_product(&r_star_fq)
         };
 
@@ -602,19 +610,6 @@ mod tests {
 
         let num_constraints = constraint_system.num_constraints();
 
-        // Debug: Print constraint system info
-        let num_gt_exp = constraint_system
-            .constraints
-            .iter()
-            .filter(|c| matches!(c.constraint_type, ConstraintType::GtExp { .. }))
-            .count();
-        let num_gt_mul = constraint_system
-            .constraints
-            .iter()
-            .filter(|c| matches!(c.constraint_type, ConstraintType::GtMul))
-            .count();
-
-
         // Create transcripts for the two-phase protocol
         let mut prover_transcript = Blake2bTranscript::new(b"two_phase_recursion");
         let mut verifier_transcript = Blake2bTranscript::new(b"two_phase_recursion");
@@ -623,6 +618,8 @@ mod tests {
         let g_poly = constraint_system.g_poly.clone();
 
         // ============ PHASE 1: Constraint Sumchecks ============
+        println!("Starting Phase 1 (Constraint Sumchecks)...");
+        let phase1_start = std::time::Instant::now();
 
         // Extract GT exp constraints for square-and-multiply
         let gt_exp_constraint_polys = constraint_system.extract_constraint_polynomials();
@@ -701,7 +698,12 @@ mod tests {
             &mut prover_transcript,
         );
 
+        let phase1_duration = phase1_start.elapsed();
+        println!("Phase 1 completed in: {:?}", phase1_duration);
+
         // ============ PHASE 2: Virtualization Sumcheck ============
+        println!("Starting Phase 2 (Virtualization Sumcheck)...");
+        let phase2_start = std::time::Instant::now();
 
         // ============ VERIFICATION ============
 
@@ -742,6 +744,7 @@ mod tests {
                 .filter_map(|c| match &c.constraint_type {
                     ConstraintType::GtExp { bit } => Some((*bit, c.constraint_index)),
                     ConstraintType::GtMul => None,
+                    ConstraintType::G1ScalarMul { .. } => None,
                 })
                 .unzip();
 
@@ -766,6 +769,7 @@ mod tests {
                 .filter_map(|c| match &c.constraint_type {
                     ConstraintType::GtMul => Some(c.constraint_index),
                     ConstraintType::GtExp { .. } => None,
+                    ConstraintType::G1ScalarMul { .. } => None,
                 })
                 .collect();
 
@@ -786,7 +790,6 @@ mod tests {
             &mut verifier_transcript,
         )
         .expect("Phase 1 verification should succeed");
-
 
         // ============ PHASE 2: Virtualization Sumcheck ============
 
@@ -825,7 +828,6 @@ mod tests {
             &mut prover_accumulator,
             &mut prover_transcript,
         );
-
 
         // Add Phase 2 dense polynomial claims to verifier accumulator
         // In a real proof, these would come from proof.opening_claims
@@ -871,6 +873,10 @@ mod tests {
             "Phase 2 challenge lengths should match"
         );
 
+        let phase2_duration = phase2_start.elapsed();
+        println!("Phase 2 completed in: {:?}", phase2_duration);
+
+        // ============ HYRAX OPENING PROOF ============
 
         // Import necessary types for Hyrax PCS
         use crate::poly::commitment::hyrax::{Hyrax, HyraxCommitment};
@@ -883,6 +889,9 @@ mod tests {
 
         // Add the constraint matrix polynomial
         let matrix_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
+        let num_hyrax_vars = matrix_poly.get_num_vars();
+        println!("\nHyrax polynomial has {} variables", num_hyrax_vars);
+
         polynomials_map.insert(
             CommittedPolynomial::DoryConstraintMatrix,
             matrix_poly.clone(),
@@ -895,10 +904,17 @@ mod tests {
         const RATIO: usize = 1;
         type HyraxPCS = Hyrax<RATIO, GrumpkinProjective>;
 
+        // 1. Hyrax Setup Phase
+        println!("Starting Hyrax prover setup...");
+        let hyrax_setup_start = std::time::Instant::now();
+
         // Setup prover generators
         let prover_setup = <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_prover(
             constraint_system.matrix.num_vars
         );
+
+        let hyrax_setup_duration = hyrax_setup_start.elapsed();
+        println!("Hyrax prover setup completed in: {:?}", hyrax_setup_duration);
 
         // Create polynomial map for prove_single
         let matrix_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
@@ -909,6 +925,31 @@ mod tests {
             matrix_poly.clone(),
         );
 
+        // 2. Hyrax Commit Phase
+        println!("Starting Hyrax commitment phase...");
+        let hyrax_commit_start = std::time::Instant::now();
+
+        // Commit to the matrix polynomial using Hyrax (reuse matrix_poly from above)
+        let (matrix_commitment, _) =
+            <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::commit(
+                &matrix_poly,
+                &prover_setup,
+            );
+
+        let hyrax_commit_duration = hyrax_commit_start.elapsed();
+        println!("Hyrax commitment completed in: {:?}", hyrax_commit_duration);
+
+        // Create commitments map for verifier
+        let mut commitments_map: HashMap<
+            CommittedPolynomial,
+            HyraxCommitment<RATIO, GrumpkinProjective>,
+        > = HashMap::new();
+        commitments_map.insert(CommittedPolynomial::DoryConstraintMatrix, matrix_commitment);
+
+        // 3. Hyrax Opening Proof Phase
+        println!("Starting Hyrax opening proof generation...");
+        let hyrax_proof_start = std::time::Instant::now();
+
         // Run prove_single for the single opening from Phase 2
         let opening_proof = prover_accumulator
             .prove_single::<Blake2bTranscript, HyraxPCS>(
@@ -918,20 +959,8 @@ mod tests {
             )
             .expect("prove_single should succeed");
 
-
-        // Create commitments map for verifier
-        let mut commitments_map: HashMap<
-            CommittedPolynomial,
-            HyraxCommitment<RATIO, GrumpkinProjective>,
-        > = HashMap::new();
-
-        // Commit to the matrix polynomial using Hyrax (reuse matrix_poly from above)
-        let (matrix_commitment, _) =
-            <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::commit(
-                &matrix_poly,
-                &prover_setup,
-            );
-        commitments_map.insert(CommittedPolynomial::DoryConstraintMatrix, matrix_commitment);
+        let hyrax_proof_duration = hyrax_proof_start.elapsed();
+        println!("Hyrax opening proof generation completed in: {:?}", hyrax_proof_duration);
 
         // Setup verifier
         let verifier_setup = <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_verifier(
@@ -959,5 +988,16 @@ mod tests {
             verification_result.err()
         );
 
+        println!("\n======== Test Summary ========");
+        println!("Phase 1 (Constraint Sumchecks): {:?}", phase1_duration);
+        println!("Phase 2 (Virtualization Sumcheck): {:?}", phase2_duration);
+        println!("Hyrax Prover Setup: {:?}", hyrax_setup_duration);
+        println!("Hyrax Commitment: {:?}", hyrax_commit_duration);
+        println!("Hyrax Opening Proof: {:?}", hyrax_proof_duration);
+        let hyrax_total = hyrax_setup_duration + hyrax_commit_duration + hyrax_proof_duration;
+        println!("Hyrax Total: {:?}", hyrax_total);
+        println!("Total time: {:?}", phase1_duration + phase2_duration + hyrax_total);
+        println!("Hyrax polynomial variables: {}", num_hyrax_vars);
+        println!("==============================\n");
     }
 }

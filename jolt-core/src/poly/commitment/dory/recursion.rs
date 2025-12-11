@@ -1,6 +1,6 @@
 //! Jolt implementation of Dory's recursion backend
 
-use ark_bn254::{Fq, Fq12, Fr};
+use ark_bn254::{Fq, Fq12, Fr, G1Affine};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::{
     backends::arkworks::{ArkG1, ArkG2, ArkGT, BN254},
@@ -18,6 +18,7 @@ use super::{
         ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkworksVerifierSetup, JoltToDoryTranscript,
     },
     gt_mul_witness::MultiplicationSteps,
+    g1_scalar_mul_witness::ScalarMultiplicationSteps,
 };
 use crate::poly::commitment::commitment_scheme::RecursionExt;
 use crate::utils::errors::ProofVerifyError;
@@ -60,6 +61,26 @@ impl WitnessResult<ArkGT> for JoltGtMulWitness {
     }
 }
 
+/// G1 scalar multiplication witness following the ScalarMultiplicationSteps pattern
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltG1ScalarMulWitness {
+    pub point_base: G1Affine,
+    pub scalar: Fr,
+    pub result: G1Affine,
+    pub x_a_mles: Vec<Vec<Fq>>,    // x-coords of A_0, A_1, ..., A_n
+    pub y_a_mles: Vec<Vec<Fq>>,    // y-coords of A_0, A_1, ..., A_n
+    pub x_t_mles: Vec<Vec<Fq>>,    // x-coords of T_0, T_1, ..., T_{n-1}
+    pub y_t_mles: Vec<Vec<Fq>>,    // y-coords of T_0, T_1, ..., T_{n-1}
+    pub bits: Vec<bool>,
+    ark_result: ArkG1,
+}
+
+impl WitnessResult<ArkG1> for JoltG1ScalarMulWitness {
+    fn result(&self) -> Option<&ArkG1> {
+        Some(&self.ark_result)
+    }
+}
+
 /// Witness type for unimplemented operations that panics when used
 #[derive(Clone, Debug)]
 pub struct UnimplementedWitness<T> {
@@ -96,7 +117,7 @@ impl WitnessResult<ArkGT> for UnimplementedWitness<ArkGT> {
 
 impl WitnessBackend for JoltWitness {
     type GtExpWitness = JoltGtExpWitness;
-    type G1ScalarMulWitness = UnimplementedWitness<ArkG1>;
+    type G1ScalarMulWitness = JoltG1ScalarMulWitness;
     type G2ScalarMulWitness = UnimplementedWitness<ArkG2>;
     type GtMulWitness = JoltGtMulWitness;
     type PairingWitness = UnimplementedWitness<ArkGT>;
@@ -135,11 +156,32 @@ impl WitnessGenerator<JoltWitness, BN254> for JoltWitnessGenerator {
     }
 
     fn generate_g1_scalar_mul(
-        _point: &<BN254 as PairingCurve>::G1,
-        _scalar: &<<BN254 as PairingCurve>::G1 as Group>::Scalar,
-        _result: &<BN254 as PairingCurve>::G1,
-    ) -> UnimplementedWitness<ArkG1> {
-        UnimplementedWitness::new("G1 scalar multiplication")
+        point: &<BN254 as PairingCurve>::G1,
+        scalar: &<<BN254 as PairingCurve>::G1 as Group>::Scalar,
+        result: &<BN254 as PairingCurve>::G1,
+    ) -> JoltG1ScalarMulWitness {
+        let point_affine: G1Affine = point.0.into();
+        let scalar_fr = ark_to_jolt(scalar);
+
+        let scalar_mul_steps = ScalarMultiplicationSteps::new(point_affine, scalar_fr);
+
+        let result_affine: G1Affine = result.0.into();
+        debug_assert_eq!(
+            scalar_mul_steps.result, result_affine,
+            "ScalarMultiplicationSteps result doesn't match expected result"
+        );
+
+        JoltG1ScalarMulWitness {
+            point_base: scalar_mul_steps.point_base,
+            scalar: scalar_mul_steps.scalar,
+            result: scalar_mul_steps.result,
+            x_a_mles: scalar_mul_steps.x_a_mles,
+            y_a_mles: scalar_mul_steps.y_a_mles,
+            x_t_mles: scalar_mul_steps.x_t_mles,
+            y_t_mles: scalar_mul_steps.y_t_mles,
+            bits: scalar_mul_steps.bits,
+            ark_result: *result,
+        }
     }
 
     fn generate_g2_scalar_mul(
