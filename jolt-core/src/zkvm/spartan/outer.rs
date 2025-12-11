@@ -16,11 +16,9 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_prover::{
-    SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
-};
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::subprotocols::univariate_skip::{build_uniskip_first_round_poly, UniSkipState};
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
+use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc8S;
 use crate::utils::math::Math;
@@ -28,6 +26,7 @@ use crate::utils::math::Math;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::r1cs::constraints::OUTER_FIRST_ROUND_POLY_DEGREE_BOUND;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::r1cs::{
     constraints::{
@@ -72,27 +71,70 @@ const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
 // the top, evaluate Eq_τ(τ, r) and verify
 //   Eq_τ(τ, r) · (Az(r) · Bz(r)).
 
-/// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
-#[derive(Allocative)]
-pub struct OuterUniSkipInstanceProver<F: JoltField> {
-    tau: Vec<F::Challenge>,
-    /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
-    extended_evals: [F; OUTER_UNIVARIATE_SKIP_DEGREE],
+#[derive(Allocative, Clone)]
+pub struct OuterUniSkipParams<F: JoltField> {
+    pub tau: Vec<F::Challenge>,
 }
 
-impl<F: JoltField> OuterUniSkipInstanceProver<F> {
-    #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::gen")]
-    pub fn gen(
+impl<F: JoltField> OuterUniSkipParams<F> {
+    pub fn new<T: Transcript>(key: &UniformSpartanKey<F>, transcript: &mut T) -> Self {
+        let num_rounds_x: usize = key.num_rows_bits();
+        let tau = transcript.challenge_vector_optimized::<F>(num_rounds_x);
+        Self { tau }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
+    fn degree(&self) -> usize {
+        OUTER_FIRST_ROUND_POLY_DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        1
+    }
+
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
+        F::zero()
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        challenges.to_vec().into()
+    }
+}
+
+/// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
+#[derive(Allocative)]
+pub struct OuterUniSkipProver<F: JoltField> {
+    params: OuterUniSkipParams<F>,
+    /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
+    extended_evals: [F; OUTER_UNIVARIATE_SKIP_DEGREE],
+    /// Verifier challenge for this univariate skip round
+    r0: Option<F::Challenge>,
+    /// Prover message for this univariate skip round
+    uni_poly: Option<UniPoly<F>>,
+}
+
+impl<F: JoltField> OuterUniSkipProver<F> {
+    #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::initialize")]
+    pub fn initialize(
+        params: OuterUniSkipParams<F>,
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
-        tau: &[F::Challenge],
     ) -> Self {
-        let extended =
-            Self::compute_univariate_skip_extended_evals(bytecode_preprocessing, trace, tau);
+        let extended = Self::compute_univariate_skip_extended_evals(
+            bytecode_preprocessing,
+            trace,
+            &params.tau,
+        );
 
         let instance = Self {
-            tau: tau.to_vec(),
+            params,
             extended_evals: extended,
+            r0: None,
+            uni_poly: None,
         };
 
         #[cfg(feature = "allocative")]
@@ -176,28 +218,155 @@ impl<F: JoltField> OuterUniSkipInstanceProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
-    for OuterUniSkipInstanceProver<F>
-{
-    fn input_claim(&self) -> F {
-        F::zero()
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterUniSkipProver<F> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::compute_poly")]
-    fn compute_poly(&mut self) -> UniPoly<F> {
+    fn compute_message(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
         // Load extended univariate-skip evaluations from prover state
         let extended_evals = &self.extended_evals;
 
-        let tau_high = self.tau[self.tau.len() - 1];
+        let tau_high = self.params.tau[self.params.tau.len() - 1];
 
         // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
-        build_uniskip_first_round_poly::<
+        let uni_poly = build_uniskip_first_round_poly::<
             F,
             OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
             OUTER_UNIVARIATE_SKIP_DEGREE,
             OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
             OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
-        >(None, extended_evals, tau_high)
+        >(None, extended_evals, tau_high);
+
+        self.uni_poly = Some(uni_poly.clone());
+        uni_poly
+    }
+
+    fn ingest_challenge(&mut self, _: F::Challenge, _round: usize) {
+        // Nothing to do
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        debug_assert_eq!(opening_point.len(), 1);
+        let claim = self.uni_poly.as_ref().unwrap().evaluate(&opening_point[0]);
+
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanOuter,
+            opening_point,
+            claim,
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+pub struct OuterUniSkipVerifier<F: JoltField> {
+    pub params: OuterUniSkipParams<F>,
+}
+
+impl<F: JoltField> OuterUniSkipVerifier<F> {
+    pub fn new<T: Transcript>(key: &UniformSpartanKey<F>, transcript: &mut T) -> Self {
+        let params = OuterUniSkipParams::new(key, transcript);
+        Self { params }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSkipVerifier<F> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    fn expected_output_claim(
+        &self,
+        _accumulator: &VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[<F as JoltField>::Challenge],
+    ) -> F {
+        unimplemented!("Unused for univariate skip")
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[<F as JoltField>::Challenge],
+    ) {
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        debug_assert_eq!(opening_point.len(), 1);
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanOuter,
+            opening_point,
+        );
+    }
+}
+
+pub struct OuterRemainingSumcheckParams<F: JoltField> {
+    /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
+    /// Total number of rounds is `1 + num_cycles_bits`
+    pub num_cycles_bits: usize,
+    /// Verifier challenge for univariate skip round
+    pub r0: F::Challenge,
+    /// The tau vector (length 1 + n_cycle_vars), available to prover and verifier
+    pub tau: Vec<F::Challenge>,
+}
+
+impl<F: JoltField> OuterRemainingSumcheckParams<F> {
+    pub fn new(
+        trace_len: usize,
+        uni_skip_params: OuterUniSkipParams<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Self {
+        let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanOuter,
+        );
+        debug_assert_eq!(r_uni_skip.len(), 1);
+        let r0 = r_uni_skip[0];
+
+        Self {
+            num_cycles_bits: trace_len.log_2(),
+            tau: uni_skip_params.tau,
+            r0,
+        }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F> {
+    fn num_rounds(&self) -> usize {
+        1 + self.num_cycles_bits
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let r_cycle = challenges[1..].to_vec();
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle).match_endianness()
+    }
+
+    fn degree(&self) -> usize {
+        OUTER_REMAINING_DEGREE_BOUND
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanOuter,
+        );
+        uni_skip_claim
     }
 }
 
@@ -220,26 +389,26 @@ pub struct OuterRemainingSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> OuterRemainingSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
-    pub fn gen(
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::initialize")]
+    pub fn initialize(
+        params: OuterRemainingSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: &BytecodePreprocessing,
-        uni: &UniSkipState<F>,
     ) -> Self {
         let bytecode_preprocessing = bytecode_preprocessing.clone();
 
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
             OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&uni.r0);
+        >(&params.r0);
 
-        let tau_high = uni.tau[uni.tau.len() - 1];
-        let tau_low = &uni.tau[..uni.tau.len() - 1];
+        let tau_high = params.tau[params.tau.len() - 1];
+        let tau_low = &params.tau[..params.tau.len() - 1];
 
         let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,
             OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&uni.r0, &tau_high);
+        >(&params.r0, &tau_high);
 
         let split_eq_poly: GruenSplitEqPolynomial<F> =
             GruenSplitEqPolynomial::<F>::new_with_scaling(
@@ -255,8 +424,6 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
             &split_eq_poly,
         );
 
-        let n_cycle_vars = trace.len().ilog2() as usize;
-
         Self {
             split_eq_poly,
             bytecode_preprocessing,
@@ -264,7 +431,7 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
             az: az_bound,
             bz: bz_bound,
             first_round_evals: (t0, t_inf),
-            params: OuterRemainingSumcheckParams::new(n_cycle_vars, uni),
+            params,
         }
     }
 
@@ -401,16 +568,8 @@ impl<F: JoltField> OuterRemainingSumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainingSumcheckProver<F> {
-    fn degree(&self) -> usize {
-        OUTER_REMAINING_DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
@@ -441,7 +600,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterRemainin
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = OuterRemainingSumcheckParams::get_inputs_opening_point(sumcheck_challenges);
+        let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
 
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let claimed_witness_evals =
@@ -470,8 +629,14 @@ pub struct OuterRemainingSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
-    pub fn new(num_cycles_bits: usize, uni: &UniSkipState<F>, key: UniformSpartanKey<F>) -> Self {
-        let params = OuterRemainingSumcheckParams::new(num_cycles_bits, uni);
+    pub fn new(
+        key: UniformSpartanKey<F>,
+        trace_len: usize,
+        uni_skip_params: OuterUniSkipParams<F>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
+    ) -> Self {
+        let params =
+            OuterRemainingSumcheckParams::new(trace_len, uni_skip_params, opening_accumulator);
         Self { params, key }
     }
 }
@@ -479,16 +644,8 @@ impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for OuterRemainingSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        OUTER_REMAINING_DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -503,7 +660,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         });
 
         // Randomness used to bind the rows of R1CS matrices A,B.
-        let rx_constr = &[sumcheck_challenges[0], self.params.r0_uniskip];
+        let rx_constr = &[sumcheck_challenges[0], self.params.r0];
         // Compute sum_y A(rx_constr, y)*z(y) * sum_y B(rx_constr, y)*z(y).
         let inner_sum_prod = self
             .key
@@ -514,7 +671,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,
             OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(tau_high, &self.params.r0_uniskip);
+        >(tau_high, &self.params.r0);
         let tau_low = &tau[..tau.len() - 1];
         let r_tail_reversed: Vec<F::Challenge> =
             sumcheck_challenges.iter().rev().copied().collect();
@@ -528,7 +685,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = OuterRemainingSumcheckParams::get_inputs_opening_point(sumcheck_challenges);
+        let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         for input in &ALL_R1CS_INPUTS {
             accumulator.append_virtual(
                 transcript,
@@ -537,39 +694,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 r_cycle.clone(),
             );
         }
-    }
-}
-
-struct OuterRemainingSumcheckParams<F: JoltField> {
-    /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
-    /// Total number of rounds is `1 + num_cycles_bits`
-    num_cycles_bits: usize,
-    /// The tau vector (length `2 + num_cycles_bits`, sampled at the beginning for Lagrange + eq poly)
-    tau: Vec<F::Challenge>,
-    /// The univariate-skip first round challenge
-    r0_uniskip: F::Challenge,
-    /// Claim after the univariate-skip first round, updated every round
-    input_claim: F,
-}
-
-impl<F: JoltField> OuterRemainingSumcheckParams<F> {
-    fn new(num_cycles_bits: usize, uni: &UniSkipState<F>) -> Self {
-        Self {
-            num_cycles_bits,
-            tau: uni.tau.clone(),
-            r0_uniskip: uni.r0,
-            input_claim: uni.claim_after_first,
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        1 + self.num_cycles_bits
-    }
-
-    fn get_inputs_opening_point(
-        sumcheck_challenges: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let r_cycle = sumcheck_challenges[1..].to_vec();
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle).match_endianness()
     }
 }

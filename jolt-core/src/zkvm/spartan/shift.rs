@@ -18,7 +18,7 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
@@ -44,6 +44,90 @@ use rayon::prelude::*;
 /// Degree bound of the sumcheck round polynomials in [`ShiftSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
 
+#[derive(Default)]
+pub struct ShiftSumcheckParams<F: JoltField> {
+    pub gamma_powers: [F; 5],
+    pub n_cycle_vars: usize, // = log(T)
+    pub r_outer: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_product: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+impl<F: JoltField> ShiftSumcheckParams<F> {
+    pub fn new(
+        n_cycle_vars: usize,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let gamma_powers = transcript.challenge_scalar_powers(5).try_into().unwrap();
+        let (outer_sumcheck_r, _) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let (r_outer, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
+        let (product_sumcheck_r, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::ProductVirtualization,
+        );
+        let (r_product, _) = product_sumcheck_r.split_at(n_cycle_vars);
+
+        Self {
+            gamma_powers,
+            n_cycle_vars,
+            r_outer,
+            r_product,
+        }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.n_cycle_vars
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, input_claim_next_pc) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let (_, input_claim_next_unexpanded_pc) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextUnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, input_claim_next_is_virtual) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsVirtual,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, input_claim_next_is_first_in_sequence) = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::NextIsFirstInSequence,
+                SumcheckId::SpartanOuter,
+            );
+        let (_, input_claim_next_is_noop) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::ProductVirtualization,
+        );
+
+        input_claim_next_unexpanded_pc
+            + input_claim_next_pc * self.gamma_powers[1]
+            + input_claim_next_is_virtual * self.gamma_powers[2]
+            + input_claim_next_is_first_in_sequence * self.gamma_powers[3]
+            + (F::one() - input_claim_next_is_noop) * self.gamma_powers[4]
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        normalize_opening_point(challenges)
+    }
+}
+
+fn normalize_opening_point<F: JoltField>(
+    challenges: &[F::Challenge],
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+}
+
 /// Sumcheck prover for [`ShiftSumcheckVerifier`].
 #[derive(Allocative)]
 #[allow(clippy::large_enum_variant, private_interfaces)]
@@ -53,35 +137,21 @@ pub enum ShiftSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> ShiftSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::gen")]
-    pub fn gen(
+    #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::initialize")]
+    pub fn initialize(
+        params: ShiftSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: &BytecodePreprocessing,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let n_cycle_vars = trace.len().ilog2() as usize;
-        let params = ShiftSumcheckParams::new(n_cycle_vars, opening_accumulator, transcript);
         Self::Phase1(Phase1Prover::gen(trace, bytecode_preprocessing, params))
     }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheckProver<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         match self {
-            Self::Phase1(prover) => prover.params.num_rounds(),
-            Self::Phase2(prover) => prover.params.num_rounds(),
-        }
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        match self {
-            Self::Phase1(prover) => prover.params.input_claim(accumulator),
-            Self::Phase2(prover) => prover.params.input_claim(accumulator),
+            ShiftSumcheckProver::Phase1(phase1_prover) => &phase1_prover.params,
+            ShiftSumcheckProver::Phase2(phase2_prover) => &phase2_prover.params,
         }
     }
 
@@ -132,7 +202,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         let is_first_in_sequence_eval = prover.is_first_in_sequence_poly.final_sumcheck_claim();
         let is_noop_eval = prover.is_noop_poly.final_sumcheck_claim();
 
-        let opening_point = get_opening_point(sumcheck_challenges);
+        let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::UnexpandedPC,
@@ -192,16 +262,8 @@ impl<F: JoltField> ShiftSumcheckVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumcheckVerifier<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -229,7 +291,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
             SumcheckId::SpartanShift,
         );
 
-        let r = get_opening_point::<F>(sumcheck_challenges);
+        let r = normalize_opening_point::<F>(sumcheck_challenges);
         let eq_plus_one_r_outer_at_shift =
             EqPlusOnePolynomial::<F>::new(self.params.r_outer.r.to_vec()).evaluate(&r.r);
         let eq_plus_one_r_product_at_shift =
@@ -257,7 +319,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        let opening_point = get_opening_point::<F>(sumcheck_challenges);
+        let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::UnexpandedPC,
@@ -289,78 +351,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
             opening_point,
         );
     }
-}
-
-#[derive(Default)]
-struct ShiftSumcheckParams<F: JoltField> {
-    gamma_powers: [F; 5],
-    n_cycle_vars: usize, // = log(T)
-    r_outer: OpeningPoint<BIG_ENDIAN, F>,
-    r_product: OpeningPoint<BIG_ENDIAN, F>,
-}
-
-impl<F: JoltField> ShiftSumcheckParams<F> {
-    fn new(
-        n_cycle_vars: usize,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-    ) -> Self {
-        let gamma_powers = transcript.challenge_scalar_powers(5).try_into().unwrap();
-
-        let (outer_sumcheck_r, _) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
-        let (r_outer, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
-        let (product_sumcheck_r, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::NextIsNoop,
-            SumcheckId::ProductVirtualization,
-        );
-        let (r_product, _) = product_sumcheck_r.split_at(n_cycle_vars);
-
-        Self {
-            gamma_powers,
-            n_cycle_vars,
-            r_outer,
-            r_product,
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.n_cycle_vars
-    }
-
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, input_claim_next_pc) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
-        let (_, input_claim_next_unexpanded_pc) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::NextUnexpandedPC,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, input_claim_next_is_virtual) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::NextIsVirtual,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, input_claim_next_is_first_in_sequence) = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::NextIsFirstInSequence,
-                SumcheckId::SpartanOuter,
-            );
-        let (_, input_claim_next_is_noop) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::NextIsNoop,
-            SumcheckId::ProductVirtualization,
-        );
-
-        input_claim_next_unexpanded_pc
-            + input_claim_next_pc * self.gamma_powers[1]
-            + input_claim_next_is_virtual * self.gamma_powers[2]
-            + input_claim_next_is_first_in_sequence * self.gamma_powers[3]
-            + (F::one() - input_claim_next_is_noop) * self.gamma_powers[4]
-    }
-}
-
-fn get_opening_point<F: JoltField>(
-    sumcheck_challenges: &[F::Challenge],
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }
 
 /// Prover for 1st half of the rounds.

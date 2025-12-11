@@ -83,6 +83,7 @@ pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
 pub mod val_evaluation;
+pub mod val_final;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
@@ -566,7 +567,7 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
     )
     .unwrap() as usize;
     // Convert input bytes into words and populate
-    // `initial_memory_state` and `final_memory_state`
+    // `initial_memory_state`
     for chunk in program_io.inputs.chunks(8) {
         let mut word = [0u8; 8];
         for (i, byte) in chunk.iter().enumerate() {
@@ -580,58 +581,56 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
     initial_memory_state
 }
 
-pub fn gen_ra_booleanity_prover<F: JoltField>(
-    trace: &[Cycle],
-    memory_layout: &MemoryLayout,
+pub fn ra_booleanity_params<F: JoltField>(
+    trace_len: usize,
     one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
-) -> BooleanitySumcheckProver<F> {
-    let log_t = trace.len().log_2();
-
-    let r_cycle = transcript.challenge_vector_optimized::<F>(log_t);
+) -> BooleanitySumcheckParams<F> {
+    let r_cycle = transcript.challenge_vector_optimized::<F>(trace_len.log_2());
     let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
-
-    // Compute G and H for RAM
-    let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
-    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
-    let H_indices = compute_ram_h_indices(trace, memory_layout, one_hot_params);
-
     let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
         .map(CommittedPolynomial::RamRa)
         .collect();
-
     let gammas: Vec<F::Challenge> =
         transcript.challenge_vector_optimized::<F>(one_hot_params.ram_d);
 
-    let params = BooleanitySumcheckParams {
+    BooleanitySumcheckParams {
         d: one_hot_params.ram_d,
         log_k_chunk: one_hot_params.log_k_chunk,
-        log_t,
+        log_t: trace_len.log_2(),
         gammas,
         r_address,
         r_cycle,
         polynomial_types,
         sumcheck_id: SumcheckId::RamBooleanity,
-        virtual_poly: None, // No virtual polynomial for RAM
-    };
-
-    BooleanitySumcheckProver::gen(params, G, H_indices)
+    }
 }
 
-pub fn gen_ra_hamming_weight_prover<F: JoltField>(
+pub fn gen_ra_booleanity_prover<F: JoltField>(
+    params: BooleanitySumcheckParams<F>,
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
-    opening_accumulator: &ProverOpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
-) -> HammingWeightSumcheckProver<F> {
-    let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
-        VirtualPolynomial::RamHammingWeight,
-        SumcheckId::RamHammingBooleanity,
-    );
-    let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
-
+) -> BooleanitySumcheckProver<F> {
+    // Compute G and H for RAM
+    let eq_r_cycle = EqPolynomial::<F>::evals(&params.r_cycle);
     let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
+    let H_indices = compute_ram_h_indices(trace, memory_layout, one_hot_params);
+    BooleanitySumcheckProver::gen(params, G, H_indices)
+}
+
+pub fn ra_hamming_weight_params<F: JoltField>(
+    one_hot_params: &OneHotParams,
+    opening_accumulator: &dyn OpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+) -> HammingWeightSumcheckParams<F> {
+    let r_cycle = opening_accumulator
+        .get_virtual_polynomial_opening(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        )
+        .0
+        .r;
 
     let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.ram_d);
 
@@ -639,68 +638,43 @@ pub fn gen_ra_hamming_weight_prover<F: JoltField>(
         .map(CommittedPolynomial::RamRa)
         .collect();
 
-    let params = HammingWeightSumcheckParams {
+    HammingWeightSumcheckParams {
         d: one_hot_params.ram_d,
         num_rounds: one_hot_params.log_k_chunk,
         gamma_powers,
         polynomial_types,
         sumcheck_id: SumcheckId::RamHammingWeight,
-        virtual_poly: Some(VirtualPolynomial::RamHammingWeight),
-        r_cycle_sumcheck_id: SumcheckId::RamHammingBooleanity,
-    };
+        r_cycle,
+    }
+}
+
+pub fn gen_ra_hamming_weight_prover<F: JoltField>(
+    params: HammingWeightSumcheckParams<F>,
+    trace: &[Cycle],
+    memory_layout: &MemoryLayout,
+    one_hot_params: &OneHotParams,
+) -> HammingWeightSumcheckProver<F> {
+    let eq_r_cycle = EqPolynomial::evals(&params.r_cycle);
+    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
 
     HammingWeightSumcheckProver::gen(params, G)
 }
 
 pub fn new_ra_booleanity_verifier<F: JoltField>(
-    n_cycle_vars: usize,
+    trace_len: usize,
     one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckVerifier<F> {
-    let r_cycle = transcript.challenge_vector_optimized::<F>(n_cycle_vars);
-    let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
-
-    let gammas = transcript.challenge_vector_optimized::<F>(one_hot_params.ram_d);
-
-    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
-        .map(CommittedPolynomial::RamRa)
-        .collect();
-
-    let params = BooleanitySumcheckParams {
-        d: one_hot_params.ram_d,
-        log_k_chunk: one_hot_params.log_k_chunk,
-        log_t: n_cycle_vars,
-        gammas,
-        r_address,
-        r_cycle,
-        polynomial_types,
-        sumcheck_id: SumcheckId::RamBooleanity,
-        virtual_poly: None,
-    };
-
+    let params = ra_booleanity_params(trace_len, one_hot_params, transcript);
     BooleanitySumcheckVerifier::new(params)
 }
 
 pub fn new_ra_hamming_weight_verifier<F: JoltField>(
     one_hot_params: &OneHotParams,
+    opening_accumulator: &dyn OpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) -> HammingWeightSumcheckVerifier<F> {
-    let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.ram_d);
-
-    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
-        .map(CommittedPolynomial::RamRa)
-        .collect();
-
-    let params = HammingWeightSumcheckParams {
-        d: one_hot_params.ram_d,
-        num_rounds: one_hot_params.log_k_chunk,
-        gamma_powers,
-        polynomial_types,
-        sumcheck_id: SumcheckId::RamHammingWeight,
-        virtual_poly: Some(VirtualPolynomial::RamHammingWeight),
-        r_cycle_sumcheck_id: SumcheckId::RamHammingBooleanity,
-    };
-
+    let params = ra_hamming_weight_params(one_hot_params, opening_accumulator, transcript);
     HammingWeightSumcheckVerifier::new(params)
 }
 

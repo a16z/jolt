@@ -9,16 +9,19 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
-use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
+        opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
     },
-    subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
+    subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+};
+use crate::{
+    subprotocols::univariate_skip::UniSkipFirstRoundProof,
+    zkvm::{config::OneHotParams, witness::AllCommittedPolynomials},
 };
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
@@ -32,6 +35,11 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage7_sumcheck_claims: Vec<F>,
+    pub joint_opening_proof: PCS::Proof,
+    #[cfg(test)]
+    pub joint_commitment_for_test: Option<PCS::Commitment>,
     /// Trusted advice opening proof at point from RamValEvaluation
     pub trusted_advice_val_evaluation_proof: Option<PCS::Proof>,
     /// Trusted advice opening proof at point from RamValFinalEvaluation
@@ -40,7 +48,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub untrusted_advice_val_evaluation_proof: Option<PCS::Proof>,
     /// Untrusted advice opening proof at point from RamValFinalEvaluation
     pub untrusted_advice_val_final_proof: Option<PCS::Proof>,
-    pub reduced_opening_proof: ReducedOpeningProof<F, PCS, FS>, // Stage 7
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -87,6 +94,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.stage6_sumcheck_proof
             .serialize_with_mode(&mut writer, compress)?;
+        self.stage7_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage7_sumcheck_claims
+            .serialize_with_mode(&mut writer, compress)?;
+        self.joint_opening_proof
+            .serialize_with_mode(&mut writer, compress)?;
         self.trusted_advice_val_evaluation_proof
             .serialize_with_mode(&mut writer, compress)?;
         self.trusted_advice_val_final_proof
@@ -94,8 +107,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.untrusted_advice_val_evaluation_proof
             .serialize_with_mode(&mut writer, compress)?;
         self.untrusted_advice_val_final_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.reduced_opening_proof
             .serialize_with_mode(&mut writer, compress)?;
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
@@ -129,7 +140,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self
                 .untrusted_advice_val_final_proof
                 .serialized_size(compress)
-            + self.reduced_opening_proof.serialized_size(compress)
+            + self.stage7_sumcheck_proof.serialized_size(compress)
+            + self.stage7_sumcheck_claims.serialized_size(compress)
+            + self.joint_opening_proof.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
             + self.bytecode_K.serialized_size(compress)
@@ -152,11 +165,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
         self.stage4_sumcheck_proof.check()?;
         self.stage5_sumcheck_proof.check()?;
         self.stage6_sumcheck_proof.check()?;
+        self.stage7_sumcheck_proof.check()?;
+        self.stage7_sumcheck_claims.check()?;
+        self.joint_opening_proof.check()?;
         self.trusted_advice_val_evaluation_proof.check()?;
         self.trusted_advice_val_final_proof.check()?;
         self.untrusted_advice_val_evaluation_proof.check()?;
         self.untrusted_advice_val_final_proof.check()?;
-        self.reduced_opening_proof.check()?;
         self.trace_length.check()?;
         self.ram_K.check()?;
         self.bytecode_K.check()?;
@@ -193,6 +208,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let stage4_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let stage5_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let stage6_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let stage7_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let stage7_sumcheck_claims = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let joint_opening_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trusted_advice_val_evaluation_proof =
             <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trusted_advice_val_final_proof =
@@ -201,9 +219,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let untrusted_advice_val_final_proof =
             <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let reduced_opening_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        // drop(guard);
 
         Ok(Self {
             opening_claims,
@@ -221,7 +237,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             trusted_advice_val_final_proof,
             untrusted_advice_val_evaluation_proof,
             untrusted_advice_val_final_proof,
-            reduced_opening_proof,
+            stage7_sumcheck_proof,
+            stage7_sumcheck_claims,
+            joint_opening_proof,
+            #[cfg(test)]
+            joint_commitment_for_test: None,
             trace_length,
             ram_K,
             bytecode_K,

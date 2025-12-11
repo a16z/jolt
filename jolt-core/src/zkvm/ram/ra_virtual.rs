@@ -58,7 +58,7 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::mles_product_sum::compute_mles_product_sum;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -76,6 +76,70 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
+/// Shared parameters between prover and verifier.
+pub struct RamRaVirtualParams<F: JoltField> {
+    /// r_cycle_reduced from RA reduction sumcheck
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+    /// r_address_reduced split into chunks according to one-hot decomposition
+    pub r_address_chunks: Vec<Vec<F::Challenge>>,
+    /// Number of decomposition chunks
+    pub d: usize,
+    /// log_2(T) - number of cycle variables
+    pub log_T: usize,
+}
+
+impl<F: JoltField> RamRaVirtualParams<F> {
+    pub fn new(
+        trace_len: usize,
+        one_hot_params: &OneHotParams,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Self {
+        let log_K = one_hot_params.ram_k.log_2();
+
+        // Get the reduced RA claim from RA reduction sumcheck
+        let (r, _ra_claim_reduced) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
+
+        // Split the opening point into address and cycle parts
+        let (r_address, r_cycle) = r.split_at(log_K);
+
+        // Split r_address into chunks according to one-hot decomposition
+        let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(&r_address.r);
+
+        Self {
+            r_cycle,
+            r_address_chunks,
+            d: one_hot_params.ram_d,
+            log_T: trace_len.log_2(),
+        }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for RamRaVirtualParams<F> {
+    /// Returns the degree of the sumcheck round polynomials.
+    /// Degree = 1 (eq) + d (product of ra_i) = d + 1
+    fn degree(&self) -> usize {
+        self.d + 1
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.log_T
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, ra_claim_reduced) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
+        ra_claim_reduced
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
 /// RAM RA virtualization sumcheck prover.
 ///
 /// Decomposes a single RA claim into claims about individual `ra_i` polynomials.
@@ -86,20 +150,17 @@ pub struct RamRaVirtualSumcheckProver<F: JoltField> {
     /// eq(r_cycle_reduced, ·) polynomial with Gruen optimization
     eq_poly: GruenSplitEqPolynomial<F>,
     #[allocative(skip)]
-    params: RaVirtualParams<F>,
+    params: RamRaVirtualParams<F>,
 }
 
 impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "RamRaVirtualSumcheckProver::gen")]
-    pub fn gen(
+    #[tracing::instrument(skip_all, name = "RamRaVirtualSumcheckProver::initialize")]
+    pub fn initialize(
+        params: RamRaVirtualParams<F>,
         trace: &[Cycle],
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-        _transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaVirtualParams::new(trace.len(), one_hot_params, opening_accumulator);
-
         // Precompute EQ tables for each address chunk
         let eq_tables: Vec<Vec<F>> = params
             .r_address_chunks
@@ -135,16 +196,8 @@ impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaVirtualSumcheckProver<F> {
-    fn degree(&self) -> usize {
-        self.params.degree()
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "RamRaVirtualSumcheckProver::ingest_challenge")]
@@ -167,7 +220,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaVirtualS
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle_final = get_opening_point::<F>(sumcheck_challenges);
+        let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
 
         // Cache opening for each ra_i polynomial
         for i in 0..self.params.d {
@@ -191,7 +244,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaVirtualS
 
 /// RAM RA virtualization sumcheck verifier.
 pub struct RamRaVirtualSumcheckVerifier<F: JoltField> {
-    params: RaVirtualParams<F>,
+    params: RamRaVirtualParams<F>,
 }
 
 impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
@@ -201,7 +254,7 @@ impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         _transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaVirtualParams::new(trace_len, one_hot_params, opening_accumulator);
+        let params = RamRaVirtualParams::new(trace_len, one_hot_params, opening_accumulator);
         Self { params }
     }
 }
@@ -209,16 +262,8 @@ impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RamRaVirtualSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        self.params.degree()
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -226,7 +271,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r_cycle_final = get_opening_point::<F>(sumcheck_challenges);
+        let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
 
         // Compute eq(r_cycle_reduced, r_cycle_final)
         let eq_eval = EqPolynomial::<F>::mle_endian(&self.params.r_cycle, &r_cycle_final);
@@ -251,7 +296,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle_final = get_opening_point::<F>(sumcheck_challenges);
+        let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
 
         // Cache opening for each ra_i polynomial
         for i in 0..self.params.d {
@@ -264,65 +309,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             );
         }
     }
-}
-
-/// Shared parameters between prover and verifier.
-struct RaVirtualParams<F: JoltField> {
-    /// r_cycle_reduced from RA reduction sumcheck
-    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
-    /// r_address_reduced split into chunks according to one-hot decomposition
-    r_address_chunks: Vec<Vec<F::Challenge>>,
-    /// Number of decomposition chunks
-    d: usize,
-    /// log_2(T) - number of cycle variables
-    log_T: usize,
-}
-
-impl<F: JoltField> RaVirtualParams<F> {
-    fn new(
-        trace_len: usize,
-        one_hot_params: &OneHotParams,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Self {
-        let log_K = one_hot_params.ram_k.log_2();
-
-        // Get the reduced RA claim from RA reduction sumcheck
-        let (r, _ra_claim_reduced) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
-
-        // Split the opening point into address and cycle parts
-        let (r_address, r_cycle) = r.split_at(log_K);
-
-        // Split r_address into chunks according to one-hot decomposition
-        let r_address_chunks = one_hot_params.compute_r_address_chunks::<F>(&r_address.r);
-
-        Self {
-            r_cycle,
-            r_address_chunks,
-            d: one_hot_params.ram_d,
-            log_T: trace_len.log_2(),
-        }
-    }
-
-    /// Returns the degree of the sumcheck round polynomials.
-    /// Degree = 1 (eq) + d (product of ra_i) = d + 1
-    fn degree(&self) -> usize {
-        self.d + 1
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.log_T
-    }
-
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, ra_claim_reduced) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
-        ra_claim_reduced
-    }
-}
-
-fn get_opening_point<F: JoltField>(
-    sumcheck_challenges: &[F::Challenge],
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }

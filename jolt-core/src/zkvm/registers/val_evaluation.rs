@@ -1,5 +1,5 @@
 use num_traits::Zero;
-use std::{array, marker::PhantomData, sync::Arc};
+use std::{array, sync::Arc};
 use tracer::instruction::Cycle;
 
 use crate::{
@@ -16,10 +16,10 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
-    utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -51,30 +51,64 @@ const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
 const DEGREE_BOUND: usize = 3;
 
 #[derive(Allocative)]
-pub(crate) struct ValEvaluationSumcheckProver<F: JoltField> {
-    inc: MultilinearPolynomial<F>,
-    wa: RaPolynomial<u8, F>,
-    lt: LtPolynomial<F>,
-    #[allocative(skip)]
-    params: ValEvaluationSumcheckParams<F>,
+pub struct RegistersValEvaluationSumcheckParams<F: JoltField> {
+    pub r_address: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }
 
-impl<F: JoltField> ValEvaluationSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::gen")]
-    pub fn gen(
-        trace: &[Cycle],
-        bytecode_preprocessing: &BytecodePreprocessing,
-        memory_layout: &MemoryLayout,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-    ) -> Self {
+impl<F: JoltField> RegistersValEvaluationSumcheckParams<F> {
+    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
         // The opening point is r_address || r_cycle
-        let registers_val_input_sample = opening_accumulator.get_virtual_polynomial_opening(
+        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );
-        let (r_address, r_cycle) = registers_val_input_sample.0.split_at(LOG_K);
+        let (r_address, r_cycle) = r.split_at(LOG_K);
+        Self { r_address, r_cycle }
+    }
+}
 
-        let params = ValEvaluationSumcheckParams::new(trace.len().log_2());
+impl<F: JoltField> SumcheckInstanceParams<F> for RegistersValEvaluationSumcheckParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.r_cycle.len()
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, registers_val_input_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        registers_val_input_claim
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
+#[derive(Allocative)]
+pub struct ValEvaluationSumcheckProver<F: JoltField> {
+    inc: MultilinearPolynomial<F>,
+    wa: RaPolynomial<u8, F>,
+    lt: LtPolynomial<F>,
+    params: RegistersValEvaluationSumcheckParams<F>,
+}
+
+impl<F: JoltField> ValEvaluationSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::initialize")]
+    pub fn initialize(
+        params: RegistersValEvaluationSumcheckParams<F>,
+        trace: &[Cycle],
+        bytecode_preprocessing: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+    ) -> Self {
         let inc = CommittedPolynomial::RdInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
@@ -82,7 +116,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
             None,
         );
 
-        let eq_r_address = EqPolynomial::evals(&r_address.r);
+        let eq_r_address = EqPolynomial::evals(&params.r_address.r);
         let wa: Vec<Option<u8>> = trace
             .par_iter()
             .map(|cycle| {
@@ -91,7 +125,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
             })
             .collect();
         let wa = RaPolynomial::new(Arc::new(wa), eq_r_address);
-        let lt = LtPolynomial::new(&r_cycle);
+        let lt = LtPolynomial::new(&params.r_cycle);
 
         Self {
             inc,
@@ -103,16 +137,8 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluationSumcheckProver<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(
@@ -168,7 +194,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = get_opening_point::<F>(sumcheck_challenges);
+        let r_cycle: OpeningPoint<BIG_ENDIAN, F> =
+            self.params.normalize_opening_point(sumcheck_challenges);
         let registers_val_input_sample = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
@@ -203,12 +230,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
 }
 
 pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
-    params: ValEvaluationSumcheckParams<F>,
+    params: RegistersValEvaluationSumcheckParams<F>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
-    pub fn new(n_cycle_vars: usize) -> Self {
-        let params = ValEvaluationSumcheckParams::new(n_cycle_vars);
+    pub fn new(opening_accumulator: &VerifierOpeningAccumulator<F>) -> Self {
+        let params = RegistersValEvaluationSumcheckParams::new(opening_accumulator);
         Self { params }
     }
 }
@@ -216,16 +243,8 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for ValEvaluationSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -243,7 +262,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
 
-        let r = get_opening_point::<F>(sumcheck_challenges);
+        let r: OpeningPoint<BIG_ENDIAN, F> =
+            self.params.normalize_opening_point(sumcheck_challenges);
         for (x, y) in r.r.iter().zip(r_cycle.r.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
@@ -268,7 +288,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = get_opening_point::<F>(sumcheck_challenges);
+        let r_cycle: OpeningPoint<BIG_ENDIAN, F> =
+            self.params.normalize_opening_point(sumcheck_challenges);
         let registers_val_input_sample = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
@@ -291,36 +312,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             OpeningPoint::new(r),
         );
     }
-}
-
-struct ValEvaluationSumcheckParams<F: JoltField> {
-    n_cycle_vars: usize,
-    _phantom: PhantomData<F>,
-}
-
-impl<F: JoltField> ValEvaluationSumcheckParams<F> {
-    pub fn new(n_cycle_vars: usize) -> Self {
-        Self {
-            n_cycle_vars,
-            _phantom: PhantomData,
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.n_cycle_vars
-    }
-
-    pub fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, registers_val_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        registers_val_input_claim
-    }
-}
-
-fn get_opening_point<F: JoltField>(
-    sumcheck_challenges: &[F::Challenge],
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }

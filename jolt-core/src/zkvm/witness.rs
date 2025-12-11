@@ -516,6 +516,7 @@ pub enum VirtualPolynomial {
     RamValInit,
     RamValFinal,
     RamHammingWeight,
+    UnivariateSkip,
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
@@ -560,6 +561,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::RamValInit,
         VirtualPolynomial::RamValFinal,
         VirtualPolynomial::RamHammingWeight,
+        VirtualPolynomial::UnivariateSkip,
     ];
     for flag in CircuitFlags::iter() {
         polynomials.push(VirtualPolynomial::OpFlags(flag));

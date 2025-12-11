@@ -19,8 +19,9 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        mles_product_sum::eval_linear_prod_assign, sumcheck_prover::SumcheckInstanceProver,
-        sumcheck_verifier::SumcheckInstanceVerifier,
+        mles_product_sum::eval_linear_prod_assign,
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
@@ -121,22 +122,12 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> ReadRafSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::gen")]
-    pub fn gen(
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::initialize")]
+    pub fn initialize(
+        params: ReadRafSumcheckParams<F>,
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
-        one_hot_params: &OneHotParams,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ReadRafSumcheckParams::gen(
-            bytecode_preprocessing,
-            trace.len().log_2(),
-            one_hot_params,
-            opening_accumulator,
-            transcript,
-        );
-
         let claim_per_stage = [
             params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
             params.rv_claims[1],
@@ -294,16 +285,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumcheckProver<F> {
-    fn degree(&self) -> usize {
-        self.params.degree()
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::compute_message")]
@@ -483,7 +466,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
 
         // Compute r_address_chunks with proper padding
@@ -535,16 +518,8 @@ impl<F: JoltField> ReadRafSumcheckVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumcheckVerifier<F> {
-    fn degree(&self) -> usize {
-        self.params.degree()
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -552,7 +527,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.params.log_K);
         // r_cycle is bound LowToHigh, so reverse
 
@@ -606,7 +581,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        let opening_point = self.params.get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
 
         // Compute r_address_chunks with proper padding
@@ -627,33 +602,33 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
     }
 }
 
-struct ReadRafSumcheckParams<F: JoltField> {
+pub struct ReadRafSumcheckParams<F: JoltField> {
     /// Index `i` stores `gamma^i`.
-    gamma_powers: Vec<F>,
+    pub gamma_powers: Vec<F>,
     /// RLC of stage rv_claims and RAF claims (per Stage1/Stage3) used as the sumcheck LHS.
-    rv_claim: F,
+    pub input_claim: F,
     /// RaParams
-    one_hot_params: OneHotParams,
+    pub one_hot_params: OneHotParams,
     /// Bytecode length.
-    K: usize,
+    pub K: usize,
     /// log2(K) and log2(T) used to determine round counts.
-    log_K: usize,
-    log_T: usize,
+    pub log_K: usize,
+    pub log_T: usize,
     /// Number of address chunks (and RA polynomials in the product).
-    d: usize,
+    pub d: usize,
     /// Stage Val polynomials evaluated over address vars.
-    val_polys: [MultilinearPolynomial<F>; N_STAGES],
+    pub val_polys: [MultilinearPolynomial<F>; N_STAGES],
     /// Stage rv claims.
-    rv_claims: [F; N_STAGES],
-    raf_claim: F,
-    raf_shift_claim: F,
+    pub rv_claims: [F; N_STAGES],
+    pub raf_claim: F,
+    pub raf_shift_claim: F,
     /// Identity polynomial over address vars used to inject RAF contributions.
-    int_poly: IdentityPolynomial<F>,
-    r_cycles: [Vec<F::Challenge>; N_STAGES],
+    pub int_poly: IdentityPolynomial<F>,
+    pub r_cycles: [Vec<F::Challenge>; N_STAGES],
 }
 
 impl<F: JoltField> ReadRafSumcheckParams<F> {
-    fn gen(
+    pub fn gen(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
@@ -708,7 +683,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         let (_, raf_shift_claim) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
-        let rv_claim = [
+        let input_claim = [
             rv_claim_1,
             rv_claim_2,
             rv_claim_3,
@@ -754,7 +729,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         // so we initialize r_address_chunks as empty and will compute it later
         Self {
             gamma_powers,
-            rv_claim,
+            input_claim,
             one_hot_params: one_hot_params.clone(),
             K: one_hot_params.bytecode_k,
             log_K: one_hot_params.bytecode_k.log_2(),
@@ -1192,7 +1167,9 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
 
         sum
     }
+}
 
+impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -1201,13 +1178,13 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
         self.log_K + self.log_T
     }
 
-    fn input_claim(&self) -> F {
-        self.rv_claim
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
+        self.input_claim
     }
 
-    fn get_opening_point(
+    fn normalize_opening_point(
         &self,
-        sumcheck_challenges: &[F::Challenge],
+        sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut r = sumcheck_challenges.to_vec();
         r[0..self.log_K].reverse();

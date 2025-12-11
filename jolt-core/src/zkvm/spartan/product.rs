@@ -2,6 +2,8 @@ use std::iter::zip;
 use std::sync::Arc;
 
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_std::Zero;
 
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
@@ -15,11 +17,9 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_prover::{
-    SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
-};
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::subprotocols::univariate_skip::{build_uniskip_first_round_poly, UniSkipState};
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
+use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc8S;
 use crate::utils::math::Math;
@@ -28,8 +28,9 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::constraints::{
-    NUM_PRODUCT_VIRTUAL, PRODUCT_CONSTRAINTS, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
-    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+    NUM_PRODUCT_VIRTUAL, PRODUCT_CONSTRAINTS, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_DEGREE_BOUND,
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
+    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
     PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
 };
 use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
@@ -68,32 +69,97 @@ use tracer::instruction::Cycle;
 /// Degree of the sumcheck round polynomials for [`ProductVirtualRemainderVerifier`].
 const PRODUCT_VIRTUAL_REMAINDER_DEGREE: usize = 3;
 
-/// Uni-skip instance for product virtualization, computing the first-round polynomial only.
-#[derive(Allocative)]
-pub struct ProductVirtualUniSkipInstanceProver<F: JoltField> {
-    /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
-    extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
-    #[allocative(skip)]
-    params: ProductVirtualUniSkipInstanceParams<F>,
+#[derive(Allocative, Clone)]
+pub struct ProductVirtualUniSkipParams<F: JoltField> {
+    /// τ = [τ_low || τ_high]
+    /// - τ_low: the cycle-point r_cycle carried from Spartan outer (length = num_cycle_vars)
+    /// - τ_high: the univariate-skip binding point sampled for the size-5 domain (length = 1)
+    ///   Ordering matches outer: variables are MSB→LSB with τ_high last
+    pub tau: Vec<F::Challenge>,
+    /// Base evaluations (claims) for the five product terms at the base domain
+    /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    base_evals: [F; NUM_PRODUCT_VIRTUAL],
 }
 
-impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
+impl<F: JoltField> ProductVirtualUniSkipParams<F> {
+    pub fn new<T: Transcript>(
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut T,
+    ) -> Self {
+        // Reuse r_cycle from Stage 1 (outer) for τ_low, and sample τ_high
+        let r_cycle = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter)
+            .0
+            .r;
+        let tau_high = transcript.challenge_scalar_optimized::<F>();
+        let mut tau = r_cycle;
+        tau.push(tau_high);
+
+        let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
+        for (i, cons) in PRODUCT_CONSTRAINTS.iter().enumerate() {
+            let (_, eval) = opening_accumulator
+                .get_virtual_polynomial_opening(cons.output, SumcheckId::SpartanOuter);
+            base_evals[i] = eval;
+        }
+        Self { tau, base_evals }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> {
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
+        // claim = \sum_i L_i(tau_high) * base_evals[i]
+        let tau_high = self.tau[self.tau.len() - 1];
+        let w = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&tau_high);
+        let mut acc = F::zero();
+        for i in 0..NUM_PRODUCT_VIRTUAL {
+            acc += w[i] * self.base_evals[i];
+        }
+        acc
+    }
+
+    fn degree(&self) -> usize {
+        PRODUCT_VIRTUAL_FIRST_ROUND_POLY_DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        1
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        challenges.to_vec().into()
+    }
+}
+
+/// Uni-skip instance for product virtualization, computing the first-round polynomial only.
+#[derive(Allocative)]
+pub struct ProductVirtualUniSkipProver<F: JoltField> {
+    /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
+    extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
+    params: ProductVirtualUniSkipParams<F>,
+    /// Verifier challenge for this univariate skip round
+    r0: Option<F::Challenge>,
+    /// Prover message for this univariate skip round
+    uni_poly: Option<UniPoly<F>>,
+}
+
+impl<F: JoltField> ProductVirtualUniSkipProver<F> {
     /// Initialize a new prover for the univariate skip round
     /// The 5 base evaluations are the claimed evaluations of the 5 product terms from Spartan outer
-    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstanceProver::gen")]
-    pub fn gen(
-        trace: &[Cycle],
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-        tau: &[F::Challenge],
-    ) -> Self {
-        let params = ProductVirtualUniSkipInstanceParams::new(opening_accumulator, tau);
-
+    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstanceProver::initialize")]
+    pub fn initialize(params: ProductVirtualUniSkipParams<F>, trace: &[Cycle]) -> Self {
         // Compute extended univariate-skip evals using split-eq fold-in-out (includes R^2 scaling)
-        let extended_evals = Self::compute_univariate_skip_extended_evals(trace, tau);
-
+        let extended_evals = Self::compute_univariate_skip_extended_evals(trace, &params.tau);
         let instance = Self {
             extended_evals,
             params,
+            r0: None,
+            uni_poly: None,
         };
 
         #[cfg(feature = "allocative")]
@@ -171,67 +237,160 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
-    for ProductVirtualUniSkipInstanceProver<F>
-{
-    fn input_claim(&self) -> F {
-        self.params.input_claim()
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtualUniSkipProver<F> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
-    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstanceProver::compute_poly")]
-    fn compute_poly(&mut self) -> UniPoly<F> {
+    #[tracing::instrument(
+        skip_all,
+        name = "ProductVirtualUniSkipInstanceProver::compute_message"
+    )]
+    fn compute_message(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
         // Load base evals from shared instance and extended from prover state
         let base = self.params.base_evals;
         let tau_high = self.params.tau[self.params.tau.len() - 1];
 
         // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
-        build_uniskip_first_round_poly::<
+        let uni_poly = build_uniskip_first_round_poly::<
             F,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
             PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
-        >(Some(&base), &self.extended_evals, tau_high)
+        >(Some(&base), &self.extended_evals, tau_high);
+
+        self.uni_poly = Some(uni_poly.clone());
+        uni_poly
+    }
+
+    fn ingest_challenge(&mut self, _: <F as JoltField>::Challenge, _: usize) {
+        // Nothing to do
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[<F as JoltField>::Challenge],
+    ) {
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        debug_assert_eq!(opening_point.len(), 1);
+        let claim = self.uni_poly.as_ref().unwrap().evaluate(&opening_point[0]);
+
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::ProductVirtualization,
+            opening_point,
+            claim,
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 
-pub struct ProductVirtualUniSkipInstanceParams<F: JoltField> {
-    /// τ = [τ_low || τ_high]
-    /// - τ_low: the cycle-point r_cycle carried from Spartan outer (length = num_cycle_vars)
-    /// - τ_high: the univariate-skip binding point sampled for the size-5 domain (length = 1)
-    ///   Ordering matches outer: variables are MSB→LSB with τ_high last
+pub struct ProductVirtualUniSkipVerifier<F: JoltField> {
+    pub params: ProductVirtualUniSkipParams<F>,
+}
+
+impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
+    pub fn new<T: Transcript>(
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
+    ) -> Self {
+        let params = ProductVirtualUniSkipParams::new(opening_accumulator, transcript);
+        Self { params }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for ProductVirtualUniSkipVerifier<F>
+{
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    fn expected_output_claim(
+        &self,
+        _accumulator: &VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[<F as JoltField>::Challenge],
+    ) -> F {
+        unimplemented!("Unused for univariate skip")
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[<F as JoltField>::Challenge],
+    ) {
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        debug_assert_eq!(opening_point.len(), 1);
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::ProductVirtualization,
+            opening_point,
+        );
+    }
+}
+
+pub struct ProductVirtualRemainderParams<F: JoltField> {
+    /// Number of cycle variables to bind in this remainder (equals log2(T))
+    n_cycle_vars: usize,
+    /// Verifier challenge for univariate skip round
+    r0: F::Challenge,
+    /// The tau vector (length 1 + n_cycle_vars), available to prover and verifier
     tau: Vec<F::Challenge>,
-    /// Base evaluations (claims) for the five product terms at the base domain
-    /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
-    base_evals: [F; NUM_PRODUCT_VIRTUAL],
 }
 
-impl<F: JoltField> ProductVirtualUniSkipInstanceParams<F> {
-    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>, tau: &[F::Challenge]) -> Self {
-        let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
-        for (i, cons) in PRODUCT_CONSTRAINTS.iter().enumerate() {
-            let (_, eval) = opening_accumulator
-                .get_virtual_polynomial_opening(cons.output, SumcheckId::SpartanOuter);
-            base_evals[i] = eval;
-        }
+impl<F: JoltField> ProductVirtualRemainderParams<F> {
+    pub fn new(
+        trace_len: usize,
+        uni_skip_params: ProductVirtualUniSkipParams<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Self {
+        let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::ProductVirtualization,
+        );
+        debug_assert_eq!(r_uni_skip.len(), 1);
+        let r0 = r_uni_skip[0];
+
         Self {
-            tau: tau.to_vec(),
-            base_evals,
+            n_cycle_vars: trace_len.log_2(),
+            tau: uni_skip_params.tau,
+            r0,
         }
     }
+}
 
-    pub fn input_claim(&self) -> F {
-        // claim = \sum_i L_i(tau_high) * base_evals[i]
-        let tau_high = self.tau[self.tau.len() - 1];
-        let w = LagrangePolynomial::<F>::evals::<
-            F::Challenge,
-            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&tau_high);
-        let mut acc = F::zero();
-        for i in 0..NUM_PRODUCT_VIRTUAL {
-            acc += w[i] * self.base_evals[i];
-        }
-        acc
+impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F> {
+    fn num_rounds(&self) -> usize {
+        self.n_cycle_vars
+    }
+
+    fn degree(&self) -> usize {
+        PRODUCT_VIRTUAL_REMAINDER_DEGREE
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::ProductVirtualization,
+        );
+        uni_skip_claim
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
 }
 
@@ -279,20 +438,20 @@ pub struct ProductVirtualRemainderProver<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualRemainderProver<F> {
-    #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::gen")]
-    pub fn gen(trace: Arc<Vec<Cycle>>, uni: &UniSkipState<F>) -> Self {
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::initialize")]
+    pub fn initialize(params: ProductVirtualRemainderParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&uni.r0);
+        >(&params.r0);
 
-        let tau_high = uni.tau[uni.tau.len() - 1];
-        let tau_low = &uni.tau[..uni.tau.len() - 1];
+        let tau_high = params.tau[params.tau.len() - 1];
+        let tau_low = &params.tau[..params.tau.len() - 1];
 
         let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&tau_high, &uni.r0);
+        >(&tau_high, &params.r0);
 
         let split_eq_poly: GruenSplitEqPolynomial<F> =
             GruenSplitEqPolynomial::<F>::new_with_scaling(
@@ -308,15 +467,13 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                 &split_eq_poly,
             );
 
-        let n_cycle_vars = trace.len().ilog2() as usize;
-
         Self {
             split_eq_poly,
             trace,
             left: left_bound,
             right: right_bound,
             first_round_evals: (t0, t_inf),
-            params: ProductVirtualRemainderParams::new(n_cycle_vars, uni),
+            params,
         }
     }
 
@@ -432,16 +589,8 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for ProductVirtualRemainderProver<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::compute_message")]
@@ -472,7 +621,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = ProductVirtualRemainderParams::get_opening_point(sumcheck_challenges);
+        let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         let claims = ProductVirtualEval::compute_claimed_factors::<F>(&self.trace, &r_cycle);
         for (poly, claim) in zip(PRODUCT_UNIQUE_FACTOR_VIRTUALS, claims) {
             accumulator.append_virtual(
@@ -496,8 +645,13 @@ pub struct ProductVirtualRemainderVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
-    pub fn new(n_cycle_vars: usize, uni: &UniSkipState<F>) -> Self {
-        let params = ProductVirtualRemainderParams::new(n_cycle_vars, uni);
+    pub fn new(
+        trace_len: usize,
+        uni_skip_params: ProductVirtualUniSkipParams<F>,
+        opening_accumulator: &VerifierOpeningAccumulator<F>,
+    ) -> Self {
+        let params =
+            ProductVirtualRemainderParams::new(trace_len, uni_skip_params, opening_accumulator);
         Self { params }
     }
 }
@@ -505,16 +659,8 @@ impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for ProductVirtualRemainderVerifier<F>
 {
-    fn degree(&self) -> usize {
-        PRODUCT_VIRTUAL_REMAINDER_DEGREE
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -526,7 +672,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let w = LagrangePolynomial::<F>::evals::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&self.params.r0_uniskip);
+        >(&self.params.r0);
 
         // Fetch factor claims
         let l_inst = accumulator
@@ -594,7 +740,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(tau_high, &self.params.r0_uniskip);
+        >(tau_high, &self.params.r0);
         let tau_low = &self.params.tau[..self.params.tau.len() - 1];
         let r_tail_reversed: Vec<F::Challenge> =
             sumcheck_challenges.iter().rev().copied().collect();
@@ -609,7 +755,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        let opening_point = ProductVirtualRemainderParams::get_opening_point(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         for vp in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter() {
             accumulator.append_virtual(
                 transcript,
@@ -618,35 +764,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 opening_point.clone(),
             );
         }
-    }
-}
-
-struct ProductVirtualRemainderParams<F: JoltField> {
-    /// Number of cycle variables to bind in this remainder (equals log2(T))
-    n_cycle_vars: usize,
-    /// The univariate-skip first round challenge r0
-    r0_uniskip: F::Challenge,
-    /// Claim after the univariate-skip first round, updated every round
-    input_claim: F,
-    /// The tau vector (length 1 + n_cycle_vars), available to prover and verifier
-    tau: Vec<F::Challenge>,
-}
-
-impl<F: JoltField> ProductVirtualRemainderParams<F> {
-    fn new(n_cycle_vars: usize, uni: &UniSkipState<F>) -> Self {
-        Self {
-            n_cycle_vars,
-            r0_uniskip: uni.r0,
-            input_claim: uni.claim_after_first,
-            tau: uni.tau.clone(),
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.n_cycle_vars
-    }
-
-    fn get_opening_point(sumcheck_challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
     }
 }
