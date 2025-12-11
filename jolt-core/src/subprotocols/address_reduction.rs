@@ -281,12 +281,12 @@
 //! compute_message(round, previous_claim):
 //!   - Evaluate degree-2 univariate at points {0, 2}
 //!   - For each j in 0..K/2:
-//!       For each i:
-//!         eq_b_evals = eq_bool[i].sumcheck_evals(j)
-//!         eq_v_evals = eq_virt[i].sumcheck_evals(j)
-//!         G_evals = G[i].sumcheck_evals(j)
-//!         contribution = γ^{2i} * eq_b_evals * G_evals + γ^{2i+1} * eq_v_evals * G_evals
-//!         accumulate contribution
+//!     - For each i:
+//!       - eq_b_evals = eq_bool[i].sumcheck_evals(j)
+//!       - eq_v_evals = eq_virt[i].sumcheck_evals(j)
+//!       - G_evals = G[i].sumcheck_evals(j)
+//!       - contribution = γ^{2i} * eq_b_evals * G_evals + γ^{2i+1} * eq_v_evals * G_evals
+//!       - accumulate contribution
 //!   - Return UniPoly::from_evals_and_hint(previous_claim, &evals)
 //!
 //! ingest_challenge(r_j, round):
@@ -300,10 +300,10 @@
 //!
 //! expected_output_claim(challenges ρ):
 //!   - For each i:
-//!       eq_bool_eval = eq(r_addr_bool_i, ρ)
-//!       eq_virt_eval = eq(r_addr_virt_i, ρ)
-//!       G_i_claim = accumulator.get_committed_polynomial_opening(ra_i, RaAddressReduction)
-//!       contribution = γ^{2i} * eq_bool_eval * G_i_claim + γ^{2i+1} * eq_virt_eval * G_i_claim
+//!     - eq_bool_eval = eq(r_addr_bool_i, ρ)
+//!     - eq_virt_eval = eq(r_addr_virt_i, ρ)
+//!     - G_i_claim = accumulator.get_committed_polynomial_opening(ra_i, RaAddressReduction)
+//!     - contribution = γ^{2i} * eq_bool_eval * G_i_claim + γ^{2i+1} * eq_virt_eval * G_i_claim
 //!   - Return sum of contributions
 //!
 //! cache_openings():
@@ -977,7 +977,7 @@ impl<F: JoltField> RaAddressReductionProver<F> {
         let G_vecs = compute_all_G(trace, &params.r_cycle, preprocessing, one_hot_params);
         let G: Vec<MultilinearPolynomial<F>> = G_vecs
             .into_iter()
-            .map(|v| MultilinearPolynomial::from(v))
+            .map(MultilinearPolynomial::from)
             .collect();
 
         // Compute eq tables for each r_address
