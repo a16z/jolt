@@ -34,15 +34,6 @@ use common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
-// Instruction read-access (RA) virtualization sumcheck
-//
-// Proves the relation:
-//   Σ_j eq(r_cycle, j) ⋅ Π_{i=0}^{D-1} ra_i(r_{address,i}, j) = ra_claim
-// where:
-// - eq is the MLE of equality on bitstrings; evaluated at field points (r_cycle, j).
-// - ra_i are MLEs of chunk-wise access indicators (1 on matching {0,1}-points).
-// - ra_claim is the claimed evaluation of the virtual read-access polynomial from the read-raf sumcheck.
-
 pub struct InstructionRaSumcheckParams<F: JoltField> {
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     pub r_address: OpeningPoint<BIG_ENDIAN, F>,
