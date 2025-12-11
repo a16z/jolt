@@ -133,14 +133,13 @@ impl BigIntMulSequenceBuilder {
             self.asm.emit_r::<SLTU>(t2, sk1, t1);
 
             // Ripple-carry add into R[k+2..]
+            // Check carry on each iteration to match reference implementation behavior
             for m in (k + 2)..OUTPUT_LIMBS {
                 let sm = self.s(m);
                 // add s[m], s[m], t2
                 self.asm.emit_r::<ADD>(sm, sm, t2);
-                // sltu t2, s[m], t2  # carry out
-                if m + 1 < OUTPUT_LIMBS {
-                    self.asm.emit_r::<SLTU>(t2, sm, t2);
-                }
+                // sltu t2, s[m], t2  # Check carry on every iteration, including the last
+                self.asm.emit_r::<SLTU>(t2, sm, t2);
             }
         }
     }
