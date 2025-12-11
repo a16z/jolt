@@ -45,7 +45,9 @@ use crate::{
     field::JoltField,
     poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator},
     pprof_scope,
-    subprotocols::sumcheck_verifier::SumcheckInstanceVerifier,
+    subprotocols::{
+        inc_reduction::IncReductionSumcheckVerifier, sumcheck_verifier::SumcheckInstanceVerifier,
+    },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
 };
@@ -347,12 +349,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let ram_ra_virtual = RamRaSumcheckVerifier::new(
-            self.proof.trace_length,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
         let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(
             n_cycle_vars,
             &self.opening_accumulator,
@@ -364,7 +360,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             vec![
                 &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &ram_hamming_booleanity,
-                &ram_ra_virtual,
                 &lookups_read_raf,
             ],
             &mut self.opening_accumulator,
@@ -395,6 +390,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_virtual = RamRaSumcheckVerifier::new(
+            self.proof.trace_length,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let lookups_ra_virtual =
             LookupsRaSumcheckVerifier::new(&self.one_hot_params, &self.opening_accumulator);
         let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
@@ -404,6 +405,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &self.opening_accumulator,
                 &mut self.transcript,
             );
+        let inc_reduction = IncReductionSumcheckVerifier::new(
+            self.proof.trace_length,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let _r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
@@ -412,9 +418,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &bytecode_hamming_weight,
                 &bytecode_booleanity,
                 &ram_hamming_weight,
+                &ram_ra_virtual,
                 &lookups_ra_virtual,
                 &lookups_ra_booleanity,
                 &lookups_rs_hamming_weight,
+                &inc_reduction,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,

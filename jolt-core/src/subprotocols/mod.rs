@@ -1,5 +1,7 @@
+pub mod address_reduction;
 pub mod booleanity;
 pub mod hamming_weight;
+pub mod inc_reduction;
 pub mod mles_product_sum;
 pub mod opening_reduction;
 pub mod sumcheck;
