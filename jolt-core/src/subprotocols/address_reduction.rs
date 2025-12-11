@@ -873,9 +873,10 @@ impl<F: JoltField> RaAddressReductionParams<F> {
         for poly_type in &polynomial_types {
             // Booleanity claim
             let (bool_sumcheck_id, virt_sumcheck_id) = match poly_type {
-                CommittedPolynomial::InstructionRa(_) => {
-                    (SumcheckId::InstructionBooleanity, SumcheckId::InstructionRaVirtualization)
-                }
+                CommittedPolynomial::InstructionRa(_) => (
+                    SumcheckId::InstructionBooleanity,
+                    SumcheckId::InstructionRaVirtualization,
+                ),
                 CommittedPolynomial::BytecodeRa(_) => {
                     (SumcheckId::BytecodeBooleanity, SumcheckId::BytecodeReadRaf)
                 }
@@ -1018,10 +1019,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RaAddressRedu
             for i in 0..N {
                 let g_evals =
                     self.G[i].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                let eq_b_evals =
-                    self.eq_bool[i].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                let eq_v_evals =
-                    self.eq_virt[i].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                let eq_b_evals = self.eq_bool[i]
+                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                let eq_v_evals = self.eq_virt[i]
+                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
                 // γ^{2i} · eq_bool · G + γ^{2i+1} · eq_virt · G
                 let gamma_bool = self.params.gamma_powers[2 * i];
@@ -1110,14 +1111,13 @@ impl<F: JoltField> RaAddressReductionVerifier<F> {
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = RaAddressReductionParams::new(r_cycle, one_hot_params, accumulator, transcript);
+        let params =
+            RaAddressReductionParams::new(r_cycle, one_hot_params, accumulator, transcript);
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for RaAddressReductionVerifier<F>
-{
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaAddressReductionVerifier<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
