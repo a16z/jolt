@@ -56,7 +56,10 @@ use crate::{
             val_evaluation::RegistersValEvaluationSumcheckParams,
         },
         spartan::{
-            claim_reductions::InstructionLookupsClaimReductionSumcheckParams,
+            claim_reductions::{
+                InstructionLookupsClaimReductionSumcheckParams,
+                RegistersClaimReductionSumcheckParams, RegistersClaimReductionSumcheckProver,
+            },
             instruction_input::InstructionInputParams,
             outer::{OuterRemainingSumcheckParams, OuterUniSkipParams, OuterUniSkipProver},
             product::{
@@ -685,6 +688,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let spartan_instruction_input_params =
             InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript);
+        let spartan_registers_claim_reduction_params = RegistersClaimReductionSumcheckParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         // Initialize
         let spartan_shift = ShiftSumcheckProver::initialize(
@@ -697,6 +705,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.opening_accumulator,
         );
+        let spartan_registers_claim_reduction = RegistersClaimReductionSumcheckProver::initialize(
+            spartan_registers_claim_reduction_params,
+            Arc::clone(&self.trace),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -705,10 +717,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "InstructionInputSumcheckProver",
                 &spartan_instruction_input,
             );
+            print_data_structure_heap_usage(
+                "RegistersClaimReductionSumcheckProver",
+                &spartan_registers_claim_reduction,
+            );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> =
-            vec![Box::new(spartan_shift), Box::new(spartan_instruction_input)];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+            Box::new(spartan_shift),
+            Box::new(spartan_instruction_input),
+            Box::new(spartan_registers_claim_reduction),
+        ];
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
