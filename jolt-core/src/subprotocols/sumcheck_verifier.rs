@@ -27,4 +27,10 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
+
+    /// Returns trusted advice dimensions if this is a trusted advice polynomial.
+    /// Returns `Some((log_rows, log_columns))` for trusted advice, `None` otherwise.
+    fn trusted_advice_dimensions(&self) -> Option<(usize, usize)> {
+        None
+    }
 }

@@ -33,6 +33,20 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
         sumcheck_challenges: &[F::Challenge],
     );
 
+    /// Returns trusted advice dimensions if this is a trusted advice polynomial.
+    /// Returns `Some((log_rows, log_columns))` for trusted advice, `None` otherwise.
+    /// For trusted advice polynomials, binding happens in two separate phases:
+    /// - First phase: bind the row variables (last `log_rows` of the row rounds)
+    /// - Second phase: bind the column variables (last `log_columns` of the column rounds)
+    fn trusted_advice_dimensions(&self) -> Option<(usize, usize)> {
+        None
+    }
+
+    /// Returns a debug name for this sumcheck instance (for logging purposes).
+    fn debug_name(&self) -> String {
+        "unknown".to_string()
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder);
 }
