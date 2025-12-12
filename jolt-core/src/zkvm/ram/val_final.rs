@@ -75,19 +75,17 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
 
         let n_memory_vars = ram_K.log_2();
 
-        {
-            // Verify that val_evaluation and output_check use the same opening point for initial_ram_state.
-            // This allows us to reuse a single untrusted_advice opening instead of providing two.
-            let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamVal,
-                SumcheckId::RamReadWriteChecking,
-            );
-            let (r_address_val_evaluation, _) = r.split_at(n_memory_vars);
-            assert_eq!(r_address_val_evaluation.r, r_address);
-        }
+        // When needs_single_advice_opening(T) is true, advice is only opened at RamValEvaluation
+        // (the two points are identical). Otherwise, we use RamValFinalEvaluation.
+        let advice_sumcheck_id =
+            if super::read_write_checking::needs_single_advice_opening(trace_len) {
+                SumcheckId::RamValEvaluation
+            } else {
+                SumcheckId::RamValFinalEvaluation
+            };
 
         let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_untrusted_advice_opening(),
+            opening_accumulator.get_untrusted_advice_opening(advice_sumcheck_id),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -98,7 +96,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         );
 
         let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_trusted_advice_opening(),
+            opening_accumulator.get_trusted_advice_opening(advice_sumcheck_id),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),

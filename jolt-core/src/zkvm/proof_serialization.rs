@@ -41,8 +41,14 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub joint_opening_proof: PCS::Proof,
     #[cfg(test)]
     pub joint_commitment_for_test: Option<PCS::Commitment>,
-    pub trusted_advice_proof: Option<PCS::Proof>,
-    pub untrusted_advice_proof: Option<PCS::Proof>,
+    /// Trusted advice opening proof at point from RamValEvaluation
+    pub trusted_advice_val_evaluation_proof: Option<PCS::Proof>,
+    /// Trusted advice opening proof at point from RamValFinalEvaluation
+    pub trusted_advice_val_final_proof: Option<PCS::Proof>,
+    /// Untrusted advice opening proof at point from RamValEvaluation
+    pub untrusted_advice_val_evaluation_proof: Option<PCS::Proof>,
+    /// Untrusted advice opening proof at point from RamValFinalEvaluation
+    pub untrusted_advice_val_final_proof: Option<PCS::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -102,13 +108,15 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
 }
 
 // Compact encoding for OpeningId:
-// - 0 = UntrustedAdvice (1 byte total)
-// - 1 = TrustedAdvice (1 byte total)
-// - 2 + sumcheck_id = Committed (2 bytes: fused byte + poly index)
-// - (2 + NUM_SUMCHECKS) + sumcheck_id = Virtual (2 bytes: fused byte + poly index)
-const OPENING_ID_UNTRUSTED_ADVICE: u8 = 0;
-const OPENING_ID_TRUSTED_ADVICE: u8 = 1;
-const OPENING_ID_COMMITTED_BASE: u8 = 2;
+// Each variant uses a fused byte = BASE + sumcheck_id (1 byte total for advice, 2 bytes for committed/virtual)
+// - [0, NUM_SUMCHECKS) = UntrustedAdvice(sumcheck_id)
+// - [NUM_SUMCHECKS, 2*NUM_SUMCHECKS) = TrustedAdvice(sumcheck_id)
+// - [2*NUM_SUMCHECKS, 3*NUM_SUMCHECKS) + poly_index = Committed(poly, sumcheck_id)
+// - [3*NUM_SUMCHECKS, 4*NUM_SUMCHECKS) + poly_index = Virtual(poly, sumcheck_id)
+const OPENING_ID_UNTRUSTED_ADVICE_BASE: u8 = 0;
+const OPENING_ID_TRUSTED_ADVICE_BASE: u8 =
+    OPENING_ID_UNTRUSTED_ADVICE_BASE + SumcheckId::COUNT as u8;
+const OPENING_ID_COMMITTED_BASE: u8 = OPENING_ID_TRUSTED_ADVICE_BASE + SumcheckId::COUNT as u8;
 const OPENING_ID_VIRTUAL_BASE: u8 = OPENING_ID_COMMITTED_BASE + SumcheckId::COUNT as u8;
 
 impl CanonicalSerialize for OpeningId {
@@ -118,6 +126,14 @@ impl CanonicalSerialize for OpeningId {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         match self {
+            OpeningId::UntrustedAdvice(sumcheck_id) => {
+                let fused = OPENING_ID_UNTRUSTED_ADVICE_BASE + (*sumcheck_id as u8);
+                fused.serialize_with_mode(&mut writer, compress)
+            }
+            OpeningId::TrustedAdvice(sumcheck_id) => {
+                let fused = OPENING_ID_TRUSTED_ADVICE_BASE + (*sumcheck_id as u8);
+                fused.serialize_with_mode(&mut writer, compress)
+            }
             OpeningId::Committed(committed_polynomial, sumcheck_id) => {
                 let fused = OPENING_ID_COMMITTED_BASE + (*sumcheck_id as u8);
                 fused.serialize_with_mode(&mut writer, compress)?;
@@ -128,17 +144,12 @@ impl CanonicalSerialize for OpeningId {
                 fused.serialize_with_mode(&mut writer, compress)?;
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
             }
-            OpeningId::UntrustedAdvice => {
-                OPENING_ID_UNTRUSTED_ADVICE.serialize_with_mode(&mut writer, compress)
-            }
-            OpeningId::TrustedAdvice => {
-                OPENING_ID_TRUSTED_ADVICE.serialize_with_mode(&mut writer, compress)
-            }
         }
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
+            OpeningId::UntrustedAdvice(_) | OpeningId::TrustedAdvice(_) => 1,
             OpeningId::Committed(committed_polynomial, _) => {
                 // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + committed_polynomial.serialized_size(compress)
@@ -147,8 +158,6 @@ impl CanonicalSerialize for OpeningId {
                 // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + virtual_polynomial.serialized_size(compress)
             }
-            OpeningId::UntrustedAdvice => 1,
-            OpeningId::TrustedAdvice => 1,
         }
     }
 }
@@ -167,9 +176,19 @@ impl CanonicalDeserialize for OpeningId {
     ) -> Result<Self, SerializationError> {
         let fused = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         match fused {
-            OPENING_ID_UNTRUSTED_ADVICE => Ok(OpeningId::UntrustedAdvice),
-            OPENING_ID_TRUSTED_ADVICE => Ok(OpeningId::TrustedAdvice),
-            _ if (OPENING_ID_COMMITTED_BASE..OPENING_ID_VIRTUAL_BASE).contains(&fused) => {
+            _ if fused < OPENING_ID_TRUSTED_ADVICE_BASE => {
+                let sumcheck_id = fused - OPENING_ID_UNTRUSTED_ADVICE_BASE;
+                Ok(OpeningId::UntrustedAdvice(
+                    SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
+                ))
+            }
+            _ if fused < OPENING_ID_COMMITTED_BASE => {
+                let sumcheck_id = fused - OPENING_ID_TRUSTED_ADVICE_BASE;
+                Ok(OpeningId::TrustedAdvice(
+                    SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
+                ))
+            }
+            _ if fused < OPENING_ID_VIRTUAL_BASE => {
                 let sumcheck_id = fused - OPENING_ID_COMMITTED_BASE;
                 let polynomial =
                     CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -178,7 +197,7 @@ impl CanonicalDeserialize for OpeningId {
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
-            _ if fused >= OPENING_ID_VIRTUAL_BASE => {
+            _ => {
                 let sumcheck_id = fused - OPENING_ID_VIRTUAL_BASE;
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -187,7 +206,6 @@ impl CanonicalDeserialize for OpeningId {
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
-            _ => Err(SerializationError::InvalidData),
         }
     }
 }

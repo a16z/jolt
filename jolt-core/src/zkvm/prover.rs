@@ -42,7 +42,8 @@ use crate::{
             hamming_booleanity::HammingBooleanityParams,
             output_check::OutputSumcheckParams,
             populate_memory_states,
-            ra_virtual::RamRaSumcheckParams,
+            ra_reduction::{RaReductionParams, RamRaReductionSumcheckProver},
+            ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams,
             val_evaluation::{
@@ -86,7 +87,7 @@ use crate::{
         ram::{
             self, gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
             output_check::OutputSumcheckProver, prover_accumulate_advice,
-            ra_virtual::RamRaSumcheckProver,
+            ra_virtual::RamRaVirtualSumcheckProver,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
             read_write_checking::RamReadWriteCheckingProver, RAMPreprocessing,
         },
@@ -316,8 +317,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage4_sumcheck_proof = self.prove_stage4();
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
-        let trusted_advice_proof = self.prove_trusted_advice();
-        let untrusted_advice_proof = self.prove_untrusted_advice();
+        let (trusted_advice_val_evaluation_proof, trusted_advice_val_final_proof) =
+            self.prove_trusted_advice();
+        let (untrusted_advice_val_evaluation_proof, untrusted_advice_val_final_proof) =
+            self.prove_untrusted_advice();
         let stage7_sumcheck_proof = self.prove_stage7();
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
@@ -357,8 +360,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
             stage6_sumcheck_proof,
-            trusted_advice_proof,
-            untrusted_advice_proof,
+            trusted_advice_val_evaluation_proof,
+            trusted_advice_val_final_proof,
+            untrusted_advice_val_evaluation_proof,
+            untrusted_advice_val_final_proof,
             stage7_sumcheck_proof,
             stage7_sumcheck_claims: opening_state.sumcheck_claims.clone(),
             joint_opening_proof,
@@ -742,6 +747,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.opening_accumulator,
             &mut self.transcript,
+            ram::read_write_checking::needs_single_advice_opening(self.trace.len()),
         );
         let ram_ra_booleanity_params =
             ram::ra_booleanity_params(self.trace.len(), &self.one_hot_params, &mut self.transcript);
@@ -819,7 +825,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
         let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
-        let ram_ra_virtual_params = RamRaSumcheckParams::new(
+        let ram_ra_reduction_params = RaReductionParams::new(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -840,8 +846,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
-        let ram_ra_virtual = RamRaSumcheckProver::initialize(
-            ram_ra_virtual_params,
+        let ram_ra_reduction = RamRaReductionSumcheckProver::initialize(
+            ram_ra_reduction_params,
             &self.trace,
             &self.program_io.memory_layout,
             &self.one_hot_params,
@@ -859,14 +865,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "ram HammingBooleanitySumcheckProver",
                 &ram_hamming_booleanity,
             );
-            print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
+            print_data_structure_heap_usage("RamRaReductionSumcheckProver", &ram_ra_reduction);
             print_data_structure_heap_usage("LookupsReadRafSumcheckProver", &lookups_read_raf);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_val_evaluation),
             Box::new(ram_hamming_booleanity),
-            Box::new(ram_ra_virtual),
+            Box::new(ram_ra_reduction),
             Box::new(lookups_read_raf),
         ];
 
@@ -913,6 +919,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_virtual_params = RamRaVirtualParams::new(
+            self.trace.len(),
+            &self.one_hot_params,
+            &self.opening_accumulator,
+        );
         let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -948,6 +959,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
+        let ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
+            ram_ra_virtual_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
+        );
         let lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
         let (lookups_ra_booleanity, lookups_ra_hamming_weight) =
@@ -970,6 +987,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &bytecode_booleanity,
             );
             print_data_structure_heap_usage("ram HammingWeightSumcheckProver", &ram_hamming_weight);
+            print_data_structure_heap_usage("RamRaVirtualSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage(
                 "lookups BooleanitySumcheckProver",
@@ -986,6 +1004,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Box::new(bytecode_hamming_weight),
             Box::new(bytecode_booleanity),
             Box::new(ram_hamming_weight),
+            Box::new(ram_ra_virtual),
             Box::new(lookups_ra_virtual),
             Box::new(lookups_ra_booleanity),
             Box::new(lookups_ra_hamming_weight),
@@ -1007,45 +1026,89 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_trusted_advice(&mut self) -> Option<PCS::Proof> {
-        self.advice
-            .trusted_advice_polynomial
-            .as_ref()
-            .map(|trusted_advice_poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-                let (point, _) = self
+    fn prove_trusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
+        use crate::poly::opening_proof::SumcheckId;
+        let poly = match &self.advice.trusted_advice_polynomial {
+            Some(p) => p,
+            None => return (None, None),
+        };
+        let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
+
+        // Prove at RamValEvaluation point
+        let (point_val, _) = self
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
+            .unwrap();
+        let proof_val = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val.r,
+            None,
+            &mut self.transcript,
+        );
+
+        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
+        let proof_val_final =
+            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
+                None
+            } else {
+                let (point_val_final, _) = self
                     .opening_accumulator
-                    .get_trusted_advice_opening()
+                    .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
                     .unwrap();
-                PCS::prove(
+                Some(PCS::prove(
                     &self.preprocessing.generators,
-                    trusted_advice_poly,
-                    &point.r,
+                    poly,
+                    &point_val_final.r,
                     None,
                     &mut self.transcript,
-                )
-            })
+                ))
+            };
+
+        (Some(proof_val), proof_val_final)
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_untrusted_advice(&mut self) -> Option<PCS::Proof> {
-        self.advice
-            .untrusted_advice_polynomial
-            .as_ref()
-            .map(|untrusted_advice_poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
-                let (point, _) = self
+    fn prove_untrusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
+        use crate::poly::opening_proof::SumcheckId;
+        let poly = match &self.advice.untrusted_advice_polynomial {
+            Some(p) => p,
+            None => return (None, None),
+        };
+        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
+
+        // Prove at RamValEvaluation point
+        let (point_val, _) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
+            .unwrap();
+        let proof_val = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val.r,
+            None,
+            &mut self.transcript,
+        );
+
+        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
+        let proof_val_final =
+            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
+                None
+            } else {
+                let (point_val_final, _) = self
                     .opening_accumulator
-                    .get_untrusted_advice_opening()
+                    .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
                     .unwrap();
-                PCS::prove(
+                Some(PCS::prove(
                     &self.preprocessing.generators,
-                    untrusted_advice_poly,
-                    &point.r,
+                    poly,
+                    &point_val_final.r,
                     None,
                     &mut self.transcript,
-                )
-            })
+                ))
+            };
+
+        (Some(proof_val), proof_val_final)
     }
 
     /// Stage 7: Batch opening reduction sumcheck.

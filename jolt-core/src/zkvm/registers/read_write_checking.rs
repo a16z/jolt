@@ -1590,6 +1590,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
         claim_stage_1 + self.gamma_cub * claim_stage_3
     }
 
+    // Invariant: we want big-endian, with address variables being "higher" than cycle variables
     fn normalize_opening_point(
         &self,
         sumcheck_challenges: &[F::Challenge],

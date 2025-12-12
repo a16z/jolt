@@ -22,8 +22,8 @@ use crate::zkvm::{
     r1cs::key::UniformSpartanKey,
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
-        output_check::OutputSumcheckVerifier,
-        ra_virtual::RaSumcheckVerifier as RamRaSumcheckVerifier,
+        output_check::OutputSumcheckVerifier, ra_reduction::RamRaReductionSumcheckVerifier,
+        ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
@@ -43,7 +43,7 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator},
+    poly::opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::sumcheck_verifier::SumcheckInstanceVerifier,
     transcripts::Transcript,
@@ -295,6 +295,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
             &mut self.transcript,
+            ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length),
         );
         let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
             self.proof.trace_length,
@@ -343,7 +344,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let ram_ra_virtual = RamRaSumcheckVerifier::new(
+        let ram_ra_reduction = RamRaReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -361,7 +362,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             vec![
                 &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &ram_hamming_booleanity,
-                &ram_ra_virtual,
+                &ram_ra_reduction,
                 &lookups_read_raf,
             ],
             &mut self.opening_accumulator,
@@ -392,6 +393,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
+            self.proof.trace_length,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -412,6 +419,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &bytecode_hamming_weight,
                 &bytecode_booleanity,
                 &ram_hamming_weight,
+                &ram_ra_virtual,
                 &lookups_ra_virtual,
                 &lookups_ra_booleanity,
                 &lookups_rs_hamming_weight,
@@ -489,10 +497,16 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
         if let Some(ref commitment) = self.trusted_advice_commitment {
-            let Some(ref proof) = self.proof.trusted_advice_proof else {
-                return Err(anyhow::anyhow!("Trusted advice proof not found"));
+            // Verify at RamValEvaluation point
+            let Some(ref proof) = self.proof.trusted_advice_val_evaluation_proof else {
+                return Err(anyhow::anyhow!(
+                    "Trusted advice val evaluation proof not found"
+                ));
             };
-            let Some((point, eval)) = self.opening_accumulator.get_trusted_advice_opening() else {
+            let Some((point, eval)) = self
+                .opening_accumulator
+                .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
+            else {
                 return Err(anyhow::anyhow!("Trusted advice opening not found"));
             };
             PCS::verify(
@@ -506,18 +520,51 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .map_err(|e| {
                 anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}")
             })?;
+
+            // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
+            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
+                let Some(ref proof_val_final) = self.proof.trusted_advice_val_final_proof else {
+                    return Err(anyhow::anyhow!("Trusted advice val final proof not found"));
+                };
+                let Some((point_val_final, eval_val_final)) = self
+                    .opening_accumulator
+                    .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                else {
+                    return Err(anyhow::anyhow!(
+                        "Trusted advice val final opening not found"
+                    ));
+                };
+                PCS::verify(
+                    proof_val_final,
+                    &self.preprocessing.generators,
+                    &mut self.transcript,
+                    &point_val_final.r,
+                    &eval_val_final,
+                    commitment,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Trusted advice val final opening proof verification failed: {e:?}"
+                    )
+                })?;
+            }
         }
 
         Ok(())
     }
 
     fn verify_untrusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
-        // Verify untrusted_advice opening proofs
+        use crate::poly::opening_proof::SumcheckId;
         if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
-            let Some(ref proof) = self.proof.untrusted_advice_proof else {
-                return Err(anyhow::anyhow!("Untrusted advice proof not found"));
+            // Verify at RamValEvaluation point
+            let Some(ref proof) = self.proof.untrusted_advice_val_evaluation_proof else {
+                return Err(anyhow::anyhow!(
+                    "Untrusted advice val evaluation proof not found"
+                ));
             };
-            let Some((point, eval)) = self.opening_accumulator.get_untrusted_advice_opening()
+            let Some((point, eval)) = self
+                .opening_accumulator
+                .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
             else {
                 return Err(anyhow::anyhow!("Untrusted advice opening not found"));
             };
@@ -532,6 +579,36 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .map_err(|e| {
                 anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
             })?;
+
+            // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
+            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
+                let Some(ref proof_val_final) = self.proof.untrusted_advice_val_final_proof else {
+                    return Err(anyhow::anyhow!(
+                        "Untrusted advice val final proof not found"
+                    ));
+                };
+                let Some((point_val_final, eval_val_final)) = self
+                    .opening_accumulator
+                    .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                else {
+                    return Err(anyhow::anyhow!(
+                        "Untrusted advice val final opening not found"
+                    ));
+                };
+                PCS::verify(
+                    proof_val_final,
+                    &self.preprocessing.generators,
+                    &mut self.transcript,
+                    &point_val_final.r,
+                    &eval_val_final,
+                    commitment,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Untrusted advice val final opening proof verification failed: {e:?}"
+                    )
+                })?;
+            }
         }
 
         Ok(())

@@ -174,6 +174,7 @@ pub enum SumcheckId {
     RamHammingWeight,
     RamHammingBooleanity,
     RamBooleanity,
+    RamRaReduction,
     RamRaVirtualization,
     RamOutputCheck,
     RamValEvaluation,
@@ -190,8 +191,14 @@ pub enum SumcheckId {
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
-    UntrustedAdvice,
-    TrustedAdvice,
+    /// Untrusted advice opened at r_address derived from the given sumcheck.
+    /// - `RamReadWriteChecking`: opened at r_address from RamVal (used by ValEvaluation)
+    /// - `RamOutputCheck`: opened at r_address from RamValFinal (used by ValFinal)
+    UntrustedAdvice(SumcheckId),
+    /// Trusted advice opened at r_address derived from the given sumcheck.
+    /// - `RamReadWriteChecking`: opened at r_address from RamVal (used by ValEvaluation)
+    /// - `RamOutputCheck`: opened at r_address from RamValFinal (used by ValFinal)
+    TrustedAdvice(SumcheckId),
 }
 
 /// (point, claim)
@@ -341,13 +348,21 @@ where
         self.openings.get(&key).unwrap().1
     }
 
-    pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice)?;
+    pub fn get_untrusted_advice_opening(
+        &self,
+        sumcheck_id: SumcheckId,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
         Some((point.clone(), *claim))
     }
 
-    pub fn get_trusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice)?;
+    pub fn get_trusted_advice_opening(
+        &self,
+        sumcheck_id: SumcheckId,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice(sumcheck_id))?;
         Some((point.clone(), *claim))
     }
 
@@ -461,23 +476,29 @@ where
     pub fn append_untrusted_advice<T: Transcript>(
         &mut self,
         transcript: &mut T,
+        sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
         transcript.append_scalar(&claim);
-        self.openings
-            .insert(OpeningId::UntrustedAdvice, (opening_point, claim));
+        self.openings.insert(
+            OpeningId::UntrustedAdvice(sumcheck_id),
+            (opening_point, claim),
+        );
     }
 
     pub fn append_trusted_advice<T: Transcript>(
         &mut self,
         transcript: &mut T,
+        sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
         transcript.append_scalar(&claim);
-        self.openings
-            .insert(OpeningId::TrustedAdvice, (opening_point, claim));
+        self.openings.insert(
+            OpeningId::TrustedAdvice(sumcheck_id),
+            (opening_point, claim),
+        );
     }
 
     // ========== Stage 7: Batch Opening Reduction Sumcheck ==========
@@ -773,13 +794,21 @@ where
         self.sumchecks.len()
     }
 
-    pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice)?;
+    pub fn get_untrusted_advice_opening(
+        &self,
+        sumcheck_id: SumcheckId,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
         Some((point.clone(), *claim))
     }
 
-    pub fn get_trusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice)?;
+    pub fn get_trusted_advice_opening(
+        &self,
+        sumcheck_id: SumcheckId,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice(sumcheck_id))?;
         Some((point.clone(), *claim))
     }
 
@@ -890,36 +919,32 @@ where
     pub fn append_untrusted_advice<T: Transcript>(
         &mut self,
         transcript: &mut T,
+        sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        if let Some((_, claim)) = self.openings.get(&OpeningId::UntrustedAdvice) {
+        let key = OpeningId::UntrustedAdvice(sumcheck_id);
+        if let Some((_, claim)) = self.openings.get(&key) {
             transcript.append_scalar(claim);
             let claim = *claim;
-            self.openings
-                .insert(OpeningId::UntrustedAdvice, (opening_point.clone(), claim));
+            self.openings.insert(key, (opening_point.clone(), claim));
         } else {
-            panic!(
-                "Tried to populate opening point for non-existent key: {:?}",
-                OpeningId::UntrustedAdvice
-            );
+            panic!("Tried to populate opening point for non-existent key: {key:?}");
         }
     }
 
     pub fn append_trusted_advice<T: Transcript>(
         &mut self,
         transcript: &mut T,
+        sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        if let Some((_, claim)) = self.openings.get(&OpeningId::TrustedAdvice) {
+        let key = OpeningId::TrustedAdvice(sumcheck_id);
+        if let Some((_, claim)) = self.openings.get(&key) {
             transcript.append_scalar(claim);
             let claim = *claim;
-            self.openings
-                .insert(OpeningId::TrustedAdvice, (opening_point.clone(), claim));
+            self.openings.insert(key, (opening_point.clone(), claim));
         } else {
-            panic!(
-                "Tried to populate opening point for non-existent key: {:?}",
-                OpeningId::TrustedAdvice
-            );
+            panic!("Tried to populate opening point for non-existent key: {key:?}");
         }
     }
 
