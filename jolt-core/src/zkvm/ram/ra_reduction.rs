@@ -133,23 +133,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         match self {
             Self::PhaseAddress(prover) => {
+                prover.bind(r_j);
                 if prover.is_last_address_round(round) {
                     // Transition to PhaseCycle1
-                    let mut sumcheck_challenges = prover.sumcheck_challenges.clone();
-                    sumcheck_challenges.push(r_j);
-                    *self = Self::PhaseCycle1(PhaseCycle1Prover::gen(prover, sumcheck_challenges));
-                } else {
-                    prover.bind(r_j);
+                    *self = Self::PhaseCycle1(PhaseCycle1Prover::gen(
+                        prover,
+                        prover.sumcheck_challenges.clone(),
+                    ));
                 }
             }
             Self::PhaseCycle1(prover) => {
+                prover.bind(r_j);
                 if prover.should_transition_to_phase2() {
                     // Transition to PhaseCycle2
-                    let mut sumcheck_challenges = prover.sumcheck_challenges.clone();
-                    sumcheck_challenges.push(r_j);
-                    *self = Self::PhaseCycle2(PhaseCycle2Prover::gen(prover, sumcheck_challenges));
-                } else {
-                    prover.bind(r_j);
+                    *self = Self::PhaseCycle2(PhaseCycle2Prover::gen(
+                        prover,
+                        prover.sumcheck_challenges.clone(),
+                    ));
                 }
             }
             Self::PhaseCycle2(prover) => prover.bind(r_j),
@@ -496,16 +496,6 @@ impl<F: JoltField> PhaseCycle1Prover<F> {
         address_prover: &mut PhaseAddressProver<F>,
         address_challenges: Vec<F::Challenge>,
     ) -> Self {
-        // Bind the final address challenge
-        let last_challenge = *address_challenges.last().unwrap();
-        address_prover
-            .B_1
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-        address_prover
-            .B_2
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-        address_prover.F.update(last_challenge);
-
         // Get α_1 and α_2 from final B polynomial claims
         let alpha_1 = address_prover.B_1.final_sumcheck_claim();
         let alpha_2 = address_prover.B_2.final_sumcheck_claim();
@@ -689,7 +679,7 @@ impl<F: JoltField> PhaseCycle1Prover<F> {
     }
 
     fn should_transition_to_phase2(&self) -> bool {
-        self.P_raf.len().log_2() == 1
+        self.P_raf.len() == 1
     }
 }
 
@@ -728,27 +718,6 @@ impl<F: JoltField> PhaseCycle2Prover<F> {
         cycle1_prover: &mut PhaseCycle1Prover<F>,
         sumcheck_challenges: Vec<F::Challenge>,
     ) -> Self {
-        // Bind the final prefix challenge
-        let last_challenge = *sumcheck_challenges.last().unwrap();
-        cycle1_prover
-            .P_raf
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-        cycle1_prover
-            .P_rw
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-        cycle1_prover
-            .P_val
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-        cycle1_prover
-            .Q_raf
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-        cycle1_prover
-            .Q_rw
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-        cycle1_prover
-            .Q_val
-            .bind_parallel(last_challenge, BindingOrder::LowToHigh);
-
         let params = cycle1_prover.params.clone();
         let log_K = params.log_K;
         let log_T = params.log_T;
@@ -756,13 +725,14 @@ impl<F: JoltField> PhaseCycle2Prover<F> {
         let suffix_n_vars = log_T - prefix_n_vars;
 
         // Extract cycle prefix challenges (those after address rounds)
-        // sumcheck_challenges are in LITTLE_ENDIAN order (low-to-high binding)
-        let r_cycle_prefix_le: Vec<_> = sumcheck_challenges[log_K..].to_vec();
-        debug_assert_eq!(r_cycle_prefix_le.len(), prefix_n_vars);
+        // sumcheck_challenges are in LITTLE_ENDIAN order (low-to-high binding),
+        // so we reverse them.
+        let r_cycle_prefix: Vec<_> = sumcheck_challenges[log_K..].iter().rev().copied().collect();
+        debug_assert_eq!(r_cycle_prefix.len(), prefix_n_vars);
 
         // Compute eq(r_prefix_reduced, c_lo) evaluations
         // Use LITTLE_ENDIAN to match c_lo iteration pattern (c_lo = 0, 1, 2, ...)
-        let eq_prefix = EqPolynomial::<F>::evals(&r_cycle_prefix_le);
+        let eq_prefix = EqPolynomial::<F>::evals(&r_cycle_prefix);
 
         // Compute H'[c_hi] = Σ_{c_lo} H[c_lo, c_hi] · eq_prefix[c_lo]
         // where H[c] = F_values[addresses[c]]
@@ -781,14 +751,13 @@ impl<F: JoltField> PhaseCycle2Prover<F> {
 
         // Compute scaling factors: eq(r_cycle_x_lo, r_cycle_prefix_reduced)
         // r_cycle_*_lo are in BIG_ENDIAN, so reverse r_cycle_prefix for mle
-        let r_cycle_prefix_be: Vec<_> = r_cycle_prefix_le.iter().rev().copied().collect();
         let r_cycle_raf_lo: Vec<_> = params.r_cycle_raf[suffix_n_vars..].to_vec();
         let r_cycle_rw_lo: Vec<_> = params.r_cycle_rw[suffix_n_vars..].to_vec();
         let r_cycle_val_lo: Vec<_> = params.r_cycle_val[suffix_n_vars..].to_vec();
 
-        let scale_raf = EqPolynomial::<F>::mle(&r_cycle_raf_lo, &r_cycle_prefix_be);
-        let scale_rw = EqPolynomial::<F>::mle(&r_cycle_rw_lo, &r_cycle_prefix_be);
-        let scale_val = EqPolynomial::<F>::mle(&r_cycle_val_lo, &r_cycle_prefix_be);
+        let scale_raf = EqPolynomial::<F>::mle(&r_cycle_raf_lo, &r_cycle_prefix);
+        let scale_rw = EqPolynomial::<F>::mle(&r_cycle_rw_lo, &r_cycle_prefix);
+        let scale_val = EqPolynomial::<F>::mle(&r_cycle_val_lo, &r_cycle_prefix);
 
         // Coefficients: α_1·scale_raf, γ²·α_2·scale_rw, (γ·α_1 + γ³·α_2)·scale_val
         let alpha_1 = cycle1_prover.alpha_1;
