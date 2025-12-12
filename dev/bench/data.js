@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1765490242775,
+  "lastUpdate": 1765570731640,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -39898,6 +39898,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 342516,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "190e0ba42e49a3a2ee0b7306d4af952fd458e001",
+          "message": "Continuing feat/col-major-sparse-matrix (#1127)\n\n* Add MatrixOrder\n\n* Use SparseMatrixPolynomial for phase 2\n\n* Introduce phase 3\n\n* Fix bugs\n\n* remove unused variables\n\n* refactor address major data structure\n\n* more optimization\n\n* some more changes\n\n* rename & move sparse matrix poly\n\n* further split address & cycle major\n\n* minor changes\n\n* add ra reduction sumcheck before ra virtual\n\n* fixed bug in ra reduction\n\n* moved read write matrix into subprotocols\n\n* fmt\n\n* clean up ra reduction\n\n* fix unreduced bug\n\n* delete data buffer\n\n* fix advice polys to be opened at two address points now\n\n* fmt\n\n* switched phase2 to low-to-high binding\n\n* cleanup & add parallelism\n\n* clarification on LT evals and materialize for cycle major\n\n* fmt + clippy\n\n* generic-fy the column index type\n\n* Test signed commit\n\n* fmt\n\n* revert prev_val and next_val of cycle major to u64\n\n* more cleanup\n\n* testing for binding all address first\n\n* update config docstring\n\n* minor change\n\n* minor\n\n* remove extra advice opening if we bind all cycle variables first\n\n* switch ra reduction to use prefix suffix\n\n* addressing comments\n\n* Fix Phase2 endianness bug\n\n* Fix advice test\n\n* Use AoS for address-major\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2025-12-12T14:37:23-05:00",
+          "tree_id": "22ea5a7d16c52b858a19521c40f7f3db4cf56710",
+          "url": "https://github.com/a16z/jolt/commit/190e0ba42e49a3a2ee0b7306d4af952fd458e001"
+        },
+        "date": 1765570730178,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 352060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 1471348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 334300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 345472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 333508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 347612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 351364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 333952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 351140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 3047944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 347700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 338072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 343368,
             "unit": "KB",
             "extra": ""
           }
