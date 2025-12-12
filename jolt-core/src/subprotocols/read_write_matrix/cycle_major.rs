@@ -17,24 +17,8 @@ use crate::zkvm::ram::remap_address;
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, RAMAccess};
 
-use super::ColIndex;
-
 /// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
 /// Conceptually, both ra and Val can be seen as K x T matrices.
-///
-/// # Usage
-///
-/// This struct is used **only** by [`ReadWriteMatrixCycleMajor`] (Array-of-Structs layout).
-/// The address-major representation ([`super::ReadWriteMatrixAddressMajor`]) uses a different
-/// Struct-of-Arrays layout with separate vectors for each field, plus dense `val_init`
-/// and `val_final` arrays to derive `next_val` on-the-fly.
-///
-/// # Why AoS for Cycle-Major?
-///
-/// Cycle-major operations (binding, prover message) access multiple fields per entry
-/// (`ra_coeff`, `val_coeff`, `prev_val`, `next_val`), making AoS cache-friendly.
-/// Additionally, `prev_val` and `next_val` must be stored explicitly because entries
-/// are sorted by row (cycle), so the next entry in the same *column* could be anywhere.
 ///
 /// # Memory Optimization: `prev_val`/`next_val` as `u64`
 ///
@@ -48,13 +32,12 @@ use super::ColIndex;
 /// # Type Parameters
 ///
 /// - `F`: The field type for coefficients.
-/// - `I`: The column index type (e.g., `usize` for RAM, `u8` for registers).
 #[derive(Allocative, Debug, PartialEq, Clone, Copy)]
-pub struct ReadWriteEntry<F: JoltField, I: ColIndex> {
+pub struct ReadWriteEntry<F: JoltField> {
     /// The row index. Before binding, row \in [0, T)
     pub row: usize,
     /// The column index. Before binding, col \in [0, K)
-    pub col: I,
+    pub col: usize,
     /// In round i, each ReadWriteEntry represents a coefficient
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
@@ -91,14 +74,13 @@ pub struct ReadWriteEntry<F: JoltField, I: ColIndex> {
 /// # Type Parameters
 ///
 /// - `F`: The field type for coefficients.
-/// - `I`: The column index type (e.g., `usize` for RAM, `u8` for registers).
 #[derive(Allocative, Debug, Default, Clone)]
-pub struct ReadWriteMatrixCycleMajor<F: JoltField, I: ColIndex = usize> {
-    pub entries: Vec<ReadWriteEntry<F, I>>,
+pub struct ReadWriteMatrixCycleMajor<F: JoltField> {
+    pub entries: Vec<ReadWriteEntry<F>>,
     pub(crate) val_init: MultilinearPolynomial<F>,
 }
 
-impl<F: JoltField> ReadWriteMatrixCycleMajor<F, usize> {
+impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// Creates a new `ReadWriteMatrixCycleMajor` to represent the ra and Val polynomials
     /// for the RAM read/write checking sumcheck.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
@@ -144,7 +126,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, usize> {
     }
 }
 
-impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
+impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// Binds two adjacent rows in the sparse matrix together with the randomness `r`.
     /// This is a parallel, recursive function (similar to a parallel merge of two
     /// sorted lists) that assumes `even_row` and `odd_row` are sorted by column
@@ -156,10 +138,10 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
     /// the number of entries that would be in the bound row, which can be used to
     /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn bind_rows(
-        even_row: &[ReadWriteEntry<F, I>],
-        odd_row: &[ReadWriteEntry<F, I>],
+        even_row: &[ReadWriteEntry<F>],
+        odd_row: &[ReadWriteEntry<F>],
         r: F::Challenge,
-        out: &mut [MaybeUninit<ReadWriteEntry<F, I>>],
+        out: &mut [MaybeUninit<ReadWriteEntry<F>>],
         dry_run: bool,
     ) -> usize {
         /// Threshold where we stop parallelizing and do a plain linear merge.
@@ -254,10 +236,10 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
     /// the number of entries that would be in the bound row, which can be used to
     /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn seq_bind_rows(
-        even: &[ReadWriteEntry<F, I>],
-        odd: &[ReadWriteEntry<F, I>],
+        even: &[ReadWriteEntry<F>],
+        odd: &[ReadWriteEntry<F>],
         r: F::Challenge,
-        out: &mut [MaybeUninit<ReadWriteEntry<F, I>>],
+        out: &mut [MaybeUninit<ReadWriteEntry<F>>],
         dry_run: bool,
     ) -> usize {
         // Even index
@@ -319,10 +301,10 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
     /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
     /// Instead, we can infer its values from the matrix entry that is `Some`.
     fn bind_entries(
-        even: Option<&ReadWriteEntry<F, I>>,
-        odd: Option<&ReadWriteEntry<F, I>>,
+        even: Option<&ReadWriteEntry<F>>,
+        odd: Option<&ReadWriteEntry<F>>,
         r: F::Challenge,
-    ) -> ReadWriteEntry<F, I> {
+    ) -> ReadWriteEntry<F> {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row.is_even());
@@ -390,7 +372,7 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
             .collect();
 
         let bound_length = row_lengths.iter().map(|(_, bound_len)| bound_len).sum();
-        let mut bound_entries: Vec<ReadWriteEntry<F, I>> = Vec::with_capacity(bound_length);
+        let mut bound_entries: Vec<ReadWriteEntry<F>> = Vec::with_capacity(bound_length);
         let mut bound_entries_slice = bound_entries.spare_capacity_mut();
         let mut unbound_entries_slice = self.entries.as_slice();
 
@@ -426,8 +408,8 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
     /// sumcheck message. This is a recursive, parallel algorithm.
     pub fn prover_message_contribution(
-        even_row: &[ReadWriteEntry<F, I>],
-        odd_row: &[ReadWriteEntry<F, I>],
+        even_row: &[ReadWriteEntry<F>],
+        odd_row: &[ReadWriteEntry<F>],
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F; 2] {
@@ -487,8 +469,8 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
     /// Each `compute_evals_unreduced` returns `Unreduced<8>` (no reduction on the final multiply),
     /// and we accumulate into `Unreduced<9>` for headroom. Only one Montgomery reduction at the end.
     fn seq_prover_message_contribution(
-        even: &[ReadWriteEntry<F, I>],
-        odd: &[ReadWriteEntry<F, I>],
+        even: &[ReadWriteEntry<F>],
+        odd: &[ReadWriteEntry<F>],
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F; 2] {
@@ -548,8 +530,8 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
     /// This is used in `seq_prover_message_contribution` for better performance when
     /// accumulating many entries.
     fn compute_evals_unreduced(
-        even: Option<&ReadWriteEntry<F, I>>,
-        odd: Option<&ReadWriteEntry<F, I>>,
+        even: Option<&ReadWriteEntry<F>>,
+        odd: Option<&ReadWriteEntry<F>>,
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F::Unreduced<8>; 2] {
@@ -635,8 +617,7 @@ impl<F: JoltField, I: ColIndex> ReadWriteMatrixCycleMajor<F, I> {
                 "row {} >= T_prime {T_prime}",
                 entry.row
             );
-            let col_usize = entry.col.to_usize();
-            let idx = col_usize * T_prime + entry.row;
+            let idx = entry.col * T_prime + entry.row;
             // SAFETY: Each entry has a unique (row, col) pair,
             // so writes to ra[idx] and val[idx] are disjoint across parallel iterations.
             unsafe {

@@ -225,10 +225,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         } else if phase2_rounds > 0 {
             (Default::default(), sparse_matrix.into(), None, None)
         } else {
-            // Both phase1 and phase2 are 0: materialize directly
-            let (ra, val) = Into::<ReadWriteMatrixAddressMajor<_, _>>::into(sparse_matrix)
-                .materialize(params.K, params.T);
-            (Default::default(), Default::default(), Some(ra), Some(val))
+            unimplemented!("Unsupported configuration: both phase 1 and phase 2 are 0 rounds")
+            // // Both phase1 and phase2 are 0: materialize directly
+            // let (ra, val) = sparse_matrix.materialize(params.K, params.T);
+            // (Default::default(), Default::default(), Some(ra), Some(val))
         };
 
         Self {
