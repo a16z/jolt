@@ -6,7 +6,7 @@ use allocative::Allocative;
 /// directly from the trace without materializing large intermediate polynomials.
 /// This trait defines when to switch from streaming mode to linear-time / materialized mode,
 /// and how to partition rounds into "windows" for the streaming data structure.
-pub trait StreamingSchedule: Send + Sync {
+pub trait StreamingSchedule: Send + Sync + Allocative {
     /// Returns `true` if this round is the switch-over round where we finally
     /// materialise the sumcheck polynomials (Az, Bz) in memory.
     ///
