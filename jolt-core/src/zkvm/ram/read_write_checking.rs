@@ -8,7 +8,8 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::read_write_matrix::{
-    ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
+    RamAddressMajorEntry, RamCycleMajorEntry, ReadWriteMatrixAddressMajor,
+    ReadWriteMatrixCycleMajor,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -141,8 +142,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
 
 #[derive(Allocative)]
 pub struct RamReadWriteCheckingProver<F: JoltField> {
-    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F>,
-    sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F>,
+    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>>,
+    sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RamAddressMajorEntry<F>>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
     // The following polynomials are instantiated after

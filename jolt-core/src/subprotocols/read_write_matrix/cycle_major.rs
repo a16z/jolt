@@ -10,55 +10,49 @@ use num::Integer;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
-use crate::field::OptimizedMul;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::subprotocols::read_write_matrix::ram::RamCycleMajorEntry;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::ram::remap_address;
 use common::jolt_device::MemoryLayout;
-use tracer::instruction::{Cycle, RAMAccess};
+use tracer::instruction::Cycle;
 
-/// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
-/// Conceptually, both ra and Val can be seen as K x T matrices.
-///
-/// # Memory Optimization: `prev_val`/`next_val` as `u64`
-///
-/// These fields store raw memory values (not bound coefficients) because:
-/// - Phase 1 (cycle binding) always starts from initial memory state
-/// - We never switch to cycle-major after binding address variables
-/// - They're only converted to `F` when needed in arithmetic
-///
-/// This saves 48 bytes per entry (~35% reduction).
-///
-/// # Type Parameters
-///
-/// - `F`: The field type for coefficients.
-#[derive(Allocative, Debug, PartialEq, Clone, Copy)]
-pub struct ReadWriteEntry<F: JoltField> {
+pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
     /// The row index. Before binding, row \in [0, T)
-    pub row: usize,
-    /// The column index. Before binding, col \in [0, K)
-    pub col: usize,
-    /// In round i, each ReadWriteEntry represents a coefficient
-    ///   Val(k, j', r)
-    /// which is some combination of Val(k, j', 00...0), ...
-    /// Val(k, j', 11...1).
-    /// `prev_val` contains the unbound coefficient before
-    /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
-    /// Val(k, j'-1, 11...1)
-    pub(crate) prev_val: u64,
-    /// In round i, each ReadWriteEntry represents a coefficient
-    ///   Val(k, j', r)
-    /// which is some combination of Val(k, j', 00...0), ...
-    /// Val(k, j', 11...1).
-    /// `next_val` contains the unbound coefficient after
-    /// Val(k, j', 00...0) –– abusing notation, `next_val` is
-    /// Val(k, j'+1, 00...0)
-    pub(crate) next_val: u64,
-    /// The Val coefficient for this matrix entry.
-    pub val_coeff: F,
-    /// The ra coefficient for this matrix entry. Note that for RAM,
-    /// ra and wa are the same polynomial.
-    pub ra_coeff: F,
+    fn row(&self) -> usize;
+
+    /// The column index. Before binding, column \in [0, K)
+    fn column(&self) -> usize;
+
+    /// Converts a cycle into a matrix entry. Returns None if the cycle did not
+    /// access RAM/registers.
+    fn from_cycle(cycle: &Cycle, cycle_index: usize, memory_layout: &MemoryLayout) -> Option<Self>;
+
+    /// Binds adjacent entries of the matrix together using the random challenge `r`.
+    /// By "adjacent", here we mean entries that are in the same column and adjacent
+    /// rows (rows 2j and 2j+1).
+    /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
+    /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
+    /// Instead, we can infer its values from the matrix entry that is `Some`.
+    fn bind_entries(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge) -> Self;
+
+    /// For the given pair of adjacent entries, computes the pair's contribution to the prover's
+    /// sumcheck message, returning `Unreduced<8>` to avoid Montgomery reduction.
+    ///
+    /// By "adjacent", here we mean entries that are in the same column and
+    /// adjacent rows (rows 2j and 2j+1).
+    /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
+    /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
+    /// Instead, we can infer its values from the matrix entry that is `Some`.
+    ///
+    /// The final `ra * (...)` uses `mul_unreduced` instead of regular multiplication.
+    /// This is used in `seq_prover_message_contribution` for better performance when
+    /// accumulating many entries.
+    fn compute_evals(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        inc_evals: [F; 2],
+        gamma: F,
+    ) -> [F::Unreduced<8>; 2];
 }
 
 /// Represents the ra(k, j) and Val(k, j) polynomials for the RAM
@@ -75,12 +69,12 @@ pub struct ReadWriteEntry<F: JoltField> {
 ///
 /// - `F`: The field type for coefficients.
 #[derive(Allocative, Debug, Default, Clone)]
-pub struct ReadWriteMatrixCycleMajor<F: JoltField> {
-    pub entries: Vec<ReadWriteEntry<F>>,
+pub struct ReadWriteMatrixCycleMajor<F: JoltField, E: CycleMajorMatrixEntry<F>> {
+    pub entries: Vec<E>,
     pub(crate) val_init: MultilinearPolynomial<F>,
 }
 
-impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
+impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> {
     /// Creates a new `ReadWriteMatrixCycleMajor` to represent the ra and Val polynomials
     /// for the RAM read/write checking sumcheck.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
@@ -88,35 +82,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         let entries: Vec<_> = trace
             .par_iter()
             .enumerate()
-            .filter_map(|(j, cycle)| {
-                let ram_op = cycle.ram_access();
-                match ram_op {
-                    RAMAccess::Write(write) => {
-                        let pre_value = write.pre_value;
-                        let post_value = write.post_value;
-                        Some(ReadWriteEntry {
-                            row: j,
-                            col: remap_address(write.address, memory_layout).unwrap() as usize,
-                            ra_coeff: F::one(),
-                            val_coeff: F::from_u64(pre_value),
-                            prev_val: pre_value,
-                            next_val: post_value,
-                        })
-                    }
-                    RAMAccess::Read(read) => {
-                        let read_value = read.value;
-                        Some(ReadWriteEntry {
-                            row: j,
-                            col: remap_address(read.address, memory_layout).unwrap() as usize,
-                            ra_coeff: F::one(),
-                            val_coeff: F::from_u64(read_value),
-                            prev_val: read_value,
-                            next_val: read_value,
-                        })
-                    }
-                    _ => None,
-                }
-            })
+            .filter_map(|(j, cycle)| CycleMajorMatrixEntry::from_cycle(cycle, j, memory_layout))
             .collect();
 
         ReadWriteMatrixCycleMajor {
@@ -126,7 +92,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     }
 }
 
-impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
+impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> {
     /// Binds two adjacent rows in the sparse matrix together with the randomness `r`.
     /// This is a parallel, recursive function (similar to a parallel merge of two
     /// sorted lists) that assumes `even_row` and `odd_row` are sorted by column
@@ -138,10 +104,10 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// the number of entries that would be in the bound row, which can be used to
     /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn bind_rows(
-        even_row: &[ReadWriteEntry<F>],
-        odd_row: &[ReadWriteEntry<F>],
+        even_row: &[E],
+        odd_row: &[E],
         r: F::Challenge,
-        out: &mut [MaybeUninit<ReadWriteEntry<F>>],
+        out: &mut [MaybeUninit<E>],
         dry_run: bool,
     ) -> usize {
         /// Threshold where we stop parallelizing and do a plain linear merge.
@@ -155,13 +121,13 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         // Split the longer row at its midpoint; find where that pivot would land in the other row.
         let (even_pivot_idx, odd_pivot_idx) = if even_row.len() > odd_row.len() {
             let even_pivot_idx = even_row.len() / 2;
-            let pivot = even_row[even_pivot_idx].col;
-            let odd_pivot_idx = odd_row.partition_point(|x| x.col < pivot);
+            let pivot = even_row[even_pivot_idx].column();
+            let odd_pivot_idx = odd_row.partition_point(|x| x.column() < pivot);
             (even_pivot_idx, odd_pivot_idx)
         } else {
             let odd_pivot_idx = odd_row.len() / 2;
-            let pivot = odd_row[odd_pivot_idx].col;
-            let even_pivot_idx = even_row.partition_point(|x| x.col < pivot);
+            let pivot = odd_row[odd_pivot_idx].column();
+            let even_pivot_idx = even_row.partition_point(|x| x.column() < pivot);
             (even_pivot_idx, odd_pivot_idx)
         };
 
@@ -236,10 +202,10 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// the number of entries that would be in the bound row, which can be used to
     /// allocate the exact amount of memory needed in the subsequent "real" bind operation.
     fn seq_bind_rows(
-        even: &[ReadWriteEntry<F>],
-        odd: &[ReadWriteEntry<F>],
+        even: &[E],
+        odd: &[E],
         r: F::Challenge,
-        out: &mut [MaybeUninit<ReadWriteEntry<F>>],
+        out: &mut [MaybeUninit<E>],
         dry_run: bool,
     ) -> usize {
         // Even index
@@ -250,24 +216,24 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         let mut k = 0;
 
         while i < even.len() && j < odd.len() {
-            if even[i].col == odd[j].col {
+            if even[i].column() == odd[j].column() {
                 if !dry_run {
-                    let bound_entry = Self::bind_entries(Some(&even[i]), Some(&odd[j]), r);
+                    let bound_entry = E::bind_entries(Some(&even[i]), Some(&odd[j]), r);
                     out[k] = MaybeUninit::new(bound_entry);
                 }
                 i += 1;
                 j += 1;
                 k += 1;
-            } else if even[i].col < odd[j].col {
+            } else if even[i].column() < odd[j].column() {
                 if !dry_run {
-                    let bound_entry = Self::bind_entries(Some(&even[i]), None, r);
+                    let bound_entry = E::bind_entries(Some(&even[i]), None, r);
                     out[k] = MaybeUninit::new(bound_entry);
                 }
                 i += 1;
                 k += 1;
             } else {
                 if !dry_run {
-                    let bound_entry = Self::bind_entries(None, Some(&odd[j]), r);
+                    let bound_entry = E::bind_entries(None, Some(&odd[j]), r);
                     out[k] = MaybeUninit::new(bound_entry);
                 }
                 j += 1;
@@ -276,14 +242,14 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         }
         for remaining_even_entry in even[i..].iter() {
             if !dry_run {
-                let bound_entry = Self::bind_entries(Some(remaining_even_entry), None, r);
+                let bound_entry = E::bind_entries(Some(remaining_even_entry), None, r);
                 out[k] = MaybeUninit::new(bound_entry);
             }
             k += 1;
         }
         for remaining_odd_entry in odd[j..].iter() {
             if !dry_run {
-                let bound_entry = Self::bind_entries(None, Some(remaining_odd_entry), r);
+                let bound_entry = E::bind_entries(None, Some(remaining_odd_entry), r);
                 out[k] = MaybeUninit::new(bound_entry);
             }
             k += 1;
@@ -294,76 +260,15 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         k
     }
 
-    /// Binds adjacent entries of the matrix together using the random challenge `r`.
-    /// By "adjacent", here we mean entries that are in the same column and adjacent
-    /// rows (rows 2j and 2j+1).
-    /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
-    /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
-    /// Instead, we can infer its values from the matrix entry that is `Some`.
-    fn bind_entries(
-        even: Option<&ReadWriteEntry<F>>,
-        odd: Option<&ReadWriteEntry<F>>,
-        r: F::Challenge,
-    ) -> ReadWriteEntry<F> {
-        match (even, odd) {
-            (Some(even), Some(odd)) => {
-                debug_assert!(even.row.is_even());
-                debug_assert!(odd.row.is_odd());
-                debug_assert_eq!(even.col, odd.col);
-                ReadWriteEntry {
-                    row: even.row / 2,
-                    col: even.col,
-                    ra_coeff: even.ra_coeff + r.mul_0_optimized(odd.ra_coeff - even.ra_coeff),
-                    val_coeff: even.val_coeff + r.mul_0_optimized(odd.val_coeff - even.val_coeff),
-                    prev_val: even.prev_val,
-                    next_val: odd.next_val,
-                }
-            }
-            (Some(even), None) => {
-                // For ReadWriteMatrixCycleMajor, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an odd-row entry in the same column as even
-                // means that its implicit Val coeff is even.next_val, and its implicit
-                // ra coeff is 0.
-                let odd_val_coeff = F::from_u64(even.next_val);
-                ReadWriteEntry {
-                    row: even.row / 2,
-                    col: even.col,
-                    ra_coeff: (F::one() - r).mul_1_optimized(even.ra_coeff),
-                    val_coeff: even.val_coeff + r.mul_0_optimized(odd_val_coeff - even.val_coeff),
-                    prev_val: even.prev_val,
-                    next_val: even.next_val,
-                }
-            }
-            (None, Some(odd)) => {
-                // For ReadWriteMatrixCycleMajor, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an even-row entry in the same column as odd
-                // means that its implicit Val coeff is odd.prev_val, and its implicit
-                // ra coeff is 0.
-                let even_val_coeff = F::from_u64(odd.prev_val);
-                ReadWriteEntry {
-                    row: odd.row / 2,
-                    col: odd.col,
-                    ra_coeff: r.mul_1_optimized(odd.ra_coeff),
-                    val_coeff: even_val_coeff + r.mul_0_optimized(odd.val_coeff - even_val_coeff),
-                    prev_val: odd.prev_val,
-                    next_val: odd.next_val,
-                }
-            }
-            (None, None) => panic!("Both entries are None"),
-        }
-    }
-
     /// Binds a cycle variable of the ra and Val polynomials represented by
     /// this `ReadWriteMatrixCycleMajor` to the random challenge `r`.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::bind")]
     pub fn bind(&mut self, r: F::Challenge) {
         let row_lengths: Vec<_> = self
             .entries
-            .par_chunk_by(|x, y| x.row / 2 == y.row / 2)
+            .par_chunk_by(|x, y| x.row() / 2 == y.row() / 2)
             .map(|entries| {
-                let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
+                let odd_row_start_index = entries.partition_point(|entry| entry.row().is_even());
                 let (even_row, odd_row) = entries.split_at(odd_row_start_index);
                 // Dry run to compute output length
                 let bound_len = Self::bind_rows(even_row, odd_row, r, &mut [], true);
@@ -372,7 +277,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
             .collect();
 
         let bound_length = row_lengths.iter().map(|(_, bound_len)| bound_len).sum();
-        let mut bound_entries: Vec<ReadWriteEntry<F>> = Vec::with_capacity(bound_length);
+        let mut bound_entries: Vec<E> = Vec::with_capacity(bound_length);
         let mut bound_entries_slice = bound_entries.spare_capacity_mut();
         let mut unbound_entries_slice = self.entries.as_slice();
 
@@ -394,7 +299,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
             .par_iter()
             .zip(output_slices.into_par_iter())
             .for_each(|(input_slice, output_slice)| {
-                let odd_row_start_index = input_slice.partition_point(|entry| entry.row.is_even());
+                let odd_row_start_index =
+                    input_slice.partition_point(|entry| entry.row().is_even());
                 let (even_row, odd_row) = input_slice.split_at(odd_row_start_index);
                 let _ = Self::bind_rows(even_row, odd_row, r, output_slice, false);
             });
@@ -408,8 +314,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
     /// sumcheck message. This is a recursive, parallel algorithm.
     pub fn prover_message_contribution(
-        even_row: &[ReadWriteEntry<F>],
-        odd_row: &[ReadWriteEntry<F>],
+        even_row: &[E],
+        odd_row: &[E],
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F; 2] {
@@ -424,13 +330,13 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         // Split the longer row at its midpoint; find where that pivot would land in the other row.
         let (even_pivot_idx, odd_pivot_idx) = if even_row.len() > odd_row.len() {
             let even_pivot_idx = even_row.len() / 2;
-            let pivot = even_row[even_pivot_idx].col;
-            let odd_pivot_idx = odd_row.partition_point(|x| x.col < pivot);
+            let pivot = even_row[even_pivot_idx].column();
+            let odd_pivot_idx = odd_row.partition_point(|x| x.column() < pivot);
             (even_pivot_idx, odd_pivot_idx)
         } else {
             let odd_pivot_idx = odd_row.len() / 2;
-            let pivot = odd_row[odd_pivot_idx].col;
-            let even_pivot_idx = even_row.partition_point(|x| x.col < pivot);
+            let pivot = odd_row[odd_pivot_idx].column();
+            let even_pivot_idx = even_row.partition_point(|x| x.column() < pivot);
             (even_pivot_idx, odd_pivot_idx)
         };
 
@@ -469,8 +375,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
     /// Each `compute_evals_unreduced` returns `Unreduced<8>` (no reduction on the final multiply),
     /// and we accumulate into `Unreduced<9>` for headroom. Only one Montgomery reduction at the end.
     fn seq_prover_message_contribution(
-        even: &[ReadWriteEntry<F>],
-        odd: &[ReadWriteEntry<F>],
+        even: &[E],
+        odd: &[E],
         inc_evals: [F; 2],
         gamma: F,
     ) -> [F; 2] {
@@ -479,34 +385,31 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
         let mut evals_accumulator = [F::Unreduced::<9>::zero(); 2];
 
         while i < even.len() && j < odd.len() {
-            if even[i].col == odd[j].col {
-                let evals =
-                    Self::compute_evals_unreduced(Some(&even[i]), Some(&odd[j]), inc_evals, gamma);
+            if even[i].column() == odd[j].column() {
+                let evals = E::compute_evals(Some(&even[i]), Some(&odd[j]), inc_evals, gamma);
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 i += 1;
                 j += 1;
-            } else if even[i].col < odd[j].col {
-                let evals = Self::compute_evals_unreduced(Some(&even[i]), None, inc_evals, gamma);
+            } else if even[i].column() < odd[j].column() {
+                let evals = E::compute_evals(Some(&even[i]), None, inc_evals, gamma);
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 i += 1;
             } else {
-                let evals = Self::compute_evals_unreduced(None, Some(&odd[j]), inc_evals, gamma);
+                let evals = E::compute_evals(None, Some(&odd[j]), inc_evals, gamma);
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 j += 1;
             }
         }
         for remaining_even_entry in even[i..].iter() {
-            let evals =
-                Self::compute_evals_unreduced(Some(remaining_even_entry), None, inc_evals, gamma);
+            let evals = E::compute_evals(Some(remaining_even_entry), None, inc_evals, gamma);
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }
         for remaining_odd_entry in odd[j..].iter() {
-            let evals =
-                Self::compute_evals_unreduced(None, Some(remaining_odd_entry), inc_evals, gamma);
+            let evals = E::compute_evals(None, Some(remaining_odd_entry), inc_evals, gamma);
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }
@@ -516,59 +419,9 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
             F::from_montgomery_reduce(evals_accumulator[1]),
         ]
     }
+}
 
-    /// For the given pair of adjacent entries, computes the pair's contribution to the prover's
-    /// sumcheck message, returning `Unreduced<8>` to avoid Montgomery reduction.
-    ///
-    /// By "adjacent", here we mean entries that are in the same column and
-    /// adjacent rows (rows 2j and 2j+1).
-    /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
-    /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
-    /// Instead, we can infer its values from the matrix entry that is `Some`.
-    ///
-    /// The final `ra * (...)` uses `mul_unreduced` instead of regular multiplication.
-    /// This is used in `seq_prover_message_contribution` for better performance when
-    /// accumulating many entries.
-    fn compute_evals_unreduced(
-        even: Option<&ReadWriteEntry<F>>,
-        odd: Option<&ReadWriteEntry<F>>,
-        inc_evals: [F; 2],
-        gamma: F,
-    ) -> [F::Unreduced<8>; 2] {
-        match (even, odd) {
-            (Some(even), Some(odd)) => {
-                debug_assert!(even.row.is_even());
-                debug_assert!(odd.row.is_odd());
-                debug_assert_eq!(even.col, odd.col);
-                let ra_evals = [even.ra_coeff, odd.ra_coeff - even.ra_coeff];
-                let val_evals = [even.val_coeff, odd.val_coeff - even.val_coeff];
-                [
-                    ra_evals[0].mul_unreduced(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
-                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
-                ]
-            }
-            (Some(even), None) => {
-                let odd_val_coeff = F::from_u64(even.next_val);
-                let ra_evals = [even.ra_coeff, -even.ra_coeff];
-                let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
-                [
-                    ra_evals[0].mul_unreduced(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
-                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
-                ]
-            }
-            (None, Some(odd)) => {
-                let even_val_coeff = F::from_u64(odd.prev_val);
-                let ra_evals = [F::zero(), odd.ra_coeff];
-                let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
-                [
-                    F::Unreduced::<8>::zero(), // ra_evals[0] is zero
-                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
-                ]
-            }
-            (None, None) => panic!("Both entries are None"),
-        }
-    }
-
+impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>> {
     /// Materializes the ra and Val polynomials represented by this `ReadWriteMatrixCycleMajor`.
     ///
     /// After partial binding of cycle and address variables, there are `K_prime` columns
@@ -613,11 +466,11 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F> {
 
         self.entries.into_par_iter().for_each(|entry| {
             debug_assert!(
-                entry.row < T_prime,
+                entry.row() < T_prime,
                 "row {} >= T_prime {T_prime}",
-                entry.row
+                entry.row()
             );
-            let idx = entry.col * T_prime + entry.row;
+            let idx = entry.column() * T_prime + entry.row();
             // SAFETY: Each entry has a unique (row, col) pair,
             // so writes to ra[idx] and val[idx] are disjoint across parallel iterations.
             unsafe {
