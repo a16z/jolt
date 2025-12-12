@@ -7,6 +7,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
+use crate::zkvm::spartan::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::{
     bytecode::{
@@ -267,12 +268,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let spartan_instruction_input =
             InstructionInputSumcheckVerifier::new(&self.opening_accumulator, &mut self.transcript);
+        let spartan_registers_claim_reduction = RegistersClaimReductionSumcheckVerifier::new(
+            self.proof.trace_length,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let _r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
                 &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &spartan_instruction_input,
+                &spartan_registers_claim_reduction,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
