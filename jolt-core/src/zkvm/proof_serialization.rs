@@ -9,6 +9,7 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
+use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 use crate::{
     field::JoltField,
     poly::{
@@ -17,13 +18,13 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
-};
-use crate::{
-    subprotocols::univariate_skip::UniSkipFirstRoundProof,
-    zkvm::{config::OneHotParams, witness::AllCommittedPolynomials},
+    zkvm::{
+        instruction::{CircuitFlags, InstructionFlags},
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
@@ -53,201 +54,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub ram_K: usize,
     pub bytecode_K: usize,
     pub log_k_chunk: usize,
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for JoltProof<F, PCS, FS>
-{
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        // serialize ram_K, bytecode_K, log_chunk first
-        self.ram_K.serialize_with_mode(&mut writer, compress)?;
-        self.bytecode_K.serialize_with_mode(&mut writer, compress)?;
-        self.log_k_chunk
-            .serialize_with_mode(&mut writer, compress)?;
-        let one_hot_params =
-            OneHotParams::new_with_log_k_chunk(self.log_k_chunk, self.bytecode_K, self.ram_K);
-        // ensure that all committed polys are set up before serializing proofs
-        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
-        self.opening_claims
-            .serialize_with_mode(&mut writer, compress)?;
-        self.commitments
-            .serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_commitment
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage1_uni_skip_first_round_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage1_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage2_uni_skip_first_round_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage2_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage3_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage4_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage5_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage6_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage7_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage7_sumcheck_claims
-            .serialize_with_mode(&mut writer, compress)?;
-        self.joint_opening_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.trusted_advice_val_evaluation_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.trusted_advice_val_final_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_val_evaluation_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_val_final_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.trace_length
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.opening_claims.serialized_size(compress)
-            + self.commitments.serialized_size(compress)
-            + self.untrusted_advice_commitment.serialized_size(compress)
-            + self
-                .stage1_uni_skip_first_round_proof
-                .serialized_size(compress)
-            + self.stage1_sumcheck_proof.serialized_size(compress)
-            + self
-                .stage2_uni_skip_first_round_proof
-                .serialized_size(compress)
-            + self.stage2_sumcheck_proof.serialized_size(compress)
-            + self.stage3_sumcheck_proof.serialized_size(compress)
-            + self.stage4_sumcheck_proof.serialized_size(compress)
-            + self.stage5_sumcheck_proof.serialized_size(compress)
-            + self.stage6_sumcheck_proof.serialized_size(compress)
-            + self
-                .trusted_advice_val_evaluation_proof
-                .serialized_size(compress)
-            + self
-                .trusted_advice_val_final_proof
-                .serialized_size(compress)
-            + self
-                .untrusted_advice_val_evaluation_proof
-                .serialized_size(compress)
-            + self
-                .untrusted_advice_val_final_proof
-                .serialized_size(compress)
-            + self.stage7_sumcheck_proof.serialized_size(compress)
-            + self.stage7_sumcheck_claims.serialized_size(compress)
-            + self.joint_opening_proof.serialized_size(compress)
-            + self.trace_length.serialized_size(compress)
-            + self.ram_K.serialized_size(compress)
-            + self.bytecode_K.serialized_size(compress)
-            + self.log_k_chunk.serialized_size(compress)
-    }
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for JoltProof<F, PCS, FS>
-{
-    fn check(&self) -> Result<(), SerializationError> {
-        self.opening_claims.check()?;
-        self.commitments.check()?;
-        self.untrusted_advice_commitment.check()?;
-        self.stage1_uni_skip_first_round_proof.check()?;
-        self.stage1_sumcheck_proof.check()?;
-        self.stage2_uni_skip_first_round_proof.check()?;
-        self.stage2_sumcheck_proof.check()?;
-        self.stage3_sumcheck_proof.check()?;
-        self.stage4_sumcheck_proof.check()?;
-        self.stage5_sumcheck_proof.check()?;
-        self.stage6_sumcheck_proof.check()?;
-        self.stage7_sumcheck_proof.check()?;
-        self.stage7_sumcheck_claims.check()?;
-        self.joint_opening_proof.check()?;
-        self.trusted_advice_val_evaluation_proof.check()?;
-        self.trusted_advice_val_final_proof.check()?;
-        self.untrusted_advice_val_evaluation_proof.check()?;
-        self.untrusted_advice_val_final_proof.check()?;
-        self.trace_length.check()?;
-        self.ram_K.check()?;
-        self.bytecode_K.check()?;
-        self.log_k_chunk.check()?;
-        Ok(())
-    }
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for JoltProof<F, PCS, FS>
-{
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let ram_K = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let bytecode_K = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let log_chunk = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let one_hot_params = OneHotParams::new_with_log_k_chunk(log_chunk, bytecode_K, ram_K);
-        // ensure that all committed polys are set up before deserializing proofs
-        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
-        let opening_claims = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let commitments = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let untrusted_advice_commitment =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage1_uni_skip_first_round =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage1_sumcheck = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage2_uni_skip_first_round =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage2_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage3_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage4_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage5_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage6_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage7_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage7_sumcheck_claims = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let joint_opening_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let trusted_advice_val_evaluation_proof =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let trusted_advice_val_final_proof =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let untrusted_advice_val_evaluation_proof =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let untrusted_advice_val_final_proof =
-            <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let trace_length = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
-
-        Ok(Self {
-            opening_claims,
-            commitments,
-            untrusted_advice_commitment,
-            stage1_uni_skip_first_round_proof: stage1_uni_skip_first_round,
-            stage1_sumcheck_proof: stage1_sumcheck,
-            stage2_uni_skip_first_round_proof: stage2_uni_skip_first_round,
-            stage2_sumcheck_proof,
-            stage3_sumcheck_proof,
-            stage4_sumcheck_proof,
-            stage5_sumcheck_proof,
-            stage6_sumcheck_proof,
-            trusted_advice_val_evaluation_proof,
-            trusted_advice_val_final_proof,
-            untrusted_advice_val_evaluation_proof,
-            untrusted_advice_val_final_proof,
-            stage7_sumcheck_proof,
-            stage7_sumcheck_claims,
-            joint_opening_proof,
-            #[cfg(test)]
-            joint_commitment_for_test: None,
-            trace_length,
-            ram_K,
-            bytecode_K,
-            log_k_chunk: log_chunk,
-        })
-    }
+    pub lookups_ra_virtual_log_k_chunk: usize,
 }
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
@@ -409,16 +216,29 @@ impl CanonicalSerialize for CommittedPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        let index = self.to_index();
-        debug_assert!(
-            index <= u8::MAX as usize,
-            "CommittedPolynomial index {index} exceeds u8::MAX"
-        );
-        (index as u8).serialize_with_mode(&mut writer, compress)
+        match self {
+            Self::RdInc => 0u8.serialize_with_mode(writer, compress),
+            Self::RamInc => 1u8.serialize_with_mode(writer, compress),
+            Self::InstructionRa(i) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::BytecodeRa(i) => {
+                3u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::RamRa(i) => {
+                4u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
+            }
+        }
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
-        1 // u8
+        match self {
+            Self::RdInc | Self::RamInc => 1,
+            Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => 2,
+        }
     }
 }
 
@@ -434,8 +254,25 @@ impl CanonicalDeserialize for CommittedPolynomial {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let index = u8::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-        Ok(CommittedPolynomial::from_index(index))
+        Ok(
+            match u8::deserialize_with_mode(&mut reader, compress, validate)? {
+                0 => Self::RdInc,
+                1 => Self::RamInc,
+                2 => {
+                    let i = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::InstructionRa(i as usize)
+                }
+                3 => {
+                    let i = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeRa(i as usize)
+                }
+                4 => {
+                    let i = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::RamRa(i as usize)
+                }
+                _ => return Err(SerializationError::InvalidData),
+            },
+        )
     }
 }
 
@@ -445,16 +282,107 @@ impl CanonicalSerialize for VirtualPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        let index = self.to_index();
-        debug_assert!(
-            index <= u8::MAX as usize,
-            "VirtualPolynomial index {index} exceeds u8::MAX"
-        );
-        (index as u8).serialize_with_mode(&mut writer, compress)
+        match self {
+            Self::PC => 0u8.serialize_with_mode(&mut writer, compress),
+            Self::UnexpandedPC => 1u8.serialize_with_mode(&mut writer, compress),
+            Self::NextPC => 2u8.serialize_with_mode(&mut writer, compress),
+            Self::NextUnexpandedPC => 3u8.serialize_with_mode(&mut writer, compress),
+            Self::NextIsNoop => 4u8.serialize_with_mode(&mut writer, compress),
+            Self::NextIsVirtual => 5u8.serialize_with_mode(&mut writer, compress),
+            Self::NextIsFirstInSequence => 6u8.serialize_with_mode(&mut writer, compress),
+            Self::LeftLookupOperand => 7u8.serialize_with_mode(&mut writer, compress),
+            Self::RightLookupOperand => 8u8.serialize_with_mode(&mut writer, compress),
+            Self::LeftInstructionInput => 9u8.serialize_with_mode(&mut writer, compress),
+            Self::RightInstructionInput => 10u8.serialize_with_mode(&mut writer, compress),
+            Self::Product => 11u8.serialize_with_mode(&mut writer, compress),
+            Self::ShouldJump => 12u8.serialize_with_mode(&mut writer, compress),
+            Self::ShouldBranch => 13u8.serialize_with_mode(&mut writer, compress),
+            Self::WritePCtoRD => 14u8.serialize_with_mode(&mut writer, compress),
+            Self::WriteLookupOutputToRD => 15u8.serialize_with_mode(&mut writer, compress),
+            Self::Rd => 16u8.serialize_with_mode(&mut writer, compress),
+            Self::Imm => 17u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs1Value => 18u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs2Value => 19u8.serialize_with_mode(&mut writer, compress),
+            Self::RdWriteValue => 20u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs1Ra => 21u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs2Ra => 22u8.serialize_with_mode(&mut writer, compress),
+            Self::RdWa => 23u8.serialize_with_mode(&mut writer, compress),
+            Self::LookupOutput => 24u8.serialize_with_mode(&mut writer, compress),
+            Self::InstructionRaf => 25u8.serialize_with_mode(&mut writer, compress),
+            Self::InstructionRafFlag => 26u8.serialize_with_mode(&mut writer, compress),
+            Self::InstructionRa(i) => {
+                27u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+            }
+            Self::RegistersVal => 28u8.serialize_with_mode(&mut writer, compress),
+            Self::RamAddress => 29u8.serialize_with_mode(&mut writer, compress),
+            Self::RamRa => 30u8.serialize_with_mode(&mut writer, compress),
+            Self::RamReadValue => 31u8.serialize_with_mode(&mut writer, compress),
+            Self::RamWriteValue => 32u8.serialize_with_mode(&mut writer, compress),
+            Self::RamVal => 33u8.serialize_with_mode(&mut writer, compress),
+            Self::RamValInit => 34u8.serialize_with_mode(&mut writer, compress),
+            Self::RamValFinal => 35u8.serialize_with_mode(&mut writer, compress),
+            Self::RamHammingWeight => 36u8.serialize_with_mode(&mut writer, compress),
+            Self::UnivariateSkip => 37u8.serialize_with_mode(&mut writer, compress),
+            Self::OpFlags(flags) => {
+                38u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*flags as usize).unwrap()).serialize_with_mode(&mut writer, compress)
+            }
+            Self::InstructionFlags(flags) => {
+                39u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*flags as usize).unwrap()).serialize_with_mode(&mut writer, compress)
+            }
+            Self::LookupTableFlag(flag) => {
+                40u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*flag).unwrap()).serialize_with_mode(&mut writer, compress)
+            }
+        }
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
-        1 // u8
+        match self {
+            Self::PC
+            | Self::UnexpandedPC
+            | Self::NextPC
+            | Self::NextUnexpandedPC
+            | Self::NextIsNoop
+            | Self::NextIsVirtual
+            | Self::NextIsFirstInSequence
+            | Self::LeftLookupOperand
+            | Self::RightLookupOperand
+            | Self::LeftInstructionInput
+            | Self::RightInstructionInput
+            | Self::Product
+            | Self::ShouldJump
+            | Self::ShouldBranch
+            | Self::WritePCtoRD
+            | Self::WriteLookupOutputToRD
+            | Self::Rd
+            | Self::Imm
+            | Self::Rs1Value
+            | Self::Rs2Value
+            | Self::RdWriteValue
+            | Self::Rs1Ra
+            | Self::Rs2Ra
+            | Self::RdWa
+            | Self::LookupOutput
+            | Self::InstructionRaf
+            | Self::InstructionRafFlag
+            | Self::RegistersVal
+            | Self::RamAddress
+            | Self::RamRa
+            | Self::RamReadValue
+            | Self::RamWriteValue
+            | Self::RamVal
+            | Self::RamValInit
+            | Self::RamValFinal
+            | Self::RamHammingWeight
+            | Self::UnivariateSkip => 1,
+            Self::InstructionRa(_)
+            | Self::OpFlags(_)
+            | Self::InstructionFlags(_)
+            | Self::LookupTableFlag(_) => 2,
+        }
     }
 }
 
@@ -470,8 +398,68 @@ impl CanonicalDeserialize for VirtualPolynomial {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let index = u8::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-        Ok(VirtualPolynomial::from_index(index))
+        Ok(
+            match u8::deserialize_with_mode(&mut reader, compress, validate)? {
+                0 => Self::PC,
+                1 => Self::UnexpandedPC,
+                2 => Self::NextPC,
+                3 => Self::NextUnexpandedPC,
+                4 => Self::NextIsNoop,
+                5 => Self::NextIsVirtual,
+                6 => Self::NextIsFirstInSequence,
+                7 => Self::LeftLookupOperand,
+                8 => Self::RightLookupOperand,
+                9 => Self::LeftInstructionInput,
+                10 => Self::RightInstructionInput,
+                11 => Self::Product,
+                12 => Self::ShouldJump,
+                13 => Self::ShouldBranch,
+                14 => Self::WritePCtoRD,
+                15 => Self::WriteLookupOutputToRD,
+                16 => Self::Rd,
+                17 => Self::Imm,
+                18 => Self::Rs1Value,
+                19 => Self::Rs2Value,
+                20 => Self::RdWriteValue,
+                21 => Self::Rs1Ra,
+                22 => Self::Rs2Ra,
+                23 => Self::RdWa,
+                24 => Self::LookupOutput,
+                25 => Self::InstructionRaf,
+                26 => Self::InstructionRafFlag,
+                27 => {
+                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::InstructionRa(i as usize)
+                }
+                28 => Self::RegistersVal,
+                29 => Self::RamAddress,
+                30 => Self::RamRa,
+                31 => Self::RamReadValue,
+                32 => Self::RamWriteValue,
+                33 => Self::RamVal,
+                34 => Self::RamValInit,
+                35 => Self::RamValFinal,
+                36 => Self::RamHammingWeight,
+                37 => Self::UnivariateSkip,
+                38 => {
+                    let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let flags = CircuitFlags::from_repr(discriminant)
+                        .ok_or(SerializationError::InvalidData)?;
+                    Self::OpFlags(flags)
+                }
+                39 => {
+                    let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let flags = InstructionFlags::from_repr(discriminant)
+                        .ok_or(SerializationError::InvalidData)?;
+                    Self::InstructionFlags(flags)
+                }
+                40 => {
+                    let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::LookupTableFlag(flag as usize)
+                }
+                _ => return Err(SerializationError::InvalidData),
+            },
+        )
     }
 }
 

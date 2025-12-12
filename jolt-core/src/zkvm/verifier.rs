@@ -7,6 +7,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
+use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::{
     bytecode::{
         self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
@@ -38,7 +39,6 @@ use crate::zkvm::{
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
-    witness::AllCommittedPolynomials,
     ProverDebugInfo, Serializable,
 };
 use crate::{
@@ -52,7 +52,7 @@ use crate::{
 use anyhow::Context;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use itertools::Itertools;
+use itertools::zip_eq;
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -123,8 +123,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let one_hot_params =
-            OneHotParams::new_with_log_k_chunk(proof.log_k_chunk, proof.bytecode_K, proof.ram_K);
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(
+            proof.log_k_chunk,
+            proof.lookups_ra_virtual_log_k_chunk,
+            proof.bytecode_K,
+            proof.ram_K,
+        );
 
         Ok(Self {
             trusted_advice_commitment,
@@ -149,14 +153,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             &mut self.transcript,
         );
-
-        let one_hot_params = OneHotParams::new_with_log_k_chunk(
-            self.proof.log_k_chunk,
-            self.proof.bytecode_K,
-            self.proof.ram_K,
-        );
-
-        let _guard = AllCommittedPolynomials::initialize(&one_hot_params);
 
         // Append commitments to transcript
         for commitment in &self.proof.commitments {
@@ -356,6 +352,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(
             n_cycle_vars,
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -402,8 +399,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_ra_virtual =
-            LookupsRaSumcheckVerifier::new(&self.one_hot_params, &self.opening_accumulator);
+        let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
             instruction_lookups::new_ra_one_hot_verifiers(
                 self.proof.trace_length,
@@ -465,13 +465,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .expect("Stage 7 must be called before Stage 8");
 
         // Build commitments map
-        let mut commitments_map = HashMap::new();
-        for (polynomial, commitment) in
-            AllCommittedPolynomials::iter().zip_eq(&self.proof.commitments)
-        {
-            commitments_map.insert(*polynomial, commitment.clone());
-        }
-
+        let mut commitments_map = HashMap::from_iter(zip_eq(
+            all_committed_polynomials(&self.one_hot_params),
+            self.proof.commitments.iter().cloned(),
+        ));
         // Compute joint commitment
         let joint_commitment = self
             .opening_accumulator

@@ -67,6 +67,7 @@ use crate::{
             shift::ShiftSumcheckParams,
         },
         verifier::JoltVerifierPreprocessing,
+        witness::all_committed_polynomials,
     },
 };
 use crate::{
@@ -99,7 +100,7 @@ use crate::{
             instruction_input::InstructionInputSumcheckProver, outer::OuterRemainingSumcheckProver,
             product::ProductVirtualRemainderProver, shift::ShiftSumcheckProver,
         },
-        witness::{AllCommittedPolynomials, CommittedPolynomial},
+        witness::CommittedPolynomial,
         ProverDebugInfo, Serializable,
     },
 };
@@ -107,7 +108,7 @@ use crate::{
 use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::{MemoryConfig, MemoryLayout};
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
 use tracer::{
     emulator::memory::Memory,
@@ -372,6 +373,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
             log_k_chunk: self.one_hot_params.log_k_chunk,
+            lookups_ra_virtual_log_k_chunk: self.one_hot_params.lookups_ra_virtual_log_k_chunk,
         };
 
         let prove_duration = start.elapsed();
@@ -393,14 +395,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         Vec<PCS::Commitment>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) {
-        let _guard = (
-            DoryGlobals::initialize(1 << self.one_hot_params.log_k_chunk, self.padded_trace_len),
-            AllCommittedPolynomials::initialize(&self.one_hot_params),
-        );
-
+        let _guard =
+            DoryGlobals::initialize(1 << self.one_hot_params.log_k_chunk, self.padded_trace_len);
         // Generate and commit to all witness polynomials using streaming tier1/tier2 pattern
         let T = DoryGlobals::get_T();
-        let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
+        let polys = all_committed_polynomials(&self.one_hot_params);
         let row_len = DoryGlobals::get_num_columns();
         let num_rows = T / DoryGlobals::get_max_num_rows();
 
@@ -450,17 +449,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Tier 2: Compute final commitments from tier1 commitments
         let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
             .into_par_iter()
-            .zip(polys)
+            .zip(&polys)
             .map(|(tier1_commitments, poly)| {
                 let onehot_k = poly.get_onehot_k(&self.one_hot_params);
                 PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
             })
             .unzip();
 
-        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
-        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
-            hint_map.insert(*poly, hint);
-        }
+        let hint_map = HashMap::from_iter(zip_eq(polys, hints));
 
         // Append commitments to transcript
         for commitment in &commitments {
@@ -837,6 +833,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         let lookups_read_raf_params = InstructionReadRafParams::new(
             self.trace.len().log_2(),
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -927,8 +924,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &self.opening_accumulator,
         );
-        let lookups_ra_virtual_params =
-            InstructionRaSumcheckParams::new(&self.one_hot_params, &self.opening_accumulator);
+        let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let lookups_hamming_weight_params = instruction_lookups::ra_hamming_weight_params(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -1117,16 +1117,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
         tracing::info!("Stage 7 proving (batch opening reduction sumcheck)");
 
-        let _guard = (
-            DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
-            AllCommittedPolynomials::initialize(&self.one_hot_params),
-        );
+        let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
 
-        // Generate witness polynomials
-        let all_polys: Vec<CommittedPolynomial> =
-            AllCommittedPolynomials::iter().copied().collect();
         let polynomials_map = CommittedPolynomial::generate_witness_batch(
-            &all_polys,
+            &all_committed_polynomials(&self.one_hot_params),
             self.preprocessing,
             &self.trace,
             &self.one_hot_params,
@@ -1187,10 +1181,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
-        let _guard = (
-            DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
-            AllCommittedPolynomials::initialize(&self.one_hot_params),
-        );
+        let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
 
         let state = self
             .opening_accumulator
