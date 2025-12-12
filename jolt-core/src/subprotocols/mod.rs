@@ -1,6 +1,6 @@
-pub mod hamming_weight_opening_reduction;
 pub mod booleanity;
 pub mod hamming_weight;
+pub mod hamming_weight_opening_reduction;
 pub mod inc_reduction;
 pub mod mles_product_sum;
 pub mod opening_reduction;

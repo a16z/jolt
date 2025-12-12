@@ -872,7 +872,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
-    #[tracing::instrument(skip_all, name = "FusedHammingAddressReductionProver::ingest_challenge")]
+    #[tracing::instrument(
+        skip_all,
+        name = "FusedHammingAddressReductionProver::ingest_challenge"
+    )]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         // Bind all polynomials in parallel
         rayon::scope(|s| {
@@ -945,8 +948,12 @@ impl<F: JoltField> FusedHammingAddressReductionVerifier<F> {
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params =
-            FusedHammingAddressReductionParams::new(r_cycle, one_hot_params, accumulator, transcript);
+        let params = FusedHammingAddressReductionParams::new(
+            r_cycle,
+            one_hot_params,
+            accumulator,
+            transcript,
+        );
         Self { params }
     }
 }
