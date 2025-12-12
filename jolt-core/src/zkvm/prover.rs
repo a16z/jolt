@@ -68,8 +68,10 @@ use crate::{
         },
         spartan::{
             claim_reductions::InstructionLookupsClaimReductionSumcheckProver,
-            instruction_input::InstructionInputSumcheckProver, outer::OuterRemainingSumcheckProver,
-            product::ProductVirtualRemainderProver, prove_stage1_uni_skip, prove_stage2_uni_skip,
+            instruction_input::InstructionInputSumcheckProver,
+            outer::{OuterRemainingStreamingSumcheck, OuterSharedState},
+            product::ProductVirtualRemainderProver,
+            prove_stage1_uni_skip, prove_stage2_uni_skip,
             shift::ShiftSumcheckProver,
         },
         witness::{AllCommittedPolynomials, CommittedPolynomial},
@@ -553,14 +555,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // which dictates the compute_message and bind methods.
         // Using LinearOnlySchedule to benchmark linear-only mode (no streaming).
         let schedule = LinearOnlySchedule::new(uni_skip_state.tau.len() - 1);
-        let mut spartan_outer_remaining = OuterRemainingSumcheckProver::gen(
+        let shared = OuterSharedState::new(
             Arc::clone(&self.trace),
-            &self.checkpoints,
-            self.checkpoint_interval,
             &self.preprocessing.bytecode,
             &uni_skip_state,
-            schedule,
         );
+        let mut spartan_outer_remaining: OuterRemainingStreamingSumcheck<_, _> =
+            OuterRemainingStreamingSumcheck::new(shared, schedule);
 
         let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
             vec![&mut spartan_outer_remaining],

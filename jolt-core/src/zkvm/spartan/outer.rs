@@ -1,10 +1,10 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use ark_std::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
-use tracer::LazyTraceIterator;
 
 use crate::field::BarrettReduce;
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
@@ -19,10 +19,10 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::streaming_schedule::StreamingSchedule;
-use crate::subprotocols::sumcheck_prover::{
-    SumcheckInstanceProver, UniSkipFirstRoundInstanceProver,
+use crate::subprotocols::streaming_sumcheck::{
+    LinearSumcheckStage, SharedStreamingSumcheckState, StreamingSumcheck, StreamingSumcheckWindow,
 };
+use crate::subprotocols::sumcheck_prover::UniSkipFirstRoundInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::subprotocols::univariate_skip::{build_uniskip_first_round_poly, UniSkipState};
 use crate::transcripts::Transcript;
@@ -43,8 +43,6 @@ use crate::zkvm::r1cs::{
     inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 
 /// Degree bound of the sumcheck round polynomials for [`OuterRemainingSumcheckVerifier`].
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
@@ -210,1067 +208,6 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstanceProver<F, T>
     }
 }
 
-/// SumcheckInstance for Spartan outer rounds after the univariate-skip first round.
-/// Round 0 in this instance corresponds to the "streaming" round; subsequent rounds
-/// use the remaining linear-time algorithm over cycle variables.
-#[derive(Allocative)]
-pub struct OuterRemainingSumcheckProver<'a, F: JoltField, S: StreamingSchedule + Allocative> {
-    #[allocative(skip)]
-    bytecode_preprocessing: BytecodePreprocessing,
-    #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
-    /// Split-eq instance used for both streaming and linear phases of the
-    /// outer Spartan sumcheck over cycle variables.
-    split_eq_poly: GruenSplitEqPolynomial<F>,
-    az: Option<DensePolynomial<F>>,
-    bz: Option<DensePolynomial<F>>,
-    t_prime_poly: Option<MultiquadraticPolynomial<F>>, // multiquadratic polynomial used to answer queries in a streaming window
-    r_grid: ExpandingTable<F>, // hadamard product of (1 - r_j, r_j) for bound variables so far to help with streaming
-    /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
-    #[allocative(skip)]
-    params: OuterRemainingSumcheckParams<F>,
-    lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-    schedule: S,
-    #[allocative(skip)]
-    checkpoints: &'a [std::iter::Take<LazyTraceIterator>],
-    checkpoint_interval: usize,
-}
-
-impl<'a, F: JoltField, S: StreamingSchedule + Allocative> OuterRemainingSumcheckProver<'a, F, S> {
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::gen")]
-    pub fn gen(
-        trace: Arc<Vec<Cycle>>,
-        checkpoints: &'a [std::iter::Take<LazyTraceIterator>], // Add lifetime 'a, use slice
-        checkpoint_interval: usize,
-        bytecode_preprocessing: &BytecodePreprocessing,
-        uni: &UniSkipState<F>,
-        schedule: S,
-    ) -> Self {
-        let bytecode_preprocessing = bytecode_preprocessing.clone();
-        let n_cycle_vars = trace.len().log_2();
-        let outer_params = OuterRemainingSumcheckParams::new(n_cycle_vars, uni);
-
-        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
-            F::Challenge,
-            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&uni.r0);
-
-        let tau_high = uni.tau[uni.tau.len() - 1];
-        let tau_low = &uni.tau[..uni.tau.len() - 1];
-
-        let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
-            F::Challenge,
-            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&uni.r0, &tau_high);
-
-        let split_eq_poly: GruenSplitEqPolynomial<F> =
-            GruenSplitEqPolynomial::<F>::new_with_scaling(
-                tau_low,
-                BindingOrder::LowToHigh,
-                Some(lagrange_tau_r0),
-            );
-
-        // NOTE: The API changed recently: Both binding orders will technically pass
-        // based on current implementation.
-        let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::LowToHigh);
-        r_grid.reset(F::one());
-
-        Self {
-            split_eq_poly,
-            bytecode_preprocessing,
-            trace,
-            checkpoints,
-            checkpoint_interval,
-            az: None,
-            bz: None,
-            t_prime_poly: None,
-            r_grid,
-            params: outer_params,
-            lagrange_evals_r0: lagrange_evals_r,
-            schedule,
-        }
-    }
-
-    // gets the evaluations of az(x, {0,1}^log(jlen), r) and bz(x, {0,1}^log(jlen), r)
-    // where x is determined by the bit decomposition of offset
-    // and r is log(klen) variables
-    // this is used both in window computation (jlen is window size)
-    // and in converting to linear time (offset is 0, log(jlen) is the number of unbound variables)
-    // The caller must pass in `scaled_w`, the tensor product of the Lagrange weights
-    // at r0 with the current `r_grid` weights:
-    //   scaled_w[k][t] = lagrange_evals_r0[t] * r_grid[k]  (for klen > 1)
-    // and scaled_w[0][t] = lagrange_evals_r0[t] when klen == 1 (no r_grid factor).
-    #[allow(clippy::too_many_arguments)]
-    fn extrapolate_from_binary_grid_to_tertiary_grid(
-        &self,
-        acc_az: &mut [Acc5U<F>],
-        acc_bz_first: &mut [Acc6S<F>],
-        acc_bz_second: &mut [Acc7S<F>],
-        grid_az: &mut [F],
-        grid_bz: &mut [F],
-        jlen: usize,
-        klen: usize,
-        offset: usize,
-        scaled_w: &[[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]],
-    ) {
-        let preprocess = &self.bytecode_preprocessing;
-        let _checkpoints = &self.checkpoints;
-        let _checkpoint_interval = self.checkpoint_interval;
-        let trace = &self.trace;
-        debug_assert_eq!(scaled_w.len(), klen);
-        debug_assert_eq!(grid_az.len(), jlen);
-        debug_assert_eq!(grid_bz.len(), jlen);
-        debug_assert_eq!(acc_az.len(), jlen);
-        debug_assert_eq!(acc_bz_first.len(), jlen);
-        debug_assert_eq!(acc_bz_second.len(), jlen);
-
-        acc_az
-            .par_iter_mut()
-            .zip(acc_bz_first.par_iter_mut())
-            .zip(acc_bz_second.par_iter_mut())
-            .for_each(|((a, b), c)| {
-                *a = Acc5U::zero();
-                *b = Acc6S::zero();
-                *c = Acc7S::zero();
-            });
-
-        // Parallel traversal over j for the linear-time prover.
-        // Each worker owns disjoint accumulators for a fixed j, so there
-        // are no data races. We reuse the precomputed scaled Lagrange weights
-        // per k from `scaled_w`, avoiding redundant tensor products.
-        acc_az
-            .par_iter_mut()
-            .zip(acc_bz_first.par_iter_mut())
-            .zip(acc_bz_second.par_iter_mut())
-            .enumerate()
-            .for_each(|(j, ((acc_az_j, acc_bz_first_j), acc_bz_second_j))| {
-                for k in 0..klen {
-                    let full_idx = offset + j * klen + k;
-                    let current_step_idx = full_idx >> 1;
-                    let selector = (full_idx & 1) == 1;
-
-                    let row_inputs =
-                        R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-                    let w_k = &scaled_w[k];
-
-                    if !selector {
-                        eval.fmadd_first_group_at_r(w_k, acc_az_j, acc_bz_first_j);
-                    } else {
-                        eval.fmadd_second_group_at_r(w_k, acc_az_j, acc_bz_second_j);
-                    }
-                }
-            });
-
-        // Final reductions: reduce accumulators and write to output slices.
-        // Each chunk writes to disjoint indices, so parallel iteration is safe.
-        const REDUCE_CHUNK_SIZE: usize = 4096;
-        grid_az
-            .par_chunks_mut(REDUCE_CHUNK_SIZE)
-            .zip(grid_bz.par_chunks_mut(REDUCE_CHUNK_SIZE))
-            .enumerate()
-            .for_each(|(chunk_idx, (az_chunk, bz_chunk))| {
-                let start = chunk_idx * REDUCE_CHUNK_SIZE;
-                for (local_j, (az_out, bz_out)) in
-                    az_chunk.iter_mut().zip(bz_chunk.iter_mut()).enumerate()
-                {
-                    let j = start + local_j;
-                    *az_out = acc_az[j].barrett_reduce();
-                    let bz_first_j = acc_bz_first[j].barrett_reduce();
-                    let bz_second_j = acc_bz_second[j].barrett_reduce();
-                    *bz_out = bz_first_j + bz_second_j;
-                }
-            });
-    }
-
-    // returns the grid of evaluations on {0,1,inf}^window_size
-    // touches each cycle of the trace exactly once and in order!
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_trace"
-    )]
-    fn compute_evaluation_grid_from_trace(&mut self, window_size: usize) {
-        // semantics in one place (see `split_eq_poly::E_out_in_for_window`).
-        let split_eq = &self.split_eq_poly;
-
-        // helper constants
-        let three_pow_dim = 3_usize.pow(window_size as u32);
-        let jlen = 1 << window_size;
-        let klen = 1 << split_eq.num_challenges();
-
-        // Precompute the tensor product of the Lagrange weights at r0 with the
-        // current r_grid weights so that all calls into `build_grids` can reuse
-        // these scaled tables.
-        let lagrange_evals_r = &self.lagrange_evals_r0;
-        let r_grid = &self.r_grid;
-        let scaled_w: Vec<[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]> = if klen > 1 {
-            debug_assert_eq!(klen, r_grid.len());
-            (0..klen)
-                .into_par_iter()
-                .map(|k| {
-                    let weight = r_grid[k];
-                    let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
-                    for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
-                        row[t] = lagrange_evals_r[t] * weight;
-                    }
-                    row
-                })
-                .collect()
-        } else {
-            debug_assert_eq!(klen, 1);
-            let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
-            row.copy_from_slice(lagrange_evals_r);
-            vec![row]
-        };
-
-        // Head-factor eq tables for this window.
-        let (e_out, e_in) = split_eq.E_out_in_for_window(window_size);
-        let e_in_len = e_in.len();
-
-        // main logic: parallelize outer sum over E_out_current; for each x_out,
-        // perform an inner unreduced accumulation over E_in_current and only
-        // reduce once per grid cell, then multiply by E_out unreduced.
-        let res_unr = e_out
-            .par_iter()
-            .enumerate()
-            .map(|(out_idx, out_val)| {
-                // Local unreduced accumulators and scratch buffers for this out_idx.
-                let mut local_res_unr = vec![F::Unreduced::<9>::zero(); three_pow_dim];
-                let mut buff_a: Vec<F> = vec![F::zero(); three_pow_dim];
-                let mut buff_b = vec![F::zero(); three_pow_dim];
-                let mut tmp = vec![F::zero(); three_pow_dim];
-                let mut grid_a = vec![F::zero(); jlen];
-                let mut grid_b = vec![F::zero(); jlen];
-                let mut acc_az = vec![Acc5U::<F>::zero(); jlen];
-                let mut acc_bz_first = vec![Acc6S::<F>::zero(); jlen];
-                let mut acc_bz_second = vec![Acc7S::<F>::zero(); jlen];
-
-                for (in_idx, in_val) in e_in.iter().enumerate() {
-                    let i = out_idx * e_in_len + in_idx;
-
-                    // Reuse the same grid buffers across all x_in for this x_out.
-                    grid_a.fill(F::zero());
-                    grid_b.fill(F::zero());
-                    // Keep this call sequential to avoid nested rayon parallelism.
-                    self.extrapolate_from_binary_grid_to_tertiary_grid(
-                        &mut acc_az,
-                        &mut acc_bz_first,
-                        &mut acc_bz_second,
-                        &mut grid_a,
-                        &mut grid_b,
-                        jlen,
-                        klen,
-                        i * jlen * klen,
-                        &scaled_w,
-                    );
-
-                    // Extrapolate grid_a and grid_b from {0,1}^window_size to {0,1,∞}^window_size.
-                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                        &grid_a,
-                        &mut buff_a,
-                        &mut tmp,
-                        window_size,
-                    );
-                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                        &grid_b,
-                        &mut buff_b,
-                        &mut tmp,
-                        window_size,
-                    );
-
-                    let e_in_val = *in_val;
-                    // For window_size == 1, we only need evals at 0 and ∞ (indices 0 and 2).
-                    // The eval at 1 is unused by Gruen polynomial computation.
-                    if window_size == 1 {
-                        local_res_unr[0] += e_in_val.mul_unreduced::<9>(buff_a[0] * buff_b[0]);
-                        local_res_unr[2] += e_in_val.mul_unreduced::<9>(buff_a[2] * buff_b[2]);
-                    } else {
-                        for idx in 0..three_pow_dim {
-                            let val = buff_a[idx] * buff_b[idx];
-                            local_res_unr[idx] += e_in_val.mul_unreduced::<9>(val);
-                        }
-                    }
-                }
-
-                // Fold in E_out for this x_out.
-                let e_out_val = *out_val;
-                for idx in 0..three_pow_dim {
-                    let inner_red = F::from_montgomery_reduce::<9>(local_res_unr[idx]);
-                    local_res_unr[idx] = e_out_val.mul_unreduced::<9>(inner_red);
-                }
-                local_res_unr
-            })
-            .reduce(
-                || vec![F::Unreduced::<9>::zero(); three_pow_dim],
-                |mut acc, local| {
-                    for idx in 0..three_pow_dim {
-                        acc[idx] += local[idx];
-                    }
-                    acc
-                },
-            );
-
-        // Final reduction over all (x_out, x_in)
-        let res: Vec<F> = res_unr
-            .into_iter()
-            .map(|unr| F::from_montgomery_reduce::<9>(unr))
-            .collect();
-        self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, res));
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterRemainingSumcheckProver::compute_evaluation_grid_from_poly_parallel"
-    )]
-    pub fn compute_evaluation_grid_from_polynomials_parallel(&mut self, num_vars: usize) {
-        let eq_poly = &self.split_eq_poly;
-
-        let n = self.az.as_ref().expect("az should be initialized").len();
-        let az = self.az.as_ref().expect("az should be initialized");
-        let bz = self.bz.as_ref().expect("bz should be initialized");
-        debug_assert_eq!(n, bz.len());
-
-        let three_pow_dim = 3_usize.pow(num_vars as u32);
-        let grid_size = 1 << num_vars;
-        let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
-        let ans: Vec<F> = if E_in.len() == 1 {
-            // Parallel version with reduction
-            (0..E_out.len())
-                .into_par_iter()
-                .map(|i| {
-                    let mut local_ans = vec![F::zero(); three_pow_dim];
-                    let mut az_grid = vec![F::zero(); grid_size];
-                    let mut bz_grid = vec![F::zero(); grid_size];
-                    let mut buff_a = vec![F::zero(); three_pow_dim];
-                    let mut buff_b = vec![F::zero(); three_pow_dim];
-                    let mut tmp = vec![F::zero(); three_pow_dim];
-
-                    // Fill grids
-                    for j in 0..grid_size {
-                        let index = grid_size * i + j;
-                        az_grid[j] = az[index];
-                        bz_grid[j] = bz[index];
-                    }
-
-                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                        &az_grid,
-                        &mut buff_a,
-                        &mut tmp,
-                        num_vars,
-                    );
-                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                        &bz_grid,
-                        &mut buff_b,
-                        &mut tmp,
-                        num_vars,
-                    );
-
-                    for idx in 0..three_pow_dim {
-                        local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
-                    }
-
-                    local_ans
-                })
-                .reduce(
-                    || vec![F::zero(); three_pow_dim],
-                    |mut acc, local_ans| {
-                        for idx in 0..three_pow_dim {
-                            acc[idx] += local_ans[idx];
-                        }
-                        acc
-                    },
-                )
-        } else {
-            let num_xin_bits = E_in.len().log_2();
-            (0..E_out.len())
-                .into_par_iter()
-                .map(|x_out| {
-                    let mut local_ans = vec![F::zero(); three_pow_dim];
-                    let mut az_grid = vec![F::zero(); grid_size];
-                    let mut bz_grid = vec![F::zero(); grid_size];
-                    let mut buff_a = vec![F::zero(); three_pow_dim];
-                    let mut buff_b = vec![F::zero(); three_pow_dim];
-                    let mut tmp = vec![F::zero(); three_pow_dim];
-
-                    for x_in in 0..E_in.len() {
-                        let i = (x_out << num_xin_bits) | x_in;
-
-                        //az_grid.fill(F::zero());
-                        //bz_grid.fill(F::zero());
-                        for j in 0..grid_size {
-                            az_grid[j] = az[grid_size * i + j];
-                            bz_grid[j] = bz[grid_size * i + j];
-                        }
-
-                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                            &az_grid,
-                            &mut buff_a,
-                            &mut tmp,
-                            num_vars,
-                        );
-                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                            &bz_grid,
-                            &mut buff_b,
-                            &mut tmp,
-                            num_vars,
-                        );
-
-                        for idx in 0..three_pow_dim {
-                            local_ans[idx] += buff_a[idx] * buff_b[idx] * E_in[x_in];
-                        }
-                    }
-                    for idx in 0..three_pow_dim {
-                        local_ans[idx] *= E_out[x_out];
-                    }
-
-                    local_ans
-                })
-                .reduce(
-                    || vec![F::zero(); three_pow_dim],
-                    |mut acc, local_ans| {
-                        for idx in 0..three_pow_dim {
-                            acc[idx] += local_ans[idx];
-                        }
-                        acc
-                    },
-                )
-        };
-        self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
-    }
-
-    fn fused_materialise_polynomials_general_with_multiquadratic(&mut self, window_size: usize) {
-        let (E_out, E_in) = self.split_eq_poly.E_out_in_for_window(window_size);
-        let num_x_out_vals = E_out.len();
-        let num_x_in_vals = E_in.len();
-        let r_grid = &self.r_grid;
-        let num_r_vals = r_grid.len();
-
-        let three_pow_dim = 3_usize.pow(window_size as u32);
-        let grid_size = 1 << window_size;
-        let num_evals_az = E_out.len() * E_in.len() * grid_size;
-
-        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
-        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
-
-        let num_r_bits = num_r_vals.log_2();
-        let num_x_in_bits = num_x_in_vals.log_2();
-
-        // Precompute scaled Lagrange weights: scaled_w[r_idx][t] = lagrange_evals_r0[t] * r_grid[r_idx]
-        let lagrange_evals_r = &self.lagrange_evals_r0;
-        let scaled_w: Vec<[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]> = (0..num_r_vals)
-            .into_par_iter()
-            .map(|r_idx| {
-                let weight = r_grid[r_idx];
-                let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
-                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
-                    row[t] = lagrange_evals_r[t] * weight;
-                }
-                row
-            })
-            .collect();
-
-        let output_size = num_x_out_vals * num_x_in_vals;
-
-        // Dynamic chunking for parallelization
-        let num_threads = rayon::current_num_threads();
-        let target_chunks = num_threads * 4;
-        let min_chunk_pairs = 16;
-        let pairs_per_chunk = output_size.div_ceil(target_chunks).max(min_chunk_pairs);
-        let chunk_size = pairs_per_chunk * grid_size;
-
-        // Parallel computation with reduction
-        let ans = az_bound
-            .par_chunks_mut(chunk_size)
-            .zip(bz_bound.par_chunks_mut(chunk_size))
-            .enumerate()
-            .fold(
-                || vec![F::zero(); three_pow_dim],
-                |mut local_ans, (chunk_idx, (az_chunk, bz_chunk))| {
-                    let start_pair = chunk_idx * pairs_per_chunk;
-                    let end_pair = (start_pair + pairs_per_chunk).min(output_size);
-
-                    // Thread-local buffers for multiquadratic expansion
-                    let mut buff_a = vec![F::zero(); three_pow_dim];
-                    let mut buff_b = vec![F::zero(); three_pow_dim];
-                    let mut tmp = vec![F::zero(); three_pow_dim];
-                    let mut az_grid = vec![F::zero(); grid_size];
-                    let mut bz_grid = vec![F::zero(); grid_size];
-
-                    // Unreduced accumulators for each grid point
-                    let mut acc_az: Vec<Acc5U<F>> = vec![Acc5U::zero(); grid_size];
-                    let mut acc_bz_first: Vec<Acc6S<F>> = vec![Acc6S::zero(); grid_size];
-                    let mut acc_bz_second: Vec<Acc7S<F>> = vec![Acc7S::zero(); grid_size];
-
-                    // Inner sum over x_in for double summation: Σ_x_out E_out * (Σ_x_in E_in * ...)
-                    // Using Unreduced<9> for accumulation of (buff_a * buff_b).mul_unreduced::<9>(e_in)
-                    let mut inner_sum: Vec<F::Unreduced<9>> =
-                        vec![F::Unreduced::<9>::zero(); three_pow_dim];
-                    let mut current_x_out = start_pair / num_x_in_vals;
-
-                    for pair_idx in start_pair..end_pair {
-                        let x_in_val = pair_idx % num_x_in_vals;
-                        let x_out_val = pair_idx / num_x_in_vals;
-
-                        // When we move to a new x_out, reduce inner_sum and finalize
-                        if x_out_val != current_x_out {
-                            let e_out = E_out[current_x_out];
-                            for idx in 0..three_pow_dim {
-                                local_ans[idx] +=
-                                    F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
-                                inner_sum[idx] = F::Unreduced::<9>::zero();
-                            }
-                            current_x_out = x_out_val;
-                        }
-
-                        // Reset accumulators for this (x_out, x_in) pair
-                        for x_val in 0..grid_size {
-                            acc_az[x_val] = Acc5U::zero();
-                            acc_bz_first[x_val] = Acc6S::zero();
-                            acc_bz_second[x_val] = Acc7S::zero();
-                        }
-
-                        // Loop over grid points, then r values for better cache locality.
-                        // Since r_idx is in the low bits of full_idx, consecutive r_idx
-                        // gives consecutive step_idx values for better trace access patterns.
-                        let base_idx = (x_out_val << (num_x_in_bits + window_size + num_r_bits))
-                            | (x_in_val << (window_size + num_r_bits));
-
-                        for x_val in 0..grid_size {
-                            let x_val_shifted = x_val << num_r_bits;
-                            for r_idx in 0..num_r_vals {
-                                let w_r = &scaled_w[r_idx];
-                                let full_idx = base_idx | x_val_shifted | r_idx;
-
-                                let step_idx = full_idx >> 1;
-                                let selector = (full_idx & 1) == 1;
-
-                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                    &self.bytecode_preprocessing,
-                                    &self.trace,
-                                    step_idx,
-                                );
-                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-
-                                if !selector {
-                                    eval.fmadd_first_group_at_r(
-                                        w_r,
-                                        &mut acc_az[x_val],
-                                        &mut acc_bz_first[x_val],
-                                    );
-                                } else {
-                                    eval.fmadd_second_group_at_r(
-                                        w_r,
-                                        &mut acc_az[x_val],
-                                        &mut acc_bz_second[x_val],
-                                    );
-                                }
-                            }
-                        }
-
-                        // Reduce accumulators and fill grids
-                        for x_val in 0..grid_size {
-                            az_grid[x_val] = acc_az[x_val].barrett_reduce();
-                            bz_grid[x_val] = acc_bz_first[x_val].barrett_reduce()
-                                + acc_bz_second[x_val].barrett_reduce();
-                        }
-
-                        // Store the accumulated grid in chunk-relative position
-                        let buffer_offset = grid_size * (pair_idx - start_pair);
-                        let end = buffer_offset + grid_size;
-                        az_chunk[buffer_offset..end].copy_from_slice(&az_grid[..grid_size]);
-                        bz_chunk[buffer_offset..end].copy_from_slice(&bz_grid[..grid_size]);
-
-                        // Expand to multiquadratic
-                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                            &az_grid,
-                            &mut buff_a,
-                            &mut tmp,
-                            window_size,
-                        );
-                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                            &bz_grid,
-                            &mut buff_b,
-                            &mut tmp,
-                            window_size,
-                        );
-
-                        // Accumulate unreduced: inner_sum += (buff_a * buff_b).mul_unreduced::<9>(e_in)
-                        let e_in = E_in[x_in_val];
-
-                        // For window_size == 1, we only need evals at 0 and ∞ (indices 0 and 2).
-                        // The eval at 1 is unused by Gruen polynomial computation.
-                        if window_size == 1 {
-                            let prod0 = buff_a[0] * buff_b[0];
-                            let prod2 = buff_a[2] * buff_b[2];
-                            inner_sum[0] += prod0.mul_unreduced::<9>(e_in);
-                            inner_sum[2] += prod2.mul_unreduced::<9>(e_in);
-                        } else {
-                            for idx in 0..three_pow_dim {
-                                let prod = buff_a[idx] * buff_b[idx];
-                                inner_sum[idx] += prod.mul_unreduced::<9>(e_in);
-                            }
-                        }
-                    }
-
-                    // Finalize the last x_out: reduce and multiply by e_out
-                    let e_out = E_out[current_x_out];
-                    for idx in 0..three_pow_dim {
-                        local_ans[idx] += F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
-                    }
-
-                    local_ans
-                },
-            )
-            .reduce(
-                || vec![F::zero(); three_pow_dim],
-                |mut acc, local_ans| {
-                    for idx in 0..three_pow_dim {
-                        acc[idx] += local_ans[idx];
-                    }
-                    acc
-                },
-            );
-
-        self.az = Some(DensePolynomial::new(az_bound));
-        self.bz = Some(DensePolynomial::new(bz_bound));
-        self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, ans));
-    }
-
-    fn fused_materialise_polynomials_round_zero(&mut self, num_vars: usize) {
-        // Note: this is the simplest materialise as there are no challenges to deal with
-        let eq_poly = &self.split_eq_poly;
-
-        let three_pow_dim = 3_usize.pow(num_vars as u32);
-        let grid_size = 1 << num_vars;
-        let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
-
-        let num_evals_az = E_out.len() * E_in.len() * grid_size;
-        let mut az: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
-        let mut bz: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
-
-        let ans: Vec<F> = if E_in.len() == 1 {
-            // Parallel version with reduction (E_in has only one element)
-            az.par_chunks_exact_mut(grid_size)
-                .zip(bz.par_chunks_exact_mut(grid_size))
-                .enumerate()
-                .map(|(i, (az_chunk, bz_chunk))| {
-                    let mut local_ans = vec![F::zero(); three_pow_dim];
-                    let mut az_grid = vec![F::zero(); grid_size];
-                    let mut bz_grid = vec![F::zero(); grid_size];
-                    let mut buff_a = vec![F::zero(); three_pow_dim];
-                    let mut buff_b = vec![F::zero(); three_pow_dim];
-                    let mut tmp = vec![F::zero(); three_pow_dim];
-
-                    // Parallel over grid_size in pairs if possible
-                    if grid_size >= 2 {
-                        let mut j = 0;
-                        while j < grid_size {
-                            let full_idx = grid_size * i + j;
-                            let time_step_idx = full_idx >> 1;
-                            // j is even => full_idx even => selector=0
-
-                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                &self.bytecode_preprocessing,
-                                &self.trace,
-                                time_step_idx,
-                            );
-                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-
-                            // First group (j)
-                            let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
-                            let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
-
-                            // Second group (j+1)
-                            let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
-                            let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
-
-                            az_chunk[j] = az0;
-                            bz_chunk[j] = bz0;
-                            az_grid[j] = az0;
-                            bz_grid[j] = bz0;
-
-                            az_chunk[j + 1] = az1;
-                            bz_chunk[j + 1] = bz1;
-                            az_grid[j + 1] = az1;
-                            bz_grid[j + 1] = bz1;
-
-                            j += 2;
-                        }
-                    } else {
-                        for j in 0..grid_size {
-                            let full_idx = grid_size * i + j;
-                            // Extract time_step_idx and selector from full_idx
-                            let time_step_idx = full_idx >> 1;
-                            let selector = (full_idx & 1) == 1;
-
-                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                &self.bytecode_preprocessing,
-                                &self.trace,
-                                time_step_idx,
-                            );
-                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-
-                            let (az_at_full_idx, bz_at_full_idx) = if !selector {
-                                (
-                                    eval.az_at_r_first_group(&self.lagrange_evals_r0),
-                                    eval.bz_at_r_first_group(&self.lagrange_evals_r0),
-                                )
-                            } else {
-                                (
-                                    eval.az_at_r_second_group(&self.lagrange_evals_r0),
-                                    eval.bz_at_r_second_group(&self.lagrange_evals_r0),
-                                )
-                            };
-
-                            az_chunk[j] = az_at_full_idx;
-                            bz_chunk[j] = bz_at_full_idx;
-                            az_grid[j] = az_at_full_idx;
-                            bz_grid[j] = bz_at_full_idx;
-                        }
-                    }
-
-                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                        &az_grid,
-                        &mut buff_a,
-                        &mut tmp,
-                        num_vars,
-                    );
-                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                        &bz_grid,
-                        &mut buff_b,
-                        &mut tmp,
-                        num_vars,
-                    );
-
-                    // For num_vars == 1, we only need evals at 0 and ∞ (indices 0 and 2).
-                    if num_vars == 1 {
-                        local_ans[0] = buff_a[0] * buff_b[0] * E_out[i];
-                        local_ans[2] = buff_a[2] * buff_b[2] * E_out[i];
-                    } else {
-                        for idx in 0..three_pow_dim {
-                            local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
-                        }
-                    }
-
-                    local_ans
-                })
-                .reduce(
-                    || vec![F::zero(); three_pow_dim],
-                    |mut acc, local_ans| {
-                        for idx in 0..three_pow_dim {
-                            acc[idx] += local_ans[idx];
-                        }
-                        acc
-                    },
-                )
-        } else {
-            // Handle case where E_in has multiple elements
-            let num_xin_bits = E_in.len().log_2();
-            az.par_chunks_exact_mut(grid_size * E_in.len())
-                .zip(bz.par_chunks_exact_mut(grid_size * E_in.len()))
-                .enumerate()
-                .map(|(x_out, (az_outer_chunk, bz_outer_chunk))| {
-                    let mut local_ans = vec![F::zero(); three_pow_dim];
-                    let mut az_grid = vec![F::zero(); grid_size];
-                    let mut bz_grid = vec![F::zero(); grid_size];
-                    let mut buff_a = vec![F::zero(); three_pow_dim];
-                    let mut buff_b = vec![F::zero(); three_pow_dim];
-                    let mut tmp = vec![F::zero(); three_pow_dim];
-
-                    for x_in in 0..E_in.len() {
-                        let i = (x_out << num_xin_bits) | x_in;
-
-                        // Fill grids for this (x_out, x_in) pair
-                        if grid_size >= 2 {
-                            let mut j = 0;
-                            while j < grid_size {
-                                let full_idx = grid_size * i + j;
-                                let time_step_idx = full_idx >> 1;
-
-                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                    &self.bytecode_preprocessing,
-                                    &self.trace,
-                                    time_step_idx,
-                                );
-                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-
-                                // First group (j)
-                                let az0 = eval.az_at_r_first_group(&self.lagrange_evals_r0);
-                                let bz0 = eval.bz_at_r_first_group(&self.lagrange_evals_r0);
-
-                                // Second group (j+1)
-                                let az1 = eval.az_at_r_second_group(&self.lagrange_evals_r0);
-                                let bz1 = eval.bz_at_r_second_group(&self.lagrange_evals_r0);
-
-                                let offset_in_chunk = x_in * grid_size + j;
-                                az_outer_chunk[offset_in_chunk] = az0;
-                                bz_outer_chunk[offset_in_chunk] = bz0;
-                                az_grid[j] = az0;
-                                bz_grid[j] = bz0;
-
-                                az_outer_chunk[offset_in_chunk + 1] = az1;
-                                bz_outer_chunk[offset_in_chunk + 1] = bz1;
-                                az_grid[j + 1] = az1;
-                                bz_grid[j + 1] = bz1;
-
-                                j += 2;
-                            }
-                        } else {
-                            for j in 0..grid_size {
-                                let full_idx = grid_size * i + j;
-                                let time_step_idx = full_idx >> 1;
-                                let selector = (full_idx & 1) == 1;
-
-                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                    &self.bytecode_preprocessing,
-                                    &self.trace,
-                                    time_step_idx,
-                                );
-                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
-
-                                let (az_at_full_idx, bz_at_full_idx) = if !selector {
-                                    (
-                                        eval.az_at_r_first_group(&self.lagrange_evals_r0),
-                                        eval.bz_at_r_first_group(&self.lagrange_evals_r0),
-                                    )
-                                } else {
-                                    (
-                                        eval.az_at_r_second_group(&self.lagrange_evals_r0),
-                                        eval.bz_at_r_second_group(&self.lagrange_evals_r0),
-                                    )
-                                };
-
-                                let offset_in_chunk = x_in * grid_size + j;
-                                az_outer_chunk[offset_in_chunk] = az_at_full_idx;
-                                bz_outer_chunk[offset_in_chunk] = bz_at_full_idx;
-                                az_grid[j] = az_at_full_idx;
-                                bz_grid[j] = bz_at_full_idx;
-                            }
-                        }
-
-                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                            &az_grid,
-                            &mut buff_a,
-                            &mut tmp,
-                            num_vars,
-                        );
-                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
-                            &bz_grid,
-                            &mut buff_b,
-                            &mut tmp,
-                            num_vars,
-                        );
-
-                        let e_product = E_out[x_out] * E_in[x_in];
-                        for idx in 0..three_pow_dim {
-                            local_ans[idx] += buff_a[idx] * buff_b[idx] * e_product;
-                        }
-                    }
-
-                    local_ans
-                })
-                .reduce(
-                    || vec![F::zero(); three_pow_dim],
-                    |mut acc, local_ans| {
-                        for idx in 0..three_pow_dim {
-                            acc[idx] += local_ans[idx];
-                        }
-                        acc
-                    },
-                )
-        };
-        self.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
-        self.az = Some(DensePolynomial::new(az));
-        self.bz = Some(DensePolynomial::new(bz));
-    }
-
-    /// Materialise Az/Bz polynomials from the trace at the switch-over point.
-    ///
-    /// # Design Note: Binding Order and Cache Locality
-    ///
-    /// The streaming index (constraint group selector, 2 groups per cycle) is bound
-    /// as the FIRST sumcheck variable. This creates different memory access patterns:
-    ///
-    /// - **Round zero** (`num_challenges() == 0`): The group selector is the LSB of
-    ///   `full_idx`, so consecutive indices access `(cycle0,G0), (cycle0,G1), (cycle1,G0)...`
-    ///   which maps to sequential `step_idx` values. Natural cache locality.
-    ///
-    /// - **After round zero** (`num_challenges() > 0`): The group selector has been
-    ///   bound into `r_grid`. Now X=0 (first group) and X=1 (second group) occupy
-    ///   separate memory regions separated by `2^num_r_bits`. Naive iteration causes
-    ///   cache thrashing; we use loop reordering (process all X=0 then all X=1) to
-    ///   maintain sequential access patterns.
-    ///
-    /// An alternative design would bind the streaming index LAST, which would preserve
-    /// natural cache locality throughout but would require restructuring the split-eq
-    /// polynomial and univariate-skip machinery.
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterRemainingSumcheckProver::materialise_poly_from_trace"
-    )]
-    fn materialise_polynomials_from_trace(&mut self, window_size: usize) {
-        let split_eq_poly = &self.split_eq_poly;
-        let is_not_first_round_of_sumcheck = split_eq_poly.num_challenges() > 0;
-        match (is_not_first_round_of_sumcheck, window_size == 1) {
-            // Disable this for now, see perf of generic version
-            // (true, true) => self.materialise_polynomials_from_trace_parallel_dim_one(),
-            (true, _) => {
-                self.fused_materialise_polynomials_general_with_multiquadratic(window_size)
-            }
-            // (false, true) => self.materialise_polynomials_from_trace_round_zero_dim_one(),
-            // Disable this for now, see perf of generic version
-            (false, _) => self.fused_materialise_polynomials_round_zero(window_size),
-        }
-    }
-
-    pub fn compute_t_evals(&self, window_size: usize) -> (F, F) {
-        let t_prime_poly = self
-            .t_prime_poly
-            .as_ref()
-            .expect("t_prime_poly should be initialized");
-
-        // Equality weights over the active window bits (all but the first).
-        let e_active = self.split_eq_poly.E_active_for_window(window_size);
-        let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
-        let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
-        (t_prime_0, t_prime_inf)
-    }
-
-    pub fn final_sumcheck_evals(&self) -> [F; 2] {
-        let az = self.az.as_ref().expect("az should be initialized");
-        let bz = self.bz.as_ref().expect("bz should be initialized");
-
-        let az0 = if !az.is_empty() { az[0] } else { F::zero() };
-        let bz0 = if !bz.is_empty() { bz[0] } else { F::zero() };
-        [az0, bz0]
-    }
-}
-
-impl<F: JoltField, T: Transcript, S: StreamingSchedule + Allocative> SumcheckInstanceProver<F, T>
-    for OuterRemainingSumcheckProver<'_, F, S>
-{
-    fn degree(&self) -> usize {
-        OUTER_REMAINING_DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim
-    }
-
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::compute_message")]
-    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        // The schedule determines how many variables we process in this window.
-        // In streaming mode: exponentially growing windows (1, 2, 4, 8, ...)
-        // In linear mode: single-variable windows (1, 1, 1, ...)
-        let num_unbound_vars = self.schedule.num_unbound_vars(round);
-
-        if self.schedule.is_switch_over_point(round) {
-            // TRANSITION: Streaming → Linear mode
-            // At this point we've done all streaming rounds. Now we:
-            // 1. Materialize az/bz polynomials from the trace (O(n) memory)
-            // 2. Compute the first evaluation grid from those polynomials
-            // After this, we never touch the trace again.
-            self.materialise_polynomials_from_trace(num_unbound_vars);
-        } else if self.schedule.is_window_start(round) {
-            // WINDOW START: Need to (re)compute the evaluation grid for this window.
-            // The grid holds partial sums over {0,1,∞}^d needed for the sumcheck.
-            if self.schedule.before_switch_over_point(round) {
-                // STREAMING MODE: Compute grid directly from trace.
-                // No polynomials materialized; we re-scan the trace each window.
-                // Memory: O(3^d) for grid, where d = window size.
-                self.compute_evaluation_grid_from_trace(num_unbound_vars);
-            } else {
-                // LINEAR MODE: Compute grid from materialized az/bz polynomials.
-                // Faster per-round since polynomials are in memory.
-                self.compute_evaluation_grid_from_polynomials_parallel(num_unbound_vars);
-            }
-        }
-        // Else: mid-window round, just reuse the existing grid (handled by bind)
-
-        // Extract T'(0) and T'(∞) from the grid, then compute the degree-3 univariate
-        // polynomial T(X) = eq(τ, x) · [Az(x) · Bz(x) - u · Cz(x)] using Gruen's formula.
-        let (t_prime_0, t_prime_inf) = self.compute_t_evals(num_unbound_vars);
-        self.split_eq_poly
-            .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
-    }
-
-    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheckProver::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        self.split_eq_poly.bind(r_j);
-
-        // Always bind the multiquadratic polynomial
-        let t_prime_poly = self
-            .t_prime_poly
-            .as_mut()
-            .expect("t_prime_poly should be initialized");
-        t_prime_poly.bind(r_j, BindingOrder::LowToHigh);
-
-        if self.schedule.before_switch_over_point(round) {
-            // Streaming mode: update r_grid for weighting trace evaluations
-            debug_assert!(
-                self.az.is_none(),
-                "az should not be materialized before switch-over"
-            );
-            self.r_grid.update(r_j);
-        } else {
-            // Linear mode: bind the materialized az/bz polynomials
-            debug_assert!(
-                self.az.is_some(),
-                "az should be materialized at or after switch-over"
-            );
-            // NOTE: As we are binding low-to-high in streaming
-            // I need to revisit the binding algorithm and optimise
-            // cache lines again
-            rayon::join(
-                || {
-                    self.az
-                        .as_mut()
-                        .expect("az should be initialised")
-                        .bind_parallel(r_j, BindingOrder::LowToHigh)
-                },
-                || {
-                    self.bz
-                        .as_mut()
-                        .expect("bz should be initialised")
-                        .bind_parallel(r_j, BindingOrder::LowToHigh)
-                },
-            );
-        }
-    }
-
-    fn cache_openings(
-        &self,
-        accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
-        let r_cycle = OuterRemainingSumcheckParams::get_inputs_opening_point(sumcheck_challenges);
-
-        // Compute claimed witness evals and append virtual openings for all R1CS inputs
-        let claimed_witness_evals =
-            R1CSEval::compute_claimed_inputs(&self.bytecode_preprocessing, &self.trace, &r_cycle);
-
-        for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
-            accumulator.append_virtual(
-                transcript,
-                VirtualPolynomial::from(input),
-                SumcheckId::SpartanOuter,
-                r_cycle.clone(),
-                claimed_witness_evals[i],
-            );
-        }
-    }
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
-    }
-}
-
 pub struct OuterRemainingSumcheckVerifier<F: JoltField> {
     params: OuterRemainingSumcheckParams<F>,
     key: UniformSpartanKey<F>,
@@ -1378,5 +315,950 @@ impl<F: JoltField> OuterRemainingSumcheckParams<F> {
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         let r_cycle = sumcheck_challenges[1..].to_vec();
         OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle).match_endianness()
+    }
+}
+
+pub type OuterRemainingStreamingSumcheck<F, S> =
+    StreamingSumcheck<F, S, OuterSharedState<F>, OuterStreamingWindow<F>, OuterLinearStage<F>>;
+
+#[derive(Allocative)]
+pub struct OuterSharedState<F: JoltField> {
+    #[allocative(skip)]
+    bytecode_preprocessing: BytecodePreprocessing,
+    #[allocative(skip)]
+    trace: Arc<Vec<Cycle>>,
+    split_eq_poly: GruenSplitEqPolynomial<F>,
+    t_prime_poly: Option<MultiquadraticPolynomial<F>>,
+    r_grid: ExpandingTable<F>,
+    #[allocative(skip)]
+    params: OuterRemainingSumcheckParams<F>,
+    #[allocative(skip)]
+    lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+}
+
+impl<F: JoltField> OuterSharedState<F> {
+    #[tracing::instrument(skip_all, name = "OuterSharedState::new")]
+    pub fn new(
+        trace: Arc<Vec<Cycle>>,
+        bytecode_preprocessing: &BytecodePreprocessing,
+        uni: &UniSkipState<F>,
+    ) -> Self {
+        let bytecode_preprocessing = bytecode_preprocessing.clone();
+        let n_cycle_vars = trace.len().log_2();
+        let outer_params = OuterRemainingSumcheckParams::new(n_cycle_vars, uni);
+
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&uni.r0);
+
+        let tau_high = uni.tau[uni.tau.len() - 1];
+        let tau_low = &uni.tau[..uni.tau.len() - 1];
+
+        let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&uni.r0, &tau_high);
+
+        let split_eq_poly: GruenSplitEqPolynomial<F> =
+            GruenSplitEqPolynomial::<F>::new_with_scaling(
+                tau_low,
+                BindingOrder::LowToHigh,
+                Some(lagrange_tau_r0),
+            );
+
+        let mut r_grid = ExpandingTable::new(1 << n_cycle_vars, BindingOrder::LowToHigh);
+        r_grid.reset(F::one());
+
+        Self {
+            split_eq_poly,
+            bytecode_preprocessing,
+            trace,
+            t_prime_poly: None,
+            r_grid,
+            params: outer_params,
+            lagrange_evals_r0: lagrange_evals_r,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn extrapolate_from_binary_grid_to_tertiary_grid(
+        &self,
+        acc_az: &mut [Acc5U<F>],
+        acc_bz_first: &mut [Acc6S<F>],
+        acc_bz_second: &mut [Acc7S<F>],
+        grid_az: &mut [F],
+        grid_bz: &mut [F],
+        jlen: usize,
+        klen: usize,
+        offset: usize,
+        scaled_w: &[[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]],
+    ) {
+        let preprocess = &self.bytecode_preprocessing;
+        let trace = &self.trace;
+        debug_assert_eq!(scaled_w.len(), klen);
+        debug_assert_eq!(grid_az.len(), jlen);
+        debug_assert_eq!(grid_bz.len(), jlen);
+        debug_assert_eq!(acc_az.len(), jlen);
+        debug_assert_eq!(acc_bz_first.len(), jlen);
+        debug_assert_eq!(acc_bz_second.len(), jlen);
+
+        acc_az
+            .par_iter_mut()
+            .zip(acc_bz_first.par_iter_mut())
+            .zip(acc_bz_second.par_iter_mut())
+            .for_each(|((a, b), c)| {
+                *a = Acc5U::zero();
+                *b = Acc6S::zero();
+                *c = Acc7S::zero();
+            });
+
+        acc_az
+            .par_iter_mut()
+            .zip(acc_bz_first.par_iter_mut())
+            .zip(acc_bz_second.par_iter_mut())
+            .enumerate()
+            .for_each(|(j, ((acc_az_j, acc_bz_first_j), acc_bz_second_j))| {
+                for k in 0..klen {
+                    let full_idx = offset + j * klen + k;
+                    let current_step_idx = full_idx >> 1;
+                    let selector = (full_idx & 1) == 1;
+
+                    let row_inputs =
+                        R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    let w_k = &scaled_w[k];
+
+                    if !selector {
+                        eval.fmadd_first_group_at_r(w_k, acc_az_j, acc_bz_first_j);
+                    } else {
+                        eval.fmadd_second_group_at_r(w_k, acc_az_j, acc_bz_second_j);
+                    }
+                }
+            });
+
+        const REDUCE_CHUNK_SIZE: usize = 4096;
+        grid_az
+            .par_chunks_mut(REDUCE_CHUNK_SIZE)
+            .zip(grid_bz.par_chunks_mut(REDUCE_CHUNK_SIZE))
+            .enumerate()
+            .for_each(|(chunk_idx, (az_chunk, bz_chunk))| {
+                let start = chunk_idx * REDUCE_CHUNK_SIZE;
+                for (local_j, (az_out, bz_out)) in
+                    az_chunk.iter_mut().zip(bz_chunk.iter_mut()).enumerate()
+                {
+                    let j = start + local_j;
+                    *az_out = acc_az[j].barrett_reduce();
+                    let bz_first_j = acc_bz_first[j].barrett_reduce();
+                    let bz_second_j = acc_bz_second[j].barrett_reduce();
+                    *bz_out = bz_first_j + bz_second_j;
+                }
+            });
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterSharedState::compute_evaluation_grid_from_trace"
+    )]
+    pub fn compute_evaluation_grid_from_trace(&mut self, window_size: usize) {
+        let split_eq = &self.split_eq_poly;
+
+        let three_pow_dim = 3_usize.pow(window_size as u32);
+        let jlen = 1 << window_size;
+        let klen = 1 << split_eq.num_challenges();
+
+        let lagrange_evals_r = &self.lagrange_evals_r0;
+        let r_grid = &self.r_grid;
+        let scaled_w: Vec<[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]> = if klen > 1 {
+            debug_assert_eq!(klen, r_grid.len());
+            (0..klen)
+                .into_par_iter()
+                .map(|k| {
+                    let weight = r_grid[k];
+                    let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+                    for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+                        row[t] = lagrange_evals_r[t] * weight;
+                    }
+                    row
+                })
+                .collect()
+        } else {
+            debug_assert_eq!(klen, 1);
+            let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+            row.copy_from_slice(lagrange_evals_r);
+            vec![row]
+        };
+
+        let (e_out, e_in) = split_eq.E_out_in_for_window(window_size);
+        let e_in_len = e_in.len();
+
+        let res_unr = e_out
+            .par_iter()
+            .enumerate()
+            .map(|(out_idx, out_val)| {
+                let mut local_res_unr = vec![F::Unreduced::<9>::zero(); three_pow_dim];
+                let mut buff_a: Vec<F> = vec![F::zero(); three_pow_dim];
+                let mut buff_b = vec![F::zero(); three_pow_dim];
+                let mut tmp = vec![F::zero(); three_pow_dim];
+                let mut grid_a = vec![F::zero(); jlen];
+                let mut grid_b = vec![F::zero(); jlen];
+                let mut acc_az = vec![Acc5U::<F>::zero(); jlen];
+                let mut acc_bz_first = vec![Acc6S::<F>::zero(); jlen];
+                let mut acc_bz_second = vec![Acc7S::<F>::zero(); jlen];
+
+                for (in_idx, in_val) in e_in.iter().enumerate() {
+                    let i = out_idx * e_in_len + in_idx;
+
+                    grid_a.fill(F::zero());
+                    grid_b.fill(F::zero());
+                    self.extrapolate_from_binary_grid_to_tertiary_grid(
+                        &mut acc_az,
+                        &mut acc_bz_first,
+                        &mut acc_bz_second,
+                        &mut grid_a,
+                        &mut grid_b,
+                        jlen,
+                        klen,
+                        i * jlen * klen,
+                        &scaled_w,
+                    );
+
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &grid_a,
+                        &mut buff_a,
+                        &mut tmp,
+                        window_size,
+                    );
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &grid_b,
+                        &mut buff_b,
+                        &mut tmp,
+                        window_size,
+                    );
+
+                    let e_in_val = *in_val;
+                    if window_size == 1 {
+                        local_res_unr[0] += e_in_val.mul_unreduced::<9>(buff_a[0] * buff_b[0]);
+                        local_res_unr[2] += e_in_val.mul_unreduced::<9>(buff_a[2] * buff_b[2]);
+                    } else {
+                        for idx in 0..three_pow_dim {
+                            let val = buff_a[idx] * buff_b[idx];
+                            local_res_unr[idx] += e_in_val.mul_unreduced::<9>(val);
+                        }
+                    }
+                }
+
+                let e_out_val = *out_val;
+                for idx in 0..three_pow_dim {
+                    let inner_red = F::from_montgomery_reduce::<9>(local_res_unr[idx]);
+                    local_res_unr[idx] = e_out_val.mul_unreduced::<9>(inner_red);
+                }
+                local_res_unr
+            })
+            .reduce(
+                || vec![F::Unreduced::<9>::zero(); three_pow_dim],
+                |mut acc, local| {
+                    for idx in 0..three_pow_dim {
+                        acc[idx] += local[idx];
+                    }
+                    acc
+                },
+            );
+
+        let res: Vec<F> = res_unr
+            .into_iter()
+            .map(|unr| F::from_montgomery_reduce::<9>(unr))
+            .collect();
+        self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, res));
+    }
+
+    pub fn compute_t_evals(&self, window_size: usize) -> (F, F) {
+        let t_prime_poly = self
+            .t_prime_poly
+            .as_ref()
+            .expect("t_prime_poly should be initialized");
+
+        let e_active = self.split_eq_poly.E_active_for_window(window_size);
+        let t_prime_0 = t_prime_poly.project_to_first_variable(&e_active, 0);
+        let t_prime_inf = t_prime_poly.project_to_first_variable(&e_active, INFINITY);
+        (t_prime_0, t_prime_inf)
+    }
+}
+
+impl<F: JoltField> SharedStreamingSumcheckState<F> for OuterSharedState<F> {
+    fn degree(&self) -> usize {
+        OUTER_REMAINING_DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.num_rounds()
+    }
+
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim
+    }
+}
+
+#[derive(Allocative)]
+#[allocative(bound = "")]
+pub struct OuterStreamingWindow<F: JoltField> {
+    _phantom: PhantomData<F>,
+}
+
+impl<F: JoltField> StreamingSumcheckWindow<F> for OuterStreamingWindow<F> {
+    type Shared = OuterSharedState<F>;
+
+    fn initialize(shared: &mut Self::Shared, window_size: usize) -> Self {
+        shared.compute_evaluation_grid_from_trace(window_size);
+        Self {
+            _phantom: PhantomData,
+        }
+    }
+
+    fn compute_message(
+        &self,
+        shared: &Self::Shared,
+        window_size: usize,
+        previous_claim: F,
+    ) -> UniPoly<F> {
+        let (t_prime_0, t_prime_inf) = shared.compute_t_evals(window_size);
+        shared
+            .split_eq_poly
+            .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
+    }
+
+    fn ingest_challenge(&mut self, shared: &mut Self::Shared, r_j: F::Challenge, _round: usize) {
+        shared.split_eq_poly.bind(r_j);
+
+        if let Some(t_prime_poly) = shared.t_prime_poly.as_mut() {
+            t_prime_poly.bind(r_j, BindingOrder::LowToHigh);
+        }
+
+        shared.r_grid.update(r_j);
+    }
+}
+
+#[derive(Allocative)]
+pub struct OuterLinearStage<F: JoltField> {
+    az: DensePolynomial<F>,
+    bz: DensePolynomial<F>,
+}
+
+impl<F: JoltField> OuterLinearStage<F> {
+    fn fused_materialise_polynomials_general_with_multiquadratic(
+        shared: &mut OuterSharedState<F>,
+        window_size: usize,
+    ) -> (DensePolynomial<F>, DensePolynomial<F>) {
+        let (E_out, E_in) = shared.split_eq_poly.E_out_in_for_window(window_size);
+        let num_x_out_vals = E_out.len();
+        let num_x_in_vals = E_in.len();
+        let r_grid = &shared.r_grid;
+        let num_r_vals = r_grid.len();
+
+        let three_pow_dim = 3_usize.pow(window_size as u32);
+        let grid_size = 1 << window_size;
+        let num_evals_az = E_out.len() * E_in.len() * grid_size;
+
+        let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+        let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+
+        let num_r_bits = num_r_vals.log_2();
+        let num_x_in_bits = num_x_in_vals.log_2();
+
+        let lagrange_evals_r = &shared.lagrange_evals_r0;
+        let scaled_w: Vec<[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]> = (0..num_r_vals)
+            .into_par_iter()
+            .map(|r_idx| {
+                let weight = r_grid[r_idx];
+                let mut row = [F::zero(); OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE];
+                for t in 0..OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE {
+                    row[t] = lagrange_evals_r[t] * weight;
+                }
+                row
+            })
+            .collect();
+
+        let output_size = num_x_out_vals * num_x_in_vals;
+
+        let num_threads = rayon::current_num_threads();
+        let target_chunks = num_threads * 4;
+        let min_chunk_pairs = 16;
+        let pairs_per_chunk = output_size.div_ceil(target_chunks).max(min_chunk_pairs);
+        let chunk_size = pairs_per_chunk * grid_size;
+
+        let ans = az_bound
+            .par_chunks_mut(chunk_size)
+            .zip(bz_bound.par_chunks_mut(chunk_size))
+            .enumerate()
+            .fold(
+                || vec![F::zero(); three_pow_dim],
+                |mut local_ans, (chunk_idx, (az_chunk, bz_chunk))| {
+                    let start_pair = chunk_idx * pairs_per_chunk;
+                    let end_pair = (start_pair + pairs_per_chunk).min(output_size);
+
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+
+                    let mut acc_az: Vec<Acc5U<F>> = vec![Acc5U::zero(); grid_size];
+                    let mut acc_bz_first: Vec<Acc6S<F>> = vec![Acc6S::zero(); grid_size];
+                    let mut acc_bz_second: Vec<Acc7S<F>> = vec![Acc7S::zero(); grid_size];
+
+                    let mut inner_sum: Vec<F::Unreduced<9>> =
+                        vec![F::Unreduced::<9>::zero(); three_pow_dim];
+                    let mut current_x_out = start_pair / num_x_in_vals;
+
+                    for pair_idx in start_pair..end_pair {
+                        let x_in_val = pair_idx % num_x_in_vals;
+                        let x_out_val = pair_idx / num_x_in_vals;
+
+                        if x_out_val != current_x_out {
+                            let e_out = E_out[current_x_out];
+                            for idx in 0..three_pow_dim {
+                                local_ans[idx] +=
+                                    F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
+                                inner_sum[idx] = F::Unreduced::<9>::zero();
+                            }
+                            current_x_out = x_out_val;
+                        }
+
+                        for x_val in 0..grid_size {
+                            acc_az[x_val] = Acc5U::zero();
+                            acc_bz_first[x_val] = Acc6S::zero();
+                            acc_bz_second[x_val] = Acc7S::zero();
+                        }
+
+                        let base_idx = (x_out_val << (num_x_in_bits + window_size + num_r_bits))
+                            | (x_in_val << (window_size + num_r_bits));
+
+                        for x_val in 0..grid_size {
+                            let x_val_shifted = x_val << num_r_bits;
+                            for r_idx in 0..num_r_vals {
+                                let w_r = &scaled_w[r_idx];
+                                let full_idx = base_idx | x_val_shifted | r_idx;
+
+                                let step_idx = full_idx >> 1;
+                                let selector = (full_idx & 1) == 1;
+
+                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                    &shared.bytecode_preprocessing,
+                                    &shared.trace,
+                                    step_idx,
+                                );
+                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                                if !selector {
+                                    eval.fmadd_first_group_at_r(
+                                        w_r,
+                                        &mut acc_az[x_val],
+                                        &mut acc_bz_first[x_val],
+                                    );
+                                } else {
+                                    eval.fmadd_second_group_at_r(
+                                        w_r,
+                                        &mut acc_az[x_val],
+                                        &mut acc_bz_second[x_val],
+                                    );
+                                }
+                            }
+                        }
+
+                        for x_val in 0..grid_size {
+                            az_grid[x_val] = acc_az[x_val].barrett_reduce();
+                            bz_grid[x_val] = acc_bz_first[x_val].barrett_reduce()
+                                + acc_bz_second[x_val].barrett_reduce();
+                        }
+
+                        let buffer_offset = grid_size * (pair_idx - start_pair);
+                        let end = buffer_offset + grid_size;
+                        az_chunk[buffer_offset..end].copy_from_slice(&az_grid[..grid_size]);
+                        bz_chunk[buffer_offset..end].copy_from_slice(&bz_grid[..grid_size]);
+
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &az_grid,
+                            &mut buff_a,
+                            &mut tmp,
+                            window_size,
+                        );
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &bz_grid,
+                            &mut buff_b,
+                            &mut tmp,
+                            window_size,
+                        );
+
+                        let e_in = E_in[x_in_val];
+
+                        if window_size == 1 {
+                            let prod0 = buff_a[0] * buff_b[0];
+                            let prod2 = buff_a[2] * buff_b[2];
+                            inner_sum[0] += prod0.mul_unreduced::<9>(e_in);
+                            inner_sum[2] += prod2.mul_unreduced::<9>(e_in);
+                        } else {
+                            for idx in 0..three_pow_dim {
+                                let prod = buff_a[idx] * buff_b[idx];
+                                inner_sum[idx] += prod.mul_unreduced::<9>(e_in);
+                            }
+                        }
+                    }
+
+                    let e_out = E_out[current_x_out];
+                    for idx in 0..three_pow_dim {
+                        local_ans[idx] += F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
+                    }
+
+                    local_ans
+                },
+            )
+            .reduce(
+                || vec![F::zero(); three_pow_dim],
+                |mut acc, local_ans| {
+                    for idx in 0..three_pow_dim {
+                        acc[idx] += local_ans[idx];
+                    }
+                    acc
+                },
+            );
+
+        shared.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, ans));
+        (
+            DensePolynomial::new(az_bound),
+            DensePolynomial::new(bz_bound),
+        )
+    }
+
+    fn fused_materialise_polynomials_round_zero(
+        shared: &mut OuterSharedState<F>,
+        num_vars: usize,
+    ) -> (DensePolynomial<F>, DensePolynomial<F>) {
+        let eq_poly = &shared.split_eq_poly;
+
+        let three_pow_dim = 3_usize.pow(num_vars as u32);
+        let grid_size = 1 << num_vars;
+        let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
+
+        let num_evals_az = E_out.len() * E_in.len() * grid_size;
+        let mut az: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+        let mut bz: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+
+        let ans: Vec<F> = if E_in.len() == 1 {
+            az.par_chunks_exact_mut(grid_size)
+                .zip(bz.par_chunks_exact_mut(grid_size))
+                .enumerate()
+                .map(|(i, (az_chunk, bz_chunk))| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    if grid_size >= 2 {
+                        let mut j = 0;
+                        while j < grid_size {
+                            let full_idx = grid_size * i + j;
+                            let time_step_idx = full_idx >> 1;
+
+                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                &shared.bytecode_preprocessing,
+                                &shared.trace,
+                                time_step_idx,
+                            );
+                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                            let az0 = eval.az_at_r_first_group(&shared.lagrange_evals_r0);
+                            let bz0 = eval.bz_at_r_first_group(&shared.lagrange_evals_r0);
+
+                            let az1 = eval.az_at_r_second_group(&shared.lagrange_evals_r0);
+                            let bz1 = eval.bz_at_r_second_group(&shared.lagrange_evals_r0);
+
+                            az_chunk[j] = az0;
+                            bz_chunk[j] = bz0;
+                            az_grid[j] = az0;
+                            bz_grid[j] = bz0;
+
+                            az_chunk[j + 1] = az1;
+                            bz_chunk[j + 1] = bz1;
+                            az_grid[j + 1] = az1;
+                            bz_grid[j + 1] = bz1;
+
+                            j += 2;
+                        }
+                    } else {
+                        for j in 0..grid_size {
+                            let full_idx = grid_size * i + j;
+                            let time_step_idx = full_idx >> 1;
+                            let selector = (full_idx & 1) == 1;
+
+                            let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                &shared.bytecode_preprocessing,
+                                &shared.trace,
+                                time_step_idx,
+                            );
+                            let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                            let (az_at_full_idx, bz_at_full_idx) = if !selector {
+                                (
+                                    eval.az_at_r_first_group(&shared.lagrange_evals_r0),
+                                    eval.bz_at_r_first_group(&shared.lagrange_evals_r0),
+                                )
+                            } else {
+                                (
+                                    eval.az_at_r_second_group(&shared.lagrange_evals_r0),
+                                    eval.bz_at_r_second_group(&shared.lagrange_evals_r0),
+                                )
+                            };
+
+                            az_chunk[j] = az_at_full_idx;
+                            bz_chunk[j] = bz_at_full_idx;
+                            az_grid[j] = az_at_full_idx;
+                            bz_grid[j] = bz_at_full_idx;
+                        }
+                    }
+
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &az_grid,
+                        &mut buff_a,
+                        &mut tmp,
+                        num_vars,
+                    );
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &bz_grid,
+                        &mut buff_b,
+                        &mut tmp,
+                        num_vars,
+                    );
+
+                    if num_vars == 1 {
+                        local_ans[0] = buff_a[0] * buff_b[0] * E_out[i];
+                        local_ans[2] = buff_a[2] * buff_b[2] * E_out[i];
+                    } else {
+                        for idx in 0..three_pow_dim {
+                            local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
+                        }
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        } else {
+            let num_xin_bits = E_in.len().log_2();
+            az.par_chunks_exact_mut(grid_size * E_in.len())
+                .zip(bz.par_chunks_exact_mut(grid_size * E_in.len()))
+                .enumerate()
+                .map(|(x_out, (az_outer_chunk, bz_outer_chunk))| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    for x_in in 0..E_in.len() {
+                        let i = (x_out << num_xin_bits) | x_in;
+
+                        if grid_size >= 2 {
+                            let mut j = 0;
+                            while j < grid_size {
+                                let full_idx = grid_size * i + j;
+                                let time_step_idx = full_idx >> 1;
+
+                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                    &shared.bytecode_preprocessing,
+                                    &shared.trace,
+                                    time_step_idx,
+                                );
+                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                                let az0 = eval.az_at_r_first_group(&shared.lagrange_evals_r0);
+                                let bz0 = eval.bz_at_r_first_group(&shared.lagrange_evals_r0);
+
+                                let az1 = eval.az_at_r_second_group(&shared.lagrange_evals_r0);
+                                let bz1 = eval.bz_at_r_second_group(&shared.lagrange_evals_r0);
+
+                                let offset_in_chunk = x_in * grid_size + j;
+                                az_outer_chunk[offset_in_chunk] = az0;
+                                bz_outer_chunk[offset_in_chunk] = bz0;
+                                az_grid[j] = az0;
+                                bz_grid[j] = bz0;
+
+                                az_outer_chunk[offset_in_chunk + 1] = az1;
+                                bz_outer_chunk[offset_in_chunk + 1] = bz1;
+                                az_grid[j + 1] = az1;
+                                bz_grid[j + 1] = bz1;
+
+                                j += 2;
+                            }
+                        } else {
+                            for j in 0..grid_size {
+                                let full_idx = grid_size * i + j;
+                                let time_step_idx = full_idx >> 1;
+                                let selector = (full_idx & 1) == 1;
+
+                                let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                                    &shared.bytecode_preprocessing,
+                                    &shared.trace,
+                                    time_step_idx,
+                                );
+                                let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+
+                                let (az_at_full_idx, bz_at_full_idx) = if !selector {
+                                    (
+                                        eval.az_at_r_first_group(&shared.lagrange_evals_r0),
+                                        eval.bz_at_r_first_group(&shared.lagrange_evals_r0),
+                                    )
+                                } else {
+                                    (
+                                        eval.az_at_r_second_group(&shared.lagrange_evals_r0),
+                                        eval.bz_at_r_second_group(&shared.lagrange_evals_r0),
+                                    )
+                                };
+
+                                let offset_in_chunk = x_in * grid_size + j;
+                                az_outer_chunk[offset_in_chunk] = az_at_full_idx;
+                                bz_outer_chunk[offset_in_chunk] = bz_at_full_idx;
+                                az_grid[j] = az_at_full_idx;
+                                bz_grid[j] = bz_at_full_idx;
+                            }
+                        }
+
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &az_grid,
+                            &mut buff_a,
+                            &mut tmp,
+                            num_vars,
+                        );
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &bz_grid,
+                            &mut buff_b,
+                            &mut tmp,
+                            num_vars,
+                        );
+
+                        let e_product = E_out[x_out] * E_in[x_in];
+                        for idx in 0..three_pow_dim {
+                            local_ans[idx] += buff_a[idx] * buff_b[idx] * e_product;
+                        }
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        };
+        shared.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
+        (DensePolynomial::new(az), DensePolynomial::new(bz))
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterLinearStage::compute_evaluation_grid_from_polynomials_parallel"
+    )]
+    fn compute_evaluation_grid_from_polynomials_parallel(
+        &self,
+        shared: &mut OuterSharedState<F>,
+        num_vars: usize,
+    ) {
+        let eq_poly = &shared.split_eq_poly;
+
+        let n = self.az.len();
+        let az = &self.az;
+        let bz = &self.bz;
+        debug_assert_eq!(n, bz.len());
+
+        let three_pow_dim = 3_usize.pow(num_vars as u32);
+        let grid_size = 1 << num_vars;
+        let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
+        let ans: Vec<F> = if E_in.len() == 1 {
+            (0..E_out.len())
+                .into_par_iter()
+                .map(|i| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    for j in 0..grid_size {
+                        let index = grid_size * i + j;
+                        az_grid[j] = az[index];
+                        bz_grid[j] = bz[index];
+                    }
+
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &az_grid,
+                        &mut buff_a,
+                        &mut tmp,
+                        num_vars,
+                    );
+                    MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                        &bz_grid,
+                        &mut buff_b,
+                        &mut tmp,
+                        num_vars,
+                    );
+
+                    for idx in 0..three_pow_dim {
+                        local_ans[idx] = buff_a[idx] * buff_b[idx] * E_out[i];
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        } else {
+            let num_xin_bits = E_in.len().log_2();
+            (0..E_out.len())
+                .into_par_iter()
+                .map(|x_out| {
+                    let mut local_ans = vec![F::zero(); three_pow_dim];
+                    let mut az_grid = vec![F::zero(); grid_size];
+                    let mut bz_grid = vec![F::zero(); grid_size];
+                    let mut buff_a = vec![F::zero(); three_pow_dim];
+                    let mut buff_b = vec![F::zero(); three_pow_dim];
+                    let mut tmp = vec![F::zero(); three_pow_dim];
+
+                    for x_in in 0..E_in.len() {
+                        let i = (x_out << num_xin_bits) | x_in;
+
+                        for j in 0..grid_size {
+                            az_grid[j] = az[grid_size * i + j];
+                            bz_grid[j] = bz[grid_size * i + j];
+                        }
+
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &az_grid,
+                            &mut buff_a,
+                            &mut tmp,
+                            num_vars,
+                        );
+                        MultiquadraticPolynomial::<F>::expand_linear_grid_to_multiquadratic(
+                            &bz_grid,
+                            &mut buff_b,
+                            &mut tmp,
+                            num_vars,
+                        );
+
+                        for idx in 0..three_pow_dim {
+                            local_ans[idx] += buff_a[idx] * buff_b[idx] * E_in[x_in];
+                        }
+                    }
+                    for idx in 0..three_pow_dim {
+                        local_ans[idx] *= E_out[x_out];
+                    }
+
+                    local_ans
+                })
+                .reduce(
+                    || vec![F::zero(); three_pow_dim],
+                    |mut acc, local_ans| {
+                        for idx in 0..three_pow_dim {
+                            acc[idx] += local_ans[idx];
+                        }
+                        acc
+                    },
+                )
+        };
+        shared.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
+    }
+}
+
+impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
+    type Shared = OuterSharedState<F>;
+    type Streaming = OuterStreamingWindow<F>;
+
+    fn initialize(
+        _streaming: Option<Self::Streaming>,
+        shared: &mut Self::Shared,
+        window_size: usize,
+    ) -> Self {
+        let is_not_first_round_of_sumcheck = shared.split_eq_poly.num_challenges() > 0;
+        let (az, bz) = if is_not_first_round_of_sumcheck {
+            Self::fused_materialise_polynomials_general_with_multiquadratic(shared, window_size)
+        } else {
+            Self::fused_materialise_polynomials_round_zero(shared, window_size)
+        };
+
+        Self { az, bz }
+    }
+
+    fn next_window(&mut self, shared: &mut Self::Shared, window_size: usize) {
+        self.compute_evaluation_grid_from_polynomials_parallel(shared, window_size);
+    }
+
+    fn compute_message(
+        &self,
+        shared: &Self::Shared,
+        window_size: usize,
+        previous_claim: F,
+    ) -> UniPoly<F> {
+        let (t_prime_0, t_prime_inf) = shared.compute_t_evals(window_size);
+        shared
+            .split_eq_poly
+            .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
+    }
+
+    fn ingest_challenge(&mut self, shared: &mut Self::Shared, r_j: F::Challenge, _round: usize) {
+        shared.split_eq_poly.bind(r_j);
+
+        if let Some(t_prime_poly) = shared.t_prime_poly.as_mut() {
+            t_prime_poly.bind(r_j, BindingOrder::LowToHigh);
+        }
+
+        rayon::join(
+            || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+        );
+    }
+
+    fn cache_openings<T: Transcript>(
+        &self,
+        shared: &Self::Shared,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let r_cycle = OuterRemainingSumcheckParams::get_inputs_opening_point(sumcheck_challenges);
+
+        let claimed_witness_evals = R1CSEval::compute_claimed_inputs(
+            &shared.bytecode_preprocessing,
+            &shared.trace,
+            &r_cycle,
+        );
+
+        for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
+            accumulator.append_virtual(
+                transcript,
+                VirtualPolynomial::from(input),
+                SumcheckId::SpartanOuter,
+                r_cycle.clone(),
+                claimed_witness_evals[i],
+            );
+        }
     }
 }
