@@ -633,22 +633,31 @@ impl<F: JoltField> IncReductionPhase2Prover<F> {
         let (s4_hi, _) = params.s_cycle_stage4.split_at(n_vars - prefix_n_vars);
         let (s5_hi, _) = params.s_cycle_stage5.split_at(n_vars - prefix_n_vars);
 
-        let eq_r2_suffix = EqPolynomial::evals_parallel(&r2_hi.r, Some(eq_r2_prefix));
-        let eq_r4_suffix = EqPolynomial::evals_parallel(&r4_hi.r, Some(eq_r4_prefix));
-        let eq_s4_suffix = EqPolynomial::evals_parallel(&s4_hi.r, Some(eq_s4_prefix));
-        let eq_s5_suffix = EqPolynomial::evals_parallel(&s5_hi.r, Some(eq_s5_prefix));
-
         // Combined eq polynomials: eq_ram = eq_r2 + γ·eq_r4, eq_rd = eq_s4 + γ·eq_s5
-        let eq_ram: Vec<F> = eq_r2_suffix
-            .par_iter()
-            .zip(eq_r4_suffix.par_iter())
-            .map(|(e2, e4)| *e2 + gamma * e4)
-            .collect();
-        let eq_rd: Vec<F> = eq_s4_suffix
-            .par_iter()
-            .zip(eq_s5_suffix.par_iter())
-            .map(|(e4, e5)| *e4 + gamma * e5)
-            .collect();
+        let (eq_ram, eq_rd) = rayon::join(
+            || {
+                let (eq_r2, eq_r4) = rayon::join(
+                    || EqPolynomial::evals_serial(&r2_hi.r, Some(eq_r2_prefix)),
+                    || EqPolynomial::evals_serial(&r4_hi.r, Some(eq_r4_prefix)),
+                );
+                eq_r2
+                    .par_iter()
+                    .zip(eq_r4.par_iter())
+                    .map(|(e2, e4)| *e2 + gamma * e4)
+                    .collect::<Vec<F>>()
+            },
+            || {
+                let (eq_s4, eq_s5) = rayon::join(
+                    || EqPolynomial::evals_serial(&s4_hi.r, Some(eq_s4_prefix)),
+                    || EqPolynomial::evals_serial(&s5_hi.r, Some(eq_s5_prefix)),
+                );
+                eq_s4
+                    .par_iter()
+                    .zip(eq_s5.par_iter())
+                    .map(|(e4, e5)| *e4 + gamma * e5)
+                    .collect::<Vec<F>>()
+            },
+        );
 
         // Materialize Inc polynomials
         let eq_prefix_evals = EqPolynomial::evals(&r_prefix.r);

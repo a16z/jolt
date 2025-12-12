@@ -748,8 +748,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_ra_booleanity_params =
-            ram::ra_booleanity_params(self.trace.len(), &self.one_hot_params, &mut self.transcript);
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -764,12 +762,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
-        );
-        let ram_ra_booleanity = ram::gen_ra_booleanity_prover(
-            ram_ra_booleanity_params,
-            &self.trace,
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
         );
         let ram_val_evaluation = RamValEvaluationSumcheckProver::initialize(
             ram_val_evaluation_params,
@@ -790,14 +782,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "RegistersReadWriteCheckingProver",
                 &registers_read_write_checking,
             );
-            print_data_structure_heap_usage("ram BooleanitySumcheckProver", &ram_ra_booleanity);
             print_data_structure_heap_usage("RamValEvaluationSumcheckProver", &ram_val_evaluation);
             print_data_structure_heap_usage("ValFinalSumcheckProver", &ram_val_final);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_read_write_checking),
-            Box::new(ram_ra_booleanity),
             Box::new(ram_val_evaluation),
             Box::new(ram_val_final),
         ];
@@ -903,6 +893,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_booleanity_params =
+            ram::ra_booleanity_params(self.trace.len(), &self.one_hot_params, &mut self.transcript);
         let ram_ra_virtual_params = RamRaSumcheckParams::new(
             self.trace.len(),
             &self.one_hot_params,
@@ -946,6 +938,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
+        let ram_ra_booleanity = ram::gen_ra_booleanity_prover(
+            ram_ra_booleanity_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
+        );
         let ram_ra_virtual = RamRaSumcheckProver::initialize(
             ram_ra_virtual_params,
             &self.trace,
@@ -976,6 +974,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &bytecode_booleanity,
             );
             print_data_structure_heap_usage("ram HammingWeightSumcheckProver", &ram_hamming_weight);
+            print_data_structure_heap_usage("ram BooleanitySumcheckProver", &ram_ra_booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage(
@@ -994,6 +993,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Box::new(bytecode_hamming_weight),
             Box::new(bytecode_booleanity),
             Box::new(ram_hamming_weight),
+            Box::new(ram_ra_booleanity),
             Box::new(ram_ra_virtual),
             Box::new(lookups_ra_virtual),
             Box::new(lookups_ra_booleanity),

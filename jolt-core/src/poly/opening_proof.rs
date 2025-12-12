@@ -185,6 +185,7 @@ pub enum SumcheckId {
     BytecodeHammingWeight,
     IncReduction,
     RaAddressReduction,
+    FusedHammingAddressReduction,
     OpeningReduction,
 }
 

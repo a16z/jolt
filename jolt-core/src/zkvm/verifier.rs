@@ -302,11 +302,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
-            self.proof.trace_length,
-            &self.one_hot_params,
-            &mut self.transcript,
-        );
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
             &self.preprocessing.ram,
@@ -331,7 +326,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.proof.stage4_sumcheck_proof,
             vec![
                 &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_ra_booleanity,
                 &ram_val_evaluation,
                 &ram_val_final,
             ],
@@ -390,6 +384,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
+            self.proof.trace_length,
+            &self.one_hot_params,
+            &mut self.transcript,
+        );
         let ram_ra_virtual = RamRaSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -418,6 +417,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &bytecode_hamming_weight,
                 &bytecode_booleanity,
                 &ram_hamming_weight,
+                &ram_ra_booleanity,
                 &ram_ra_virtual,
                 &lookups_ra_virtual,
                 &lookups_ra_booleanity,
