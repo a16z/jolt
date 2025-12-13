@@ -55,7 +55,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::witness::CommittedPolynomial,
 };
 use anyhow::Context;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

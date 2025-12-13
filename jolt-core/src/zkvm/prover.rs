@@ -29,7 +29,7 @@ use crate::{
     subprotocols::{
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
-        unified_booleanity::{self, UnifiedBooleanityParams},
+        unified_booleanity::{UnifiedBooleanityParams, UnifiedBooleanityProver},
         univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProof},
     },
     transcripts::Transcript,
@@ -107,7 +107,7 @@ use crate::{
             instruction_input::InstructionInputSumcheckProver, outer::OuterRemainingSumcheckProver,
             product::ProductVirtualRemainderProver, shift::ShiftSumcheckProver,
         },
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::CommittedPolynomial,
         ProverDebugInfo, Serializable,
     },
 };
@@ -932,7 +932,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
         // Unified booleanity prover - handles all three families
-        let unified_booleanity = unified_booleanity::init::initialize_prover(
+        let unified_booleanity = UnifiedBooleanityProver::initialize(
             unified_booleanity_params,
             &self.trace,
             &self.preprocessing.bytecode,
@@ -1260,10 +1260,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         mut opening_hints: HashMap<CommittedPolynomial, PCS2::OpeningProofHint>,
         state: &DoryOpeningState<F>,
         streaming_context: (LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams),
-    ) -> (MultilinearPolynomial<F>, PCS2::OpeningProofHint)
-    where
-        PCS2: CommitmentScheme<Field = F>,
-    {
+    ) -> (MultilinearPolynomial<F>, PCS2::OpeningProofHint) {
         use crate::poly::rlc_polynomial::RLCPolynomial;
         use std::collections::BTreeMap;
 

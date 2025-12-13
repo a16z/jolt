@@ -41,7 +41,7 @@ fn compute_d(log_k: usize, log_chunk: usize) -> usize {
     log_k.div_ceil(log_chunk)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct OneHotParams {
     pub log_k_chunk: usize,
     pub lookups_ra_virtual_log_k_chunk: usize,

@@ -59,8 +59,8 @@
 //!
 //! ## eq Polynomial Optimization
 //!
-//! - **eq_bool**: 3 polynomials total (shared per family)
-//!   - All ra_i within a family share the same r_addr_bool from booleanity sumcheck
+//! - **eq_bool**: 1 polynomial total (shared across ALL families)
+//!   - Thanks to UnifiedBooleanity, all ra_i share the same r_addr_bool
 //! - **eq_virt**: N polynomials (one per ra_i)
 //!   - Each ra_i has different r_addr_virt from virtualization (chunks bound sequentially)
 //!
@@ -200,7 +200,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         // Sample batching challenge γ and compute powers (3 claims per ra_i)
         let gamma: F = transcript.challenge_scalar();
         #[cfg(debug_assertions)]
-        eprintln!("HWClaimReduction gamma={:?}", gamma);
+        eprintln!("HWClaimReduction gamma={gamma:?}");
         let mut gamma_powers = Vec::with_capacity(3 * N);
         let mut power = F::one();
         for _ in 0..(3 * N) {
@@ -300,8 +300,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             "HWClaimReduction input_claim: {:?}, num_polys: {}, claims_hw[0]: {:?}, claims_bool[0]: {:?}",
             claim,
             self.polynomial_types.len(),
-            self.claims_hw.get(0),
-            self.claims_bool.get(0)
+            self.claims_hw.first(),
+            self.claims_bool.first()
         );
         claim
     }
@@ -336,8 +336,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
 /// This sumcheck combines all three ra_i claim types (HammingWeight, Booleanity,
 /// Virtualization) into a single degree-2 sumcheck over log_k_chunk rounds.
 ///
-/// Memory optimization: eq_bool is shared per family (3 polynomials), while
-/// eq_virt requires one per ra_i (N polynomials).
+/// Memory optimization: eq_bool is shared across all families (1 polynomial, thanks
+/// to UnifiedBooleanity), while eq_virt requires one per ra_i (N polynomials).
 #[derive(Allocative)]
 pub struct HammingWeightClaimReductionProver<F: JoltField> {
     /// G_i polynomials (pushforward of ra_i over r_cycle)
@@ -495,19 +495,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 g_eq_le += g_val * eq_from_le[k];
             }
 
-            eprintln!(
-                "HW round 0: non_zero_count={}, indices={:?}",
-                non_zero_count, non_zero_indices
-            );
+            eprintln!("HW round 0: non_zero_count={non_zero_count}, indices={non_zero_indices:?}");
             eprintln!(
                 "  G·eq(r_BE)={:?}, G·eq(r_LE)={:?}, claims_bool={:?}",
                 g_eq_be,
                 g_eq_le,
-                self.params.claims_bool.get(0)
+                self.params.claims_bool.first()
             );
             eprintln!(
                 "  claims_bool[0]={:?}, G_len={}, eq_len={}",
-                self.params.claims_bool.get(0),
+                self.params.claims_bool.first(),
                 g_len,
                 self.eq_bool.len()
             );
@@ -608,10 +605,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 expected_output +=
                     g_claim * (gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval);
                 if i == 0 || i == N - 1 {
-                    eprintln!(
-                        "Prover expected_output: i={}, N={}, g_claim={:?}",
-                        i, N, g_claim
-                    );
+                    eprintln!("Prover expected_output: i={i}, N={N}, g_claim={g_claim:?}");
                 }
             }
 
@@ -715,10 +709,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
             #[cfg(debug_assertions)]
             if i == 0 || i == N - 1 {
-                eprintln!(
-                    "Verifier expected_output: i={}, N={}, g_i_claim={:?}",
-                    i, N, g_i_claim
-                );
+                eprintln!("Verifier expected_output: i={i}, N={N}, g_i_claim={g_i_claim:?}");
             }
 
             // γ^{3i} · G_i(ρ) + γ^{3i+1} · eq_bool(ρ) · G_i(ρ) + γ^{3i+2} · eq_virt(ρ) · G_i(ρ)
@@ -732,7 +723,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         }
 
         #[cfg(debug_assertions)]
-        eprintln!("Verifier expected_output_claim final: {:?}", output_claim);
+        eprintln!("Verifier expected_output_claim final: {output_claim:?}");
 
         output_claim
     }

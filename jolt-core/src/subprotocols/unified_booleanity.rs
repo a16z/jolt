@@ -24,6 +24,9 @@ use ark_std::Zero;
 use rayon::prelude::*;
 use std::iter::zip;
 
+use common::jolt_device::MemoryLayout;
+use tracer::instruction::Cycle;
+
 use crate::{
     field::JoltField,
     poly::{
@@ -33,7 +36,7 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
-        shared_ra_polys::{RaIndices, SharedRaPolynomials},
+        shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -43,7 +46,11 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, thread::drop_in_background_thread},
-    zkvm::{config::OneHotParams, witness::CommittedPolynomial},
+    zkvm::{
+        bytecode::BytecodePreprocessing,
+        config::OneHotParams,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
 
 /// Degree bound of the sumcheck round polynomials.
@@ -103,20 +110,19 @@ impl<F: JoltField> UnifiedBooleanityParams<F> {
     ///
     /// Stage 5 produces challenges in order: address (LOG_K_INSTRUCTION) => cycle (log_t).
     /// We extract the last log_k_chunk challenges for r_address and all of r_cycle.
+    /// (this is a somewhat arbitrary choice; any prior randomness would work)
     pub fn new(
         log_t: usize,
-        one_hot_params: &crate::zkvm::config::OneHotParams,
-        accumulator: &dyn crate::poly::opening_proof::OpeningAccumulator<F>,
+        one_hot_params: &OneHotParams,
+        accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        use crate::poly::opening_proof::SumcheckId;
-        use crate::zkvm::witness::VirtualPolynomial;
-
         let log_k_chunk = one_hot_params.log_k_chunk;
         let instruction_d = one_hot_params.instruction_d;
         let bytecode_d = one_hot_params.bytecode_d;
         let ram_d = one_hot_params.ram_d;
         let total_d = instruction_d + bytecode_d + ram_d;
+        let log_k_instruction = one_hot_params.lookups_ra_virtual_log_k_chunk;
 
         // Get Stage 5 opening point: order is address (LOG_K_INSTRUCTION) => cycle (log_t)
         // The stored point is in BIG_ENDIAN format (after normalize_opening_point reversed it)
@@ -125,21 +131,9 @@ impl<F: JoltField> UnifiedBooleanityParams<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        // Extract r_address and r_cycle, reversing each section to get LE format for sumcheck
-        // Stage 5 point (BE) = [address_BE (LOG_K_INSTRUCTION)] ++ [cycle_BE (log_t)]
-        // We need LE format, so reverse each section
-        let log_k_instruction = stage5_point.r.len() - log_t;
-        let r_address: Vec<F::Challenge> = stage5_point.r
-            [log_k_instruction - log_k_chunk..log_k_instruction]
-            .iter()
-            .rev()
-            .cloned()
-            .collect();
-        let r_cycle: Vec<F::Challenge> = stage5_point.r[log_k_instruction..]
-            .iter()
-            .rev()
-            .cloned()
-            .collect();
+        // Extract r_address and r_cycle
+        let r_address = stage5_point.r[log_k_instruction..log_k_chunk].to_vec();
+        let r_cycle = stage5_point.r[log_k_instruction..].to_vec();
 
         // Build polynomial types and family mapping
         let mut polynomial_types = Vec::with_capacity(total_d);
@@ -158,7 +152,7 @@ impl<F: JoltField> UnifiedBooleanityParams<F> {
             family.push(FAMILY_RAM);
         }
 
-        // Sample batching challenges
+        // Sample batching challenges (TODO: we can also reuse prior challenges from Stage 5)
         let gammas = transcript.challenge_vector_optimized::<F>(total_d);
 
         Self {
@@ -199,15 +193,34 @@ pub struct UnifiedBooleanityProver<F: JoltField> {
 }
 
 impl<F: JoltField> UnifiedBooleanityProver<F> {
-    pub fn new(
+    /// Initialize a UnifiedBooleanityProver with all three families.
+    ///
+    /// All heavy computation is done here:
+    /// - Compute G polynomials and RA indices in a single pass over the trace
+    /// - Initialize split-eq polynomials for address (B) and cycle (D) variables
+    /// - Initialize expanding table for phase 1
+    #[tracing::instrument(skip_all, name = "UnifiedBooleanityProver::initialize")]
+    pub fn initialize(
         params: UnifiedBooleanityParams<F>,
-        G: Vec<Vec<F>>,
-        ra_indices: Vec<RaIndices>,
-        one_hot_params: OneHotParams,
+        trace: &[Cycle],
+        bytecode: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        one_hot_params: &OneHotParams,
     ) -> Self {
+        // Compute G and RA indices in a single pass over the trace
+        let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
+            trace,
+            bytecode,
+            memory_layout,
+            one_hot_params,
+            &params.r_cycle,
+        );
+
+        // Initialize split-eq polynomials for address and cycle variables
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         let D = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
 
+        // Initialize expanding table for phase 1
         let k_chunk = 1 << params.log_k_chunk;
         let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
         F_table.reset(F::one());
@@ -217,7 +230,7 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
             D,
             G,
             ra_indices,
-            one_hot_params,
+            one_hot_params: one_hot_params.clone(),
             H: None,
             F: F_table,
             eq_r_r: F::zero(),
@@ -242,7 +255,7 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
                             .enumerate()
                             .map(|(k, &G_k)| {
                                 let k_m = k >> (m - 1);
-                                let F_k = self.F[k % (1 << (m - 1))];
+                                let F_k = self.F[k & ((1 << (m - 1)) - 1)];
                                 let G_times_F = G_k * F_k;
 
                                 let eval_infty = G_times_F * F_k;
@@ -287,8 +300,10 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
         let H = self.H.as_ref().expect("H should be initialized in phase 2");
         let num_polys = H.num_polys();
 
+        // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = D
             .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
+                // Accumulate in unreduced form to minimize per-term reductions
                 let mut acc_c = F::Unreduced::<9>::zero();
                 let mut acc_e = F::Unreduced::<9>::zero();
                 for (i, gamma) in self.params.gammas.iter().enumerate().take(num_polys) {
@@ -296,11 +311,13 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
                     let h_1 = H.get_bound_coeff(i, 2 * j_prime + 1);
                     let b = h_1 - h_0;
 
+                    // Compute gamma * h0, then a single unreduced multiply by (h0 - 1)
                     let g_h0 = *gamma * h_0;
                     let h0_minus_one = h_0 - F::one();
                     let c_unr = g_h0.mul_unreduced::<9>(h0_minus_one);
                     acc_c += c_unr;
 
+                    // Compute gamma * b, then a single unreduced multiply by b
                     let g_b = *gamma * b;
                     let e_unr = g_b.mul_unreduced::<9>(b);
                     acc_e += e_unr;
@@ -311,6 +328,7 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
                 ]
             });
 
+        // previous_claim is s(0)+s(1) of the scaled polynomial; divide out eq_r_r to get inner claim
         let adjusted_claim = previous_claim * self.eq_r_r.inverse().unwrap();
         let gruen_poly =
             D.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim);
@@ -394,42 +412,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
-    }
-}
-
-/// Initialization helper for UnifiedBooleanityProver.
-pub mod init {
-    use super::*;
-    use crate::poly::shared_ra_polys::{compute_all_G, compute_ra_indices};
-    use crate::zkvm::bytecode::BytecodePreprocessing;
-    use common::jolt_device::MemoryLayout;
-    use tracer::instruction::Cycle;
-
-    /// Initialize a UnifiedBooleanityProver with all three families.
-    #[tracing::instrument(skip_all, name = "UnifiedBooleanityProver::initialize")]
-    pub fn initialize_prover<F: JoltField>(
-        params: UnifiedBooleanityParams<F>,
-        trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
-        memory_layout: &MemoryLayout,
-        one_hot_params: &OneHotParams,
-    ) -> UnifiedBooleanityProver<F> {
-        // Compute G and RA indices for all families in parallel
-        // compute_all_G uses GruenSplitEqPolynomial internally for efficient eq evaluation
-        let (G, ra_indices) = rayon::join(
-            || {
-                compute_all_G::<F>(
-                    trace,
-                    bytecode,
-                    memory_layout,
-                    one_hot_params,
-                    &params.r_cycle,
-                )
-            },
-            || compute_ra_indices(trace, bytecode, memory_layout, one_hot_params),
-        );
-
-        UnifiedBooleanityProver::new(params, G, ra_indices, one_hot_params.clone())
     }
 }
 

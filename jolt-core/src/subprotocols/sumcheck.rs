@@ -281,10 +281,7 @@ impl BatchedSumcheck {
 
         if output_claim != expected_output_claim {
             #[cfg(debug_assertions)]
-            eprintln!(
-                "Sumcheck output mismatch: output_claim={:?}, expected_output_claim={:?}",
-                output_claim, expected_output_claim
-            );
+            eprintln!("Sumcheck output mismatch: output_claim={output_claim:?}, expected_output_claim={expected_output_claim:?}");
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 

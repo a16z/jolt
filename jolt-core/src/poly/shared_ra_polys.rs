@@ -24,6 +24,7 @@
 //! This saves memory and improves cache locality when iterating through cycles.
 
 use allocative::Allocative;
+use ark_std::Zero;
 use fixedbitset::FixedBitSet;
 
 use crate::field::JoltField;
@@ -75,7 +76,7 @@ pub fn assert_ra_bounds(one_hot_params: &OneHotParams) {
 
 /// Stores all RA chunk indices for a single cycle.
 /// Uses fixed-size arrays to avoid heap allocation in hot loops.
-#[derive(Clone, Copy, Allocative)]
+#[derive(Clone, Copy, Default, Allocative)]
 pub struct RaIndices {
     /// Instruction RA chunk indices (always present)
     pub instruction: [u16; MAX_INSTRUCTION_D],
@@ -83,6 +84,33 @@ pub struct RaIndices {
     pub bytecode: [u16; MAX_BYTECODE_D],
     /// RAM RA chunk indices (None for non-memory cycles)
     pub ram: [Option<u16>; MAX_RAM_D],
+}
+
+impl std::ops::Add for RaIndices {
+    type Output = Self;
+
+    fn add(self, _rhs: Self) -> Self::Output {
+        // This is only implemented to satisfy the Zero trait bound.
+        // RaIndices should never actually be added together.
+        unimplemented!("RaIndices::add is not meaningful; this impl exists only for Zero trait")
+    }
+}
+
+/// Implement Zero trait for RaIndices to satisfy the trait bound for `unsafe_allocate_zero_vec`
+impl Zero for RaIndices {
+    fn zero() -> Self {
+        Self {
+            instruction: [0u16; MAX_INSTRUCTION_D],
+            bytecode: [0u16; MAX_BYTECODE_D],
+            ram: [None; MAX_RAM_D],
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.instruction.iter().all(|&x| x == 0)
+            && self.bytecode.iter().all(|&x| x == 0)
+            && self.ram.iter().all(|x| x.is_none())
+    }
 }
 
 impl RaIndices {
@@ -160,43 +188,6 @@ impl RaIndices {
     }
 }
 
-/// Compute all H_indices for all families in parallel.
-///
-/// Returns H_indices in order: [instruction_0..d, bytecode_0..d, ram_0..d]
-/// Each inner Vec has length trace.len() with the chunk index for that cycle.
-///
-/// This function parallelizes across trace cycles, computing all indices per cycle
-/// and then transposing the results.
-#[tracing::instrument(skip_all, name = "shared_ra_polys::compute_all_H_indices")]
-pub fn compute_all_H_indices(
-    trace: &[Cycle],
-    bytecode: &BytecodePreprocessing,
-    memory_layout: &MemoryLayout,
-    one_hot_params: &OneHotParams,
-) -> Vec<Vec<Option<u16>>> {
-    let instruction_d = one_hot_params.instruction_d;
-    let bytecode_d = one_hot_params.bytecode_d;
-    let ram_d = one_hot_params.ram_d;
-    let N = instruction_d + bytecode_d + ram_d;
-
-    // Parallel computation: each cycle produces its RaIndices
-    let all_indices: Vec<RaIndices> = trace
-        .par_iter()
-        .map(|cycle| RaIndices::from_cycle(cycle, bytecode, memory_layout, one_hot_params))
-        .collect();
-
-    // Transpose: for each polynomial, collect its index across all cycles
-    (0..N)
-        .into_par_iter()
-        .map(|poly_idx| {
-            all_indices
-                .iter()
-                .map(|indices| indices.get_index(poly_idx, one_hot_params))
-                .collect()
-        })
-        .collect()
-}
-
 /// Compute all G evaluations for all families in parallel using split-eq optimization.
 ///
 /// G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)
@@ -215,6 +206,58 @@ pub fn compute_all_G<F: JoltField>(
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
+) -> Vec<Vec<F>> {
+    // Pass 0 as dummy pointer (not used when COLLECT_RA = false)
+    compute_all_G_impl::<F, false>(trace, bytecode, memory_layout, one_hot_params, r_cycle, 0)
+}
+
+/// Compute all G evaluations AND RA indices in a single pass over the trace.
+///
+/// This avoids traversing the trace twice when both G and ra_indices are needed.
+///
+/// Returns (G, ra_indices) where:
+/// - G[i] = pushforward of ra_i over r_cycle (length k_chunk each)
+/// - ra_indices[j] = RA chunk indices for cycle j
+#[tracing::instrument(skip_all, name = "shared_ra_polys::compute_all_G_and_ra_indices")]
+pub fn compute_all_G_and_ra_indices<F: JoltField>(
+    trace: &[Cycle],
+    bytecode: &BytecodePreprocessing,
+    memory_layout: &MemoryLayout,
+    one_hot_params: &OneHotParams,
+    r_cycle: &[F::Challenge],
+) -> (Vec<Vec<F>>, Vec<RaIndices>) {
+    let T = trace.len();
+    // Pre-allocate ra_indices (we'll write to it via raw pointer)
+    let mut ra_indices: Vec<RaIndices> = unsafe_allocate_zero_vec(T);
+    // Convert pointer to usize for thread safety (usize is Send + Sync)
+    let ra_ptr_usize = ra_indices.as_mut_ptr() as usize;
+
+    let G = compute_all_G_impl::<F, true>(
+        trace,
+        bytecode,
+        memory_layout,
+        one_hot_params,
+        r_cycle,
+        ra_ptr_usize,
+    );
+
+    (G, ra_indices)
+}
+
+/// Core implementation for computing G evaluations.
+///
+/// When `COLLECT_RA = true`, also writes RaIndices to `ra_indices_ptr_usize`.
+/// This is safe because each cycle index is visited exactly once (disjoint writes).
+///
+/// The pointer is passed as `usize` for thread safety (usize is Send + Sync).
+#[inline(always)]
+fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
+    trace: &[Cycle],
+    bytecode: &BytecodePreprocessing,
+    memory_layout: &MemoryLayout,
+    one_hot_params: &OneHotParams,
+    r_cycle: &[F::Challenge],
+    ra_indices_ptr_usize: usize,
 ) -> Vec<Vec<F>> {
     // Verify bounds once at the start
     assert_ra_bounds(one_hot_params);
@@ -258,7 +301,7 @@ pub fn compute_all_G<F: JoltField>(
     // Each thread allocates ONE partial_G and processes its entire chunk
     let num_threads = rayon::current_num_threads();
     let out_len = E_out.len();
-    let chunk_size = (out_len + num_threads - 1) / num_threads; // ceil division
+    let chunk_size = out_len.div_ceil(num_threads);
 
     // Create index ranges for each thread chunk
     let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
@@ -306,16 +349,27 @@ pub fn compute_all_G<F: JoltField>(
 
                     // Process cycle j0 (last_bit = 0)
                     if j0 < T {
-                        let ra_indices = RaIndices::from_cycle(
+                        let ra_idx = RaIndices::from_cycle(
                             &trace[j0],
                             bytecode,
                             memory_layout,
                             one_hot_params,
                         );
 
+                        // Write ra_indices if collecting (disjoint write, each j visited once)
+                        if COLLECT_RA {
+                            // SAFETY: Each j0 value is unique across all parallel iterations,
+                            // so this write is to a disjoint index. No data race possible.
+                            // Convert usize back to pointer.
+                            unsafe {
+                                let ra_ptr = ra_indices_ptr_usize as *mut RaIndices;
+                                *ra_ptr.add(j0) = ra_idx;
+                            }
+                        }
+
                         // InstructionRa contributions
                         for i in 0..instruction_d {
-                            let k = ra_indices.instruction[i] as usize;
+                            let k = ra_idx.instruction[i] as usize;
                             if !touched_flags[i].contains(k) {
                                 touched_flags[i].insert(k);
                             }
@@ -325,7 +379,7 @@ pub fn compute_all_G<F: JoltField>(
                         // BytecodeRa contributions
                         for i in 0..bytecode_d {
                             let poly_idx = instruction_d + i;
-                            let k = ra_indices.bytecode[i] as usize;
+                            let k = ra_idx.bytecode[i] as usize;
                             if !touched_flags[poly_idx].contains(k) {
                                 touched_flags[poly_idx].insert(k);
                             }
@@ -335,7 +389,7 @@ pub fn compute_all_G<F: JoltField>(
                         // RamRa contributions (may be None)
                         for i in 0..ram_d {
                             let poly_idx = instruction_d + bytecode_d + i;
-                            if let Some(k) = ra_indices.ram[i] {
+                            if let Some(k) = ra_idx.ram[i] {
                                 let k = k as usize;
                                 if !touched_flags[poly_idx].contains(k) {
                                     touched_flags[poly_idx].insert(k);
@@ -347,16 +401,27 @@ pub fn compute_all_G<F: JoltField>(
 
                     // Process cycle j1 (last_bit = 1)
                     if j1 < T {
-                        let ra_indices = RaIndices::from_cycle(
+                        let ra_idx = RaIndices::from_cycle(
                             &trace[j1],
                             bytecode,
                             memory_layout,
                             one_hot_params,
                         );
 
+                        // Write ra_indices if collecting (disjoint write, each j visited once)
+                        if COLLECT_RA {
+                            // SAFETY: Each j1 value is unique across all parallel iterations,
+                            // so this write is to a disjoint index. No data race possible.
+                            // Convert usize back to pointer.
+                            unsafe {
+                                let ra_ptr = ra_indices_ptr_usize as *mut RaIndices;
+                                *ra_ptr.add(j1) = ra_idx;
+                            }
+                        }
+
                         // InstructionRa contributions
                         for i in 0..instruction_d {
-                            let k = ra_indices.instruction[i] as usize;
+                            let k = ra_idx.instruction[i] as usize;
                             if !touched_flags[i].contains(k) {
                                 touched_flags[i].insert(k);
                             }
@@ -366,7 +431,7 @@ pub fn compute_all_G<F: JoltField>(
                         // BytecodeRa contributions
                         for i in 0..bytecode_d {
                             let poly_idx = instruction_d + i;
-                            let k = ra_indices.bytecode[i] as usize;
+                            let k = ra_idx.bytecode[i] as usize;
                             if !touched_flags[poly_idx].contains(k) {
                                 touched_flags[poly_idx].insert(k);
                             }
@@ -376,7 +441,7 @@ pub fn compute_all_G<F: JoltField>(
                         // RamRa contributions (may be None)
                         for i in 0..ram_d {
                             let poly_idx = instruction_d + bytecode_d + i;
-                            if let Some(k) = ra_indices.ram[i] {
+                            if let Some(k) = ra_idx.ram[i] {
                                 let k = k as usize;
                                 if !touched_flags[poly_idx].contains(k) {
                                     touched_flags[poly_idx].insert(k);
@@ -438,7 +503,7 @@ pub enum SharedRaPolynomials<F: JoltField> {
 }
 
 /// Round 1 state: single shared eq table
-#[derive(Allocative)]
+#[derive(Allocative, Default)]
 pub struct SharedRaRound1<F: JoltField> {
     /// Shared eq table: F[k] = eq(r_address, k) for k in 0..K
     F: Vec<F>,
@@ -452,7 +517,7 @@ pub struct SharedRaRound1<F: JoltField> {
 }
 
 /// Round 2 state: split eq tables
-#[derive(Allocative)]
+#[derive(Allocative, Default)]
 pub struct SharedRaRound2<F: JoltField> {
     /// F_0[k] = eq(r_address, k) * eq(0, r0)
     F_0: Vec<F>,
@@ -467,7 +532,7 @@ pub struct SharedRaRound2<F: JoltField> {
 }
 
 /// Round 3 state: further split eq tables
-#[derive(Allocative)]
+#[derive(Allocative, Default)]
 pub struct SharedRaRound3<F: JoltField> {
     F_00: Vec<F>,
     F_01: Vec<F>,
@@ -548,10 +613,15 @@ impl<F: JoltField> SharedRaPolynomials<F> {
 
     /// Bind in place with a challenge, transitioning to next round state.
     pub fn bind_in_place(&mut self, r: F::Challenge, order: BindingOrder) {
-        // Use take pattern: temporarily replace with RoundN(empty), then put back the real value
-        let placeholder = Self::RoundN(vec![]);
-        let current = std::mem::replace(self, placeholder);
-        *self = current.bind(r, order);
+        // Use mem::take pattern (same as ra_poly.rs) for efficiency
+        match self {
+            Self::Round1(r1) => *self = Self::Round2(std::mem::take(r1).bind(r, order)),
+            Self::Round2(r2) => *self = Self::Round3(std::mem::take(r2).bind(r, order)),
+            Self::Round3(r3) => *self = Self::RoundN(std::mem::take(r3).bind(r, order)),
+            Self::RoundN(polys) => {
+                polys.par_iter_mut().for_each(|p| p.bind_parallel(r, order));
+            }
+        }
     }
 }
 
