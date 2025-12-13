@@ -4,6 +4,7 @@ pub mod hamming_weight_claim_reduction;
 pub mod inc_reduction;
 pub mod mles_product_sum;
 pub mod opening_reduction;
+pub mod read_write_matrix;
 pub mod sumcheck;
 pub mod sumcheck_prover;
 pub mod sumcheck_verifier;

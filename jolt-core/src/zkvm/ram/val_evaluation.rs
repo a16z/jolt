@@ -39,14 +39,14 @@ use rayon::prelude::*;
 // RAM value evaluation sumcheck
 //
 // Proves the relation:
-//   Val(r) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
+//   Val(r) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(j) ⋅ wa(r_address, j) ⋅ LT(j, r_cycle)
 // where:
 // - r = (r_address, r_cycle) is the evaluation point from the read-write checking sumcheck.
 // - Val(r) is the claimed value of memory at address r_address and time r_cycle.
 // - Val_init(r_address) is the initial value of memory at address r_address.
 // - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise.
 // - wa is the MLE of the write-indicator (1 on matching {0,1}-points).
-// - LT is the MLE of strict less-than on bitstrings; evaluated at (r_cycle, j) as field points.
+// - LT is the MLE of strict less-than on bitstrings; LT(j, k) = 1 iff j < k for bitstrings j, k.
 //
 // This sumcheck ensures that the claimed final value of a memory cell is consistent
 // with its initial value and all the writes that occurred to it over time.
@@ -108,7 +108,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
 
         // Calculate untrusted advice contribution
         let untrusted_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_untrusted_advice_opening(),
+            opening_accumulator.get_untrusted_advice_opening(SumcheckId::RamValEvaluation),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -120,7 +120,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
 
         // Calculate trusted advice contribution
         let trusted_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_trusted_advice_opening(),
+            opening_accumulator.get_trusted_advice_opening(SumcheckId::RamValEvaluation),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -356,7 +356,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
         let (_, r_cycle) = r_val.split_at(self.params.K.log_2());
         let r = self.params.normalize_opening_point(sumcheck_challenges);
-        // Compute LT(r_cycle', r_cycle)
+
+        // Compute LT(r, r_cycle) using the MLE formula:
+        //   LT(x, y) = Σ_i (1 - x_i) · y_i · eq(x[i+1:], y[i+1:])
+        //
+        // The prover constructs LtPolynomial with r_cycle, giving LT(j, r_cycle) for all j.
+        // After binding j to r (the sumcheck challenges), the prover gets LT(r, r_cycle).
+        // The verifier computes the same value directly using the formula above.
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
         for (x, y) in zip(&r.r, &r_cycle.r) {
