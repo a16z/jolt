@@ -189,6 +189,19 @@ pub fn gen_ra_one_hot_provers<F: JoltField>(
     )
 }
 
+/// Generate only the booleanity prover (HammingWeight moved to Stage 7).
+pub fn gen_ra_booleanity_prover<F: JoltField>(
+    booleanity_params: BooleanitySumcheckParams<F>,
+    trace: &[Cycle],
+    bytecode_preprocessing: &BytecodePreprocessing,
+    one_hot_params: &OneHotParams,
+) -> BooleanitySumcheckProver<F> {
+    let E_1: Vec<F> = EqPolynomial::evals(&booleanity_params.r_cycle);
+    let G = compute_ra_evals(bytecode_preprocessing, trace, &E_1, one_hot_params);
+    let H_indices = compute_bytecode_h_indices(bytecode_preprocessing, trace, one_hot_params);
+    BooleanitySumcheckProver::gen(booleanity_params, G, H_indices)
+}
+
 pub fn new_ra_one_hot_verifiers<F: JoltField>(
     trace_len: usize,
     one_hot_params: &OneHotParams,
@@ -206,6 +219,18 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
         HammingWeightSumcheckVerifier::new(hamming_weight_params),
         BooleanitySumcheckVerifier::new(booleanity_params),
     )
+}
+
+/// Generate only the booleanity verifier (HammingWeight moved to Stage 7).
+pub fn new_ra_booleanity_verifier<F: JoltField>(
+    trace_len: usize,
+    one_hot_params: &OneHotParams,
+    opening_accumulator: &VerifierOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+) -> BooleanitySumcheckVerifier<F> {
+    let booleanity_params =
+        ra_booleanity_params(trace_len, one_hot_params, opening_accumulator, transcript);
+    BooleanitySumcheckVerifier::new(booleanity_params)
 }
 
 #[inline(always)]

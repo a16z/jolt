@@ -1,0 +1,297 @@
+# Opening Reduction Refactor - Progress Tracker
+
+This document tracks the progress of the opening reduction optimization. The goal is to eliminate the expensive generic opening reduction sumcheck (Stage 7) by:
+1. Using `IncReduction` to align dense polynomial claims (RamInc, RdInc) in Stage 6
+2. Moving HammingWeight to a new Stage 7 that uses `r_cycle_stage6` from Stage 6
+3. Fusing HammingWeight with Address Reduction to align all ra_i claims
+
+## 🎉 STATUS: CORE WIRING COMPLETE (Dec 13, 2025)
+
+The major refactoring is done. The code compiles. Remaining work:
+- Testing (unit tests and e2e tests)
+- Potential bug fixes discovered during testing
+- Optional cleanup of deprecated code
+
+## High-Level Goal
+
+**Before optimization:**
+- Stage 7 runs a generic opening reduction sumcheck over ALL committed polynomials
+- This is expensive: O(N × log(K) × log(T)) where N = number of polynomials
+
+**After optimization:**
+- Stage 6 aligns dense claims (Inc polynomials) to `r_cycle_stage6`
+- Stage 7 runs a cheap fused HammingWeight + Address Reduction over only `log_k_chunk ≤ 8` rounds
+- All committed polynomials share `r_cycle_stage6` → go directly to Dory
+
+## Current Stage Layout (IMPLEMENTED ✅)
+
+```
+Stage 4:
+  - RegistersReadWriteChecking (emits RdInc claim at s_cycle_stage4)
+  - RamValEvaluation (emits RamInc claim at r_cycle_stage4)
+  - RamValFinal (emits RamInc claim at r_cycle_stage4)
+
+Stage 5:
+  - RegistersValEvaluation (emits RdInc claim at s_cycle_stage5)
+  - RamHammingBooleanity (emits virtual RamHammingWeight claim)
+  - InstructionReadRaf (emits InstructionRa virtual claim)
+
+Stage 6: (all sumchecks share r_cycle_stage6) ✅
+  - BytecodeReadRaf
+  - BytecodeBooleanity
+  - RamBooleanity
+  - RamRaVirtualization
+  - InstructionRaVirtualization
+  - InstructionBooleanity
+  - IncReduction
+
+Stage 7: (uses r_cycle_stage6 via accumulator, produces r_address_stage7 via log_k_chunk rounds) ✅
+  - HammingWeightClaimReduction (fused HammingWeight + Address Reduction)
+  - Produces DoryOpeningState with unified opening point
+
+Stage 8: ✅
+  - Dory opening proof (on aligned claims via DoryOpeningState)
+```
+
+## Claim Flow After Optimization
+
+**After Stage 6:**
+- RamInc: 1 claim at r_cycle_stage6 (from IncReduction)
+- RdInc: 1 claim at r_cycle_stage6 (from IncReduction)
+- BytecodeRa(i): 2 claims at (r_addr_bool, r_cycle_stage6), (r_addr_readraf, r_cycle_stage6)
+- InstructionRa(i): 2 claims at (r_addr_bool, r_cycle_stage6), (r_addr_virt, r_cycle_stage6)
+- RamRa(i): 2 claims at (r_addr_bool, r_cycle_stage6), (r_addr_virt, r_cycle_stage6)
+
+**After Stage 7:**
+- RamInc: 1 claim at r_cycle_stage6 (unchanged)
+- RdInc: 1 claim at r_cycle_stage6 (unchanged)
+- BytecodeRa(i): 1 claim at (ρ_addr, r_cycle_stage6)
+- InstructionRa(i): 1 claim at (ρ_addr, r_cycle_stage6)
+- RamRa(i): 1 claim at (ρ_addr, r_cycle_stage6)
+
+All committed polynomials share r_cycle_stage6!
+
+## Implementation Progress
+
+### ✅ COMPLETED (Dec 13, 2025)
+
+1. **`inc_reduction.rs`** - Dense polynomial reduction sumcheck
+   - Reduces 5 claims (3 RamInc + 2 RdInc) to 2 claims at `r_cycle_stage6`
+   - Uses prefix-suffix optimization for first half of rounds
+   - Integrated into Stage 6 in `prover.rs` and `verifier.rs`
+   - **STATUS**: Wired in, needs testing
+
+2. **`hamming_weight_claim_reduction.rs`** - Fused sumcheck
+   - `HammingWeightClaimReductionParams` - parameters for the fused sumcheck
+   - `HammingWeightClaimReductionProver` - prover implementation
+   - `HammingWeightClaimReductionVerifier` - verifier implementation
+   - `compute_all_G` - computes pushforward polynomials from trace
+   - **STATUS**: Fully wired into Stage 7, needs testing
+
+3. **`opening_proof.rs`** changes:
+   - Added `DoryOpeningState<F>` - minimal state for Dory opening
+   - Added `SumcheckId::HammingWeightClaimReduction`
+   - Added `dory_opening_state` field to both accumulators
+
+4. **Stage 6 changes** (`prover.rs` and `verifier.rs`):
+   - ✅ Removed `bytecode_hamming_weight` from instances
+   - ✅ Removed `ram_hamming_weight` from instances
+   - ✅ Removed `lookups_ra_hamming_weight` from instances
+   - ✅ Added `gen_ra_booleanity_prover` and `new_ra_booleanity_verifier` helper functions
+
+5. **Stage 7 changes** (`prover.rs` and `verifier.rs`):
+   - ✅ Replaced generic opening reduction with HammingWeightClaimReduction
+   - ✅ Gets `r_cycle_stage6` via opening accumulator
+   - ✅ Runs sumcheck for `log_k_chunk` rounds only
+   - ✅ Constructs `DoryOpeningState` with unified opening point
+
+6. **Stage 8 changes** (`prover.rs` and `verifier.rs`):
+   - ✅ Uses `DoryOpeningState` instead of `OpeningReductionState`
+   - ✅ Regenerates witness polynomials in Stage 8 (moved from Stage 7)
+   - ✅ Uses `build_rlc_polynomial_new` and `compute_joint_commitment_new`
+
+### 🔲 TODO (Remaining Work)
+
+#### Testing
+
+1. **Unit tests for HammingWeightClaimReduction**:
+   - [ ] Test `compute_all_G` against naive implementation
+   - [ ] Test sumcheck prover/verifier correctness
+
+2. **Unit tests for IncReduction**:
+   - [ ] Test sumcheck correctness
+   - [ ] Debug virtual/committed polynomial handling if issues found
+
+3. **E2E tests**:
+   - [ ] Run existing Jolt e2e tests (fibonacci, sha2, etc.)
+   - [ ] Fix any integration bugs
+
+#### Cleanup (Optional)
+
+4. **Remove obsolete code**:
+   - [ ] Remove or deprecate `opening_reduction.rs`
+   - [ ] Remove `OpeningReductionState` once fully migrated
+   - [ ] Clean up unused HammingWeight sumcheck code
+
+5. **Optional: Unify Booleanity sumchecks**:
+   - [ ] Create single `BooleanitySumcheck` for all families (Instruction, Bytecode, Ram)
+   - [ ] Share eq tables across all ra_i within a family
+   - [ ] May improve cache efficiency
+
+## Key Design Decisions
+
+### r_cycle_stage6 propagation
+
+**Decision**: Pass `r_cycle_stage6` via opening accumulator, NOT prover state.
+
+After Stage 6, the Booleanity/Virtualization sumchecks append claims with opening points
+containing r_cycle_stage6. Stage 7 retrieves r_cycle by getting any RA claim's opening 
+point from the accumulator and extracting the cycle portion.
+
+Example:
+```rust
+// In Stage 7 params initialization:
+let (point, _) = accumulator.get_committed_polynomial_opening(
+    CommittedPolynomial::BytecodeRa(0),
+    SumcheckId::BytecodeBooleanity,
+);
+let r_cycle_stage6 = point.r[log_k_chunk..].to_vec();
+```
+
+### G_i computation
+
+**Decision**: Compute G_i in Stage 7's `initialize()`, NOT in Stage 6.
+
+G_i polynomials are the "pushforward" of ra_i over r_cycle:
+```
+G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)
+```
+
+These are ONLY needed for Stage 7. Computing them requires:
+1. Access to the trace (for ra_i indices)
+2. r_cycle_stage6 (from Stage 6 via accumulator)
+
+The `compute_all_G` function in `hamming_weight_claim_reduction.rs` does this in a 
+single streaming pass over the trace.
+
+### HammingWeight claims
+
+**Decision**: HammingWeight claims are NOT stored separately.
+
+In the fused sumcheck, HammingWeight is verified implicitly:
+- `input_claim` includes `Σ_i γ^{3i} · H_i` where H_i is the expected hamming weight
+- The sumcheck proves `Σ_k G_i(k) = H_i` as part of the fused relation
+- No need to store separate HammingWeight openings in the accumulator
+
+### Why fuse HammingWeight with Address Reduction?
+
+The G_i polynomial (pushforward of ra_i over r_cycle) is shared:
+- HammingWeight: Σ_k G_i(k) = H_i
+- Booleanity reduction: Σ_k eq(r_addr_bool, k)·G_i(k) = claim_bool_i
+- Virtualization reduction: Σ_k eq(r_addr_virt_i, k)·G_i(k) = claim_virt_i
+
+By batching with γ, we fuse all three into one degree-2 sumcheck!
+
+### Degree analysis
+
+- G_i(k) contributes degree 1
+- eq(r_addr, k) contributes degree 1 (or 0 for HammingWeight constant term)
+- Maximum: 1 + 1 = 2
+
+Same degree as address reduction alone - fusion is free!
+
+## Stage 7/8 Dory Integration (Important!)
+
+### How Dory Gets the Opening Point Currently
+
+**Stage 7 (current):**
+1. Regenerate witness polynomials
+2. Run opening reduction sumcheck (`log_K + log_T` rounds)
+3. Creates `OpeningReductionState`:
+   - `r_sumcheck` = unified point from sumcheck challenges
+   - `gamma_powers` = RLC coefficients (sampled after sumcheck)
+   - `sumcheck_claims` = per-polynomial claims
+   - `polynomials` = list of committed polynomials
+
+**Stage 8 (current):**
+1. Build RLC polynomial: `Σ γ_i · poly_i`
+2. Dory prove: Opens RLC at `state.r_sumcheck`
+
+**Key: `compute_joint_claim` handles different-sized polynomials:**
+```rust
+// Dense polys (log_T vars): first log_K challenges contribute Lagrange factor
+let r_slice = &state.r_sumcheck[..max_rounds - poly_rounds];
+let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+```
+
+### New Stage 7/8 Flow
+
+**After new Stage 6:**
+- Dense polys: opening at `r_cycle_stage6` (length `log_T`)
+- Sparse polys: openings at `(r_addr_*, r_cycle_stage6)` (different r_addr per claim type)
+
+**After new Stage 7 (HammingWeightClaimReduction):**
+- Dense polys: opening at `r_cycle_stage6` (unchanged)
+- Sparse polys: opening at `(ρ_addr, r_cycle_stage6)` (SAME r_addr now!)
+
+**Unified opening point: `(ρ_addr, r_cycle_stage6)`** of length `log_K + log_T`.
+
+**New Stage 7:**
+1. Run `HammingWeightClaimReduction` sumcheck (only `log_K_chunk` rounds!)
+   - Produces `ρ_addr` challenges
+   - Produces `G_i(ρ_addr)` claims for each ra_i via `cache_openings`
+2. Collect all claims:
+   - From IncReduction: `RamInc(r_cycle_stage6)`, `RdInc(r_cycle_stage6)`
+   - From HammingWeightClaimReduction: `G_i(ρ_addr)` for each ra_i
+3. Construct `OpeningReductionState` **directly** (NO opening reduction sumcheck!):
+   - `r_sumcheck = (ρ_addr, r_cycle_stage6)` (concatenated, big-endian)
+   - `sumcheck_claims` = collected claims
+   - `gamma_powers` = sample from transcript
+   - `polynomials` = [RamInc, RdInc, InstructionRa(0), ..., RamRa(d-1)]
+
+**New Stage 8:**
+- **Regenerate witness polynomials** (still needed for Dory proof)
+- Build RLC polynomial using the state
+- Dory prove at `state.r_sumcheck`
+
+**For `compute_joint_claim` (verifier):**
+- Dense polys (log_T vars) get Lagrange factor: `∏_{i<log_K} (1 - ρ_addr_i)`
+- Sparse polys (log_K + log_T vars) get Lagrange factor: `1`
+
+This works because all sparse polys NOW share the same `ρ_addr`!
+
+### Witness Regeneration
+
+Note: We avoid witness regeneration in Stage 7's **sumcheck** (HammingWeightClaimReduction
+uses G_i computed from trace, not the committed polynomials). However, Stage 8 still
+needs the actual polynomial coefficients to build the RLC polynomial for Dory.
+
+- OLD: Regen witnesses → Run opening reduction sumcheck → Build RLC → Dory
+- NEW: Run HammingWeightClaimReduction (trace-based) → Regen witnesses → Build RLC → Dory
+
+The expensive opening reduction sumcheck is eliminated!
+
+## Files Modified/Created
+
+| File | Status | Description |
+|------|--------|-------------|
+| `subprotocols/inc_reduction.rs` | ⚠️ Buggy | Dense Inc reduction sumcheck (virtual/committed poly issues) |
+| `subprotocols/hamming_weight_claim_reduction.rs` | ✅ Created | Fused HW + Address reduction (not wired yet) |
+| `subprotocols/address_reduction.rs` | ❌ DELETED | Was duplicate of hamming_weight_claim_reduction.rs |
+| `subprotocols/mod.rs` | ✅ Updated | Exports new module |
+| `poly/opening_proof.rs` | 🔲 Needs update | Remove generic reduction code |
+| `subprotocols/opening_reduction.rs` | 🔲 Will become obsolete | Remove after Stage 7 refactor |
+| `subprotocols/hamming_weight.rs` | 🔲 Will become obsolete | Remove after Stage 7 refactor |
+| `zkvm/prover.rs` | 🔲 Needs update | Wire Stage 7 fused sumcheck, remove HW from Stage 6 |
+| `zkvm/verifier.rs` | 🔲 Needs update | Wire Stage 7 fused verification, remove HW from Stage 6 |
+| `zkvm/bytecode/mod.rs` | 🔲 Needs update | Remove HW param generation |
+| `zkvm/ram/mod.rs` | 🔲 Needs update | Remove HW param generation |
+| `zkvm/instruction_lookups/mod.rs` | 🔲 Needs update | Remove HW param generation |
+
+## Testing
+
+- [ ] Unit tests for `FusedHammingAddressReductionProver` sumcheck correctness
+- [ ] Unit tests comparing `compute_all_G` against naive computation
+- [ ] Unit tests for `IncReduction` sumcheck correctness
+- [ ] Integration test: full e2e proof with new Stage 7
+- [ ] Benchmark comparison: old vs new opening reduction cost

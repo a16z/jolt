@@ -185,7 +185,7 @@ pub enum SumcheckId {
     BytecodeHammingWeight,
     IncReduction,
     RaAddressReduction,
-    FusedHammingAddressReduction,
+    HammingWeightClaimReduction,
     OpeningReduction,
 }
 
@@ -216,6 +216,7 @@ where
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
     pub log_T: usize,
     pub opening_reduction_state: Option<OpeningReductionState<F>>,
+    pub dory_opening_state: Option<DoryOpeningState<F>>,
     pub polynomials_for_opening: Option<HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
     pub cached_opening_claims: Vec<(CommittedPolynomial, F)>,
 }
@@ -235,6 +236,7 @@ where
     log_T: usize,
     /// State from Stage 7 (batch opening sumcheck) for Stage 8 (Dory opening)
     pub opening_reduction_state: Option<OpeningReductionState<F>>,
+    pub dory_opening_state: Option<DoryOpeningState<F>>,
 }
 
 pub trait OpeningAccumulator<F: JoltField> {
@@ -258,6 +260,20 @@ pub struct OpeningReductionState<F: JoltField> {
     pub r_sumcheck: Vec<F::Challenge>,
     pub gamma_powers: Vec<F>,
     pub sumcheck_claims: Vec<F>,
+    pub polynomials: Vec<CommittedPolynomial>,
+}
+
+/// Minimal state passed from Stage 7 (HammingWeightClaimReduction) to Stage 8 (Dory opening).
+/// This is a generic interface for batch opening proofs.
+#[derive(Clone, Allocative)]
+pub struct DoryOpeningState<F: JoltField> {
+    /// Unified opening point for all polynomials (length = log_k_chunk + log_T)
+    pub opening_point: Vec<F::Challenge>,
+    /// γ^i coefficients for the RLC polynomial
+    pub gamma_powers: Vec<F>,
+    /// Claims per polynomial at the opening point (with Lagrange factors already applied for shorter polys)
+    pub claims: Vec<F>,
+    /// Which polynomials are included (in same order as claims)
     pub polynomials: Vec<CommittedPolynomial>,
 }
 
@@ -320,6 +336,7 @@ where
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
             opening_reduction_state: None,
+            dory_opening_state: None,
             polynomials_for_opening: None,
             cached_opening_claims: vec![],
         }
@@ -762,6 +779,7 @@ where
             prover_opening_accumulator: None,
             log_T,
             opening_reduction_state: None,
+            dory_opening_state: None,
         }
     }
 

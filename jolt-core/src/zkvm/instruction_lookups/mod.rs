@@ -98,6 +98,17 @@ pub fn gen_ra_one_hot_provers<F: JoltField>(
     )
 }
 
+/// Generate only the booleanity prover (HammingWeight moved to Stage 7).
+pub fn gen_ra_booleanity_prover<F: JoltField>(
+    booleanity_params: BooleanitySumcheckParams<F>,
+    trace: &[Cycle],
+    one_hot_params: &OneHotParams,
+) -> BooleanitySumcheckProver<F> {
+    let ra_evals = compute_ra_evals(trace, one_hot_params, &booleanity_params.r_cycle);
+    let H_indices = compute_instruction_h_indices(trace, one_hot_params);
+    BooleanitySumcheckProver::gen(booleanity_params, ra_evals, H_indices)
+}
+
 pub fn new_ra_one_hot_verifiers<F: JoltField>(
     trace_len: usize,
     one_hot_params: &OneHotParams,
@@ -115,6 +126,18 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
         HammingWeightSumcheckVerifier::new(hamming_weight_params),
         BooleanitySumcheckVerifier::new(booleanity_params),
     )
+}
+
+/// Generate only the booleanity verifier (HammingWeight moved to Stage 7).
+pub fn new_ra_booleanity_verifier<F: JoltField>(
+    trace_len: usize,
+    one_hot_params: &OneHotParams,
+    opening_accumulator: &VerifierOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+) -> BooleanitySumcheckVerifier<F> {
+    let booleanity_params =
+        ra_booleanity_params(trace_len, one_hot_params, opening_accumulator, transcript);
+    BooleanitySumcheckVerifier::new(booleanity_params)
 }
 
 #[tracing::instrument(skip_all, name = "instruction_lookups::compute_instruction_h_indices")]

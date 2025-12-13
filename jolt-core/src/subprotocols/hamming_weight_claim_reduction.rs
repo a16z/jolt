@@ -577,7 +577,7 @@ pub const NUM_FAMILIES: usize = 3;
 ///
 /// After this sumcheck, each ra_i has a single opening at (ρ, r_cycle_stage6).
 #[derive(Allocative, Clone)]
-pub struct FusedHammingAddressReductionParams<F: JoltField> {
+pub struct HammingWeightClaimReductionParams<F: JoltField> {
     /// γ^0, γ^1, ..., γ^{3N-1} for batching (3 claims per ra polynomial)
     /// Order: γ^{3i} = HW, γ^{3i+1} = Bool, γ^{3i+2} = Virt
     pub gamma_powers: Vec<F>,
@@ -603,7 +603,7 @@ pub struct FusedHammingAddressReductionParams<F: JoltField> {
     pub family: Vec<usize>,
 }
 
-impl<F: JoltField> FusedHammingAddressReductionParams<F> {
+impl<F: JoltField> HammingWeightClaimReductionParams<F> {
     /// Create params by fetching claims from Stage 6 and sampling batching challenge.
     ///
     /// Fetches:
@@ -737,7 +737,7 @@ impl<F: JoltField> FusedHammingAddressReductionParams<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for FusedHammingAddressReductionParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionParams<F> {
     fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
         // Σ_i (γ^{3i} · claim_hw_i + γ^{3i+1} · claim_bool_i + γ^{3i+2} · claim_virt_i)
         let mut claim = F::zero();
@@ -782,7 +782,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for FusedHammingAddressReductionPar
 /// Memory optimization: eq_bool is shared per family (3 polynomials), while
 /// eq_virt requires one per ra_i (N polynomials).
 #[derive(Allocative)]
-pub struct FusedHammingAddressReductionProver<F: JoltField> {
+pub struct HammingWeightClaimReductionProver<F: JoltField> {
     /// G_i polynomials (pushforward of ra_i over r_cycle)
     /// G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)
     G: Vec<MultilinearPolynomial<F>>,
@@ -791,14 +791,14 @@ pub struct FusedHammingAddressReductionProver<F: JoltField> {
     /// eq(r_addr_virt_i, ·) for each ra polynomial (N total)
     eq_virt: Vec<MultilinearPolynomial<F>>,
     #[allocative(skip)]
-    params: FusedHammingAddressReductionParams<F>,
+    params: HammingWeightClaimReductionParams<F>,
 }
 
-impl<F: JoltField> FusedHammingAddressReductionProver<F> {
+impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     /// Initialize the prover by computing all G_i polynomials.
-    #[tracing::instrument(skip_all, name = "FusedHammingAddressReductionProver::initialize")]
+    #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::initialize")]
     pub fn initialize<PCS: CommitmentScheme<Field = F>>(
-        params: FusedHammingAddressReductionParams<F>,
+        params: HammingWeightClaimReductionParams<F>,
         trace: &[Cycle],
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         one_hot_params: &OneHotParams,
@@ -831,13 +831,13 @@ impl<F: JoltField> FusedHammingAddressReductionProver<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for FusedHammingAddressReductionProver<F>
+    for HammingWeightClaimReductionProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    #[tracing::instrument(skip_all, name = "FusedHammingAddressReductionProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let N = self.params.polynomial_types.len();
         let half_n = self.G[0].len() / 2;
@@ -874,7 +874,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(
         skip_all,
-        name = "FusedHammingAddressReductionProver::ingest_challenge"
+        name = "HammingWeightClaimReductionProver::ingest_challenge"
     )]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         // Bind all polynomials in parallel
@@ -919,7 +919,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             accumulator.append_sparse(
                 transcript,
                 vec![self.params.polynomial_types[i]],
-                SumcheckId::FusedHammingAddressReduction,
+                SumcheckId::HammingWeightClaimReduction,
                 r_address.clone(),
                 self.params.r_cycle.clone(),
                 vec![claim],
@@ -937,18 +937,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 // VERIFIER
 // ============================================================================
 
-pub struct FusedHammingAddressReductionVerifier<F: JoltField> {
-    params: FusedHammingAddressReductionParams<F>,
+pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
+    params: HammingWeightClaimReductionParams<F>,
 }
 
-impl<F: JoltField> FusedHammingAddressReductionVerifier<F> {
+impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     pub fn new(
         r_cycle: Vec<F::Challenge>,
         one_hot_params: &OneHotParams,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = FusedHammingAddressReductionParams::new(
+        let params = HammingWeightClaimReductionParams::new(
             r_cycle,
             one_hot_params,
             accumulator,
@@ -959,7 +959,7 @@ impl<F: JoltField> FusedHammingAddressReductionVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for FusedHammingAddressReductionVerifier<F>
+    for HammingWeightClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -989,7 +989,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             // Fetch G_i(ρ) from accumulator (prover provided this)
             let (_, g_i_claim) = accumulator.get_committed_polynomial_opening(
                 self.params.polynomial_types[i],
-                SumcheckId::FusedHammingAddressReduction,
+                SumcheckId::HammingWeightClaimReduction,
             );
 
             // γ^{3i} · G_i(ρ) + γ^{3i+1} · eq_bool(ρ) · G_i(ρ) + γ^{3i+2} · eq_virt(ρ) · G_i(ρ)
@@ -1023,7 +1023,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             accumulator.append_sparse(
                 transcript,
                 vec![self.params.polynomial_types[i]],
-                SumcheckId::FusedHammingAddressReduction,
+                SumcheckId::HammingWeightClaimReduction,
                 full_point.clone(),
             );
         }
