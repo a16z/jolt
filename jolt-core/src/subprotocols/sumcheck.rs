@@ -104,10 +104,11 @@ impl BatchedSumcheck {
                     },
                 );
 
+            // append the prover's message to the transcript
+            batched_univariate_poly.append_to_transcript(transcript);
+
             let compressed_poly = batched_univariate_poly.compress();
 
-            // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
@@ -286,7 +287,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             }
 
             // append the prover's message to the transcript
-            self.compressed_polys[i].append_to_transcript(transcript);
+            self.compressed_polys[i]
+                .decompress(&e)
+                .append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
