@@ -11,10 +11,6 @@ use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::subprotocols::read_write_matrix::ram::RamCycleMajorEntry;
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use common::jolt_device::MemoryLayout;
-use tracer::instruction::Cycle;
 
 pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
     /// The row index. Before binding, row \in [0, T)
@@ -22,10 +18,6 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
 
     /// The column index. Before binding, column \in [0, K)
     fn column(&self) -> usize;
-
-    /// Converts a cycle into a matrix entry. Returns None if the cycle did not
-    /// access RAM/registers.
-    fn from_cycle(cycle: &Cycle, cycle_index: usize, memory_layout: &MemoryLayout) -> Option<Self>;
 
     /// Binds adjacent entries of the matrix together using the random challenge `r`.
     /// By "adjacent", here we mean entries that are in the same column and adjacent
@@ -72,24 +64,6 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
 pub struct ReadWriteMatrixCycleMajor<F: JoltField, E: CycleMajorMatrixEntry<F>> {
     pub entries: Vec<E>,
     pub(crate) val_init: MultilinearPolynomial<F>,
-}
-
-impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> {
-    /// Creates a new `ReadWriteMatrixCycleMajor` to represent the ra and Val polynomials
-    /// for the RAM read/write checking sumcheck.
-    #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
-    pub fn new(trace: &[Cycle], val_init: Vec<F>, memory_layout: &MemoryLayout) -> Self {
-        let entries: Vec<_> = trace
-            .par_iter()
-            .enumerate()
-            .filter_map(|(j, cycle)| CycleMajorMatrixEntry::from_cycle(cycle, j, memory_layout))
-            .collect();
-
-        ReadWriteMatrixCycleMajor {
-            entries,
-            val_init: val_init.into(),
-        }
-    }
 }
 
 impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> {
@@ -362,10 +336,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
             },
         );
 
-        [
-            left_evals[0] + right_evals[0],
-            left_evals[1] + right_evals[1],
-        ]
+        std::array::from_fn(|i| left_evals[i] + right_evals[i])
     }
 
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
@@ -414,73 +385,6 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
             evals_accumulator[1] += evals[1];
         }
 
-        [
-            F::from_montgomery_reduce(evals_accumulator[0]),
-            F::from_montgomery_reduce(evals_accumulator[1]),
-        ]
-    }
-}
-
-impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>> {
-    /// Materializes the ra and Val polynomials represented by this `ReadWriteMatrixCycleMajor`.
-    ///
-    /// After partial binding of cycle and address variables, there are `K_prime` columns
-    /// (remaining address positions) and `T_prime` rows (remaining cycle positions) in the matrix.
-    /// This expands the sparse representation to dense polynomials of size `K_prime * T_prime`.
-    ///
-    /// The output layout is address-major: index(addr k, cycle t) = k * T_prime + t.
-    /// This matches the layout expected by `phase3_compute_message`.
-    ///
-    /// When `T_prime == 1` (all cycle variables bound), this is equivalent to the simple case
-    /// where each entry has `row == 0` and entries have distinct `col` values.
-    #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::materialize")]
-    pub fn materialize(
-        self,
-        K_prime: usize,
-        T_prime: usize,
-    ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
-        let len = K_prime * T_prime;
-
-        // Initialize ra to zero
-        let mut ra: Vec<F> = unsafe_allocate_zero_vec(len);
-
-        // Initialize val: expand val_init from size K to size K * T_prime
-        // Each address k gets val_init[k] replicated across all T_prime cycle positions
-        // Layout: address-major, index(k, t) = k * T_prime + t
-        let mut val: Vec<F> = unsafe_allocate_zero_vec(len);
-        // Extract the coefficient slice from self.val_init (which is a LargeScalars polynomial)
-        let val_init_coeffs = match &self.val_init {
-            MultilinearPolynomial::LargeScalars(poly) => &poly.Z,
-            _ => panic!("val_init must be LargeScalars"),
-        };
-        val.par_chunks_mut(T_prime)
-            .zip(val_init_coeffs.par_iter())
-            .for_each(|(chunk, &v)| {
-                chunk.fill(v);
-            });
-
-        // Update ra and val at positions where we have entries.
-        // Index is col * T_prime + row (address-major layout).
-        let ra_ptr = ra.as_mut_ptr() as usize;
-        let val_ptr = val.as_mut_ptr() as usize;
-
-        self.entries.into_par_iter().for_each(|entry| {
-            debug_assert!(
-                entry.row() < T_prime,
-                "row {} >= T_prime {T_prime}",
-                entry.row()
-            );
-            let idx = entry.column() * T_prime + entry.row();
-            // SAFETY: Each entry has a unique (row, col) pair,
-            // so writes to ra[idx] and val[idx] are disjoint across parallel iterations.
-            unsafe {
-                let ra_p = ra_ptr as *mut F;
-                let val_p = val_ptr as *mut F;
-                *ra_p.add(idx) = entry.ra_coeff;
-                *val_p.add(idx) = entry.val_coeff;
-            }
-        });
-
-        (ra.into(), val.into())
+        std::array::from_fn(|i| F::from_montgomery_reduce(evals_accumulator[i]))
     }
 }

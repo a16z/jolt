@@ -4,7 +4,6 @@
 
 use std::cmp::Ordering;
 use std::mem::MaybeUninit;
-use std::sync::{Arc, Mutex};
 
 use allocative::Allocative;
 use ark_std::Zero;
@@ -13,9 +12,7 @@ use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
-use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::read_write_matrix::cycle_major::CycleMajorMatrixEntry;
-use crate::subprotocols::read_write_matrix::ram::RamAddressMajorEntry;
 
 use super::cycle_major::ReadWriteMatrixCycleMajor;
 
@@ -403,54 +400,9 @@ impl<F: JoltField, E: AddressMajorMatrixEntry<F>> ReadWriteMatrixAddressMajor<F,
         k
     }
 
-    pub fn compute_prover_message(
-        &self,
-        inc: &MultilinearPolynomial<F>,
-        eq: &MultilinearPolynomial<F>,
-        gamma: F,
-        previous_claim: F,
-    ) -> UniPoly<F> {
-        let evals = self
-            .entries
-            .par_chunk_by(|x, y| x.column() / 2 == y.column() / 2)
-            .map(|entries| {
-                let odd_col_start_index = entries.partition_point(|entry| entry.column().is_even());
-                let (even_col, odd_col) = entries.split_at(odd_col_start_index);
-                let even_col_idx = 2 * (entries[0].column() / 2);
-                let odd_col_idx = even_col_idx + 1;
-                Self::prover_message_contribution(
-                    even_col,
-                    odd_col,
-                    self.val_init.get_bound_coeff(even_col_idx),
-                    self.val_init.get_bound_coeff(odd_col_idx),
-                    inc,
-                    eq,
-                    gamma,
-                )
-            })
-            .fold_with([F::Unreduced::<5>::zero(); 2], |running, new| {
-                [
-                    running[0] + new[0].as_unreduced_ref(),
-                    running[1] + new[1].as_unreduced_ref(),
-                ]
-            })
-            .reduce(
-                || [F::Unreduced::<5>::zero(); 2],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        UniPoly::from_evals_and_hint(
-            previous_claim,
-            &[
-                F::from_barrett_reduce(evals[0]),
-                F::from_barrett_reduce(evals[1]),
-            ],
-        )
-    }
-
     /// For the given pair of adjacent columns, computes the pair's contribution to the prover's
     /// sumcheck message. This is a recursive, parallel algorithm.
-    fn prover_message_contribution(
+    pub fn prover_message_contribution(
         even_col: &[E],
         odd_col: &[E],
         even_checkpoint: F,
@@ -629,60 +581,5 @@ impl<F: JoltField, E: AddressMajorMatrixEntry<F>> ReadWriteMatrixAddressMajor<F,
             F::from_montgomery_reduce(evals_accumulator[0]),
             F::from_montgomery_reduce(evals_accumulator[1]),
         ]
-    }
-}
-
-impl<F: JoltField> ReadWriteMatrixAddressMajor<F, RamAddressMajorEntry<F>> {
-    /// Materializes the ra and Val polynomials represented by this `ReadWriteMatrixAddressMajor`.
-    /// Some number of cycle and address variables have already been bound, so at this point
-    /// there are `K_prime` columns and `T_prime` rows left in the matrix.
-    #[tracing::instrument(skip_all, name = "ReadWriteMatrixAddressMajor::materialize")]
-    pub fn materialize(
-        self,
-        K_prime: usize,
-        T_prime: usize,
-    ) -> (MultilinearPolynomial<F>, MultilinearPolynomial<F>) {
-        // Initialize ra and Val to initial values
-        let ra: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
-            .into_par_iter()
-            .map(|_| Arc::new(Mutex::new(F::zero())))
-            .collect();
-        let val: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
-            .into_par_iter()
-            .map(|_| Arc::new(Mutex::new(F::zero())))
-            .collect();
-
-        // Update some of the ra and Val coefficients based on
-        // matrix entries.
-        self.entries
-            .par_chunk_by(|a, b| a.column() == b.column())
-            .for_each(|column| {
-                let k = column[0].column();
-                let mut current_val_coeff = self.val_init.get_bound_coeff(k);
-                let mut column_iter = column.iter().peekable();
-                for j in 0..T_prime {
-                    let idx = k * T_prime + j;
-                    if let Some(entry) = column_iter.next_if(|&entry| entry.row() == j) {
-                        *ra[idx].lock().unwrap() = entry.ra_coeff;
-                        *val[idx].lock().unwrap() = entry.val_coeff;
-                        current_val_coeff = entry.next_val();
-                        continue;
-                    }
-                    // *ra[idx].lock().unwrap() = F::zero(); // Already zero
-                    *val[idx].lock().unwrap() = current_val_coeff;
-                    continue;
-                }
-            });
-        // Unwrap Arc<Mutex<F>> back into F
-        let ra: Vec<F> = ra
-            .into_par_iter()
-            .map(|arc_mutex| *arc_mutex.lock().unwrap())
-            .collect();
-        let val: Vec<F> = val
-            .into_par_iter()
-            .map(|arc_mutex| *arc_mutex.lock().unwrap())
-            .collect();
-        // Convert Vec<F> to MultilinearPolynomial<F>
-        (ra.into(), val.into())
     }
 }

@@ -755,7 +755,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 4 baseline");
 
         let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
-            self.trace.len().log_2(),
+            self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
         );

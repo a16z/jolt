@@ -291,7 +291,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
-            self.proof.trace_length.log_2(),
+            self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
         );
