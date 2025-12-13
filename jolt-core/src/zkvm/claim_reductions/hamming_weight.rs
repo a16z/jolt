@@ -93,296 +93,11 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::BindingOrder;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::utils::math::Math;
-use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::poly::shared_ra_polys::compute_all_G;
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::prover::JoltProverPreprocessing;
-use crate::zkvm::ram::remap_address;
-use common::constants::XLEN;
-use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
-
-/// Maximum number of instruction ra chunks (lookup index splits into at most 32 chunks)
-const MAX_INSTRUCTION_D: usize = 32;
-/// Maximum number of bytecode ra chunks (PC splits into at most 6 chunks)
-const MAX_BYTECODE_D: usize = 6;
-/// Maximum number of ram ra chunks (address splits into at most 8 chunks)
-const MAX_RAM_D: usize = 8;
-
-/// Stores the chunk indices for all ra polynomials for a single cycle.
-/// Uses fixed-size arrays to avoid heap allocation in hot loop.
-struct RaIndices {
-    /// InstructionRa chunk indices (always present)
-    instruction_ra: [u16; MAX_INSTRUCTION_D],
-    /// BytecodeRa chunk indices (always present)
-    bytecode_ra: [u16; MAX_BYTECODE_D],
-    /// RamRa chunk indices (may be None for non-memory cycles)
-    ram_ra: [Option<u16>; MAX_RAM_D],
-}
-
-impl RaIndices {
-    /// Compute all ra chunk indices for a single cycle from trace data.
-    /// Only the first `instruction_d`, `bytecode_d`, `ram_d` elements are valid.
-    #[inline]
-    fn from_cycle<F: JoltField, PCS: CommitmentScheme<Field = F>>(
-        cycle: &Cycle,
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        one_hot_params: &OneHotParams,
-    ) -> Self {
-        // Assert bounds at runtime (should be checked once at init, but defensive here)
-        debug_assert!(
-            one_hot_params.instruction_d <= MAX_INSTRUCTION_D,
-            "instruction_d {} exceeds MAX_INSTRUCTION_D {}",
-            one_hot_params.instruction_d,
-            MAX_INSTRUCTION_D
-        );
-        debug_assert!(
-            one_hot_params.bytecode_d <= MAX_BYTECODE_D,
-            "bytecode_d {} exceeds MAX_BYTECODE_D {}",
-            one_hot_params.bytecode_d,
-            MAX_BYTECODE_D
-        );
-        debug_assert!(
-            one_hot_params.ram_d <= MAX_RAM_D,
-            "ram_d {} exceeds MAX_RAM_D {}",
-            one_hot_params.ram_d,
-            MAX_RAM_D
-        );
-
-        // 1. InstructionRa: from lookup index
-        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-        let mut instruction_ra = [0u16; MAX_INSTRUCTION_D];
-        for i in 0..one_hot_params.instruction_d {
-            instruction_ra[i] = one_hot_params.lookup_index_chunk(lookup_index, i);
-        }
-
-        // 2. BytecodeRa: from PC
-        let pc = preprocessing.bytecode.get_pc(cycle);
-        let mut bytecode_ra = [0u16; MAX_BYTECODE_D];
-        for i in 0..one_hot_params.bytecode_d {
-            bytecode_ra[i] = one_hot_params.bytecode_pc_chunk(pc, i);
-        }
-
-        // 3. RamRa: from remapped address (may be None for non-memory cycles)
-        let address = remap_address(
-            cycle.ram_access().address() as u64,
-            &preprocessing.memory_layout,
-        );
-        let mut ram_ra = [None; MAX_RAM_D];
-        for i in 0..one_hot_params.ram_d {
-            ram_ra[i] = address.map(|a| one_hot_params.ram_address_chunk(a, i));
-        }
-
-        Self {
-            instruction_ra,
-            bytecode_ra,
-            ram_ra,
-        }
-    }
-}
-
-/// Asserts that the one_hot_params dimensions are within bounds.
-/// Call this once at the start of compute_all_G to catch issues early.
-#[inline]
-fn assert_ra_bounds(one_hot_params: &OneHotParams) {
-    assert!(
-        one_hot_params.instruction_d <= MAX_INSTRUCTION_D,
-        "instruction_d {} exceeds MAX_INSTRUCTION_D {}",
-        one_hot_params.instruction_d,
-        MAX_INSTRUCTION_D
-    );
-    assert!(
-        one_hot_params.bytecode_d <= MAX_BYTECODE_D,
-        "bytecode_d {} exceeds MAX_BYTECODE_D {}",
-        one_hot_params.bytecode_d,
-        MAX_BYTECODE_D
-    );
-    assert!(
-        one_hot_params.ram_d <= MAX_RAM_D,
-        "ram_d {} exceeds MAX_RAM_D {}",
-        one_hot_params.ram_d,
-        MAX_RAM_D
-    );
-}
-
-/// Computes all G_i polynomials in a single streaming pass over the trace.
-///
-/// G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)
-///
-/// For one-hot ra polynomials:
-/// G_i(k) = Σ_{j: addr_chunk_i(j) = k} eq(r_cycle, j)
-#[tracing::instrument(skip_all, name = "HammingWeightClaimReduction::compute_all_G")]
-pub fn compute_all_G<F: JoltField, PCS: CommitmentScheme<Field = F>>(
-    trace: &[Cycle],
-    r_cycle: &[F::Challenge],
-    preprocessing: &JoltProverPreprocessing<F, PCS>,
-    one_hot_params: &OneHotParams,
-) -> Vec<Vec<F>> {
-    // Verify bounds once at the start
-    assert_ra_bounds(one_hot_params);
-
-    let K = one_hot_params.k_chunk;
-    let instruction_d = one_hot_params.instruction_d;
-    let bytecode_d = one_hot_params.bytecode_d;
-    let ram_d = one_hot_params.ram_d;
-    let N = instruction_d + bytecode_d + ram_d; // Total number of ra polynomials
-    let T = trace.len();
-
-    // Build split-eq polynomial over r_cycle
-    // This gives us E_out, E_in tables and the current_w (last challenge)
-    let split_eq = GruenSplitEqPolynomial::<F>::new(r_cycle, BindingOrder::LowToHigh);
-
-    let E_in = split_eq.E_in_current();
-    let E_out = split_eq.E_out_current();
-    let w_current = split_eq.get_current_w();
-    let factor_0 = F::one() - w_current;
-    let factor_1: F = w_current.into();
-
-    let in_len = E_in.len();
-    let x_in_bits = in_len.log_2();
-
-    // Precompute merged inner weights: [E_in[x_in] * (1-w), E_in[x_in] * w] for all x_in
-    // This avoids recomputing the product for each (x_out, x_in) pair
-    let merged_in_unreduced: Vec<F::Unreduced<9>> = {
-        let mut merged: Vec<F::Unreduced<9>> = unsafe_allocate_zero_vec(2 * in_len);
-        merged
-            .par_chunks_exact_mut(2)
-            .zip(E_in.par_iter())
-            .for_each(|(chunk, &low)| {
-                chunk[0] = low.mul_unreduced::<9>(factor_0);
-                chunk[1] = low.mul_unreduced::<9>(factor_1);
-            });
-        merged
-    };
-
-    // Parallel fold over E_out indices
-    // Each thread maintains local G arrays for all N polynomials
-    let G: Vec<Vec<F>> = E_out
-        .par_iter()
-        .enumerate()
-        .fold(
-            || vec![unsafe_allocate_zero_vec::<F>(K); N],
-            |mut partial_G, (x_out, &e_out)| {
-                // Local unreduced accumulators for this x_out chunk
-                let mut local_unreduced: Vec<Vec<F::Unreduced<9>>> =
-                    vec![unsafe_allocate_zero_vec(K); N];
-
-                // Track which indices were touched for efficient reduction
-                let mut touched_flags: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); N];
-
-                let x_out_base = x_out << (x_in_bits + 1);
-
-                // Sequential over x_in
-                for x_in in 0..in_len {
-                    let j0 = x_out_base + (x_in << 1);
-                    let j1 = j0 + 1;
-                    let off = 2 * x_in;
-                    let add0_unr = merged_in_unreduced[off];
-                    let add1_unr = merged_in_unreduced[off + 1];
-
-                    // Process cycle j0 (last_bit = 0)
-                    if j0 < T {
-                        let ra_indices =
-                            RaIndices::from_cycle(&trace[j0], preprocessing, one_hot_params);
-
-                        // InstructionRa contributions
-                        for i in 0..instruction_d {
-                            let k = ra_indices.instruction_ra[i] as usize;
-                            if !touched_flags[i].contains(k) {
-                                touched_flags[i].insert(k);
-                            }
-                            local_unreduced[i][k] += add0_unr;
-                        }
-
-                        // BytecodeRa contributions
-                        for i in 0..bytecode_d {
-                            let poly_idx = instruction_d + i;
-                            let k = ra_indices.bytecode_ra[i] as usize;
-                            if !touched_flags[poly_idx].contains(k) {
-                                touched_flags[poly_idx].insert(k);
-                            }
-                            local_unreduced[poly_idx][k] += add0_unr;
-                        }
-
-                        // RamRa contributions (may be None)
-                        for i in 0..ram_d {
-                            let poly_idx = instruction_d + bytecode_d + i;
-                            if let Some(k) = ra_indices.ram_ra[i] {
-                                let k = k as usize;
-                                if !touched_flags[poly_idx].contains(k) {
-                                    touched_flags[poly_idx].insert(k);
-                                }
-                                local_unreduced[poly_idx][k] += add0_unr;
-                            }
-                        }
-                    }
-
-                    // Process cycle j1 (last_bit = 1)
-                    if j1 < T {
-                        let ra_indices =
-                            RaIndices::from_cycle(&trace[j1], preprocessing, one_hot_params);
-
-                        // InstructionRa contributions
-                        for i in 0..instruction_d {
-                            let k = ra_indices.instruction_ra[i] as usize;
-                            if !touched_flags[i].contains(k) {
-                                touched_flags[i].insert(k);
-                            }
-                            local_unreduced[i][k] += add1_unr;
-                        }
-
-                        // BytecodeRa contributions
-                        for i in 0..bytecode_d {
-                            let poly_idx = instruction_d + i;
-                            let k = ra_indices.bytecode_ra[i] as usize;
-                            if !touched_flags[poly_idx].contains(k) {
-                                touched_flags[poly_idx].insert(k);
-                            }
-                            local_unreduced[poly_idx][k] += add1_unr;
-                        }
-
-                        // RamRa contributions (may be None)
-                        for i in 0..ram_d {
-                            let poly_idx = instruction_d + bytecode_d + i;
-                            if let Some(k) = ra_indices.ram_ra[i] {
-                                let k = k as usize;
-                                if !touched_flags[poly_idx].contains(k) {
-                                    touched_flags[poly_idx].insert(k);
-                                }
-                                local_unreduced[poly_idx][k] += add1_unr;
-                            }
-                        }
-                    }
-                }
-
-                // Reduce and scale by E_out[x_out]
-                for poly_idx in 0..N {
-                    for k in touched_flags[poly_idx].ones() {
-                        let reduced = F::from_montgomery_reduce::<9>(local_unreduced[poly_idx][k]);
-                        partial_G[poly_idx][k] += e_out * reduced;
-                    }
-                }
-
-                partial_G
-            },
-        )
-        .reduce(
-            || vec![unsafe_allocate_zero_vec::<F>(K); N],
-            |mut a, b| {
-                for poly_idx in 0..N {
-                    for (x, y) in a[poly_idx].iter_mut().zip(&b[poly_idx]) {
-                        *x += *y;
-                    }
-                }
-                a
-            },
-        );
-
-    G
-}
 
 // ============================================================================
 // IMPORTS FOR SUMCHECK
@@ -493,22 +208,34 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             power *= gamma;
         }
 
-        // Fetch r_addr_bool and r_cycle from UnifiedBooleanity opening point
-        // All families now share the same r_addr and r_cycle
+        // Fetch r_addr_bool from UnifiedBooleanity opening point (the sumcheck challenges for address)
+        // and r_cycle from Stage 5 (the original r_cycle used by UnifiedBooleanity).
         //
-        // The stored opening point is in BIG_ENDIAN format (after normalize_opening_point reversed it).
-        // - r_addr_bool stays in BE format (will be reversed in initialize() for eq_bool)
-        // - r_cycle needs to be in LE format for compute_all_G (which uses the original challenge order)
+        // UnifiedBooleanity's claims are at (ρ_addr, r_cycle_stage5):
+        // - ρ_addr = sumcheck challenges for address dimension (used for opening point)
+        // - r_cycle_stage5 = original r_cycle from Stage 5 (used in G computation and eq factor)
+        //
+        // The sumcheck verifies via eq(r_cycle_stage5, ρ_cycle) factor, but the claims are
+        // H.final_sumcheck_claim(i) = Σ_j eq(r_cycle_stage5, j) * ra_i(ρ_addr, j) = ra_i(ρ_addr, r_cycle_stage5)
         let (unified_bool_point, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
             SumcheckId::UnifiedBooleanity,
         );
         let r_addr_bool = unified_bool_point.r[..log_k_chunk].to_vec(); // Keep as BE
-        let r_cycle: Vec<F::Challenge> = unified_bool_point.r[log_k_chunk..]
+
+        // Get r_cycle from Stage 5 (same as UnifiedBooleanity uses in its D polynomial)
+        let (stage5_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionRa(0),
+            SumcheckId::InstructionReadRaf,
+        );
+        // Stage 5 point: [address_BE (LOG_K_INSTRUCTION)] ++ [cycle_BE (log_t)]
+        let log_t = unified_bool_point.r.len() - log_k_chunk;
+        let log_k_instruction = stage5_point.r.len() - log_t;
+        let r_cycle: Vec<F::Challenge> = stage5_point.r[log_k_instruction..]
             .iter()
             .rev()
             .cloned()
-            .collect(); // Reverse to get LE for compute_all_G
+            .collect(); // Reverse BE to LE for compute_all_G
 
         // Fetch claims for each ra_i
         let mut r_addr_virt = Vec::with_capacity(N);
@@ -649,7 +376,13 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
         // r_cycle is in BIG_ENDIAN format from normalize_opening_point.
         // compute_all_G uses GruenSplitEqPolynomial with LowToHigh, which expects
         // the same convention as EqPolynomial::evals (BE r maps to LE binding).
-        let G_vecs = compute_all_G(trace, &params.r_cycle, preprocessing, one_hot_params);
+        let G_vecs = compute_all_G::<F>(
+            trace,
+            &preprocessing.bytecode,
+            &preprocessing.memory_layout,
+            one_hot_params,
+            &params.r_cycle,
+        );
         let G: Vec<MultilinearPolynomial<F>> = G_vecs
             .into_iter()
             .map(MultilinearPolynomial::from)
@@ -937,7 +670,8 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = HammingWeightClaimReductionParams::new(one_hot_params, accumulator, transcript);
+        let params =
+            HammingWeightClaimReductionParams::new(one_hot_params, accumulator, transcript);
         Self { params }
     }
 }

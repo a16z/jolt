@@ -1112,9 +1112,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Dense polynomials: RamInc and RdInc (from IncReduction in Stage 6)
         // These are at r_cycle_stage6 only (length log_T)
-        let (ram_inc_point, ram_inc_claim) = self
-            .opening_accumulator
-            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::IncReduction);
+        let (ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncReduction,
+            );
         let (rd_inc_point, rd_inc_claim) = self
             .opening_accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);

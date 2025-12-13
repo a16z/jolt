@@ -24,11 +24,15 @@
 //! This saves memory and improves cache locality when iterating through cycles.
 
 use allocative::Allocative;
+use fixedbitset::FixedBitSet;
 
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
@@ -44,6 +48,30 @@ pub const MAX_INSTRUCTION_D: usize = 32;
 pub const MAX_BYTECODE_D: usize = 6;
 /// Maximum number of RAM RA chunks (address splits into at most 8 chunks)
 pub const MAX_RAM_D: usize = 8;
+
+/// Asserts that the one_hot_params dimensions are within bounds.
+/// Call this once at the start of bulk operations to catch issues early.
+#[inline]
+pub fn assert_ra_bounds(one_hot_params: &OneHotParams) {
+    assert!(
+        one_hot_params.instruction_d <= MAX_INSTRUCTION_D,
+        "instruction_d {} exceeds MAX_INSTRUCTION_D {}",
+        one_hot_params.instruction_d,
+        MAX_INSTRUCTION_D
+    );
+    assert!(
+        one_hot_params.bytecode_d <= MAX_BYTECODE_D,
+        "bytecode_d {} exceeds MAX_BYTECODE_D {}",
+        one_hot_params.bytecode_d,
+        MAX_BYTECODE_D
+    );
+    assert!(
+        one_hot_params.ram_d <= MAX_RAM_D,
+        "ram_d {} exceeds MAX_RAM_D {}",
+        one_hot_params.ram_d,
+        MAX_RAM_D
+    );
+}
 
 /// Stores all RA chunk indices for a single cycle.
 /// Uses fixed-size arrays to avoid heap allocation in hot loops.
@@ -66,6 +94,26 @@ impl RaIndices {
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
     ) -> Self {
+        // Debug assertions for bounds (use assert_ra_bounds once at bulk operation start)
+        debug_assert!(
+            one_hot_params.instruction_d <= MAX_INSTRUCTION_D,
+            "instruction_d {} exceeds MAX_INSTRUCTION_D {}",
+            one_hot_params.instruction_d,
+            MAX_INSTRUCTION_D
+        );
+        debug_assert!(
+            one_hot_params.bytecode_d <= MAX_BYTECODE_D,
+            "bytecode_d {} exceeds MAX_BYTECODE_D {}",
+            one_hot_params.bytecode_d,
+            MAX_BYTECODE_D
+        );
+        debug_assert!(
+            one_hot_params.ram_d <= MAX_RAM_D,
+            "ram_d {} exceeds MAX_RAM_D {}",
+            one_hot_params.ram_d,
+            MAX_RAM_D
+        );
+
         // Instruction indices from lookup index
         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
         let mut instruction = [0u16; MAX_INSTRUCTION_D];
@@ -149,12 +197,14 @@ pub fn compute_all_H_indices(
         .collect()
 }
 
-/// Compute all G evaluations for all families in parallel.
+/// Compute all G evaluations for all families in parallel using split-eq optimization.
 ///
 /// G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)
 ///
 /// For one-hot RA polynomials, this simplifies to:
 /// G_i(k) = Σ_{j: chunk_i(j) = k} eq_r_cycle[j]
+///
+/// Uses GruenSplitEqPolynomial for efficient eq evaluation with E_out/E_in tables.
 ///
 /// Returns G in order: [instruction_0..d, bytecode_0..d, ram_0..d]
 /// Each inner Vec has length k_chunk.
@@ -164,41 +214,158 @@ pub fn compute_all_G<F: JoltField>(
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
-    eq_r_cycle: &[F],
+    r_cycle: &[F::Challenge],
 ) -> Vec<Vec<F>> {
+    // Verify bounds once at the start
+    assert_ra_bounds(one_hot_params);
+
+    let K = one_hot_params.k_chunk;
     let instruction_d = one_hot_params.instruction_d;
     let bytecode_d = one_hot_params.bytecode_d;
     let ram_d = one_hot_params.ram_d;
     let N = instruction_d + bytecode_d + ram_d;
-    let K = one_hot_params.k_chunk;
+    let T = trace.len();
 
-    // Parallel fold over trace cycles
+    // Build split-eq polynomial over r_cycle
+    // This gives us E_out, E_in tables and the current_w (last challenge)
+    let split_eq = GruenSplitEqPolynomial::<F>::new(r_cycle, BindingOrder::LowToHigh);
+
+    let E_in = split_eq.E_in_current();
+    let E_out = split_eq.E_out_current();
+    let w_current = split_eq.get_current_w();
+    let factor_0 = F::one() - w_current;
+    let factor_1: F = w_current.into();
+
+    let in_len = E_in.len();
+    let x_in_bits = in_len.log_2();
+
+    // Precompute merged inner weights: [E_in[x_in] * (1-w), E_in[x_in] * w] for all x_in
+    // This avoids recomputing the product for each (x_out, x_in) pair
+    let merged_in_unreduced: Vec<F::Unreduced<9>> = {
+        let mut merged: Vec<F::Unreduced<9>> = unsafe_allocate_zero_vec(2 * in_len);
+        merged
+            .par_chunks_exact_mut(2)
+            .zip(E_in.par_iter())
+            .for_each(|(chunk, &low)| {
+                chunk[0] = low.mul_unreduced::<9>(factor_0);
+                chunk[1] = low.mul_unreduced::<9>(factor_1);
+            });
+        merged
+    };
+
+    // Parallel fold over E_out indices using flat N*K vector
     // Each thread maintains local G arrays for all N polynomials
-    trace
+    let flat_G: Vec<F> = E_out
         .par_iter()
-        .zip(eq_r_cycle.par_iter())
+        .enumerate()
         .fold(
-            || vec![vec![F::zero(); K]; N],
-            |mut partial_G, (cycle, &eq_val)| {
-                let indices =
-                    RaIndices::from_cycle(cycle, bytecode, memory_layout, one_hot_params);
+            || unsafe_allocate_zero_vec::<F>(N * K),
+            |mut partial_G, (x_out, &e_out)| {
+                // Local unreduced accumulators for this x_out chunk
+                let mut local_unreduced: Vec<F::Unreduced<9>> = unsafe_allocate_zero_vec(N * K);
 
-                // Instruction contributions
-                for i in 0..instruction_d {
-                    let k = indices.instruction[i] as usize;
-                    partial_G[i][k] += eq_val;
+                // Track which indices were touched for efficient reduction
+                let mut touched_flags: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); N];
+
+                let x_out_base = x_out << (x_in_bits + 1);
+
+                // Sequential over x_in
+                for x_in in 0..in_len {
+                    let j0 = x_out_base + (x_in << 1);
+                    let j1 = j0 + 1;
+                    let off = 2 * x_in;
+                    let add0_unr = merged_in_unreduced[off];
+                    let add1_unr = merged_in_unreduced[off + 1];
+
+                    // Process cycle j0 (last_bit = 0)
+                    if j0 < T {
+                        let ra_indices = RaIndices::from_cycle(
+                            &trace[j0],
+                            bytecode,
+                            memory_layout,
+                            one_hot_params,
+                        );
+
+                        // InstructionRa contributions
+                        for i in 0..instruction_d {
+                            let k = ra_indices.instruction[i] as usize;
+                            if !touched_flags[i].contains(k) {
+                                touched_flags[i].insert(k);
+                            }
+                            local_unreduced[i * K + k] += add0_unr;
+                        }
+
+                        // BytecodeRa contributions
+                        for i in 0..bytecode_d {
+                            let poly_idx = instruction_d + i;
+                            let k = ra_indices.bytecode[i] as usize;
+                            if !touched_flags[poly_idx].contains(k) {
+                                touched_flags[poly_idx].insert(k);
+                            }
+                            local_unreduced[poly_idx * K + k] += add0_unr;
+                        }
+
+                        // RamRa contributions (may be None)
+                        for i in 0..ram_d {
+                            let poly_idx = instruction_d + bytecode_d + i;
+                            if let Some(k) = ra_indices.ram[i] {
+                                let k = k as usize;
+                                if !touched_flags[poly_idx].contains(k) {
+                                    touched_flags[poly_idx].insert(k);
+                                }
+                                local_unreduced[poly_idx * K + k] += add0_unr;
+                            }
+                        }
+                    }
+
+                    // Process cycle j1 (last_bit = 1)
+                    if j1 < T {
+                        let ra_indices = RaIndices::from_cycle(
+                            &trace[j1],
+                            bytecode,
+                            memory_layout,
+                            one_hot_params,
+                        );
+
+                        // InstructionRa contributions
+                        for i in 0..instruction_d {
+                            let k = ra_indices.instruction[i] as usize;
+                            if !touched_flags[i].contains(k) {
+                                touched_flags[i].insert(k);
+                            }
+                            local_unreduced[i * K + k] += add1_unr;
+                        }
+
+                        // BytecodeRa contributions
+                        for i in 0..bytecode_d {
+                            let poly_idx = instruction_d + i;
+                            let k = ra_indices.bytecode[i] as usize;
+                            if !touched_flags[poly_idx].contains(k) {
+                                touched_flags[poly_idx].insert(k);
+                            }
+                            local_unreduced[poly_idx * K + k] += add1_unr;
+                        }
+
+                        // RamRa contributions (may be None)
+                        for i in 0..ram_d {
+                            let poly_idx = instruction_d + bytecode_d + i;
+                            if let Some(k) = ra_indices.ram[i] {
+                                let k = k as usize;
+                                if !touched_flags[poly_idx].contains(k) {
+                                    touched_flags[poly_idx].insert(k);
+                                }
+                                local_unreduced[poly_idx * K + k] += add1_unr;
+                            }
+                        }
+                    }
                 }
 
-                // Bytecode contributions
-                for i in 0..bytecode_d {
-                    let k = indices.bytecode[i] as usize;
-                    partial_G[instruction_d + i][k] += eq_val;
-                }
-
-                // RAM contributions (skip None indices)
-                for i in 0..ram_d {
-                    if let Some(k) = indices.ram[i] {
-                        partial_G[instruction_d + bytecode_d + i][k as usize] += eq_val;
+                // Reduce and scale by E_out[x_out], only for touched indices
+                for poly_idx in 0..N {
+                    for k in touched_flags[poly_idx].ones() {
+                        let reduced =
+                            F::from_montgomery_reduce::<9>(local_unreduced[poly_idx * K + k]);
+                        partial_G[poly_idx * K + k] += e_out * reduced;
                     }
                 }
 
@@ -206,16 +373,17 @@ pub fn compute_all_G<F: JoltField>(
             },
         )
         .reduce(
-            || vec![vec![F::zero(); K]; N],
+            || unsafe_allocate_zero_vec::<F>(N * K),
             |mut a, b| {
-                for poly_idx in 0..N {
-                    for k in 0..K {
-                        a[poly_idx][k] += b[poly_idx][k];
-                    }
-                }
+                a.par_iter_mut()
+                    .zip(b.par_iter())
+                    .for_each(|(a_val, b_val)| *a_val += *b_val);
                 a
             },
-        )
+        );
+
+    // Chop flat vector into N vectors of length K
+    flat_G.chunks_exact(K).map(|chunk| chunk.to_vec()).collect()
 }
 
 // ============================================================================
@@ -472,19 +640,20 @@ impl<F: JoltField> SharedRaRound3<F> {
                 h_00 + h_01 + h_10 + h_11
             }
             BindingOrder::LowToHigh => {
+                // Bit pattern for offset: (r1, r0), so offset 1 = r0=1,r1=0 → F_10
                 let h_00 = self.indices[4 * j]
                     .get_index(poly_idx, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.F_00[k as usize]);
-                let h_01 = self.indices[4 * j + 1]
-                    .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_01[k as usize]);
-                let h_10 = self.indices[4 * j + 2]
+                let h_10 = self.indices[4 * j + 1]
                     .get_index(poly_idx, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.F_10[k as usize]);
+                let h_01 = self.indices[4 * j + 2]
+                    .get_index(poly_idx, &self.one_hot_params)
+                    .map_or(F::zero(), |k| self.F_01[k as usize]);
                 let h_11 = self.indices[4 * j + 3]
                     .get_index(poly_idx, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.F_11[k as usize]);
-                h_00 + h_01 + h_10 + h_11
+                h_00 + h_10 + h_01 + h_11
             }
         }
     }
@@ -493,25 +662,66 @@ impl<F: JoltField> SharedRaRound3<F> {
     fn bind(self, r2: F::Challenge, order: BindingOrder) -> Vec<MultilinearPolynomial<F>> {
         assert_eq!(order, self.binding_order);
 
+        // Create 8 F tables: F_ABC where A=r0, B=r1, C=r2
+        let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
+        let eq_1_r2 = EqPolynomial::mle(&[F::one()], &[r2]);
+
+        let mut F_000 = self.F_00.clone();
+        let mut F_001 = self.F_00;
+        let mut F_010 = self.F_01.clone();
+        let mut F_011 = self.F_01;
+        let mut F_100 = self.F_10.clone();
+        let mut F_101 = self.F_10;
+        let mut F_110 = self.F_11.clone();
+        let mut F_111 = self.F_11;
+
+        // Scale by eq(r2, bit)
+        rayon::join(
+            || {
+                rayon::join(
+                    || {
+                        rayon::join(
+                            || F_000.par_iter_mut().for_each(|f| *f *= eq_0_r2),
+                            || F_001.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                        )
+                    },
+                    || {
+                        rayon::join(
+                            || F_010.par_iter_mut().for_each(|f| *f *= eq_0_r2),
+                            || F_011.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                        )
+                    },
+                )
+            },
+            || {
+                rayon::join(
+                    || {
+                        rayon::join(
+                            || F_100.par_iter_mut().for_each(|f| *f *= eq_0_r2),
+                            || F_101.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                        )
+                    },
+                    || {
+                        rayon::join(
+                            || F_110.par_iter_mut().for_each(|f| *f *= eq_0_r2),
+                            || F_111.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                        )
+                    },
+                )
+            },
+        );
+
+        // Collect all 8 tables for indexed access
+        let F_tables = [
+            &F_000, &F_100, &F_010, &F_110, &F_001, &F_101, &F_011, &F_111,
+        ];
+
         // Materialize all polynomials in parallel
         let num_polys = self.num_polys;
         let indices = &self.indices;
         let one_hot_params = &self.one_hot_params;
-
-        // Combine F tables: F_combined[k] = F_00[k]*eq(00,r) + F_01[k]*eq(01,r) + ...
-        let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
-        let eq_1_r2 = EqPolynomial::mle(&[F::one()], &[r2]);
-        
-        let F_combined: Vec<F> = (0..self.F_00.len())
-            .into_par_iter()
-            .map(|k| {
-                self.F_00[k] * eq_0_r2 + self.F_01[k] * eq_1_r2 
-                    + self.F_10[k] * eq_0_r2 + self.F_11[k] * eq_1_r2
-            })
-            .collect();
-
-        // For each polynomial, materialize from indices
         let new_len = indices.len() / 8;
+
         (0..num_polys)
             .into_par_iter()
             .map(|poly_idx| {
@@ -519,12 +729,12 @@ impl<F: JoltField> SharedRaRound3<F> {
                     BindingOrder::LowToHigh => {
                         (0..new_len)
                             .map(|j| {
-                                // Sum over 8 consecutive indices
+                                // Sum over 8 consecutive indices, each using appropriate F table
                                 (0..8)
                                     .map(|offset| {
                                         indices[8 * j + offset]
                                             .get_index(poly_idx, one_hot_params)
-                                            .map_or(F::zero(), |k| F_combined[k as usize])
+                                            .map_or(F::zero(), |k| F_tables[offset][k as usize])
                                     })
                                     .sum()
                             })
@@ -538,7 +748,7 @@ impl<F: JoltField> SharedRaRound3<F> {
                                     .map(|seg| {
                                         indices[seg * eighth + j]
                                             .get_index(poly_idx, one_hot_params)
-                                            .map_or(F::zero(), |k| F_combined[k as usize])
+                                            .map_or(F::zero(), |k| F_tables[seg][k as usize])
                                     })
                                     .sum()
                             })

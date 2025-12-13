@@ -414,11 +414,18 @@ pub mod init {
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
     ) -> UnifiedBooleanityProver<F> {
-        let eq_r_cycle = EqPolynomial::evals(&params.r_cycle);
-
         // Compute G and RA indices for all families in parallel
+        // compute_all_G uses GruenSplitEqPolynomial internally for efficient eq evaluation
         let (G, ra_indices) = rayon::join(
-            || compute_all_G(trace, bytecode, memory_layout, one_hot_params, &eq_r_cycle),
+            || {
+                compute_all_G::<F>(
+                    trace,
+                    bytecode,
+                    memory_layout,
+                    one_hot_params,
+                    &params.r_cycle,
+                )
+            },
             || compute_ra_indices(trace, bytecode, memory_layout, one_hot_params),
         );
 
