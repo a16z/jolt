@@ -31,7 +31,8 @@
 //! ## Fusion Insight
 //!
 //! Define the "pushforward" polynomial:
-//!   G_i(k) := Σ_j eq(r_cycle, j) · ra_i(k, j)
+//!
+//!   `G_i(k) := Σ_j eq(r_cycle, j) · ra_i(k, j)`
 //!
 //! All claim types operate on this same G_i, just with different weights:
 //! - **HammingWeight**: weight = 1 (constant) → proves Σ_k G_i(k) = H_i
@@ -47,12 +48,14 @@
 //!
 //! The fused sumcheck proves:
 //!
+//! ```text
 //!   Σ_k Σ_i G_i(k) · [
 //!       γ^{3i}   · 1                              (HammingWeight)
 //!     + γ^{3i+1} · eq(r_addr_bool_{family(i)}, k)  (Booleanity reduction)
 //!     + γ^{3i+2} · eq(r_addr_virt_i, k)           (Virtualization reduction)
 //!   ]
 //!   = Σ_i [γ^{3i} · H_i + γ^{3i+1} · claim_bool_i + γ^{3i+2} · claim_virt_i]
+//! ```
 //!
 //! ## eq Polynomial Optimization
 //!
@@ -72,8 +75,9 @@
 //!
 //! ## After This Sumcheck
 //!
-//! Let ρ be the challenges from this sumcheck. Each ra_i has a SINGLE opening:
-//!   ra_i(ρ, r_cycle_stage6)
+//! Let ρ be the challenges from this sumcheck (r_address_stage7). Each ra_i has a SINGLE opening:
+//!
+//!   `ra_i(ρ, r_cycle_stage6)`
 //!
 //! The verifier computes expected claims using the single opening G_i(ρ):
 //! - HammingWeight: G_i(ρ)
@@ -81,168 +85,10 @@
 //! - Virtualization: eq(r_addr_virt_i, ρ) · G_i(ρ)
 //!
 //! All three claim types collapse to a single committed polynomial opening per ra_i!
-
-//! ## Detailed Wiring Changes
 //!
-//! ### Current Stage Layout (before optimization)
+//! ## Implementation Details
 //!
-//! ```text
-//! Stage 4:
-//!   - RegistersReadWriteChecking (emits RdInc claim)
-//!   - RamBooleanity (emits RamRa claims) ← MOVE TO STAGE 6
-//!   - RamValEvaluation (emits RamInc claim)
-//!   - RamValFinal (emits RamInc claim, same point as ValEval)
-//!
-//! Stage 5:
-//!   - RegistersValEvaluation (emits RdInc claim)
-//!   - RamHammingBooleanity (emits virtual RamHammingWeight claim)
-//!   - RamRaVirtualization (emits RamRa claims) ← MOVE TO STAGE 6
-//!   - InstructionReadRaf (emits InstructionRa virtual claim)
-//!
-//! Stage 6:
-//!   - BytecodeReadRaf (emits BytecodeRa claims)
-//!   - BytecodeHammingWeight (emits BytecodeRa claims) ← MOVE TO STAGE 7
-//!   - BytecodeBooleanity (emits BytecodeRa claims)
-//!   - RamHammingWeight (emits RamRa claims) ← MOVE TO STAGE 7
-//!   - InstructionRaVirtualization (emits InstructionRa claims)
-//!   - InstructionBooleanity (emits InstructionRa claims)
-//!   - InstructionHammingWeight (emits InstructionRa claims) ← MOVE TO STAGE 7
-//!
-//! Stage 7:
-//!   - OpeningReduction (generic, expensive) ← REMOVE
-//!
-//! Stage 8:
-//!   - Dory opening proof
-//! ```
-//!
-//! ### New Stage Layout (after optimization)
-//!
-//! ```text
-//! Stage 4:
-//!   - RegistersReadWriteChecking (emits RdInc claim)
-//!   - RamValEvaluation (emits RamInc claim)
-//!   - RamValFinal (emits RamInc claim)
-//!
-//! Stage 5:
-//!   - RegistersValEvaluation (emits RdInc claim)
-//!   - RamHammingBooleanity (emits virtual RamHammingWeight claim)
-//!   - InstructionReadRaf (emits InstructionRa virtual claim)
-//!
-//! Stage 6:
-//!   - BytecodeReadRaf (emits BytecodeRa claims at r_addr_readraf, r_cycle_stage6)
-//!   - BytecodeBooleanity (emits BytecodeRa claims at r_addr_bool, r_cycle_stage6)
-//!   - RamBooleanity (emits RamRa claims at r_addr_bool, r_cycle_stage6)  ← MOVED HERE
-//!   - RamRaVirtualization (emits RamRa claims at r_addr_virt, r_cycle_stage6)  ← MOVED HERE
-//!   - InstructionRaVirtualization (emits InstructionRa claims at r_addr_virt, r_cycle_stage6)
-//!   - InstructionBooleanity (emits InstructionRa claims at r_addr_bool, r_cycle_stage6)
-//!   - IncReduction (reduces RamInc + RdInc to single point ρ_inc)  ← NEW
-//!
-//! Stage 7:
-//!   - BytecodeHammingWeight (uses r_cycle_stage6, produces r_addr = ρ)  ← MOVED HERE
-//!   - InstructionHammingWeight (uses r_cycle_stage6, produces r_addr = ρ)  ← MOVED HERE
-//!   - RamHammingWeight (uses r_cycle_stage6, produces r_addr = ρ)  ← MOVED HERE
-//!   - RaAddressReduction (aligns Stage 6 claims to r_addr = ρ)  ← NEW
-//!   // All batched together, sharing challenges ρ_1..ρ_{log_k_chunk}
-//!
-//! Stage 8:
-//!   - Dory opening proof (directly on aligned claims)
-//! ```
-//!
-//! ### Claim Flow Summary
-//!
-//! After Stage 6:
-//!   - RamInc: 1 claim at r_cycle_stage6 (from IncReduction, batched with RA sumchecks)
-//!   - RdInc: 1 claim at r_cycle_stage6 (from IncReduction, batched with RA sumchecks)
-//!   - BytecodeRa(i): 2 claims at (r_addr_bool, r_cycle_stage6), (r_addr_readraf, r_cycle_stage6)
-//!   - InstructionRa(i): 2 claims at (r_addr_bool, r_cycle_stage6), (r_addr_virt, r_cycle_stage6)
-//!   - RamRa(i): 2 claims at (r_addr_bool, r_cycle_stage6), (r_addr_virt, r_cycle_stage6)
-//!
-//! After Stage 7:
-//!   - RamInc: 1 claim at r_cycle_stage6 (unchanged, already fully reduced)
-//!   - RdInc: 1 claim at r_cycle_stage6 (unchanged, already fully reduced)
-//!   - BytecodeRa(i): 1 claim at (ρ_addr, r_cycle_stage6) ← HammingWeight + AddressReduction
-//!   - InstructionRa(i): 1 claim at (ρ_addr, r_cycle_stage6) ← HammingWeight + AddressReduction
-//!   - RamRa(i): 1 claim at (ρ_addr, r_cycle_stage6) ← HammingWeight + AddressReduction
-//!
-//! All committed polynomials share r_cycle_stage6 as their cycle component!
-//!
-//! ### Key Invariants
-//!
-//! 1. **Shared r_cycle in Stage 6**: All RA-related sumchecks (Booleanity, Virtualization,
-//!    ReadRaf) must be in the same batched sumcheck so they share r_cycle from the
-//!    sumcheck challenges.
-//!
-//! 2. **Shared r_address in Stage 7**: HammingWeight and AddressReduction must be in the
-//!    same batched sumcheck so they share r_address from the sumcheck challenges.
-//!
-//! 3. **HammingWeight uses Stage 6 r_cycle**: The HammingWeight params must pass in
-//!    r_cycle_stage6 (from Stage 6 sumcheck challenges), not sample new challenges.
-//!
-//! 4. **AddressReduction only needs 2 claims per ra_i**: Booleanity + Virtualization.
-//!    HammingWeight claim is automatically aligned since it shares challenges.
-//!
-//! ### How r_cycle Flows from Stage 6 to Stage 7
-//!
-//! Stage 6 runs a batched sumcheck with instances that all have log(T) cycle rounds.
-//! The shared sumcheck challenges become r_cycle_stage6.
-//!
-//! At the end of Stage 6, `cache_openings` is called for each instance. The RA-related
-//! instances append their claims with r_cycle = r_cycle_stage6.
-//!
-//! Stage 7 then needs to access r_cycle_stage6. There are two options:
-//!
-//! **Option A**: Store r_cycle_stage6 in prover state
-//!   - After Stage 6 BatchedSumcheck::prove returns (proof, r_stage6)
-//!   - Extract the cycle portion: r_cycle_stage6 = r_stage6[log_k_chunk..]
-//!   - Pass r_cycle_stage6 to Stage 7 HammingWeight and AddressReduction params
-//!
-//! **Option B**: Retrieve from opening accumulator
-//!   - Stage 6 cache_openings appended claims with r_cycle_stage6
-//!   - Stage 7 can retrieve any RA claim's opening point and extract r_cycle
-//!   - e.g., get_committed_polynomial_opening(BytecodeRa(0), BytecodeBooleanity).0
-//!
-//! Option A is cleaner and more explicit. The prover would:
-//!
-//! ```text
-//! // Stage 6
-//! let (stage6_proof, r_stage6) = BatchedSumcheck::prove(stage6_instances, ...);
-//! let r_cycle_stage6 = r_stage6[log_k_chunk..].to_vec();  // Extract cycle portion
-//!
-//! // Stage 7
-//! let hw_params = HammingWeightParams {
-//!     r_cycle: r_cycle_stage6.clone(),
-//!     ...
-//! };
-//! let addr_reduction_params = RaAddressReductionParams::new(
-//!     r_cycle_stage6,
-//!     &opening_accumulator,
-//!     ...
-//! );
-//! ```
-//!
-//! ### Opening Accumulator Changes
-//!
-//! The `append_sparse` calls from Stage 6 sumchecks will accumulate openings at
-//! different r_address values but the SAME r_cycle_stage6. The AddressReduction sumcheck
-//! reads these accumulated claims and produces a single reduced opening per ra_i.
-//!
-//! After Stage 7, the opening accumulator should contain:
-//!   - RamInc at r_cycle_stage6 (from IncReduction)
-//!   - RdInc at r_cycle_stage6 (from IncReduction)
-//!   - Each ra_i at (ρ_addr, r_cycle_stage6) (from AddressReduction)
-//!
-//! All polynomials share r_cycle_stage6. They go directly to Dory without any
-//! generic opening reduction sumcheck.
-//!
-//! ### Dory Integration
-//!
-//! The `OpeningReductionState` (currently produced by Stage 7 generic opening reduction)
-//! needs to be replaced with a simpler structure that just lists:
-//!   - The final opening points
-//!   - The corresponding claims
-//!   - The polynomial commitments
-//!
-//! The RLC polynomial construction remains the same, but operates on fewer, aligned openings.
+//! See `OPENING_REDUCTION_REFACTOR.md` for the full implementation plan and status.
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -368,7 +214,7 @@ fn assert_ra_bounds(one_hot_params: &OneHotParams) {
 ///
 /// For one-hot ra polynomials:
 /// G_i(k) = Σ_{j: addr_chunk_i(j) = k} eq(r_cycle, j)
-#[tracing::instrument(skip_all, name = "RaAddressReduction::compute_all_G")]
+#[tracing::instrument(skip_all, name = "HammingWeightClaimReduction::compute_all_G")]
 pub fn compute_all_G<F: JoltField, PCS: CommitmentScheme<Field = F>>(
     trace: &[Cycle],
     r_cycle: &[F::Challenge],
@@ -872,10 +718,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "HammingWeightClaimReductionProver::ingest_challenge"
-    )]
+    #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         // Bind all polynomials in parallel
         rayon::scope(|s| {

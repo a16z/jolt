@@ -145,7 +145,7 @@
 //!   - RdInc has 1 claim at r_cycle_stage6 (from IncReduction)
 //!   - RA polynomials have 2 claims each at (r_addr_*, r_cycle_stage6)
 //!
-//! Stage 7 then runs RaAddressReduction to align the RA polynomials' address portions.
+//! Stage 7 then runs HammingWeightClaimReduction to align the RA polynomials' address portions.
 //! Inc polynomials are NOT touched in Stage 7 (they're already fully reduced).
 //!
 //! After Stage 7:

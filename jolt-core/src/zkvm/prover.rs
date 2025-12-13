@@ -20,7 +20,9 @@ use crate::{
             dory::{DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{DoryOpeningState, OpeningAccumulator, ProverOpeningAccumulator, SumcheckId},
+        opening_proof::{
+            DoryOpeningState, OpeningAccumulator, ProverOpeningAccumulator, SumcheckId,
+        },
         rlc_polynomial::RLCStreamingData,
     },
     pprof_scope,
@@ -343,11 +345,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(test))]
         let debug_info = None;
 
-        let opening_state = self
+        let dory_state = self
             .opening_accumulator
-            .opening_reduction_state
+            .dory_opening_state
             .as_ref()
-            .unwrap();
+            .expect("Stage 7 must be called before finalizing proof");
         let proof = JoltProof {
             opening_claims: Claims(self.opening_accumulator.openings.clone()),
             commitments,
@@ -363,7 +365,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trusted_advice_proof,
             untrusted_advice_proof,
             stage7_sumcheck_proof,
-            stage7_sumcheck_claims: opening_state.sumcheck_claims.clone(),
+            // Note: verifier no longer uses this field, but kept for proof format compatibility
+            stage7_sumcheck_claims: dory_state.claims.clone(),
             joint_opening_proof,
             #[cfg(test)]
             joint_commitment_for_test: self.joint_commitment_for_test.clone(),
@@ -1075,17 +1078,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             CommittedPolynomial::RamInc,
             SumcheckId::IncReduction,
         );
-        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncReduction,
-        );
+        let (_, rd_inc_claim) = self
+            .opening_accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
 
         // Apply Lagrange factor for dense polys: ∏_{i<log_k_chunk} (1 - r_address[i])
         // Because dense polys have fewer variables, we need to account for this
-        let lagrange_factor: F = r_address_stage7
-            .iter()
-            .map(|r| F::one() - *r)
-            .product();
+        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
 
         claims.push(ram_inc_claim * lagrange_factor);
         claims.push(rd_inc_claim * lagrange_factor);
@@ -1206,10 +1205,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
         }
 
-        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) = rlc_map
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .unzip();
+        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
+            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
 
         let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming_from_ids(
             poly_ids.clone(),

@@ -184,9 +184,7 @@ pub enum SumcheckId {
     BytecodeBooleanity,
     BytecodeHammingWeight,
     IncReduction,
-    RaAddressReduction,
     HammingWeightClaimReduction,
-    OpeningReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

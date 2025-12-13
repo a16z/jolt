@@ -22,7 +22,8 @@ pub use hamming_weight_claim_reduction::{
     HammingWeightClaimReductionVerifier,
 };
 // Note: OpeningReduction is being replaced by the new Stage 7 flow
-// TODO: Remove these exports once Stage 7 refactor is complete
+// DEPRECATED: These are no longer used after Stage 7 refactor to HammingWeightClaimReduction.
+// Kept for backward compatibility - can be removed in a cleanup PR.
 pub use opening_reduction::{
     DensePolynomialProverOpening, OpeningProofReductionSumcheckProver,
     OpeningProofReductionSumcheckVerifier, ProverOpening, SharedDensePolynomial,

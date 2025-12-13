@@ -260,37 +260,42 @@ let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
 
 This works because all sparse polys NOW share the same `ρ_addr`!
 
-### Witness Regeneration
+### Witness Regeneration & Streaming
 
-Note: We avoid witness regeneration in Stage 7's **sumcheck** (HammingWeightClaimReduction
-uses G_i computed from trace, not the committed polynomials). However, Stage 8 still
-needs the actual polynomial coefficients to build the RLC polynomial for Dory.
+**Key optimization**: Stage 8 now streams directly from trace via `RLCPolynomial::new_streaming_from_ids`. 
+No witness polynomial regeneration is needed!
 
-- OLD: Regen witnesses → Run opening reduction sumcheck → Build RLC → Dory
-- NEW: Run HammingWeightClaimReduction (trace-based) → Regen witnesses → Build RLC → Dory
+- OLD: Regen witnesses (Stage 7) → Run opening reduction sumcheck → Build RLC → Dory
+- NEW: Run HammingWeightClaimReduction (trace-based) → Build streaming RLC directly → Dory
 
-The expensive opening reduction sumcheck is eliminated!
+Both the expensive opening reduction sumcheck AND witness regeneration are eliminated!
 
 ## Files Modified/Created
 
 | File | Status | Description |
 |------|--------|-------------|
-| `subprotocols/inc_reduction.rs` | ⚠️ Buggy | Dense Inc reduction sumcheck (virtual/committed poly issues) |
-| `subprotocols/hamming_weight_claim_reduction.rs` | ✅ Created | Fused HW + Address reduction (not wired yet) |
-| `subprotocols/address_reduction.rs` | ❌ DELETED | Was duplicate of hamming_weight_claim_reduction.rs |
-| `subprotocols/mod.rs` | ✅ Updated | Exports new module |
-| `poly/opening_proof.rs` | 🔲 Needs update | Remove generic reduction code |
-| `subprotocols/opening_reduction.rs` | 🔲 Will become obsolete | Remove after Stage 7 refactor |
-| `subprotocols/hamming_weight.rs` | 🔲 Will become obsolete | Remove after Stage 7 refactor |
-| `zkvm/prover.rs` | 🔲 Needs update | Wire Stage 7 fused sumcheck, remove HW from Stage 6 |
-| `zkvm/verifier.rs` | 🔲 Needs update | Wire Stage 7 fused verification, remove HW from Stage 6 |
-| `zkvm/bytecode/mod.rs` | 🔲 Needs update | Remove HW param generation |
-| `zkvm/ram/mod.rs` | 🔲 Needs update | Remove HW param generation |
-| `zkvm/instruction_lookups/mod.rs` | 🔲 Needs update | Remove HW param generation |
+| `subprotocols/inc_reduction.rs` | ✅ Wired | Dense Inc reduction sumcheck, needs testing |
+| `subprotocols/hamming_weight_claim_reduction.rs` | ✅ Wired | Fused HW + Address reduction |
+| `subprotocols/mod.rs` | ✅ Updated | Exports new modules, deprecation comments |
+| `poly/opening_proof.rs` | ✅ Updated | Added `DoryOpeningState`, `SumcheckId::HammingWeightClaimReduction` |
+| `poly/rlc_polynomial.rs` | ✅ Updated | Added `new_streaming_from_ids` for streaming without witness polys |
+| `subprotocols/opening_reduction.rs` | ⚠️ DEPRECATED | No longer used, can be removed in cleanup PR |
+| `zkvm/prover.rs` | ✅ Updated | New Stage 7 (HammingWeightClaimReduction), Stage 8 (streaming) |
+| `zkvm/verifier.rs` | ✅ Updated | New Stage 7/8 verification |
+| `zkvm/bytecode/mod.rs` | ✅ Updated | Added `gen_ra_booleanity_prover`, `new_ra_booleanity_verifier` |
+| `zkvm/instruction_lookups/mod.rs` | ✅ Updated | Added `gen_ra_booleanity_prover`, `new_ra_booleanity_verifier` |
+
+## Dead Code (can be removed in cleanup PR)
+
+- `OpeningReductionState` struct (replaced by `DoryOpeningState`)
+- `opening_reduction_state` fields in accumulators
+- `sumchecks: Vec<OpeningProofReductionSumcheckProver>` (populated but never used)
+- Old Stage 7 methods: `prove_batch_opening_sumcheck`, `verify_batch_opening_sumcheck`, etc.
+- `opening_reduction.rs` module
 
 ## Testing
 
-- [ ] Unit tests for `FusedHammingAddressReductionProver` sumcheck correctness
+- [ ] Unit tests for `HammingWeightClaimReductionProver` sumcheck correctness
 - [ ] Unit tests comparing `compute_all_G` against naive computation
 - [ ] Unit tests for `IncReduction` sumcheck correctness
 - [ ] Integration test: full e2e proof with new Stage 7

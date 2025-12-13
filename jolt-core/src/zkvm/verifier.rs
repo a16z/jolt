@@ -466,10 +466,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             CommittedPolynomial::RamInc,
             SumcheckId::IncReduction,
         );
-        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncReduction,
-        );
+        let (_, rd_inc_claim) = self
+            .opening_accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
 
         // Apply Lagrange factor for dense polys
         let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
