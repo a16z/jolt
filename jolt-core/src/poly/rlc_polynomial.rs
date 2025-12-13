@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
@@ -25,12 +25,38 @@ pub struct RLCStreamingData {
     pub memory_layout: MemoryLayout,
 }
 
-/// Streaming context for lazy RLC evaluation
+/// Source of trace data for streaming VMV computation.
+#[derive(Clone, Debug)]
+pub enum TraceSource {
+    /// Pre-materialized trace in memory (default, efficient single pass)
+    Materialized(Arc<Vec<Cycle>>),
+    /// Lazy trace iterator (experimental, re-runs tracer)
+    Lazy(LazyTraceIterator),
+}
+
+impl TraceSource {
+    pub fn len(&self) -> usize {
+        match self {
+            TraceSource::Materialized(trace) => trace.len(),
+            // Lazy trace length is not known upfront (would require full iteration)
+            TraceSource::Lazy(_) => panic!("Cannot get length of lazy trace"),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            TraceSource::Materialized(trace) => trace.is_empty(),
+            TraceSource::Lazy(_) => panic!("Cannot check emptiness of lazy trace"),
+        }
+    }
+}
+
+/// Streaming context for RLC evaluation
 #[derive(Clone, Debug)]
 pub struct StreamingRLCContext<F: JoltField> {
     pub dense_polys: Vec<(CommittedPolynomial, F)>,
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
-    pub lazy_trace: LazyTraceIterator,
+    pub trace_source: TraceSource,
     pub preprocessing: Arc<RLCStreamingData>,
     pub one_hot_params: OneHotParams,
 }
@@ -70,57 +96,122 @@ impl<F: JoltField> RLCPolynomial<F> {
         }
     }
 
-    /// O(sqrt(T)) space Vector matrix product constructor for all polys
-    /// Allows for just a single pass over the trace
-    pub fn new_streaming(
-        dense_polys: Vec<(CommittedPolynomial, F)>,
-        onehot_polys: Vec<(CommittedPolynomial, F)>,
-        lazy_trace: LazyTraceIterator,
-        preprocessing: Arc<RLCStreamingData>,
-        one_hot_params: &OneHotParams,
-    ) -> Self {
-        Self {
-            dense_rlc: vec![],   // Not materialized in streaming mode
-            one_hot_rlc: vec![], // Not materialized in streaming mode
-            streaming_context: Some(Arc::new(StreamingRLCContext {
-                dense_polys,
-                onehot_polys,
-                lazy_trace,
-                preprocessing,
-                one_hot_params: one_hot_params.clone(),
-            })),
-        }
-    }
-
-    #[tracing::instrument(skip_all)]
+    /// Constructs an `RLCPolynomial` as a linear combination of `polynomials` with the provided
+    /// `coefficients`.
+    ///
+    /// This is a legacy helper (used by some commitment backends) that eagerly combines dense
+    /// polynomials into `dense_rlc` and stores one-hot polynomials lazily in `one_hot_rlc`.
+    #[allow(unused_variables)]
     pub fn linear_combination(
         poly_ids: Vec<CommittedPolynomial>,
         polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
         coefficients: &[F],
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+        streaming_context: Option<Arc<StreamingRLCContext<F>>>,
     ) -> Self {
-        debug_assert_eq!(polynomials.len(), coefficients.len());
-        debug_assert_eq!(poly_ids.len(), coefficients.len());
+        use crate::utils::small_scalar::SmallScalar;
 
-        // Note: polynomials are ignored when streaming - we only need IDs and coefficients
-        Self::new_streaming_from_ids(
-            poly_ids,
-            coefficients,
-            streaming_context.expect("Streaming context must be provided"),
-        )
+        debug_assert_eq!(polynomials.len(), coefficients.len());
+        debug_assert_eq!(polynomials.len(), poly_ids.len());
+
+        // Collect indices of dense (non-one-hot) polynomials.
+        let dense_indices: Vec<usize> = polynomials
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Eagerly materialize the dense linear combination (if any).
+        let dense_rlc = if dense_indices.is_empty() {
+            vec![]
+        } else {
+            let max_len = dense_indices
+                .iter()
+                .map(|&i| polynomials[i].as_ref().original_len())
+                .max()
+                .unwrap();
+
+            (0..max_len)
+                .into_par_iter()
+                .map(|idx| {
+                    let mut acc = F::zero();
+                    for &poly_idx in &dense_indices {
+                        let poly = polynomials[poly_idx].as_ref();
+                        let coeff = coefficients[poly_idx];
+
+                        if idx < poly.original_len() {
+                            match poly {
+                                MultilinearPolynomial::LargeScalars(p) => {
+                                    acc += p.Z[idx] * coeff;
+                                }
+                                MultilinearPolynomial::U8Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U16Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U32Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U64Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::I64Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U128Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::I128Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::S128Scalars(p) => {
+                                    acc += p.coeffs[idx].field_mul(coeff);
+                                }
+                                _ => unreachable!(
+                                    "unexpected polynomial variant in RLC linear_combination"
+                                ),
+                            }
+                        }
+                    }
+                    acc
+                })
+                .collect()
+        };
+
+        // Store one-hot polynomials lazily.
+        let mut one_hot_rlc = Vec::new();
+        for (i, poly) in polynomials.iter().enumerate() {
+            if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
+                one_hot_rlc.push((coefficients[i], poly.clone()));
+            }
+        }
+
+        Self {
+            dense_rlc,
+            one_hot_rlc,
+            streaming_context,
+        }
     }
 
     /// Creates a streaming RLC polynomial from polynomial IDs and coefficients.
-    /// Does NOT require the actual polynomial data - streams directly from trace.
+    /// O(sqrt(T)) space - streams directly from trace without materializing polynomials.
+    ///
+    /// # Arguments
+    /// * `one_hot_params` - Parameters for one-hot polynomial chunking
+    /// * `preprocessing` - Bytecode and memory layout for address computation
+    /// * `trace_source` - Either materialized trace (default) or lazy trace (experimental)
+    /// * `poly_ids` - List of polynomial identifiers
+    /// * `coefficients` - RLC coefficients for each polynomial
     #[tracing::instrument(skip_all)]
-    pub fn new_streaming_from_ids(
+    pub fn new_streaming(
+        one_hot_params: OneHotParams,
+        preprocessing: Arc<RLCStreamingData>,
+        trace_source: TraceSource,
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
-        streaming_context: (LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams),
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
-
-        let (lazy_trace, preprocessing, one_hot_params) = streaming_context;
 
         let mut dense_polys = Vec::new();
         let mut onehot_polys = Vec::new();
@@ -138,13 +229,17 @@ impl<F: JoltField> RLCPolynomial<F> {
             }
         }
 
-        Self::new_streaming(
-            dense_polys,
-            onehot_polys,
-            lazy_trace,
-            preprocessing,
-            &one_hot_params,
-        )
+        Self {
+            dense_rlc: vec![],   // Not materialized in streaming mode
+            one_hot_rlc: vec![], // Not materialized in streaming mode
+            streaming_context: Some(Arc::new(StreamingRLCContext {
+                dense_polys,
+                onehot_polys,
+                trace_source,
+                preprocessing,
+                one_hot_params,
+            })),
+        }
     }
 
     /// Materializes a streaming RLC polynomial for testing purposes.
@@ -392,8 +487,8 @@ impl<F: JoltField> RLCPolynomial<F> {
     }
 
     /// Streaming VMP implementation that generates rows on-demand from trace.
-    /// Achieves O(sqrt(n)) space complexity by lazily generating the witness
-    /// Single pass through lazy trace iterator for both dense and one-hot polynomials.
+    /// Achieves O(sqrt(n)) space complexity by lazily generating the witness.
+    /// Single pass through trace for both dense and one-hot polynomials.
     fn streaming_vector_matrix_product(
         &self,
         left_vec: &[F],
@@ -402,15 +497,105 @@ impl<F: JoltField> RLCPolynomial<F> {
     ) -> Vec<F> {
         let T = DoryGlobals::get_T();
 
-        let result = ctx
-            .lazy_trace
-            .clone()
+        match &ctx.trace_source {
+            TraceSource::Materialized(trace) => {
+                self.materialized_vector_matrix_product(left_vec, num_columns, trace, &ctx, T)
+            }
+            TraceSource::Lazy(lazy_trace) => {
+                self.lazy_vector_matrix_product(left_vec, num_columns, lazy_trace.clone(), &ctx, T)
+            }
+        }
+    }
+
+    /// Single-pass VMV over materialized trace. Parallelizes by dividing chunks evenly across threads.
+    fn materialized_vector_matrix_product(
+        &self,
+        left_vec: &[F],
+        num_columns: usize,
+        trace: &[Cycle],
+        ctx: &StreamingRLCContext<F>,
+        T: usize,
+    ) -> Vec<F> {
+        let rows_per_k = T / num_columns;
+        let num_rows = T / num_columns;
+
+        // Pad trace to T if needed (typically already padded)
+        let padded_len = T;
+
+        // Parallel over row chunks, each thread accumulates into its own result vector
+        (0..num_rows)
+            .into_par_iter()
+            .fold(
+                || vec![F::zero(); num_columns],
+                |mut acc, row_idx| {
+                    let chunk_start = row_idx * num_columns;
+                    let _chunk_end = std::cmp::min(chunk_start + num_columns, padded_len);
+
+                    for col_idx in 0..num_columns {
+                        let t = chunk_start + col_idx;
+                        let cycle = if t < trace.len() {
+                            &trace[t]
+                        } else {
+                            // Pad with NoOp
+                            &Cycle::NoOp
+                        };
+
+                        let mut val = F::zero();
+
+                        // Process DENSE POLYNOMIALS (RdInc, RamInc)
+                        for (poly_id, coeff) in &ctx.dense_polys {
+                            let dense_val = Self::extract_dense_value(poly_id, cycle);
+                            val += left_vec[row_idx] * *coeff * dense_val;
+                        }
+
+                        // Process ONE-HOT POLYNOMIALS (InstructionRa, BytecodeRa, RamRa)
+                        for (poly_id, coeff) in &ctx.onehot_polys {
+                            if let Some(k) = Self::extract_onehot_k(
+                                poly_id,
+                                cycle,
+                                &ctx.preprocessing,
+                                &ctx.one_hot_params,
+                            ) {
+                                let onehot_row = k * rows_per_k + row_idx;
+                                val += left_vec[onehot_row] * *coeff;
+                            }
+                        }
+
+                        acc[col_idx] += val;
+                    }
+
+                    acc
+                },
+            )
+            .reduce(
+                || vec![F::zero(); num_columns],
+                |mut a, b| {
+                    for (x, y) in a.iter_mut().zip(b.iter()) {
+                        *x += *y;
+                    }
+                    a
+                },
+            )
+    }
+
+    /// Lazy VMV over lazy trace iterator (experimental, re-runs tracer).
+    fn lazy_vector_matrix_product(
+        &self,
+        left_vec: &[F],
+        num_columns: usize,
+        lazy_trace: LazyTraceIterator,
+        ctx: &StreamingRLCContext<F>,
+        T: usize,
+    ) -> Vec<F> {
+        let rows_per_k = T / num_columns;
+
+        lazy_trace
             .pad_using(T, |_| Cycle::NoOp)
             .iter_chunks(num_columns)
             .enumerate()
             .par_bridge()
             .map(|(row_idx, chunk)| {
-                // Nested parallelism: process columns within chunk in parallel
+                // Process columns within chunk
                 let chunk_result: Vec<F> = chunk
                     .par_iter()
                     .map(|cycle| {
@@ -430,7 +615,6 @@ impl<F: JoltField> RLCPolynomial<F> {
                                 &ctx.preprocessing,
                                 &ctx.one_hot_params,
                             ) {
-                                let rows_per_k = T / num_columns;
                                 let onehot_row = k * rows_per_k + row_idx;
                                 val += left_vec[onehot_row] * *coeff;
                             }
@@ -452,9 +636,6 @@ impl<F: JoltField> RLCPolynomial<F> {
                     );
                     acc
                 },
-            );
-
-        drop_in_background_thread(ctx);
-        result
+            )
     }
 }

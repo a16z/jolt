@@ -127,7 +127,7 @@ All committed polynomials share r_cycle_stage6!
 6. **Stage 8 changes** (`prover.rs` and `verifier.rs`):
    - ✅ Uses `DoryOpeningState` instead of `OpeningReductionState`
    - ✅ Builds streaming RLC directly from trace (no witness poly regeneration!)
-   - ✅ Uses `RLCPolynomial::new_streaming_from_ids` for true streaming
+   - ✅ Uses `RLCPolynomial::new_streaming` for true streaming
 
 ### 🔲 TODO (Remaining Work)
 
@@ -280,7 +280,7 @@ This works because all sparse polys NOW share the same `ρ_addr`!
 
 ### Witness Regeneration & Streaming
 
-**Key optimization**: Stage 8 now streams directly from trace via `RLCPolynomial::new_streaming_from_ids`. 
+**Key optimization**: Stage 8 now streams directly from trace via `RLCPolynomial::new_streaming`. 
 No witness polynomial regeneration is needed!
 
 - OLD: Regen witnesses (Stage 7) → Run opening reduction sumcheck → Build RLC → Dory
@@ -296,7 +296,7 @@ Both the expensive opening reduction sumcheck AND witness regeneration are elimi
 | `subprotocols/hamming_weight_claim_reduction.rs` | ✅ Wired | Fused HW + Address reduction |
 | `subprotocols/mod.rs` | ✅ Updated | Exports new modules, deprecation comments |
 | `poly/opening_proof.rs` | ✅ Updated | Added `DoryOpeningState`, `SumcheckId::HammingWeightClaimReduction` |
-| `poly/rlc_polynomial.rs` | ✅ Updated | Added `new_streaming_from_ids` for streaming without witness polys |
+| `poly/rlc_polynomial.rs` | ✅ Updated | Added `TraceSource` enum, `new_streaming` with single-pass VMV for materialized trace |
 | `subprotocols/opening_reduction.rs` | ⚠️ DEPRECATED | No longer used, can be removed in cleanup PR |
 | `zkvm/prover.rs` | ✅ Updated | New Stage 7 (HammingWeightClaimReduction), Stage 8 (streaming) |
 | `zkvm/verifier.rs` | ✅ Updated | New Stage 7/8 verification |
@@ -318,6 +318,10 @@ Both the expensive opening reduction sumcheck AND witness regeneration are elimi
 - [x] Unused fields (`G`, `H`, `num_variables_bound`) from `OneHotPolynomial` struct
 - [x] `generate_witness_batch` function from `zkvm/witness.rs`
 - [x] `WitnessData`, `SharedWitnessData` structs from `zkvm/witness.rs`
+- [x] `RLCPolynomial::linear_combination` function (replaced by `new_streaming`)
+- [x] Added `TraceSource` enum with `Materialized(Arc<Vec<Cycle>>)` and `Lazy(LazyTraceIterator)` variants
+- [x] Updated `new_streaming` to take `TraceSource` instead of `LazyTraceIterator`
+- [x] Implemented single-pass parallel VMV for materialized trace (default, efficient)
 
 ## Testing
 

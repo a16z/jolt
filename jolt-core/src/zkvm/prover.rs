@@ -23,7 +23,7 @@ use crate::{
         opening_proof::{
             DoryOpeningState, OpeningAccumulator, ProverOpeningAccumulator, SumcheckId,
         },
-        rlc_polynomial::RLCStreamingData,
+        rlc_polynomial::{RLCStreamingData, TraceSource},
     },
     pprof_scope,
     subprotocols::{
@@ -1232,11 +1232,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         });
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
+        // Use materialized trace (default, single pass) instead of lazy trace
         let (joint_poly, hint) = self.build_streaming_rlc::<PCS>(
             opening_proof_hints,
             state,
             (
-                self.lazy_trace.clone(),
+                TraceSource::Materialized(Arc::clone(&self.trace)),
                 streaming_data,
                 self.one_hot_params.clone(),
             ),
@@ -1259,7 +1260,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         &self,
         mut opening_hints: HashMap<CommittedPolynomial, PCS2::OpeningProofHint>,
         state: &DoryOpeningState<F>,
-        streaming_context: (LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams),
+        streaming_context: (TraceSource, Arc<RLCStreamingData>, OneHotParams),
     ) -> (MultilinearPolynomial<F>, PCS2::OpeningProofHint) {
         use crate::poly::rlc_polynomial::RLCPolynomial;
         use std::collections::BTreeMap;
@@ -1273,10 +1274,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
             rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
 
-        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming_from_ids(
+        let (trace_source, preprocessing, one_hot_params) = streaming_context;
+        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
+            one_hot_params,
+            preprocessing,
+            trace_source,
             poly_ids.clone(),
             &coeffs,
-            streaming_context,
         ));
 
         let hints: Vec<PCS2::OpeningProofHint> = rlc_map

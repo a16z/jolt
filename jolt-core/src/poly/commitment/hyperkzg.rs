@@ -163,12 +163,13 @@ where
     let f_arc: Vec<Arc<MultilinearPolynomial<P::ScalarField>>> =
         f.iter().map(|poly| Arc::new(poly.clone())).collect();
 
-    // @TODO(markosg04) right now we don't use HyperKZG so we just handle both cases
+    // HyperKZG is not currently used in Jolt, but we handle both dense-only and mixed cases
     let has_one_hot = f_arc
         .iter()
         .any(|poly| matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)));
 
     let B = if has_one_hot {
+        // Use RLCPolynomial::linear_combination for mixed dense + one-hot polynomials
         let dummy_poly_ids = vec![CommittedPolynomial::RdInc; f_arc.len()];
         let rlc_result = RLCPolynomial::linear_combination(dummy_poly_ids, f_arc, &q_powers, None);
         MultilinearPolynomial::RLC(rlc_result)

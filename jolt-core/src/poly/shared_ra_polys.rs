@@ -99,11 +99,13 @@ impl std::ops::Add for RaIndices {
 /// Implement Zero trait for RaIndices to satisfy the trait bound for `unsafe_allocate_zero_vec`
 impl Zero for RaIndices {
     fn zero() -> Self {
-        Self {
-            instruction: [0u16; MAX_INSTRUCTION_D],
-            bytecode: [0u16; MAX_BYTECODE_D],
-            ram: [None; MAX_RAM_D],
-        }
+        // `unsafe_allocate_zero_vec` relies on the invariant that `Zero::zero()` is represented
+        // by all-zero bytes. Constructing `[None; N]` can leave padding / unused enum payload
+        // bytes uninitialized, which breaks that invariant (and is UB to inspect as bytes).
+        //
+        // All-zero is a valid bit-pattern for `RaIndices` (arrays of integers + `Option<u16>`),
+        // so this is safe here.
+        unsafe { core::mem::zeroed() }
     }
 
     fn is_zero(&self) -> bool {

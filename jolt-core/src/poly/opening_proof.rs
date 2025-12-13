@@ -6,17 +6,15 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 use crate::{
-    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData},
+    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
     zkvm::config::OneHotParams,
 };
 use allocative::Allocative;
-use itertools::Itertools;
 use num_derive::FromPrimitive;
 #[cfg(test)]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use tracer::LazyTraceIterator;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::MultilinearPolynomial,
@@ -446,7 +444,7 @@ where
         mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         state: &OpeningReductionState<F>,
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+        streaming_context: Option<(TraceSource, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         let mut rlc_map = BTreeMap::new();
         for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
@@ -457,23 +455,22 @@ where
             }
         }
 
-        let (poly_ids, coeffs, polys): (
-            Vec<CommittedPolynomial>,
-            Vec<F>,
-            Vec<MultilinearPolynomial<F>>,
-        ) = rlc_map
-            .iter()
-            .map(|(k, v)| (*k, *v, polynomials.remove(k).unwrap()))
-            .multiunzip();
+        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
+            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
 
-        let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
-            polys.into_iter().map(Arc::new).collect();
+        // Remove polynomials from the map (they're streamed from trace, not used directly)
+        for poly_id in &poly_ids {
+            polynomials.remove(poly_id);
+        }
 
-        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
+        let (trace_source, preprocessing, one_hot_params) =
+            streaming_context.expect("Streaming context required for Dory opening");
+        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
+            one_hot_params,
+            preprocessing,
+            trace_source,
             poly_ids.clone(),
-            poly_arcs,
             &coeffs,
-            streaming_context,
         ));
 
         let hints: Vec<PCS::OpeningProofHint> = rlc_map
@@ -499,7 +496,7 @@ where
         polynomials: &HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         state: &OpeningReductionState<F>,
         pcs_setup: &PCS::ProverSetup,
-        streaming_context: Option<(LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams)>,
+        streaming_context: Option<(TraceSource, Arc<RLCStreamingData>, OneHotParams)>,
     ) -> PCS::Commitment {
         let mut rlc_map = BTreeMap::new();
         for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
@@ -511,6 +508,7 @@ where
         }
 
         if streaming_context.is_some() {
+            use itertools::Itertools;
             // Use RLC streaming with materialization
             let (poly_ids, coeffs, polys): (
                 Vec<CommittedPolynomial>,
@@ -524,11 +522,13 @@ where
             let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
                 polys.into_iter().map(Arc::new).collect();
 
-            let rlc = RLCPolynomial::linear_combination(
+            let (trace_source, preprocessing, one_hot_params) = streaming_context.unwrap();
+            let rlc = RLCPolynomial::new_streaming(
+                one_hot_params,
+                preprocessing,
+                trace_source,
                 poly_ids.clone(),
-                poly_arcs.clone(),
                 &coeffs,
-                streaming_context,
             );
             let materialized_rlc = rlc.materialize(&poly_ids, &poly_arcs, &coeffs);
             let joint_poly = MultilinearPolynomial::RLC(materialized_rlc);
