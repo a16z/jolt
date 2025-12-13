@@ -13,21 +13,59 @@ use crate::{
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpeningRef {
+    Committed(CommittedPolynomial),
+    Virtual(VirtualPolynomial),
+}
+
+impl OpeningRef {
+    fn get_cached_opening<F: JoltField>(&self, acc: &impl OpeningAccumulator<F>, sumcheck_id: SumcheckId) -> F {
+        match self {
+            Self::Committed(poly) => acc.get_committed_polynomial_opening(*poly, sumcheck_id),
+            Self::Virtual(poly) => acc.get_virtual_polynomial_opening(*poly, sumcheck_id),
+        }.1
+    }
+
+    fn get_point<F: JoltField>(&self, acc: &impl OpeningAccumulator<F>, sumcheck_id: SumcheckId) -> OpeningPoint<BIG_ENDIAN, F> {
+        match self {
+            Self::Committed(poly) => acc.get_committed_polynomial_opening(*poly, sumcheck_id),
+            Self::Virtual(poly) => acc.get_virtual_polynomial_opening(*poly, sumcheck_id),
+        }.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchingPolynomial {
+    Cycle(OpeningRef),
+    NextCycle(OpeningRef),
+    LtCycle(OpeningRef),
+    Address(OpeningRef),
+    Identity,
+}
+
 #[derive(Debug, Clone)]
 pub enum ClaimExpr<F> {
     Val(F),
+    Var(OpeningRef),
     Add(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
     Mul(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
     Sub(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
-    /// Corresponds to an "opening"
-    CommittedVar(CommittedPolynomial),
-    VirtualVar(VirtualPolynomial),
 }
 
 impl<F: JoltField> ClaimExpr<F> {
+    pub fn committed_var(poly: CommittedPolynomial) -> Self {
+        Self::Var(OpeningRef::Committed(poly))
+    }
+
+    pub fn virtual_var(poly: VirtualPolynomial) -> Self {
+        Self::Var(OpeningRef::Virtual(poly))
+    }
+
     fn evaluate(&self, acc: &impl OpeningAccumulator<F>, sumcheck_id: SumcheckId) -> F {
         match self {
             ClaimExpr::Val(f) => *f,
+            ClaimExpr::Var(opening_ref) => opening_ref.get_cached_opening(acc, sumcheck_id),
             ClaimExpr::Add(e1, e2) => {
                 F::add(e1.evaluate(acc, sumcheck_id), e2.evaluate(acc, sumcheck_id))
             }
@@ -36,14 +74,6 @@ impl<F: JoltField> ClaimExpr<F> {
             }
             ClaimExpr::Sub(e1, e2) => {
                 F::sub(e1.evaluate(acc, sumcheck_id), e2.evaluate(acc, sumcheck_id))
-            }
-            ClaimExpr::CommittedVar(committed_polynomial) => {
-                acc.get_committed_polynomial_opening(*committed_polynomial, sumcheck_id)
-                    .1
-            }
-            ClaimExpr::VirtualVar(virtual_polynomial) => {
-                acc.get_virtual_polynomial_opening(*virtual_polynomial, sumcheck_id)
-                    .1
             }
         }
     }
@@ -59,17 +89,10 @@ impl<F: JoltField> ClaimExpr<F> {
     ) -> Option<OpeningPoint<BIG_ENDIAN, F>> {
         match self {
             ClaimExpr::Val(_) => None,
+            ClaimExpr::Var(opening_ref) => Some(opening_ref.get_point(acc, sumcheck_id)),
             ClaimExpr::Add(e1, e2) | ClaimExpr::Mul(e1, e2) | ClaimExpr::Sub(e1, e2) => e1
                 .get_first_opening_point(acc, sumcheck_id)
                 .or(e2.get_first_opening_point(acc, sumcheck_id)),
-            ClaimExpr::CommittedVar(committed_polynomial) => Some(
-                acc.get_committed_polynomial_opening(*committed_polynomial, sumcheck_id)
-                    .0,
-            ),
-            ClaimExpr::VirtualVar(virtual_polynomial) => Some(
-                acc.get_virtual_polynomial_opening(*virtual_polynomial, sumcheck_id)
-                    .0,
-            ),
         }
     }
 }
@@ -80,15 +103,15 @@ impl<F: JoltField> From<F> for ClaimExpr<F> {
     }
 }
 
-impl<F> From<VirtualPolynomial> for ClaimExpr<F> {
+impl<F: JoltField> From<VirtualPolynomial> for ClaimExpr<F> {
     fn from(value: VirtualPolynomial) -> Self {
-        Self::VirtualVar(value)
+        Self::virtual_var(value)
     }
 }
 
-impl<F> From<CommittedPolynomial> for ClaimExpr<F> {
+impl<F: JoltField> From<CommittedPolynomial> for ClaimExpr<F> {
     fn from(value: CommittedPolynomial) -> Self {
-        Self::CommittedVar(value)
+        Self::committed_var(value)
     }
 }
 

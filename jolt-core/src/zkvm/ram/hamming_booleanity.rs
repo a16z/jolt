@@ -227,7 +227,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
 impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> {
     fn input_output_claims() -> InputOutputClaims<F> {
-        let ram_hamming_weight = ClaimExpr::VirtualVar(VirtualPolynomial::RamHammingWeight);
+        let lookup_output: ClaimExpr<F> = VirtualPolynomial::LookupOutput.into();
+        let ram_hamming_weight: ClaimExpr<F> = VirtualPolynomial::RamHammingWeight.into();
         let ram_hamming_weight_squared = ram_hamming_weight.clone() * ram_hamming_weight.clone();
 
         InputOutputClaims {
@@ -237,8 +238,7 @@ impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> 
                 input_sumcheck_id: SumcheckId::SpartanOuter,
                 // FIXME: This is a kludge. Should just be 0, but then how do we know which
                 // virtual polynomial to use to get the opening from the accumulator?
-                input_claim_expr: ClaimExpr::Val(F::zero())
-                    * ClaimExpr::VirtualVar(VirtualPolynomial::LookupOutput),
+                input_claim_expr: ClaimExpr::Val(F::zero()) * lookup_output,
                 expected_output_claim_expr: ram_hamming_weight_squared - ram_hamming_weight,
                 is_offset: false,
             }],
