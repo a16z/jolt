@@ -311,6 +311,14 @@ Both the expensive opening reduction sumcheck AND witness regeneration are elimi
 - Old Stage 7 methods: `prove_batch_opening_sumcheck`, `verify_batch_opening_sumcheck`, etc.
 - `opening_reduction.rs` module
 
+## Dead Code Already Removed
+
+- [x] `EqAddressState`, `EqCycleState`, `OneHotPolynomialProverOpening` from `poly/one_hot_polynomial.rs`
+- [x] Associated tests (`dense_polynomial_equivalence`, `sumcheck_K_less_than_T`, etc.)
+- [x] Unused fields (`G`, `H`, `num_variables_bound`) from `OneHotPolynomial` struct
+- [x] `generate_witness_batch` function from `zkvm/witness.rs`
+- [x] `WitnessData`, `SharedWitnessData` structs from `zkvm/witness.rs`
+
 ## Testing
 
 - [ ] Unit tests for `HammingWeightClaimReductionProver` sumcheck correctness
@@ -318,3 +326,8 @@ Both the expensive opening reduction sumcheck AND witness regeneration are elimi
 - [ ] Unit tests for `IncReduction` sumcheck correctness
 - [ ] Integration test: full e2e proof with new Stage 7
 - [ ] Benchmark comparison: old vs new opening reduction cost
+
+## Documentation
+
+- [ ] Update `book/src/how/architecture/opening-proof.md` - references old `OneHotPolynomialProverOpening`
+      and the old "Layer 2" opening reduction sumcheck which no longer exists

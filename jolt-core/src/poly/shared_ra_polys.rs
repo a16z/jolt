@@ -873,11 +873,3 @@ pub fn compute_ra_indices(
         .map(|cycle| RaIndices::from_cycle(cycle, bytecode, memory_layout, one_hot_params))
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    // TODO: Add tests for compute_all_H_indices
-    // TODO: Add tests for compute_all_G
-    // TODO: Add tests comparing parallel vs sequential results
-    // TODO: Add tests for SharedRaPolynomials
-}

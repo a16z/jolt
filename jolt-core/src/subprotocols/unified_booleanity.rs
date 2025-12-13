@@ -131,9 +131,38 @@ impl<F: JoltField> UnifiedBooleanityParams<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        // Extract r_address and r_cycle
-        let r_address = stage5_point.r[log_k_instruction..log_k_chunk].to_vec();
-        let r_cycle = stage5_point.r[log_k_instruction..].to_vec();
+        // Extract r_address and r_cycle.
+        //
+        // NOTE: `stage5_point.r` is stored in BIG_ENDIAN format (each segment was reversed by
+        // `normalize_opening_point`). For internal eq evaluations we want LowToHigh (LE) order
+        // because `GruenSplitEqPolynomial` is instantiated with `BindingOrder::LowToHigh`.
+        debug_assert!(
+            stage5_point.r.len() == log_k_instruction + log_t,
+            "InstructionReadRaf opening point length mismatch: got {}, expected {} (= log_k_instruction {} + log_t {})",
+            stage5_point.r.len(),
+            log_k_instruction + log_t,
+            log_k_instruction,
+            log_t
+        );
+
+        // Address segment: BE -> LE
+        let mut stage5_addr = stage5_point.r[..log_k_instruction].to_vec();
+        stage5_addr.reverse();
+
+        // Cycle segment: BE -> LE
+        let mut r_cycle = stage5_point.r[log_k_instruction..].to_vec();
+        r_cycle.reverse();
+
+        // Take the last `log_k_chunk` address challenges (in LE order). If Stage 5 provided fewer,
+        // fall back to sampling additional challenges so prover/verifier stay in sync.
+        let r_address = if stage5_addr.len() >= log_k_chunk {
+            stage5_addr[stage5_addr.len() - log_k_chunk..].to_vec()
+        } else {
+            let mut r = stage5_addr;
+            let extra = transcript.challenge_vector_optimized::<F>(log_k_chunk - r.len());
+            r.extend(extra);
+            r
+        };
 
         // Build polynomial types and family mapping
         let mut polynomial_types = Vec::with_capacity(total_d);
