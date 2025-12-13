@@ -208,30 +208,19 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             power *= gamma;
         }
 
-        // Fetch r_addr_bool from UnifiedBooleanity opening point (the sumcheck challenges for address)
-        // and r_cycle from Stage 5 (the original r_cycle used by UnifiedBooleanity).
+        // Fetch r_addr_bool and r_cycle from UnifiedBooleanity opening point.
+        // The claims from UnifiedBooleanity are at (ρ_addr, ρ_cycle) where both are sumcheck challenges.
         //
-        // UnifiedBooleanity's claims are at (ρ_addr, r_cycle_stage5):
-        // - ρ_addr = sumcheck challenges for address dimension (used for opening point)
-        // - r_cycle_stage5 = original r_cycle from Stage 5 (used in G computation and eq factor)
+        // For HammingWeight's G to satisfy: Σ_k G_i(k) * eq(ρ_addr, k) = claims_bool[i] = ra_i(ρ_addr, ρ_cycle)
+        // We need: G_i(k) = Σ_j eq(ρ_cycle, j) * ra_i(k, j)
         //
-        // The sumcheck verifies via eq(r_cycle_stage5, ρ_cycle) factor, but the claims are
-        // H.final_sumcheck_claim(i) = Σ_j eq(r_cycle_stage5, j) * ra_i(ρ_addr, j) = ra_i(ρ_addr, r_cycle_stage5)
+        // The opening point is stored in BE format (after normalize_opening_point reversed it).
         let (unified_bool_point, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
             SumcheckId::UnifiedBooleanity,
         );
         let r_addr_bool = unified_bool_point.r[..log_k_chunk].to_vec(); // Keep as BE
-
-        // Get r_cycle from Stage 5 (same as UnifiedBooleanity uses in its D polynomial)
-        let (stage5_point, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionRa(0),
-            SumcheckId::InstructionReadRaf,
-        );
-        // Stage 5 point: [address_BE (LOG_K_INSTRUCTION)] ++ [cycle_BE (log_t)]
-        let log_t = unified_bool_point.r.len() - log_k_chunk;
-        let log_k_instruction = stage5_point.r.len() - log_t;
-        let r_cycle: Vec<F::Challenge> = stage5_point.r[log_k_instruction..]
+        let r_cycle: Vec<F::Challenge> = unified_bool_point.r[log_k_chunk..]
             .iter()
             .rev()
             .cloned()
@@ -570,8 +559,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         #[cfg(debug_assertions)]
         {
             // Debug: compare eq evaluations for polynomial 0
-            // Bound eq gives eq(r, rho_reversed), so mle(rho_reversed, r) should match
+            // Bound eq gives eq(r_addr_le, rho), so mle(rho_rev, r_addr_bool) should match
             let rho_rev: Vec<F::Challenge> = sumcheck_challenges.iter().cloned().rev().collect();
+
+            // Print lengths and first values for debugging
+            eprintln!(
+                "HW debug: sumcheck_challenges.len()={}, r_addr_bool.len()={}, eq_bool.len()={}",
+                sumcheck_challenges.len(),
+                self.params.r_addr_bool.len(),
+                self.eq_bool.len()
+            );
+            eprintln!(
+                "HW debug: sumcheck_challenges[0]={:?}, r_addr_bool[0]={:?}",
+                sumcheck_challenges.first(),
+                self.params.r_addr_bool.first()
+            );
+
             let eq_bool_mle = EqPolynomial::mle(&rho_rev, &self.params.r_addr_bool);
             let eq_bool_bound = self.eq_bool.final_sumcheck_claim();
             eprintln!(

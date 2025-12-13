@@ -239,43 +239,70 @@ pub fn compute_all_G<F: JoltField>(
     let in_len = E_in.len();
     let x_in_bits = in_len.log_2();
 
-    // Precompute merged inner weights: [E_in[x_in] * (1-w), E_in[x_in] * w] for all x_in
-    // This avoids recomputing the product for each (x_out, x_in) pair
-    let merged_in_unreduced: Vec<F::Unreduced<9>> = {
-        let mut merged: Vec<F::Unreduced<9>> = unsafe_allocate_zero_vec(2 * in_len);
+    // Precompute merged inner weights as reduced field elements: [E_in[x_in] * (1-w), E_in[x_in] * w]
+    // By storing as F instead of Unreduced<9>, we can accumulate with 4-limb additions
+    // into a 5-limb accumulator (instead of 9-limb additions into 9-limb accumulator)
+    let merged_in: Vec<F> = {
+        let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * in_len);
         merged
             .par_chunks_exact_mut(2)
             .zip(E_in.par_iter())
             .for_each(|(chunk, &low)| {
-                chunk[0] = low.mul_unreduced::<9>(factor_0);
-                chunk[1] = low.mul_unreduced::<9>(factor_1);
+                chunk[0] = low * factor_0;
+                chunk[1] = low * factor_1;
             });
         merged
     };
 
-    // Parallel fold over E_out indices using flat N*K vector
-    // Each thread maintains local G arrays for all N polynomials
-    let flat_G: Vec<F> = E_out
-        .par_iter()
-        .enumerate()
-        .fold(
-            || unsafe_allocate_zero_vec::<F>(N * K),
-            |mut partial_G, (x_out, &e_out)| {
-                // Local unreduced accumulators for this x_out chunk
-                let mut local_unreduced: Vec<F::Unreduced<9>> = unsafe_allocate_zero_vec(N * K);
+    // Split E_out into exactly num_threads chunks to minimize allocations
+    // Each thread allocates ONE partial_G and processes its entire chunk
+    let num_threads = rayon::current_num_threads();
+    let out_len = E_out.len();
+    let chunk_size = (out_len + num_threads - 1) / num_threads; // ceil division
 
-                // Track which indices were touched for efficient reduction
-                let mut touched_flags: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); N];
+    // Create index ranges for each thread chunk
+    let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
+        .map(|t| {
+            let start = t * chunk_size;
+            let end = std::cmp::min(start + chunk_size, out_len);
+            (start, end)
+        })
+        .filter(|(start, end)| start < end) // Filter out empty chunks
+        .collect();
 
+    // Parallel map over thread chunks - each thread allocates exactly once
+    let flat_G: Vec<F> = chunk_ranges
+        .into_par_iter()
+        .map(|(chunk_start, chunk_end)| {
+            // Each thread allocates ONE partial_G for its entire chunk
+            let mut partial_G: Vec<F> = unsafe_allocate_zero_vec(N * K);
+
+            // Reusable local_unreduced (5-limb) and touched_flags across x_out iterations
+            // Using 5-limb accumulator since we're adding 4-limb field elements
+            let mut local_unreduced: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(N * K);
+            let mut touched_flags: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); N];
+
+            // Process all x_out in this thread's chunk
+            for x_out in chunk_start..chunk_end {
+                let e_out = E_out[x_out];
                 let x_out_base = x_out << (x_in_bits + 1);
+
+                // Clear touched flags and local accumulators for this x_out
+                for poly_idx in 0..N {
+                    for k in touched_flags[poly_idx].ones() {
+                        local_unreduced[poly_idx * K + k] = Default::default();
+                    }
+                    touched_flags[poly_idx].clear();
+                }
 
                 // Sequential over x_in
                 for x_in in 0..in_len {
                     let j0 = x_out_base + (x_in << 1);
                     let j1 = j0 + 1;
                     let off = 2 * x_in;
-                    let add0_unr = merged_in_unreduced[off];
-                    let add1_unr = merged_in_unreduced[off + 1];
+                    // Get 4-limb unreduced representation (copy, since AddAssign takes owned)
+                    let add0 = *merged_in[off].as_unreduced_ref();
+                    let add1 = *merged_in[off + 1].as_unreduced_ref();
 
                     // Process cycle j0 (last_bit = 0)
                     if j0 < T {
@@ -292,7 +319,7 @@ pub fn compute_all_G<F: JoltField>(
                             if !touched_flags[i].contains(k) {
                                 touched_flags[i].insert(k);
                             }
-                            local_unreduced[i * K + k] += add0_unr;
+                            local_unreduced[i * K + k] += add0;
                         }
 
                         // BytecodeRa contributions
@@ -302,7 +329,7 @@ pub fn compute_all_G<F: JoltField>(
                             if !touched_flags[poly_idx].contains(k) {
                                 touched_flags[poly_idx].insert(k);
                             }
-                            local_unreduced[poly_idx * K + k] += add0_unr;
+                            local_unreduced[poly_idx * K + k] += add0;
                         }
 
                         // RamRa contributions (may be None)
@@ -313,7 +340,7 @@ pub fn compute_all_G<F: JoltField>(
                                 if !touched_flags[poly_idx].contains(k) {
                                     touched_flags[poly_idx].insert(k);
                                 }
-                                local_unreduced[poly_idx * K + k] += add0_unr;
+                                local_unreduced[poly_idx * K + k] += add0;
                             }
                         }
                     }
@@ -333,7 +360,7 @@ pub fn compute_all_G<F: JoltField>(
                             if !touched_flags[i].contains(k) {
                                 touched_flags[i].insert(k);
                             }
-                            local_unreduced[i * K + k] += add1_unr;
+                            local_unreduced[i * K + k] += add1;
                         }
 
                         // BytecodeRa contributions
@@ -343,7 +370,7 @@ pub fn compute_all_G<F: JoltField>(
                             if !touched_flags[poly_idx].contains(k) {
                                 touched_flags[poly_idx].insert(k);
                             }
-                            local_unreduced[poly_idx * K + k] += add1_unr;
+                            local_unreduced[poly_idx * K + k] += add1;
                         }
 
                         // RamRa contributions (may be None)
@@ -354,24 +381,24 @@ pub fn compute_all_G<F: JoltField>(
                                 if !touched_flags[poly_idx].contains(k) {
                                     touched_flags[poly_idx].insert(k);
                                 }
-                                local_unreduced[poly_idx * K + k] += add1_unr;
+                                local_unreduced[poly_idx * K + k] += add1;
                             }
                         }
                     }
                 }
 
-                // Reduce and scale by E_out[x_out], only for touched indices
+                // Barrett reduce and scale by E_out[x_out], only for touched indices
                 for poly_idx in 0..N {
                     for k in touched_flags[poly_idx].ones() {
                         let reduced =
-                            F::from_montgomery_reduce::<9>(local_unreduced[poly_idx * K + k]);
+                            F::from_barrett_reduce::<5>(local_unreduced[poly_idx * K + k]);
                         partial_G[poly_idx * K + k] += e_out * reduced;
                     }
                 }
+            }
 
-                partial_G
-            },
-        )
+            partial_G
+        })
         .reduce(
             || unsafe_allocate_zero_vec::<F>(N * K),
             |mut a, b| {
