@@ -899,28 +899,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
 
         // Unified Booleanity: combines instruction, bytecode, and ram booleanity into one
-        // Get r_cycle from the accumulator (any prior virtual polynomial)
-        let r_cycle: Vec<F::Challenge> = self
-            .opening_accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r;
-        // Sample unified r_address for all families
-        let r_address: Vec<F::Challenge> = self
-            .transcript
-            .challenge_vector_optimized::<F>(self.one_hot_params.log_k_chunk);
-
+        // (extracts r_address and r_cycle from Stage 5 internally)
         let unified_booleanity_params = UnifiedBooleanityParams::new(
-            self.one_hot_params.log_k_chunk,
             self.trace.len().log_2(),
-            self.one_hot_params.instruction_d,
-            self.one_hot_params.bytecode_d,
-            self.one_hot_params.ram_d,
-            r_address,
-            r_cycle,
+            &self.one_hot_params,
+            &self.opening_accumulator,
             &mut self.transcript,
         );
 
@@ -1097,17 +1080,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
         tracing::info!("Stage 7 proving (HammingWeight claim reduction)");
 
-        // 1. Get r_cycle_stage6 from accumulator (extract from any RA claim's opening point)
-        let (bytecode_ra_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::BytecodeRa(0),
-            SumcheckId::UnifiedBooleanity,
-        );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_cycle_stage6: Vec<F::Challenge> = bytecode_ra_point.r[log_k_chunk..].to_vec();
-
-        // 2. Create params and prover for HammingWeightClaimReduction
+        // Create params and prover for HammingWeightClaimReduction
+        // (r_cycle and r_addr_bool are extracted from UnifiedBooleanity opening internally)
         let hw_params = HammingWeightClaimReductionParams::new(
-            r_cycle_stage6.clone(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
@@ -1137,13 +1112,34 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Dense polynomials: RamInc and RdInc (from IncReduction in Stage 6)
         // These are at r_cycle_stage6 only (length log_T)
-        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::IncReduction,
-        );
-        let (_, rd_inc_claim) = self
+        let (ram_inc_point, ram_inc_claim) = self
+            .opening_accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::IncReduction);
+        let (rd_inc_point, rd_inc_claim) = self
             .opening_accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
+
+        #[cfg(debug_assertions)]
+        {
+            // Verify that Inc openings are at the same point as r_cycle from UnifiedBooleanity
+            let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(0),
+                SumcheckId::UnifiedBooleanity,
+            );
+            let log_k_chunk = self.one_hot_params.log_k_chunk;
+            let r_cycle_from_unified = &unified_point.r[log_k_chunk..];
+
+            debug_assert_eq!(
+                ram_inc_point.r.as_slice(),
+                r_cycle_from_unified,
+                "RamInc opening point should match r_cycle from UnifiedBooleanity"
+            );
+            debug_assert_eq!(
+                rd_inc_point.r.as_slice(),
+                r_cycle_from_unified,
+                "RdInc opening point should match r_cycle from UnifiedBooleanity"
+            );
+        }
 
         // Apply Lagrange factor for dense polys: ∏_{i<log_k_chunk} (1 - r_address[i])
         // Because dense polys have fewer variables, we need to account for this
@@ -1185,7 +1181,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Note: r_address_stage7 is little-endian from sumcheck, convert to big-endian
         let mut r_address_be = r_address_stage7.clone();
         r_address_be.reverse();
-        let opening_point = [r_address_be.as_slice(), r_cycle_stage6.as_slice()].concat();
+
+        // Extract r_cycle from UnifiedBooleanity (same source as HammingWeightClaimReduction uses)
+        let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::UnifiedBooleanity,
+        );
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_cycle_stage6 = &unified_point.r[log_k_chunk..];
+
+        let opening_point = [r_address_be.as_slice(), r_cycle_stage6].concat();
 
         // 6. Sample gamma and compute powers for RLC
         self.transcript.append_scalars(&claims);

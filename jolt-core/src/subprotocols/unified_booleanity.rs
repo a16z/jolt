@@ -22,18 +22,18 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use ark_std::Zero;
 use rayon::prelude::*;
-use std::{iter::zip, sync::Arc};
+use std::iter::zip;
 
 use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, PolynomialBinding},
+        multilinear_polynomial::BindingOrder,
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
-        ra_poly::RaPolynomial,
+        shared_ra_polys::{RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -43,7 +43,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, thread::drop_in_background_thread},
-    zkvm::witness::CommittedPolynomial,
+    zkvm::{config::OneHotParams, witness::CommittedPolynomial},
 };
 
 /// Degree bound of the sumcheck round polynomials.
@@ -101,19 +101,45 @@ impl<F: JoltField> SumcheckInstanceParams<F> for UnifiedBooleanityParams<F> {
 impl<F: JoltField> UnifiedBooleanityParams<F> {
     /// Create unified booleanity params by taking r_cycle and r_address from Stage 5.
     ///
-    /// Stage 5 produces challenges in order: address (log_k_chunk) => cycle (log_t).
-    /// We extract them from the last sumcheck's challenges.
+    /// Stage 5 produces challenges in order: address (LOG_K_INSTRUCTION) => cycle (log_t).
+    /// We extract the last log_k_chunk challenges for r_address and all of r_cycle.
     pub fn new(
-        log_k_chunk: usize,
         log_t: usize,
-        instruction_d: usize,
-        bytecode_d: usize,
-        ram_d: usize,
-        r_address: Vec<F::Challenge>,
-        r_cycle: Vec<F::Challenge>,
+        one_hot_params: &crate::zkvm::config::OneHotParams,
+        accumulator: &dyn crate::poly::opening_proof::OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
+        use crate::poly::opening_proof::SumcheckId;
+        use crate::zkvm::witness::VirtualPolynomial;
+
+        let log_k_chunk = one_hot_params.log_k_chunk;
+        let instruction_d = one_hot_params.instruction_d;
+        let bytecode_d = one_hot_params.bytecode_d;
+        let ram_d = one_hot_params.ram_d;
         let total_d = instruction_d + bytecode_d + ram_d;
+
+        // Get Stage 5 opening point: order is address (LOG_K_INSTRUCTION) => cycle (log_t)
+        // The stored point is in BIG_ENDIAN format (after normalize_opening_point reversed it)
+        let (stage5_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionRa(0),
+            SumcheckId::InstructionReadRaf,
+        );
+
+        // Extract r_address and r_cycle, reversing each section to get LE format for sumcheck
+        // Stage 5 point (BE) = [address_BE (LOG_K_INSTRUCTION)] ++ [cycle_BE (log_t)]
+        // We need LE format, so reverse each section
+        let log_k_instruction = stage5_point.r.len() - log_t;
+        let r_address: Vec<F::Challenge> = stage5_point.r
+            [log_k_instruction - log_k_chunk..log_k_instruction]
+            .iter()
+            .rev()
+            .cloned()
+            .collect();
+        let r_cycle: Vec<F::Challenge> = stage5_point.r[log_k_instruction..]
+            .iter()
+            .rev()
+            .cloned()
+            .collect();
 
         // Build polynomial types and family mapping
         let mut polynomial_types = Vec::with_capacity(total_d);
@@ -157,14 +183,17 @@ pub struct UnifiedBooleanityProver<F: JoltField> {
     D: GruenSplitEqPolynomial<F>,
     /// G[i][k] = Σ_j eq(r_cycle, j) · ra_i(k, j) for all RA polynomials
     G: Vec<Vec<F>>,
-    /// H polynomials for phase 2 (initialized at transition)
-    H: Vec<RaPolynomial<u16, F>>,
+    /// Shared H polynomials for phase 2 (initialized at transition)
+    H: Option<SharedRaPolynomials<F>>,
     /// F: Expanding table for phase 1
     F: ExpandingTable<F>,
     /// eq(r_address, r_address) at end of phase 1
     eq_r_r: F,
-    /// Indices for H polynomials
-    H_indices: Vec<Vec<Option<u16>>>,
+    /// RA indices (non-transposed, one per cycle)
+    ra_indices: Vec<RaIndices>,
+    /// OneHotParams for SharedRaPolynomials
+    #[allocative(skip)]
+    one_hot_params: OneHotParams,
     #[allocative(skip)]
     params: UnifiedBooleanityParams<F>,
 }
@@ -173,7 +202,8 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
     pub fn new(
         params: UnifiedBooleanityParams<F>,
         G: Vec<Vec<F>>,
-        H_indices: Vec<Vec<Option<u16>>>,
+        ra_indices: Vec<RaIndices>,
+        one_hot_params: OneHotParams,
     ) -> Self {
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         let D = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
@@ -186,8 +216,9 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
             B,
             D,
             G,
-            H_indices,
-            H: vec![],
+            ra_indices,
+            one_hot_params,
+            H: None,
             F: F_table,
             eq_r_r: F::zero(),
             params,
@@ -253,14 +284,16 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
 
     fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let D = &self.D;
+        let H = self.H.as_ref().expect("H should be initialized in phase 2");
+        let num_polys = H.num_polys();
 
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = D
             .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
                 let mut acc_c = F::Unreduced::<9>::zero();
                 let mut acc_e = F::Unreduced::<9>::zero();
-                for (h, gamma) in zip(&self.H, &self.params.gammas) {
-                    let h_0 = h.get_bound_coeff(2 * j_prime);
-                    let h_1 = h.get_bound_coeff(2 * j_prime + 1);
+                for (i, gamma) in self.params.gammas.iter().enumerate().take(num_polys) {
+                    let h_0 = H.get_bound_coeff(i, 2 * j_prime);
+                    let h_1 = H.get_bound_coeff(i, 2 * j_prime + 1);
                     let b = h_1 - h_0;
 
                     let g_h0 = *gamma * h_0;
@@ -311,13 +344,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
             if round == self.params.log_k_chunk - 1 {
                 self.eq_r_r = self.B.get_current_scalar();
 
-                // Initialize H polynomials using RaPolynomial
+                // Initialize SharedRaPolynomials with shared eq table
                 let F_table = std::mem::take(&mut self.F);
-                let H_indices = std::mem::take(&mut self.H_indices);
-                self.H = H_indices
-                    .into_iter()
-                    .map(|indices| RaPolynomial::new(Arc::new(indices), F_table.clone_values()))
-                    .collect();
+                let ra_indices = std::mem::take(&mut self.ra_indices);
+                let one_hot_params = self.one_hot_params.clone();
+                self.H = Some(SharedRaPolynomials::new(
+                    F_table.clone_values(),
+                    ra_indices,
+                    one_hot_params,
+                ));
 
                 // Drop G arrays
                 let g = std::mem::take(&mut self.G);
@@ -326,9 +361,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
         } else {
             // Phase 2: Bind D and H
             self.D.bind(r_j);
-            self.H
-                .par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            if let Some(ref mut h) = self.H {
+                h.bind_in_place(r_j, BindingOrder::LowToHigh);
+            }
         }
     }
 
@@ -339,7 +374,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
-        let claims: Vec<F> = self.H.iter().map(|H| H.final_sumcheck_claim()).collect();
+        let H = self.H.as_ref().expect("H should be initialized");
+        let claims: Vec<F> = (0..H.num_polys())
+            .map(|i| H.final_sumcheck_claim(i))
+            .collect();
 
         // All polynomials share the same opening point (r_address, r_cycle)
         // Use a single SumcheckId for all
@@ -360,149 +398,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
 }
 
 /// Initialization helper for UnifiedBooleanityProver.
-/// Computes G and H_indices for all three families (instruction, bytecode, ram).
 pub mod init {
     use super::*;
-    use crate::zkvm::{
-        bytecode::BytecodePreprocessing, config::OneHotParams, instruction::LookupQuery,
-        ram::remap_address,
-    };
+    use crate::poly::shared_ra_polys::{compute_all_G, compute_ra_indices};
+    use crate::zkvm::bytecode::BytecodePreprocessing;
     use common::jolt_device::MemoryLayout;
     use tracer::instruction::Cycle;
-
-    const XLEN: usize = 32;
-
-    /// Compute G evaluations for instruction RA polynomials.
-    #[tracing::instrument(skip_all, name = "unified_booleanity::compute_instruction_G")]
-    pub fn compute_instruction_G<F: JoltField>(
-        trace: &[Cycle],
-        one_hot_params: &OneHotParams,
-        eq_r_cycle: &[F],
-    ) -> Vec<Vec<F>> {
-        let K = one_hot_params.k_chunk;
-        (0..one_hot_params.instruction_d)
-            .into_par_iter()
-            .map(|i| {
-                let mut G_i = vec![F::zero(); K];
-                for (j, cycle) in trace.iter().enumerate() {
-                    let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                    let k = one_hot_params.lookup_index_chunk(lookup_index, i) as usize;
-                    G_i[k] += eq_r_cycle[j];
-                }
-                G_i
-            })
-            .collect()
-    }
-
-    /// Compute G evaluations for bytecode RA polynomials.
-    #[tracing::instrument(skip_all, name = "unified_booleanity::compute_bytecode_G")]
-    pub fn compute_bytecode_G<F: JoltField>(
-        trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
-        one_hot_params: &OneHotParams,
-        eq_r_cycle: &[F],
-    ) -> Vec<Vec<F>> {
-        let K = one_hot_params.k_chunk;
-        (0..one_hot_params.bytecode_d)
-            .into_par_iter()
-            .map(|i| {
-                let mut G_i = vec![F::zero(); K];
-                for (j, cycle) in trace.iter().enumerate() {
-                    let pc = bytecode.get_pc(cycle);
-                    let k = one_hot_params.bytecode_pc_chunk(pc, i) as usize;
-                    G_i[k] += eq_r_cycle[j];
-                }
-                G_i
-            })
-            .collect()
-    }
-
-    /// Compute G evaluations for RAM RA polynomials.
-    #[tracing::instrument(skip_all, name = "unified_booleanity::compute_ram_G")]
-    pub fn compute_ram_G<F: JoltField>(
-        trace: &[Cycle],
-        memory_layout: &MemoryLayout,
-        one_hot_params: &OneHotParams,
-        eq_r_cycle: &[F],
-    ) -> Vec<Vec<F>> {
-        let K = one_hot_params.k_chunk;
-        (0..one_hot_params.ram_d)
-            .into_par_iter()
-            .map(|i| {
-                let mut G_i = vec![F::zero(); K];
-                for (j, cycle) in trace.iter().enumerate() {
-                    let address = cycle.ram_access().address() as u64;
-                    if let Some(remapped) = remap_address(address, memory_layout) {
-                        let k = one_hot_params.ram_address_chunk(remapped, i) as usize;
-                        G_i[k] += eq_r_cycle[j];
-                    }
-                }
-                G_i
-            })
-            .collect()
-    }
-
-    /// Compute H indices for instruction RA polynomials.
-    #[tracing::instrument(skip_all, name = "unified_booleanity::compute_instruction_H_indices")]
-    pub fn compute_instruction_H_indices(
-        trace: &[Cycle],
-        one_hot_params: &OneHotParams,
-    ) -> Vec<Vec<Option<u16>>> {
-        (0..one_hot_params.instruction_d)
-            .map(|i| {
-                trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                        Some(one_hot_params.lookup_index_chunk(lookup_index, i))
-                    })
-                    .collect()
-            })
-            .collect()
-    }
-
-    /// Compute H indices for bytecode RA polynomials.
-    #[tracing::instrument(skip_all, name = "unified_booleanity::compute_bytecode_H_indices")]
-    pub fn compute_bytecode_H_indices(
-        trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
-        one_hot_params: &OneHotParams,
-    ) -> Vec<Vec<Option<u16>>> {
-        (0..one_hot_params.bytecode_d)
-            .into_par_iter()
-            .map(|i| {
-                trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let pc = bytecode.get_pc(cycle);
-                        Some(one_hot_params.bytecode_pc_chunk(pc, i))
-                    })
-                    .collect()
-            })
-            .collect()
-    }
-
-    /// Compute H indices for RAM RA polynomials.
-    #[tracing::instrument(skip_all, name = "unified_booleanity::compute_ram_H_indices")]
-    pub fn compute_ram_H_indices(
-        trace: &[Cycle],
-        memory_layout: &MemoryLayout,
-        one_hot_params: &OneHotParams,
-    ) -> Vec<Vec<Option<u16>>> {
-        (0..one_hot_params.ram_d)
-            .into_par_iter()
-            .map(|i| {
-                trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let address = cycle.ram_access().address() as u64;
-                        remap_address(address, memory_layout)
-                            .map(|addr| one_hot_params.ram_address_chunk(addr, i))
-                    })
-                    .collect()
-            })
-            .collect()
-    }
 
     /// Initialize a UnifiedBooleanityProver with all three families.
     #[tracing::instrument(skip_all, name = "UnifiedBooleanityProver::initialize")]
@@ -515,26 +416,13 @@ pub mod init {
     ) -> UnifiedBooleanityProver<F> {
         let eq_r_cycle = EqPolynomial::evals(&params.r_cycle);
 
-        // Compute G for all families
-        let instruction_G = compute_instruction_G(trace, one_hot_params, &eq_r_cycle);
-        let bytecode_G = compute_bytecode_G(trace, bytecode, one_hot_params, &eq_r_cycle);
-        let ram_G = compute_ram_G(trace, memory_layout, one_hot_params, &eq_r_cycle);
+        // Compute G and RA indices for all families in parallel
+        let (G, ra_indices) = rayon::join(
+            || compute_all_G(trace, bytecode, memory_layout, one_hot_params, &eq_r_cycle),
+            || compute_ra_indices(trace, bytecode, memory_layout, one_hot_params),
+        );
 
-        // Concatenate in order: instruction, bytecode, ram
-        let mut G = instruction_G;
-        G.extend(bytecode_G);
-        G.extend(ram_G);
-
-        // Compute H_indices for all families
-        let instruction_H = compute_instruction_H_indices(trace, one_hot_params);
-        let bytecode_H = compute_bytecode_H_indices(trace, bytecode, one_hot_params);
-        let ram_H = compute_ram_H_indices(trace, memory_layout, one_hot_params);
-
-        let mut H_indices = instruction_H;
-        H_indices.extend(bytecode_H);
-        H_indices.extend(ram_H);
-
-        UnifiedBooleanityProver::new(params, G, H_indices)
+        UnifiedBooleanityProver::new(params, G, ra_indices, one_hot_params.clone())
     }
 }
 

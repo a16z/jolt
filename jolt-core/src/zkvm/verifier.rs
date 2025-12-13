@@ -388,28 +388,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
 
         // Unified Booleanity: combines instruction, bytecode, and ram booleanity into one
-        // Get r_cycle from the accumulator (same as prover)
-        let r_cycle: Vec<F::Challenge> = self
-            .opening_accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r;
-        // Sample unified r_address for all families (must match prover)
-        let r_address: Vec<F::Challenge> = self
-            .transcript
-            .challenge_vector_optimized::<F>(self.one_hot_params.log_k_chunk);
-
+        // (extracts r_address and r_cycle from Stage 5 internally)
         let unified_booleanity_params = UnifiedBooleanityParams::new(
-            self.one_hot_params.log_k_chunk,
             n_cycle_vars,
-            self.one_hot_params.instruction_d,
-            self.one_hot_params.bytecode_d,
-            self.one_hot_params.ram_d,
-            r_address,
-            r_cycle,
+            &self.one_hot_params,
+            &self.opening_accumulator,
             &mut self.transcript,
         );
         let unified_booleanity = UnifiedBooleanityVerifier::new(unified_booleanity_params);
@@ -452,16 +435,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     /// Stage 7: HammingWeight claim reduction verification.
     fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
         // 1. Get r_cycle_stage6 from accumulator (extract from any RA claim's opening point)
-        let (bytecode_ra_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::BytecodeRa(0),
-            SumcheckId::UnifiedBooleanity,
-        );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_cycle_stage6: Vec<F::Challenge> = bytecode_ra_point.r[log_k_chunk..].to_vec();
-
-        // 2. Create verifier for HammingWeightClaimReduction
+        // Create verifier for HammingWeightClaimReduction
+        // (r_cycle and r_addr_bool are extracted from UnifiedBooleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
-            r_cycle_stage6.clone(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
@@ -527,7 +503,16 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
         let mut r_address_be = r_address_stage7.clone();
         r_address_be.reverse();
-        let opening_point = [r_address_be.as_slice(), r_cycle_stage6.as_slice()].concat();
+
+        // Extract r_cycle from UnifiedBooleanity (same source as HammingWeightClaimReduction uses)
+        let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::UnifiedBooleanity,
+        );
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_cycle_stage6 = &unified_point.r[log_k_chunk..];
+
+        let opening_point = [r_address_be.as_slice(), r_cycle_stage6].concat();
 
         // 6. Sample gamma and compute powers for RLC
         self.transcript.append_scalars(&claims);
