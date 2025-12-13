@@ -486,6 +486,8 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
 
         // Sample batching challenge γ and compute powers (3 claims per ra_i)
         let gamma: F = transcript.challenge_scalar();
+        #[cfg(debug_assertions)]
+        eprintln!("HWClaimReduction gamma={:?}", gamma);
         let mut gamma_powers = Vec::with_capacity(3 * N);
         let mut power = F::one();
         for _ in 0..(3 * N) {
@@ -493,31 +495,20 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             power *= gamma;
         }
 
-        // Fetch per-family booleanity r_address (shared within each family)
-        // We take the first ra polynomial of each family as representative
-        let r_addr_bool_per_family = {
-            // Instruction family
-            let (instr_bool_point, _) = accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::InstructionRa(0),
-                SumcheckId::InstructionBooleanity,
-            );
-            // Bytecode family
-            let (bc_bool_point, _) = accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::BytecodeRa(0),
-                SumcheckId::BytecodeBooleanity,
-            );
-            // Ram family
-            let (ram_bool_point, _) = accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamRa(0),
-                SumcheckId::RamBooleanity,
-            );
+        // Fetch unified booleanity r_address (shared across ALL families)
+        // All families now use the same r_addr from UnifiedBooleanity sumcheck
+        let (unified_bool_point, _) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::UnifiedBooleanity,
+        );
+        let unified_r_addr = unified_bool_point.r[..log_k_chunk].to_vec();
 
-            [
-                instr_bool_point.r[..log_k_chunk].to_vec(),
-                bc_bool_point.r[..log_k_chunk].to_vec(),
-                ram_bool_point.r[..log_k_chunk].to_vec(),
-            ]
-        };
+        // All families share the same r_addr now
+        let r_addr_bool_per_family = [
+            unified_r_addr.clone(),
+            unified_r_addr.clone(),
+            unified_r_addr,
+        ];
 
         // Fetch claims for each ra_i
         let mut r_addr_virt = Vec::with_capacity(N);
@@ -534,17 +525,11 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             .1;
 
         for (idx, poly_type) in polynomial_types.iter().enumerate() {
-            let (bool_sumcheck_id, virt_sumcheck_id) = match poly_type {
-                CommittedPolynomial::InstructionRa(_) => (
-                    SumcheckId::InstructionBooleanity,
-                    SumcheckId::InstructionRaVirtualization,
-                ),
-                CommittedPolynomial::BytecodeRa(_) => {
-                    (SumcheckId::BytecodeBooleanity, SumcheckId::BytecodeReadRaf)
-                }
-                CommittedPolynomial::RamRa(_) => {
-                    (SumcheckId::RamBooleanity, SumcheckId::RamRaVirtualization)
-                }
+            // All families now use UnifiedBooleanity for booleanity claims
+            let virt_sumcheck_id = match poly_type {
+                CommittedPolynomial::InstructionRa(_) => SumcheckId::InstructionRaVirtualization,
+                CommittedPolynomial::BytecodeRa(_) => SumcheckId::BytecodeReadRaf,
+                CommittedPolynomial::RamRa(_) => SumcheckId::RamRaVirtualization,
                 _ => unreachable!(),
             };
 
@@ -558,9 +543,9 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             };
             claims_hw.push(hw_claim);
 
-            // Booleanity claim
-            let (_, bool_claim) =
-                accumulator.get_committed_polynomial_opening(*poly_type, bool_sumcheck_id);
+            // Booleanity claim (from unified booleanity sumcheck)
+            let (_, bool_claim) = accumulator
+                .get_committed_polynomial_opening(*poly_type, SumcheckId::UnifiedBooleanity);
             claims_bool.push(bool_claim);
 
             // Virtualization claim (with per-polynomial r_addr)
@@ -594,6 +579,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             claim += self.gamma_powers[3 * i + 1] * self.claims_bool[i];
             claim += self.gamma_powers[3 * i + 2] * self.claims_virt[i];
         }
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "HWClaimReduction input_claim: {:?}, num_polys: {}, claims_hw[0]: {:?}, claims_bool[0]: {:?}",
+            claim,
+            self.polynomial_types.len(),
+            self.claims_hw.get(0),
+            self.claims_bool.get(0)
+        );
         claim
     }
 
@@ -653,7 +646,9 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
         one_hot_params: &OneHotParams,
     ) -> Self {
         // Compute all G_i polynomials via streaming
-        // Note: Use r_cycle directly (in BIG_ENDIAN format) as that's what booleanity uses
+        // r_cycle is in BIG_ENDIAN format from normalize_opening_point.
+        // compute_all_G uses GruenSplitEqPolynomial with LowToHigh, which expects
+        // the same convention as EqPolynomial::evals (BE r maps to LE binding).
         let G_vecs = compute_all_G(trace, &params.r_cycle, preprocessing, one_hot_params);
         let G: Vec<MultilinearPolynomial<F>> = G_vecs
             .into_iter()
@@ -661,15 +656,31 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             .collect();
 
         // Compute 3 shared eq_bool tables (one per family)
-        // Use r_addr_bool directly (in BIG_ENDIAN format) as that's the convention
+        //
+        // r_addr_bool_per_family is in BIG_ENDIAN (after normalize_opening_point reversed it).
+        // But claims_bool was computed using the original LITTLE_ENDIAN challenges from the sumcheck.
+        //
+        // EqPolynomial::evals(r) creates a table where eq[k] = eq(r, k), with k's bit j
+        // corresponding to r[j]. To match claims_bool (which uses LE challenges), we need to
+        // reverse r_addr_BE back to LE.
         let eq_bool = std::array::from_fn(|fam| {
-            MultilinearPolynomial::from(EqPolynomial::evals(&params.r_addr_bool_per_family[fam]))
+            let r_addr_le: Vec<F::Challenge> = params.r_addr_bool_per_family[fam]
+                .iter()
+                .cloned()
+                .rev()
+                .collect();
+            MultilinearPolynomial::from(EqPolynomial::evals(&r_addr_le))
         });
 
         // Compute N eq_virt tables (one per ra polynomial)
+        // Same endianness fix as eq_bool
         let N = params.polynomial_types.len();
         let eq_virt: Vec<MultilinearPolynomial<F>> = (0..N)
-            .map(|i| MultilinearPolynomial::from(EqPolynomial::evals(&params.r_addr_virt[i])))
+            .map(|i| {
+                let r_addr_le: Vec<F::Challenge> =
+                    params.r_addr_virt[i].iter().cloned().rev().collect();
+                MultilinearPolynomial::from(EqPolynomial::evals(&r_addr_le))
+            })
             .collect();
 
         Self {
@@ -689,7 +700,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::compute_message")]
-    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let N = self.params.polynomial_types.len();
         let half_n = self.G[0].len() / 2;
 
@@ -720,7 +731,78 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             }
         }
 
-        UniPoly::from_evals_and_hint(previous_claim, &evals)
+        // from_evals_and_hint expects [S(0), S(2), S(3), ...] (S(1) is reconstructed from hint).
+        // For a linear polynomial (DEGREE_BOUND = 2), we only pass [S(0)].
+        let poly = UniPoly::from_evals_and_hint(previous_claim, &evals[..DEGREE_BOUND - 1]);
+
+        #[cfg(debug_assertions)]
+        if round == 0 {
+            let s0_computed = evals[0];
+            let s1_computed = evals[1];
+            let s0_s1_sum = s0_computed + s1_computed;
+
+            // For i=0, find the non-zero index in G[0]
+            let i = 0;
+            let family = self.params.family[i];
+            let g_len = self.G[i].len();
+
+            // Count non-zero entries in G[0]
+            let mut non_zero_count = 0;
+            let mut non_zero_indices = Vec::new();
+            for k in 0..g_len {
+                let g_val = self.G[i].get_bound_coeff(k);
+                if g_val != F::zero() {
+                    non_zero_count += 1;
+                    non_zero_indices.push(k);
+                }
+            }
+
+            // Compute full sum
+            let mut full_sum = F::zero();
+            for k in 0..g_len {
+                full_sum += self.G[i].get_bound_coeff(k) * self.eq_bool[family].get_bound_coeff(k);
+            }
+
+            // Compute G·eq using both r_addr_BE and r_addr_LE to see which matches claims_bool
+            let r_addr_be = &self.params.r_addr_bool_per_family[family];
+            let r_addr_le: Vec<F::Challenge> = r_addr_be.iter().cloned().rev().collect();
+
+            let eq_from_be = EqPolynomial::evals(r_addr_be);
+            let eq_from_le = EqPolynomial::evals(&r_addr_le);
+
+            let mut g_eq_be = F::zero();
+            let mut g_eq_le = F::zero();
+            for k in 0..g_len {
+                let g_val = self.G[i].get_bound_coeff(k);
+                g_eq_be += g_val * eq_from_be[k];
+                g_eq_le += g_val * eq_from_le[k];
+            }
+
+            eprintln!(
+                "HW round 0: non_zero_count={}, indices={:?}",
+                non_zero_count, non_zero_indices
+            );
+            eprintln!(
+                "  G·eq(r_BE)={:?}, G·eq(r_LE)={:?}, claims_bool={:?}",
+                g_eq_be,
+                g_eq_le,
+                self.params.claims_bool.get(0)
+            );
+            eprintln!(
+                "  claims_bool[0]={:?}, G_len={}, eq_len={}",
+                self.params.claims_bool.get(0),
+                g_len,
+                self.eq_bool[family].len()
+            );
+            eprintln!(
+                "HWClaimReduction round 0: S(0)+S(1)={:?}, input_claim={:?}, match={}",
+                s0_s1_sum,
+                previous_claim,
+                s0_s1_sum == previous_claim
+            );
+        }
+
+        poly
     }
 
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::ingest_challenge")]
@@ -758,6 +840,75 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let r_address: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness();
         let r_address = r_address.r;
+
+        #[cfg(debug_assertions)]
+        {
+            // Debug: compare eq evaluations for polynomial 0
+            // Bound eq gives eq(r, rho_reversed), so mle(rho_reversed, r) should match
+            let rho_rev: Vec<F::Challenge> = sumcheck_challenges.iter().cloned().rev().collect();
+            let family0 = self.params.family[0];
+            let eq_bool_mle =
+                EqPolynomial::mle(&rho_rev, &self.params.r_addr_bool_per_family[family0]);
+            let eq_bool_bound = self.eq_bool[family0].final_sumcheck_claim();
+            eprintln!(
+                "HWClaimReduction eq_bool[0]: mle={:?}, bound={:?}, match={}",
+                eq_bool_mle,
+                eq_bool_bound,
+                eq_bool_mle == eq_bool_bound
+            );
+
+            // Check eq_virt for poly 0
+            let eq_virt_mle = EqPolynomial::mle(&rho_rev, &self.params.r_addr_virt[0]);
+            let eq_virt_bound = self.eq_virt[0].final_sumcheck_claim();
+            eprintln!(
+                "HWClaimReduction eq_virt[0]: mle={:?}, bound={:?}, match={}",
+                eq_virt_mle,
+                eq_virt_bound,
+                eq_virt_mle == eq_virt_bound
+            );
+
+            // Compute expected output (what verifier will compute)
+            let mut expected_output = F::zero();
+            for i in 0..N {
+                let family = self.params.family[i];
+                let g_claim = self.G[i].final_sumcheck_claim();
+                let eq_bool_eval =
+                    EqPolynomial::mle(&rho_rev, &self.params.r_addr_bool_per_family[family]);
+                let eq_virt_eval = EqPolynomial::mle(&rho_rev, &self.params.r_addr_virt[i]);
+                let gamma_hw = self.params.gamma_powers[3 * i];
+                let gamma_bool = self.params.gamma_powers[3 * i + 1];
+                let gamma_virt = self.params.gamma_powers[3 * i + 2];
+                expected_output +=
+                    g_claim * (gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval);
+                if i == 0 || i == N - 1 {
+                    eprintln!(
+                        "Prover expected_output: i={}, N={}, g_claim={:?}",
+                        i, N, g_claim
+                    );
+                }
+            }
+
+            // Compute actual output from bound polys
+            let mut actual_output = F::zero();
+            for i in 0..N {
+                let family = self.params.family[i];
+                let g_claim = self.G[i].final_sumcheck_claim();
+                let eq_bool_eval = self.eq_bool[family].final_sumcheck_claim();
+                let eq_virt_eval = self.eq_virt[i].final_sumcheck_claim();
+                let gamma_hw = self.params.gamma_powers[3 * i];
+                let gamma_bool = self.params.gamma_powers[3 * i + 1];
+                let gamma_virt = self.params.gamma_powers[3 * i + 2];
+                actual_output +=
+                    g_claim * (gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval);
+            }
+
+            eprintln!(
+                "HWClaimReduction output: expected={:?}, actual={:?}, match={}",
+                expected_output,
+                actual_output,
+                expected_output == actual_output
+            );
+        }
 
         for i in 0..N {
             // Final claim is G_i(ρ) where ρ is the sumcheck challenges
@@ -821,25 +972,34 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         let N = self.params.polynomial_types.len();
 
-        // Compute ρ (final address point) - convert from LE to BE to match stored points
-        let rho: OpeningPoint<BIG_ENDIAN, F> =
-            OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness();
-        let rho = rho.r;
+        // When binding with LowToHigh, challenges[j] binds index bit j which corresponds to
+        // r[n-1-j] in EqPolynomial::evals table. So after binding, the result is eq(r, reversed_challenges).
+        // To match, compute mle(r, reversed_challenges) or equivalently mle(reversed_challenges, r).
+        let rho_rev: Vec<F::Challenge> = sumcheck_challenges.iter().cloned().rev().collect();
 
         let mut output_claim = F::zero();
 
         for i in 0..N {
             let family = self.params.family[i];
 
-            // eq evaluations at final point ρ (both in BIG_ENDIAN)
-            let eq_bool_eval = EqPolynomial::mle(&rho, &self.params.r_addr_bool_per_family[family]);
-            let eq_virt_eval = EqPolynomial::mle(&rho, &self.params.r_addr_virt[i]);
+            // r_addr values are in BIG_ENDIAN. Compute eq(r_addr, rho) = mle(rho_reversed, r_addr).
+            let eq_bool_eval =
+                EqPolynomial::mle(&rho_rev, &self.params.r_addr_bool_per_family[family]);
+            let eq_virt_eval = EqPolynomial::mle(&rho_rev, &self.params.r_addr_virt[i]);
 
             // Fetch G_i(ρ) from accumulator (prover provided this)
             let (_, g_i_claim) = accumulator.get_committed_polynomial_opening(
                 self.params.polynomial_types[i],
                 SumcheckId::HammingWeightClaimReduction,
             );
+
+            #[cfg(debug_assertions)]
+            if i == 0 || i == N - 1 {
+                eprintln!(
+                    "Verifier expected_output: i={}, N={}, g_i_claim={:?}",
+                    i, N, g_i_claim
+                );
+            }
 
             // γ^{3i} · G_i(ρ) + γ^{3i+1} · eq_bool(ρ) · G_i(ρ) + γ^{3i+2} · eq_virt(ρ) · G_i(ρ)
             let gamma_hw = self.params.gamma_powers[3 * i];
@@ -850,6 +1010,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             output_claim +=
                 g_i_claim * (gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval);
         }
+
+        #[cfg(debug_assertions)]
+        eprintln!("Verifier expected_output_claim final: {:?}", output_claim);
 
         output_claim
     }

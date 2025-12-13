@@ -10,20 +10,23 @@ use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::{
     bytecode::{
-        self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
+        read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
         BytecodePreprocessing,
+    },
+    claim_reductions::{
+        HammingWeightClaimReductionVerifier, IncReductionSumcheckVerifier,
+        InstructionLookupsClaimReductionSumcheckVerifier, RamRaReductionSumcheckVerifier,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
-        self, ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
+        ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
         read_raf_checking::ReadRafSumcheckVerifier as LookupsReadRafSumcheckVerifier,
     },
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
-        output_check::OutputSumcheckVerifier, ra_reduction::RamRaReductionSumcheckVerifier,
-        ra_virtual::RamRaVirtualSumcheckVerifier,
+        output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
@@ -34,7 +37,6 @@ use crate::zkvm::{
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
-        claim_reductions::InstructionLookupsClaimReductionSumcheckVerifier,
         instruction_input::InstructionInputSumcheckVerifier, outer::OuterRemainingSumcheckVerifier,
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
@@ -48,12 +50,12 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        hamming_weight_claim_reduction::HammingWeightClaimReductionVerifier,
-        inc_reduction::IncReductionSumcheckVerifier, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_verifier::SumcheckInstanceVerifier,
+        unified_booleanity::{UnifiedBooleanityParams, UnifiedBooleanityVerifier},
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
-    zkvm::witness::CommittedPolynomial,
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use anyhow::Context;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -380,20 +382,38 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let bytecode_booleanity = bytecode::new_ra_booleanity_verifier(
-            self.proof.trace_length,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
-        // RamHammingBooleanity moved here from Stage 5 so it shares r_cycle_stage6
+
+        // RamHammingBooleanity - uses r_cycle from prior sumcheck
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
-            self.proof.trace_length,
-            &self.one_hot_params,
+
+        // Unified Booleanity: combines instruction, bytecode, and ram booleanity into one
+        // Get r_cycle from the accumulator (same as prover)
+        let r_cycle: Vec<F::Challenge> = self
+            .opening_accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r;
+        // Sample unified r_address for all families (must match prover)
+        let r_address: Vec<F::Challenge> = self
+            .transcript
+            .challenge_vector_optimized::<F>(self.one_hot_params.log_k_chunk);
+
+        let unified_booleanity_params = UnifiedBooleanityParams::new(
+            self.one_hot_params.log_k_chunk,
+            n_cycle_vars,
+            self.one_hot_params.instruction_d,
+            self.one_hot_params.bytecode_d,
+            self.one_hot_params.ram_d,
+            r_address,
+            r_cycle,
             &mut self.transcript,
         );
+        let unified_booleanity = UnifiedBooleanityVerifier::new(unified_booleanity_params);
+
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -401,12 +421,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
         let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
-        let lookups_ra_booleanity = instruction_lookups::new_ra_booleanity_verifier(
-            self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
@@ -421,12 +435,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.proof.stage6_sumcheck_proof,
             vec![
                 &bytecode_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &bytecode_booleanity,
                 &ram_hamming_booleanity,
-                &ram_ra_booleanity,
+                &unified_booleanity,
                 &ram_ra_virtual,
                 &lookups_ra_virtual,
-                &lookups_ra_booleanity,
                 &inc_reduction,
             ],
             &mut self.opening_accumulator,
@@ -442,7 +454,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // 1. Get r_cycle_stage6 from accumulator (extract from any RA claim's opening point)
         let (bytecode_ra_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::BytecodeRa(0),
-            SumcheckId::BytecodeBooleanity,
+            SumcheckId::UnifiedBooleanity,
         );
         let log_k_chunk = self.one_hot_params.log_k_chunk;
         let r_cycle_stage6: Vec<F::Challenge> = bytecode_ra_point.r[log_k_chunk..].to_vec();

@@ -47,7 +47,6 @@
 
 use crate::subprotocols::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
-    HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
 };
 use crate::zkvm::config::OneHotParams;
 use crate::{
@@ -78,7 +77,6 @@ use tracer::JoltDevice;
 
 pub mod hamming_booleanity;
 pub mod output_check;
-pub mod ra_reduction;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
@@ -619,47 +617,6 @@ pub fn gen_ra_booleanity_prover<F: JoltField>(
     BooleanitySumcheckProver::gen(params, G, H_indices)
 }
 
-pub fn ra_hamming_weight_params<F: JoltField>(
-    one_hot_params: &OneHotParams,
-    opening_accumulator: &dyn OpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
-) -> HammingWeightSumcheckParams<F> {
-    let r_cycle = opening_accumulator
-        .get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        )
-        .0
-        .r;
-
-    let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.ram_d);
-
-    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
-        .map(CommittedPolynomial::RamRa)
-        .collect();
-
-    HammingWeightSumcheckParams {
-        d: one_hot_params.ram_d,
-        num_rounds: one_hot_params.log_k_chunk,
-        gamma_powers,
-        polynomial_types,
-        sumcheck_id: SumcheckId::RamHammingWeight,
-        r_cycle,
-    }
-}
-
-pub fn gen_ra_hamming_weight_prover<F: JoltField>(
-    params: HammingWeightSumcheckParams<F>,
-    trace: &[Cycle],
-    memory_layout: &MemoryLayout,
-    one_hot_params: &OneHotParams,
-) -> HammingWeightSumcheckProver<F> {
-    let eq_r_cycle = EqPolynomial::evals(&params.r_cycle);
-    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
-
-    HammingWeightSumcheckProver::gen(params, G)
-}
-
 pub fn new_ra_booleanity_verifier<F: JoltField>(
     trace_len: usize,
     one_hot_params: &OneHotParams,
@@ -667,15 +624,6 @@ pub fn new_ra_booleanity_verifier<F: JoltField>(
 ) -> BooleanitySumcheckVerifier<F> {
     let params = ra_booleanity_params(trace_len, one_hot_params, transcript);
     BooleanitySumcheckVerifier::new(params)
-}
-
-pub fn new_ra_hamming_weight_verifier<F: JoltField>(
-    one_hot_params: &OneHotParams,
-    opening_accumulator: &dyn OpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
-) -> HammingWeightSumcheckVerifier<F> {
-    let params = ra_hamming_weight_params(one_hot_params, opening_accumulator, transcript);
-    HammingWeightSumcheckVerifier::new(params)
 }
 
 #[tracing::instrument(skip_all, name = "ram::compute_ram_ra_evals")]
