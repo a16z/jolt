@@ -853,12 +853,18 @@ where
             );
         }
 
-        let claim = self
-            .openings
-            .get(&OpeningId::Committed(polynomial, sumcheck))
-            .unwrap()
-            .1;
+        let key = OpeningId::Committed(polynomial, sumcheck);
+        let claim = self.openings.get(&key).unwrap().1;
         transcript.append_scalar(&claim);
+
+        // Update the opening point in self.openings (it was initialized with default empty point)
+        self.openings.insert(
+            key,
+            (
+                OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
+                claim,
+            ),
+        );
 
         self.sumchecks
             .push(OpeningProofReductionSumcheckVerifier::new(
@@ -900,12 +906,18 @@ where
                 );
             }
 
-            let claim = self
-                .openings
-                .get(&OpeningId::Committed(label, sumcheck))
-                .unwrap()
-                .1;
+            let key = OpeningId::Committed(label, sumcheck);
+            let claim = self.openings.get(&key).unwrap().1;
             transcript.append_scalar(&claim);
+
+            // Update the opening point in self.openings (it was initialized with default empty point)
+            self.openings.insert(
+                key,
+                (
+                    OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
+                    claim,
+                ),
+            );
 
             self.sumchecks
                 .push(OpeningProofReductionSumcheckVerifier::new(

@@ -821,7 +821,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 5 baseline");
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
-        let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
+        // Note: RamHammingBooleanity moved to Stage 6 so it shares r_cycle_stage6
         let ram_ra_reduction_params = RaReductionParams::new(
             self.trace.len(),
             &self.one_hot_params,
@@ -841,8 +841,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
         );
-        let ram_hamming_booleanity =
-            HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
         let ram_ra_reduction = RamRaReductionSumcheckProver::initialize(
             ram_ra_reduction_params,
             &self.trace,
@@ -858,17 +856,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "RegistersValEvaluationSumcheckProver",
                 &registers_val_evaluation,
             );
-            print_data_structure_heap_usage(
-                "ram HammingBooleanitySumcheckProver",
-                &ram_hamming_booleanity,
-            );
             print_data_structure_heap_usage("RamRaReductionSumcheckProver", &ram_ra_reduction);
             print_data_structure_heap_usage("LookupsReadRafSumcheckProver", &lookups_read_raf);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_val_evaluation),
-            Box::new(ram_hamming_booleanity),
             Box::new(ram_ra_reduction),
             Box::new(lookups_read_raf),
         ];
@@ -906,6 +899,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        // RamHammingBooleanity moved here from Stage 5 so it shares r_cycle_stage6
+        let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
         let ram_ra_booleanity_params =
             ram::ra_booleanity_params(self.trace.len(), &self.one_hot_params, &mut self.transcript);
         let ram_ra_virtual_params = RamRaVirtualParams::new(
@@ -941,6 +936,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.preprocessing.bytecode,
             &self.one_hot_params,
         );
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
         let ram_ra_booleanity = ram::gen_ra_booleanity_prover(
             ram_ra_booleanity_params,
             &self.trace,
@@ -970,6 +967,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "bytecode BooleanitySumcheckProver",
                 &bytecode_booleanity,
             );
+            print_data_structure_heap_usage(
+                "ram HammingBooleanitySumcheckProver",
+                &ram_hamming_booleanity,
+            );
             print_data_structure_heap_usage("ram BooleanitySumcheckProver", &ram_ra_booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
@@ -983,6 +984,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(bytecode_read_raf),
             Box::new(bytecode_booleanity),
+            Box::new(ram_hamming_booleanity),
             Box::new(ram_ra_booleanity),
             Box::new(ram_ra_virtual),
             Box::new(lookups_ra_virtual),

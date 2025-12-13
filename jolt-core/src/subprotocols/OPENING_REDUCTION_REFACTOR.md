@@ -5,11 +5,28 @@ This document tracks the progress of the opening reduction optimization. The goa
 2. Moving HammingWeight to a new Stage 7 that uses `r_cycle_stage6` from Stage 6
 3. Fusing HammingWeight with Address Reduction to align all ra_i claims
 
-## 🎉 STATUS: CORE WIRING COMPLETE (Dec 13, 2025)
+## 🎉 STATUS: E2E TESTS PASSING (Dec 13, 2025)
 
-The major refactoring is done. The code compiles. Remaining work:
-- Testing (unit tests and e2e tests)
-- Potential bug fixes discovered during testing
+The major refactoring is done. All e2e tests pass when run individually.
+
+**Latest Fix:** Moved `RamHammingBooleanity` from Stage 5 to Stage 6 so it shares `r_cycle_stage6`.
+This allows the RAM HW claims to be fetched from the accumulator directly, eliminating the need for
+`ram_hw_claims` as a separate field in the proof.
+
+**Verified passing tests:**
+- `fib_e2e_dory` ✅
+- `memory_ops_e2e_dory` ✅  
+- `muldiv_e2e_dory` ✅
+- `small_trace_e2e_dory` ✅
+- `sha2_e2e_dory` ✅
+- `sha3_e2e_dory` ✅
+- `advice_e2e_dory` ✅
+- `btreemap_e2e_dory` ✅
+
+**Note:** Tests fail when run together due to pre-existing `DoryGlobals` singleton issue (not related to this refactor).
+
+Remaining work:
+- Unit tests for sumcheck correctness
 - Optional cleanup of deprecated code
 
 ## High-Level Goal
@@ -33,12 +50,13 @@ Stage 4:
 
 Stage 5:
   - RegistersValEvaluation (emits RdInc claim at s_cycle_stage5)
-  - RamHammingBooleanity (emits virtual RamHammingWeight claim)
+  - RamRaReduction
   - InstructionReadRaf (emits InstructionRa virtual claim)
 
 Stage 6: (all sumchecks share r_cycle_stage6) ✅
   - BytecodeReadRaf
   - BytecodeBooleanity
+  - RamHammingBooleanity (moved from Stage 5 to share r_cycle_stage6!) ✅
   - RamBooleanity
   - RamRaVirtualization
   - InstructionRaVirtualization
@@ -48,6 +66,7 @@ Stage 6: (all sumchecks share r_cycle_stage6) ✅
 Stage 7: (uses r_cycle_stage6 via accumulator, produces r_address_stage7 via log_k_chunk rounds) ✅
   - HammingWeightClaimReduction (fused HammingWeight + Address Reduction)
   - Produces DoryOpeningState with unified opening point
+  - RAM HW claims fetched from Stage 6's RamHammingBooleanity via accumulator ✅
 
 Stage 8: ✅
   - Dory opening proof (on aligned claims via DoryOpeningState)
@@ -79,14 +98,14 @@ All committed polynomials share r_cycle_stage6!
    - Reduces 5 claims (3 RamInc + 2 RdInc) to 2 claims at `r_cycle_stage6`
    - Uses prefix-suffix optimization for first half of rounds
    - Integrated into Stage 6 in `prover.rs` and `verifier.rs`
-   - **STATUS**: Wired in, needs testing
+   - **STATUS**: ✅ WORKING (e2e tests pass)
 
 2. **`hamming_weight_claim_reduction.rs`** - Fused sumcheck
    - `HammingWeightClaimReductionParams` - parameters for the fused sumcheck
    - `HammingWeightClaimReductionProver` - prover implementation
    - `HammingWeightClaimReductionVerifier` - verifier implementation
    - `compute_all_G` - computes pushforward polynomials from trace
-   - **STATUS**: Fully wired into Stage 7, needs testing
+   - **STATUS**: ✅ WORKING (e2e tests pass)
 
 3. **`opening_proof.rs`** changes:
    - Added `DoryOpeningState<F>` - minimal state for Dory opening
@@ -107,8 +126,8 @@ All committed polynomials share r_cycle_stage6!
 
 6. **Stage 8 changes** (`prover.rs` and `verifier.rs`):
    - ✅ Uses `DoryOpeningState` instead of `OpeningReductionState`
-   - ✅ Regenerates witness polynomials in Stage 8 (moved from Stage 7)
-   - ✅ Uses `build_rlc_polynomial_new` and `compute_joint_commitment_new`
+   - ✅ Builds streaming RLC directly from trace (no witness poly regeneration!)
+   - ✅ Uses `RLCPolynomial::new_streaming_from_ids` for true streaming
 
 ### 🔲 TODO (Remaining Work)
 
@@ -120,11 +139,10 @@ All committed polynomials share r_cycle_stage6!
 
 2. **Unit tests for IncReduction**:
    - [ ] Test sumcheck correctness
-   - [ ] Debug virtual/committed polynomial handling if issues found
 
 3. **E2E tests**:
-   - [ ] Run existing Jolt e2e tests (fibonacci, sha2, etc.)
-   - [ ] Fix any integration bugs
+   - [x] Run existing Jolt e2e tests (fibonacci, sha2, etc.) - ALL PASSING ✅
+   - [x] Fix integration bugs - FIXED ✅
 
 #### Cleanup (Optional)
 

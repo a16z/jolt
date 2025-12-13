@@ -525,11 +525,13 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         let mut claims_bool = Vec::with_capacity(N);
         let mut claims_virt = Vec::with_capacity(N);
 
-        // Get the RAM HammingWeight scaling factor (for RAM, not all cycles access memory)
-        let (_, ram_hw_factor) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        );
+        // RAM HammingWeight factor: now in Stage 6, so shares r_cycle_stage6
+        let ram_hw_factor = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamHammingWeight,
+                SumcheckId::RamHammingBooleanity,
+            )
+            .1;
 
         for (idx, poly_type) in polynomial_types.iter().enumerate() {
             let (bool_sumcheck_id, virt_sumcheck_id) = match poly_type {
@@ -548,7 +550,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
 
             // HammingWeight claim:
             // - For Instruction/Bytecode: H_i = 1 (one-hot sums to 1)
-            // - For Ram: H_i = ram_hw_factor (fraction of cycles accessing RAM)
+            // - For Ram: H_i = ram_hw_factor (shared across all RAM chunks)
             let hw_claim = if family[idx] == FAMILY_RAM {
                 ram_hw_factor
             } else {
@@ -642,6 +644,7 @@ pub struct HammingWeightClaimReductionProver<F: JoltField> {
 
 impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     /// Initialize the prover by computing all G_i polynomials.
+    /// Returns (prover, ram_hw_claims) where ram_hw_claims contains the computed H_i for RAM polynomials.
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::initialize")]
     pub fn initialize<PCS: CommitmentScheme<Field = F>>(
         params: HammingWeightClaimReductionParams<F>,
@@ -650,6 +653,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
         one_hot_params: &OneHotParams,
     ) -> Self {
         // Compute all G_i polynomials via streaming
+        // Note: Use r_cycle directly (in BIG_ENDIAN format) as that's what booleanity uses
         let G_vecs = compute_all_G(trace, &params.r_cycle, preprocessing, one_hot_params);
         let G: Vec<MultilinearPolynomial<F>> = G_vecs
             .into_iter()
@@ -657,6 +661,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             .collect();
 
         // Compute 3 shared eq_bool tables (one per family)
+        // Use r_addr_bool directly (in BIG_ENDIAN format) as that's the convention
         let eq_bool = std::array::from_fn(|fam| {
             MultilinearPolynomial::from(EqPolynomial::evals(&params.r_addr_bool_per_family[fam]))
         });
@@ -785,6 +790,7 @@ pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
+    /// Create verifier. RAM HW claims now come from Stage 6 RamHammingBooleanity via accumulator.
     pub fn new(
         r_cycle: Vec<F::Challenge>,
         one_hot_params: &OneHotParams,
@@ -815,7 +821,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         let N = self.params.polynomial_types.len();
 
-        // Compute ρ (final address point)
+        // Compute ρ (final address point) - convert from LE to BE to match stored points
         let rho: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness();
         let rho = rho.r;
@@ -825,7 +831,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         for i in 0..N {
             let family = self.params.family[i];
 
-            // eq evaluations at final point ρ
+            // eq evaluations at final point ρ (both in BIG_ENDIAN)
             let eq_bool_eval = EqPolynomial::mle(&rho, &self.params.r_addr_bool_per_family[family]);
             let eq_virt_eval = EqPolynomial::mle(&rho, &self.params.r_addr_virt[i]);
 

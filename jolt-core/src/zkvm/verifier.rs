@@ -342,8 +342,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let n_cycle_vars = self.proof.trace_length.log_2();
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
-        let ram_hamming_booleanity =
-            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
+        // Note: RamHammingBooleanity moved to Stage 6 so it shares r_cycle_stage6
         let ram_ra_reduction = RamRaReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -361,7 +360,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.proof.stage5_sumcheck_proof,
             vec![
                 &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_hamming_booleanity,
                 &ram_ra_reduction,
                 &lookups_read_raf,
             ],
@@ -382,13 +380,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        // Note: HammingWeight sumchecks moved to Stage 7 (HammingWeightClaimReduction)
         let bytecode_booleanity = bytecode::new_ra_booleanity_verifier(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        // RamHammingBooleanity moved here from Stage 5 so it shares r_cycle_stage6
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
         let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -417,12 +417,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        // Note: HammingWeight sumchecks moved to Stage 7 (HammingWeightClaimReduction)
         let _r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
             vec![
                 &bytecode_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &bytecode_booleanity,
+                &ram_hamming_booleanity,
                 &ram_ra_booleanity,
                 &ram_ra_virtual,
                 &lookups_ra_virtual,
