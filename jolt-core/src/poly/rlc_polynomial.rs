@@ -102,8 +102,25 @@ impl<F: JoltField> RLCPolynomial<F> {
         debug_assert_eq!(polynomials.len(), coefficients.len());
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
-        let (lazy_trace, preprocessing, one_hot_params) =
-            streaming_context.expect("Streaming context must be provided");
+        // Note: polynomials are ignored when streaming - we only need IDs and coefficients
+        Self::new_streaming_from_ids(
+            poly_ids,
+            coefficients,
+            streaming_context.expect("Streaming context must be provided"),
+        )
+    }
+
+    /// Creates a streaming RLC polynomial from polynomial IDs and coefficients.
+    /// Does NOT require the actual polynomial data - streams directly from trace.
+    #[tracing::instrument(skip_all)]
+    pub fn new_streaming_from_ids(
+        poly_ids: Vec<CommittedPolynomial>,
+        coefficients: &[F],
+        streaming_context: (LazyTraceIterator, Arc<RLCStreamingData>, OneHotParams),
+    ) -> Self {
+        debug_assert_eq!(poly_ids.len(), coefficients.len());
+
+        let (lazy_trace, preprocessing, one_hot_params) = streaming_context;
 
         let mut dense_polys = Vec::new();
         let mut onehot_polys = Vec::new();
