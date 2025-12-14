@@ -158,7 +158,7 @@ pub enum SumcheckId {
     BytecodeBooleanity,
     IncReduction,
     HammingWeightClaimReduction,
-    UnifiedBooleanity,
+    Booleanity,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

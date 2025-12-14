@@ -60,7 +60,7 @@
 //! ## eq Polynomial Optimization
 //!
 //! - **eq_bool**: 1 polynomial total (shared across ALL families)
-//!   - Thanks to UnifiedBooleanity, all ra_i share the same r_addr_bool
+//!   - Thanks to Booleanity, all ra_i share the same r_addr_bool
 //! - **eq_virt**: N polynomials (one per ra_i)
 //!   - Each ra_i has different r_addr_virt from virtualization (chunks bound sequentially)
 //!
@@ -136,9 +136,9 @@ pub struct HammingWeightClaimReductionParams<F: JoltField> {
     /// γ^0, γ^1, ..., γ^{3N-1} for batching (3 claims per ra polynomial)
     /// Order: γ^{3i} = HW, γ^{3i+1} = Bool, γ^{3i+2} = Virt
     pub gamma_powers: Vec<F>,
-    /// Shared r_cycle from UnifiedBooleanity (all ra claims share this)
+    /// Shared r_cycle from Booleanity (all ra claims share this)
     pub r_cycle: Vec<F::Challenge>,
-    /// Shared r_address from UnifiedBooleanity (all families share this now)
+    /// Shared r_address from Booleanity (all families share this now)
     pub r_addr_bool: Vec<F::Challenge>,
     /// r_address values from Virtualization/ReadRaf sumcheck for each ra_i (N total)
     /// Each ra_i has different r_addr because chunks are bound sequentially
@@ -162,7 +162,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
     ///
     /// Fetches:
     /// - HammingWeight claims (from HammingBooleanity virtual polynomial)
-    /// - Booleanity claims (r_addr shared across all families from UnifiedBooleanity)
+    /// - Booleanity claims (r_addr shared across all families from Booleanity sumcheck)
     /// - Virtualization claims (r_addr different per ra_i)
     pub fn new(
         one_hot_params: &OneHotParams,
@@ -200,8 +200,8 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             power *= gamma;
         }
 
-        // Fetch r_addr_bool and r_cycle from UnifiedBooleanity opening point.
-        // The claims from UnifiedBooleanity are at (ρ_addr, ρ_cycle) where both are sumcheck challenges.
+        // Fetch r_addr_bool and r_cycle from Booleanity opening point.
+        // The claims from Booleanity are at (ρ_addr, ρ_cycle) where both are sumcheck challenges.
         //
         // For HammingWeight's G to satisfy: Σ_k G_i(k) * eq(ρ_addr, k) = claims_bool[i] = ra_i(ρ_addr, ρ_cycle)
         // We need: G_i(k) = Σ_j eq(ρ_cycle, j) * ra_i(k, j)
@@ -209,7 +209,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         // The opening point is stored in BE format (after normalize_opening_point reversed it).
         let (unified_bool_point, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
-            SumcheckId::UnifiedBooleanity,
+            SumcheckId::Booleanity,
         );
         // Keep both segments in BE: this matches the convention expected by `EqPolynomial::evals`
         // and `GruenSplitEqPolynomial` when used with `BindingOrder::LowToHigh` (LSB bound first).
@@ -231,7 +231,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             .1;
 
         for (idx, poly_type) in polynomial_types.iter().enumerate() {
-            // All families now use UnifiedBooleanity for booleanity claims
+            // All families now use Booleanity sumcheck for booleanity claims
             let virt_sumcheck_id = match poly_type {
                 CommittedPolynomial::InstructionRa(_) => SumcheckId::InstructionRaVirtualization,
                 CommittedPolynomial::BytecodeRa(_) => SumcheckId::BytecodeReadRaf,
@@ -249,9 +249,9 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             };
             claims_hw.push(hw_claim);
 
-            // Booleanity claim (from unified booleanity sumcheck)
+            // Booleanity claim (from booleanity sumcheck)
             let (_, bool_claim) = accumulator
-                .get_committed_polynomial_opening(*poly_type, SumcheckId::UnifiedBooleanity);
+                .get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity);
             claims_bool.push(bool_claim);
 
             // Virtualization claim (with per-polynomial r_addr)
@@ -319,7 +319,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
 /// Virtualization) into a single degree-2 sumcheck over log_k_chunk rounds.
 ///
 /// Memory optimization: eq_bool is shared across all families (1 polynomial, thanks
-/// to UnifiedBooleanity), while eq_virt requires one per ra_i (N polynomials).
+/// to Booleanity), while eq_virt requires one per ra_i (N polynomials).
 #[derive(Allocative)]
 pub struct HammingWeightClaimReductionProver<F: JoltField> {
     /// G_i polynomials (pushforward of ra_i over r_cycle)
@@ -490,7 +490,7 @@ pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
-    /// Create verifier. r_cycle and r_addr_bool are extracted from UnifiedBooleanity opening.
+    /// Create verifier. r_cycle and r_addr_bool are extracted from Booleanity opening.
     pub fn new(
         one_hot_params: &OneHotParams,
         accumulator: &VerifierOpeningAccumulator<F>,

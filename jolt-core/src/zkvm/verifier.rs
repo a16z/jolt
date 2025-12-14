@@ -51,7 +51,7 @@ use crate::{
     pprof_scope,
     subprotocols::{
         sumcheck_verifier::SumcheckInstanceVerifier,
-        unified_booleanity::{UnifiedBooleanityParams, UnifiedBooleanityVerifier},
+        booleanity::{BooleanityParams, BooleanityVerifier},
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
@@ -387,15 +387,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
 
-        // Unified Booleanity: combines instruction, bytecode, and ram booleanity into one
+        // Booleanity: combines instruction, bytecode, and ram booleanity into one
         // (extracts r_address and r_cycle from Stage 5 internally)
-        let unified_booleanity_params = UnifiedBooleanityParams::new(
+        let booleanity_params = BooleanityParams::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let unified_booleanity = UnifiedBooleanityVerifier::new(unified_booleanity_params);
+        let booleanity = BooleanityVerifier::new(booleanity_params);
 
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,
@@ -419,7 +419,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             vec![
                 &bytecode_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
                 &ram_hamming_booleanity,
-                &unified_booleanity,
+                &booleanity,
                 &ram_ra_virtual,
                 &lookups_ra_virtual,
                 &inc_reduction,
@@ -436,7 +436,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
         // 1. Get r_cycle_stage6 from accumulator (extract from any RA claim's opening point)
         // Create verifier for HammingWeightClaimReduction
-        // (r_cycle and r_addr_bool are extracted from UnifiedBooleanity opening internally)
+        // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -504,10 +504,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let mut r_address_be = r_address_stage7.clone();
         r_address_be.reverse();
 
-        // Extract r_cycle from UnifiedBooleanity (same source as HammingWeightClaimReduction uses)
+        // Extract r_cycle from Booleanity (same source as HammingWeightClaimReduction uses)
         let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
-            SumcheckId::UnifiedBooleanity,
+            SumcheckId::Booleanity,
         );
         let log_k_chunk = self.one_hot_params.log_k_chunk;
         let r_cycle_stage6 = &unified_point.r[log_k_chunk..];

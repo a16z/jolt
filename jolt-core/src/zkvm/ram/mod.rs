@@ -49,7 +49,6 @@ use crate::zkvm::config::OneHotParams;
 use crate::{
     field::{self, JoltField},
     poly::{
-        eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -57,8 +56,8 @@ use crate::{
         },
     },
     transcripts::Transcript,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    utils::math::Math,
+    zkvm::witness::VirtualPolynomial,
 };
 use std::vec;
 
@@ -69,7 +68,6 @@ use common::{
 };
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::Cycle;
 use tracer::JoltDevice;
 
 pub mod hamming_booleanity;

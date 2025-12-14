@@ -1,16 +1,16 @@
-//! Unified Booleanity Sumcheck
+//! Booleanity Sumcheck
 //!
 //! This module implements a single booleanity sumcheck that handles all three families:
 //! - Instruction RA polynomials
 //! - Bytecode RA polynomials  
 //! - RAM RA polynomials
 //!
-//! By unifying them into a single sumcheck, all families share the same `r_address` and `r_cycle`,
+//! By combining them into a single sumcheck, all families share the same `r_address` and `r_cycle`,
 //! which is required by the HammingWeightClaimReduction sumcheck in Stage 7.
 //!
 //! ## Sumcheck Relation
 //!
-//! The unified booleanity sumcheck proves:
+//! The booleanity sumcheck proves:
 //! ```text
 //! 0 = Σ_{k,j} eq(r_address, k) · eq(r_cycle, j) · Σ_i γ_i · (ra_i(k,j)² - ra_i(k,j))
 //! ```
@@ -56,13 +56,13 @@ use crate::{
 /// Degree bound of the sumcheck round polynomials.
 const DEGREE_BOUND: usize = 3;
 
-/// Family indices for the unified booleanity sumcheck.
+/// Family indices for the booleanity sumcheck.
 pub const FAMILY_INSTRUCTION: usize = 0;
 pub const FAMILY_BYTECODE: usize = 1;
 pub const FAMILY_RAM: usize = 2;
 
-/// Parameters for the unified booleanity sumcheck.
-pub struct UnifiedBooleanityParams<F: JoltField> {
+/// Parameters for the booleanity sumcheck.
+pub struct BooleanityParams<F: JoltField> {
     /// Log of chunk size (shared across all families)
     pub log_k_chunk: usize,
     /// Log of trace length
@@ -81,7 +81,7 @@ pub struct UnifiedBooleanityParams<F: JoltField> {
     pub d_per_family: [usize; 3],
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for UnifiedBooleanityParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for BooleanityParams<F> {
     fn degree(&self) -> usize {
         DEGREE_BOUND
     }
@@ -105,8 +105,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for UnifiedBooleanityParams<F> {
     }
 }
 
-impl<F: JoltField> UnifiedBooleanityParams<F> {
-    /// Create unified booleanity params by taking r_cycle and r_address from Stage 5.
+impl<F: JoltField> BooleanityParams<F> {
+    /// Create booleanity params by taking r_cycle and r_address from Stage 5.
     ///
     /// Stage 5 produces challenges in order: address (LOG_K_INSTRUCTION) => cycle (log_t).
     /// We extract the last log_k_chunk challenges for r_address and all of r_cycle.
@@ -197,9 +197,9 @@ impl<F: JoltField> UnifiedBooleanityParams<F> {
     }
 }
 
-/// Unified Booleanity Sumcheck Prover.
+/// Booleanity Sumcheck Prover.
 #[derive(Allocative)]
-pub struct UnifiedBooleanityProver<F: JoltField> {
+pub struct BooleanityProver<F: JoltField> {
     /// B: split-eq over address-chunk variables (phase 1, LowToHigh).
     B: GruenSplitEqPolynomial<F>,
     /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
@@ -218,19 +218,19 @@ pub struct UnifiedBooleanityProver<F: JoltField> {
     #[allocative(skip)]
     one_hot_params: OneHotParams,
     #[allocative(skip)]
-    params: UnifiedBooleanityParams<F>,
+    params: BooleanityParams<F>,
 }
 
-impl<F: JoltField> UnifiedBooleanityProver<F> {
-    /// Initialize a UnifiedBooleanityProver with all three families.
+impl<F: JoltField> BooleanityProver<F> {
+    /// Initialize a BooleanityProver with all three families.
     ///
     /// All heavy computation is done here:
     /// - Compute G polynomials and RA indices in a single pass over the trace
     /// - Initialize split-eq polynomials for address (B) and cycle (D) variables
     /// - Initialize expanding table for phase 1
-    #[tracing::instrument(skip_all, name = "UnifiedBooleanityProver::initialize")]
+    #[tracing::instrument(skip_all, name = "BooleanityProver::initialize")]
     pub fn initialize(
-        params: UnifiedBooleanityParams<F>,
+        params: BooleanityParams<F>,
         trace: &[Cycle],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
@@ -366,12 +366,12 @@ impl<F: JoltField> UnifiedBooleanityProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBooleanityProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanityProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    #[tracing::instrument(skip_all, name = "UnifiedBooleanityProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "BooleanityProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_k_chunk {
             self.compute_phase1_message(round, previous_claim)
@@ -380,7 +380,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
         }
     }
 
-    #[tracing::instrument(skip_all, name = "UnifiedBooleanityProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "BooleanityProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.params.log_k_chunk {
             // Phase 1: Bind B and update F
@@ -431,7 +431,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
         accumulator.append_sparse(
             transcript,
             self.params.polynomial_types.clone(),
-            SumcheckId::UnifiedBooleanity,
+            SumcheckId::Booleanity,
             opening_point.r[..self.params.log_k_chunk].to_vec(),
             opening_point.r[self.params.log_k_chunk..].to_vec(),
             claims,
@@ -444,18 +444,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for UnifiedBoolea
     }
 }
 
-/// Unified Booleanity Sumcheck Verifier.
-pub struct UnifiedBooleanityVerifier<F: JoltField> {
-    params: UnifiedBooleanityParams<F>,
+/// Booleanity Sumcheck Verifier.
+pub struct BooleanityVerifier<F: JoltField> {
+    params: BooleanityParams<F>,
 }
 
-impl<F: JoltField> UnifiedBooleanityVerifier<F> {
-    pub fn new(params: UnifiedBooleanityParams<F>) -> Self {
+impl<F: JoltField> BooleanityVerifier<F> {
+    pub fn new(params: BooleanityParams<F>) -> Self {
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for UnifiedBooleanityVerifier<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityVerifier<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -471,7 +471,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for UnifiedBool
             .iter()
             .map(|poly_type| {
                 accumulator
-                    .get_committed_polynomial_opening(*poly_type, SumcheckId::UnifiedBooleanity)
+                    .get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity)
                     .1
             })
             .collect();
@@ -501,7 +501,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for UnifiedBool
         accumulator.append_sparse(
             transcript,
             self.params.polynomial_types.clone(),
-            SumcheckId::UnifiedBooleanity,
+            SumcheckId::Booleanity,
             opening_point.r,
         );
     }
