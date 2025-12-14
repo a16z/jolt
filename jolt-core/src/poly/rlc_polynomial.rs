@@ -512,7 +512,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         }
     }
 
-    /// Single-pass VMV over materialized trace. Parallelizes by dividing chunks evenly across threads.
+    /// Single-pass VMV over materialized trace. Parallelizes by dividing rows evenly across threads.
     fn materialized_vector_matrix_product(
         &self,
         left_vec: &[F],
@@ -521,47 +521,57 @@ impl<F: JoltField> RLCPolynomial<F> {
         ctx: &StreamingRLCContext<F>,
         T: usize,
     ) -> Vec<F> {
-        let rows_per_k = T / num_columns;
         let num_rows = T / num_columns;
+        let trace_len = trace.len();
 
-        // Pad trace to T if needed (typically already padded)
-        let padded_len = T;
+        // Divide rows evenly among threads - one allocation per thread
+        let num_threads = rayon::current_num_threads();
+        let rows_per_thread = num_rows.div_ceil(num_threads);
 
-        // Parallel over row chunks, each thread accumulates into its own result vector
+        // Pre-extract dense polynomial coefficients
+        let dense_coeffs: Vec<_> = ctx.dense_polys.iter().map(|(id, c)| (*id, *c)).collect();
+        let onehot_coeffs: Vec<_> = ctx.onehot_polys.iter().map(|(id, c)| (*id, *c)).collect();
+
         (0..num_rows)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); num_columns],
-                |mut acc, row_idx| {
+            .collect::<Vec<_>>()
+            .par_chunks(rows_per_thread)
+            .map(|row_chunk| {
+                // One allocation per thread
+                let mut acc: Vec<F> = unsafe_allocate_zero_vec(num_columns);
+
+                for &row_idx in row_chunk {
                     let chunk_start = row_idx * num_columns;
-                    let _chunk_end = std::cmp::min(chunk_start + num_columns, padded_len);
 
-                    for col_idx in 0..num_columns {
-                        let t = chunk_start + col_idx;
-                        let cycle = if t < trace.len() {
-                            &trace[t]
-                        } else {
-                            // Pad with NoOp
-                            &Cycle::NoOp
-                        };
+                    // Precompute scaled dense coefficients for this row
+                    let scaled_dense: Vec<_> = dense_coeffs
+                        .iter()
+                        .map(|(_, coeff)| left_vec[row_idx] * *coeff)
+                        .collect();
 
+                    // Split into valid trace range vs padding range (avoid branch in hot loop)
+                    let valid_end = std::cmp::min(chunk_start + num_columns, trace_len);
+                    let valid_cols = valid_end.saturating_sub(chunk_start);
+
+                    // Process valid trace elements (no branch needed)
+                    for col_idx in 0..valid_cols {
+                        let cycle = &trace[chunk_start + col_idx];
                         let mut val = F::zero();
 
-                        // Process DENSE POLYNOMIALS (RdInc, RamInc)
-                        for (poly_id, coeff) in &ctx.dense_polys {
+                        // Dense polynomials with precomputed scaling
+                        for (i, (poly_id, _)) in dense_coeffs.iter().enumerate() {
                             let dense_val = Self::extract_dense_value(poly_id, cycle);
-                            val += left_vec[row_idx] * *coeff * dense_val;
+                            val += scaled_dense[i] * dense_val;
                         }
 
-                        // Process ONE-HOT POLYNOMIALS (InstructionRa, BytecodeRa, RamRa)
-                        for (poly_id, coeff) in &ctx.onehot_polys {
+                        // One-hot polynomials
+                        for (poly_id, coeff) in &onehot_coeffs {
                             if let Some(k) = Self::extract_onehot_k(
                                 poly_id,
                                 cycle,
                                 &ctx.preprocessing,
                                 &ctx.one_hot_params,
                             ) {
-                                let onehot_row = k * rows_per_k + row_idx;
+                                let onehot_row = k * num_rows + row_idx;
                                 val += left_vec[onehot_row] * *coeff;
                             }
                         }
@@ -569,11 +579,39 @@ impl<F: JoltField> RLCPolynomial<F> {
                         acc[col_idx] += val;
                     }
 
-                    acc
-                },
-            )
+                    // Process padding (NoOp cycles) - typically rare or none
+                    if valid_cols < num_columns {
+                        for col_idx in valid_cols..num_columns {
+                            let mut val = F::zero();
+
+                            // Dense polynomials on NoOp (usually zero contribution)
+                            for (i, (poly_id, _)) in dense_coeffs.iter().enumerate() {
+                                let dense_val = Self::extract_dense_value(poly_id, &Cycle::NoOp);
+                                val += scaled_dense[i] * dense_val;
+                            }
+
+                            // One-hot polynomials on NoOp
+                            for (poly_id, coeff) in &onehot_coeffs {
+                                if let Some(k) = Self::extract_onehot_k(
+                                    poly_id,
+                                    &Cycle::NoOp,
+                                    &ctx.preprocessing,
+                                    &ctx.one_hot_params,
+                                ) {
+                                    let onehot_row = k * num_rows + row_idx;
+                                    val += left_vec[onehot_row] * *coeff;
+                                }
+                            }
+
+                            acc[col_idx] += val;
+                        }
+                    }
+                }
+
+                acc
+            })
             .reduce(
-                || vec![F::zero(); num_columns],
+                || unsafe_allocate_zero_vec(num_columns),
                 |mut a, b| {
                     for (x, y) in a.iter_mut().zip(b.iter()) {
                         *x += *y;
@@ -592,7 +630,11 @@ impl<F: JoltField> RLCPolynomial<F> {
         ctx: &StreamingRLCContext<F>,
         T: usize,
     ) -> Vec<F> {
-        let rows_per_k = T / num_columns;
+        let num_rows = T / num_columns;
+
+        // Pre-extract coefficients
+        let dense_coeffs: Vec<_> = ctx.dense_polys.iter().map(|(id, c)| (*id, *c)).collect();
+        let onehot_coeffs: Vec<_> = ctx.onehot_polys.iter().map(|(id, c)| (*id, *c)).collect();
 
         lazy_trace
             .pad_using(T, |_| Cycle::NoOp)
@@ -600,27 +642,33 @@ impl<F: JoltField> RLCPolynomial<F> {
             .enumerate()
             .par_bridge()
             .map(|(row_idx, chunk)| {
+                // Precompute scaled dense coefficients for this row
+                let scaled_dense: Vec<_> = dense_coeffs
+                    .iter()
+                    .map(|(_, coeff)| left_vec[row_idx] * *coeff)
+                    .collect();
+
                 // Process columns within chunk
                 let chunk_result: Vec<F> = chunk
                     .par_iter()
                     .map(|cycle| {
                         let mut val = F::zero();
 
-                        // Process DENSE POLYNOMIALS (RdInc, RamInc)
-                        for (poly_id, coeff) in &ctx.dense_polys {
+                        // Dense polynomials with precomputed scaling
+                        for (i, (poly_id, _)) in dense_coeffs.iter().enumerate() {
                             let dense_val = Self::extract_dense_value(poly_id, cycle);
-                            val += left_vec[row_idx] * *coeff * dense_val;
+                            val += scaled_dense[i] * dense_val;
                         }
 
-                        // Process ONE-HOT POLYNOMIALS (InstructionRa, BytecodeRa, RamRa)
-                        for (poly_id, coeff) in &ctx.onehot_polys {
+                        // One-hot polynomials
+                        for (poly_id, coeff) in &onehot_coeffs {
                             if let Some(k) = Self::extract_onehot_k(
                                 poly_id,
                                 cycle,
                                 &ctx.preprocessing,
                                 &ctx.one_hot_params,
                             ) {
-                                let onehot_row = k * rows_per_k + row_idx;
+                                let onehot_row = k * num_rows + row_idx;
                                 val += left_vec[onehot_row] * *coeff;
                             }
                         }
@@ -632,7 +680,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 chunk_result
             })
             .reduce(
-                || vec![F::zero(); num_columns],
+                || unsafe_allocate_zero_vec(num_columns),
                 |mut acc, chunk_result| {
                     acc.par_iter_mut().zip(chunk_result.par_iter()).for_each(
                         |(acc_val, &chunk_val)| {

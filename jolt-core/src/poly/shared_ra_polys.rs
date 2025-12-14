@@ -336,12 +336,8 @@ fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
                     // Get 4-limb unreduced representation (copy, since AddAssign takes owned)
                     let add = *E_lo[c_lo].as_unreduced_ref();
 
-                    let ra_idx = RaIndices::from_cycle(
-                        &trace[j],
-                        bytecode,
-                        memory_layout,
-                        one_hot_params,
-                    );
+                    let ra_idx =
+                        RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params);
 
                     // Write ra_indices if collecting (disjoint write, each j visited once)
                     if COLLECT_RA {

@@ -59,7 +59,7 @@ impl<F: JoltField> EqPolynomial<F> {
     /// Computes the table of evaluations: `{ eq(r, x) : x ∈ {0, 1}^n }`.
     ///
     /// ### Index / bit order: Big-endian
-    /// 
+    ///
     /// The returned vector is ordered by interpreting `x` as an `n`-bit binary number.
     /// `r[0]` corresponds to the **most-significant bit** and `r[n - 1]` to the
     /// **least-significant bit**.
