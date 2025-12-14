@@ -27,9 +27,9 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
+        booleanity::{BooleanityParams, BooleanityProver},
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
-        unified_booleanity::{UnifiedBooleanityParams, UnifiedBooleanityProver},
         univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProof},
     },
     transcripts::Transcript,
@@ -898,9 +898,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // RamHammingBooleanity - uses r_cycle from Stage 5's RamRaReduction
         let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
 
-        // Unified Booleanity: combines instruction, bytecode, and ram booleanity into one
+        // Booleanity: combines instruction, bytecode, and ram booleanity into one
         // (extracts r_address and r_cycle from Stage 5 internally)
-        let unified_booleanity_params = UnifiedBooleanityParams::new(
+        let booleanity_params = BooleanityParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -931,9 +931,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
-        // Unified booleanity prover - handles all three families
-        let unified_booleanity = UnifiedBooleanityProver::initialize(
-            unified_booleanity_params,
+        // Booleanity prover - handles all three families
+        let booleanity = BooleanityProver::initialize(
+            booleanity_params,
             &self.trace,
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
@@ -958,7 +958,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "ram HammingBooleanitySumcheckProver",
                 &ram_hamming_booleanity,
             );
-            print_data_structure_heap_usage("UnifiedBooleanityProver", &unified_booleanity);
+            print_data_structure_heap_usage("BooleanityProver", &booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncReductionSumcheckProver", &inc_reduction);
@@ -967,7 +967,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(bytecode_read_raf),
             Box::new(ram_hamming_booleanity),
-            Box::new(unified_booleanity),
+            Box::new(booleanity),
             Box::new(ram_ra_virtual),
             Box::new(lookups_ra_virtual),
             Box::new(inc_reduction),
@@ -1081,7 +1081,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         tracing::info!("Stage 7 proving (HammingWeight claim reduction)");
 
         // Create params and prover for HammingWeightClaimReduction
-        // (r_cycle and r_addr_bool are extracted from UnifiedBooleanity opening internally)
+        // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_params = HammingWeightClaimReductionParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -1123,10 +1123,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         #[cfg(debug_assertions)]
         {
-            // Verify that Inc openings are at the same point as r_cycle from UnifiedBooleanity
+            // Verify that Inc openings are at the same point as r_cycle from Booleanity
             let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::InstructionRa(0),
-                SumcheckId::UnifiedBooleanity,
+                SumcheckId::Booleanity,
             );
             let log_k_chunk = self.one_hot_params.log_k_chunk;
             let r_cycle_from_unified = &unified_point.r[log_k_chunk..];
@@ -1134,12 +1134,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             debug_assert_eq!(
                 _ram_inc_point.r.as_slice(),
                 r_cycle_from_unified,
-                "RamInc opening point should match r_cycle from UnifiedBooleanity"
+                "RamInc opening point should match r_cycle from Booleanity"
             );
             debug_assert_eq!(
                 _rd_inc_point.r.as_slice(),
                 r_cycle_from_unified,
-                "RdInc opening point should match r_cycle from UnifiedBooleanity"
+                "RdInc opening point should match r_cycle from Booleanity"
             );
         }
 
@@ -1184,10 +1184,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let mut r_address_be = r_address_stage7.clone();
         r_address_be.reverse();
 
-        // Extract r_cycle from UnifiedBooleanity (same source as HammingWeightClaimReduction uses)
+        // Extract r_cycle from Booleanity (same source as HammingWeightClaimReduction uses)
         let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
-            SumcheckId::UnifiedBooleanity,
+            SumcheckId::Booleanity,
         );
         let log_k_chunk = self.one_hot_params.log_k_chunk;
         let r_cycle_stage6 = &unified_point.r[log_k_chunk..];
