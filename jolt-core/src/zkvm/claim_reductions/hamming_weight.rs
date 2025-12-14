@@ -14,9 +14,9 @@
 //! After Stage 6, each ra_i one-hot polynomial has TWO claims at different address points
 //! but the SAME cycle point (r_cycle_stage6):
 //!
-//! 1. **Booleanity claim**: `ra_i(r_addr_bool_family, r_cycle_stage6)`
+//! 1. **Booleanity claim**: `ra_i(r_addr_bool, r_cycle_stage6)`
 //!    - From `BooleanitySumcheck` in Stage 6
-//!    - r_addr_bool is shared across all ra_i within a family (instruction/bytecode/ram)
+//!    - r_addr_bool is shared across all ra_i and across families (instruction/bytecode/ram)
 //!
 //! 2. **Virtualization claim**: `ra_i(r_addr_virt_i, r_cycle_stage6)`
 //!    - For BytecodeRa: from `BytecodeReadRaf` in Stage 6
@@ -51,7 +51,7 @@
 //! ```text
 //!   Σ_k Σ_i G_i(k) · [
 //!       γ^{3i}   · 1                              (HammingWeight)
-//!     + γ^{3i+1} · eq(r_addr_bool_{family(i)}, k)  (Booleanity reduction)
+//!     + γ^{3i+1} · eq(r_addr_bool, k)  (Booleanity reduction)
 //!     + γ^{3i+2} · eq(r_addr_virt_i, k)           (Virtualization reduction)
 //!   ]
 //!   = Σ_i [γ^{3i} · H_i + γ^{3i+1} · claim_bool_i + γ^{3i+2} · claim_virt_i]
@@ -63,15 +63,6 @@
 //!   - Thanks to UnifiedBooleanity, all ra_i share the same r_addr_bool
 //! - **eq_virt**: N polynomials (one per ra_i)
 //!   - Each ra_i has different r_addr_virt from virtualization (chunks bound sequentially)
-//!
-//! ## Degree Analysis
-//!
-//! Each round polynomial has degree 2:
-//! - G_i(k) contributes degree 1
-//! - eq(r_addr, k) contributes degree 1 (or 0 for HammingWeight constant term)
-//! - Maximum: 1 + 1 = 2
-//!
-//! Same degree as address reduction alone - fusion is free!
 //!
 //! ## After This Sumcheck
 //!
@@ -119,8 +110,8 @@ use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 // Degree bound of the sumcheck round polynomials.
 // The fused relation includes `G(k) * eq(k)` terms where both are multilinear in k,
-// making the round polynomials quadratic (degree 2). We need 3 evaluations to interpolate.
-const DEGREE_BOUND: usize = 3;
+// making the round polynomials quadratic (degree 2).
+const DEGREE_BOUND: usize = 2;
 
 // ============================================================================
 // PARAMS
@@ -430,9 +421,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             }
         }
 
-        // `from_evals_and_hint` expects [S(0), S(2), S(3), ...] (S(1) is reconstructed from the hint).
-        // With `DEGREE_BOUND = 3` (quadratic), we pass [S(0), S(2)].
-        UniPoly::from_evals_and_hint(previous_claim, &evals[..DEGREE_BOUND - 1])
+        // `from_evals_and_hint` expects [S(0), S(2), ...] (S(1) is reconstructed from the hint).
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::ingest_challenge")]

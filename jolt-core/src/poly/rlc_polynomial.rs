@@ -31,7 +31,8 @@ pub enum TraceSource {
     /// Pre-materialized trace in memory (default, efficient single pass)
     Materialized(Arc<Vec<Cycle>>),
     /// Lazy trace iterator (experimental, re-runs tracer)
-    Lazy(LazyTraceIterator),
+    /// Boxed to avoid large enum size difference (LazyTraceIterator is ~34KB)
+    Lazy(Box<LazyTraceIterator>),
 }
 
 impl TraceSource {
@@ -501,9 +502,13 @@ impl<F: JoltField> RLCPolynomial<F> {
             TraceSource::Materialized(trace) => {
                 self.materialized_vector_matrix_product(left_vec, num_columns, trace, &ctx, T)
             }
-            TraceSource::Lazy(lazy_trace) => {
-                self.lazy_vector_matrix_product(left_vec, num_columns, lazy_trace.clone(), &ctx, T)
-            }
+            TraceSource::Lazy(lazy_trace) => self.lazy_vector_matrix_product(
+                left_vec,
+                num_columns,
+                (**lazy_trace).clone(),
+                &ctx,
+                T,
+            ),
         }
     }
 
