@@ -75,47 +75,39 @@
 //! - Booleanity: eq(r_addr_bool, ρ) · G_i(ρ)
 //! - Virtualization: eq(r_addr_virt_i, ρ) · G_i(ρ)
 //!
-//! All three claim types collapse to a single committed polynomial opening per ra_i!
-//!
-//! ## Implementation Details
-//!
-//! See `OPENING_REDUCTION_REFACTOR.md` for the full implementation plan and status.
+//! All three claim types collapse to a single committed polynomial opening per ra_i
 
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::BindingOrder;
-use crate::poly::shared_ra_polys::compute_all_G;
-use crate::zkvm::config::OneHotParams;
-use crate::zkvm::prover::JoltProverPreprocessing;
+use allocative::Allocative;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
-// ============================================================================
-// IMPORTS FOR SUMCHECK
-// ============================================================================
-
-use allocative::Allocative;
-
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+use crate::field::JoltField;
+use crate::poly::{
+    commitment::commitment_scheme::CommitmentScheme,
+    eq_poly::EqPolynomial,
+    multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+    opening_proof::{
+        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+        VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    },
+    shared_ra_polys::compute_all_G,
+    unipoly::UniPoly,
 };
-use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
+use crate::subprotocols::{
+    sumcheck_prover::SumcheckInstanceProver,
+    sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
+};
 use crate::transcripts::Transcript;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::{
+    config::OneHotParams,
+    prover::JoltProverPreprocessing,
+    witness::{CommittedPolynomial, VirtualPolynomial},
+};
 
 // Degree bound of the sumcheck round polynomials.
 // The fused relation includes `G(k) * eq(k)` terms where both are multilinear in k,
 // making the round polynomials quadratic (degree 2).
 const DEGREE_BOUND: usize = 2;
-
-// ============================================================================
-// PARAMS
-// ============================================================================
 
 /// Family indices for the three ra polynomial types.
 pub const FAMILY_INSTRUCTION: usize = 0;

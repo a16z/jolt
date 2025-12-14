@@ -34,13 +34,6 @@ impl BatchedSumcheck {
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "BatchedSumcheck batching_coeffs[0]={:?}, len={}",
-            batching_coeffs.first(),
-            sumcheck_instances.len()
-        );
-
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
         //   claim_a = \sum_x P(x)             where x \in {0, 1}^M
@@ -130,16 +123,6 @@ impl BatchedSumcheck {
                 let h0 = batched_univariate_poly.evaluate::<F>(&F::zero());
                 let h1 = batched_univariate_poly.evaluate::<F>(&F::one());
 
-                // Debug for Stage 7
-                if sumcheck_instances.len() == 1 && max_num_rounds <= 8 && round == 0 {
-                    eprintln!(
-                        "BatchedSumcheck::prove round 0: h0+h1={:?}, batched_claim={:?}, match={}",
-                        h0 + h1,
-                        batched_claim,
-                        h0 + h1 == batched_claim
-                    );
-                }
-
                 assert_eq!(
                     h0 + h1,
                     batched_claim,
@@ -180,16 +163,6 @@ impl BatchedSumcheck {
             sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
         }
 
-        #[cfg(debug_assertions)]
-        if sumcheck_instances.len() == 1 && max_num_rounds <= 8 {
-            eprintln!(
-                "BatchedSumcheck::prove r[0]={:?}, num_rounds={}, individual_claims[0]={:?}",
-                r_sumcheck.first(),
-                max_num_rounds,
-                individual_claims.first()
-            );
-        }
-
         (SumcheckInstanceProof::new(compressed_polys), r_sumcheck)
     }
 
@@ -211,13 +184,6 @@ impl BatchedSumcheck {
             .unwrap();
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
-
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "BatchedSumcheck batching_coeffs[0]={:?}, len={}",
-            batching_coeffs.first(),
-            sumcheck_instances.len()
-        );
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -242,15 +208,6 @@ impl BatchedSumcheck {
         let (output_claim, r_sumcheck) =
             proof.verify(claim, max_num_rounds, max_degree, transcript)?;
 
-        #[cfg(debug_assertions)]
-        if sumcheck_instances.len() == 1 && max_num_rounds <= 8 {
-            eprintln!(
-                "BatchedSumcheck::verify output_claim={:?}, r[0]={:?}",
-                output_claim,
-                r_sumcheck.first()
-            );
-        }
-
         let expected_output_claim = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
@@ -272,8 +229,6 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            #[cfg(debug_assertions)]
-            eprintln!("Sumcheck output mismatch: output_claim={output_claim:?}, expected_output_claim={expected_output_claim:?}");
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 

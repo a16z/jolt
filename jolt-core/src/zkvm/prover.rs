@@ -1121,7 +1121,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .opening_accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
 
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         {
             // Verify that Inc openings are at the same point as r_cycle from Booleanity
             let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1233,14 +1233,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
-        let (joint_poly, hint) = self.build_streaming_rlc::<PCS>(
+        let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
+            self.one_hot_params.clone(),
+            TraceSource::Materialized(Arc::clone(&self.trace)),
+            streaming_data,
             opening_proof_hints,
-            state,
-            (
-                TraceSource::Materialized(Arc::clone(&self.trace)),
-                streaming_data,
-                self.one_hot_params.clone(),
-            ),
         );
 
         // Dory opening proof at the unified point
@@ -1251,46 +1248,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Some(hint),
             &mut self.transcript,
         )
-    }
-
-    /// Build streaming RLC polynomial from DoryOpeningState.
-    /// Does NOT require regenerating witness polynomials - streams directly from trace.
-    #[tracing::instrument(skip_all)]
-    fn build_streaming_rlc<PCS2: CommitmentScheme<Field = F>>(
-        &self,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS2::OpeningProofHint>,
-        state: &DoryOpeningState<F>,
-        streaming_context: (TraceSource, Arc<RLCStreamingData>, OneHotParams),
-    ) -> (MultilinearPolynomial<F>, PCS2::OpeningProofHint) {
-        use crate::poly::rlc_polynomial::RLCPolynomial;
-        use std::collections::BTreeMap;
-
-        // Accumulate gamma coefficients per polynomial
-        let mut rlc_map = BTreeMap::new();
-        for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
-            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-        }
-
-        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
-            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
-
-        let (trace_source, preprocessing, one_hot_params) = streaming_context;
-        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
-            one_hot_params,
-            preprocessing,
-            trace_source,
-            poly_ids.clone(),
-            &coeffs,
-        ));
-
-        let hints: Vec<PCS2::OpeningProofHint> = rlc_map
-            .into_keys()
-            .map(|k| opening_hints.remove(&k).unwrap())
-            .collect();
-
-        let hint = PCS2::combine_hints(hints, &coeffs);
-
-        (joint_poly, hint)
     }
 }
 
