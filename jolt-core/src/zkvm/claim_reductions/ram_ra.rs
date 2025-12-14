@@ -37,6 +37,8 @@ use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+use fixedbitset::FixedBitSet;
+
 use crate::{
     field::JoltField,
     poly::{
@@ -46,6 +48,7 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
+        split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
     subprotocols::{
@@ -292,40 +295,204 @@ impl<F: JoltField> PhaseAddressProver<F> {
         r_cycle_val: &[F::Challenge],
         gamma: F,
     ) -> (Vec<F>, Vec<F>) {
-        let eq_raf = EqPolynomial::<F>::evals(r_cycle_raf);
-        let eq_rw = EqPolynomial::<F>::evals(r_cycle_rw);
-        let eq_val = EqPolynomial::<F>::evals(r_cycle_val);
+        let T = addresses.len();
 
-        let chunk_size = 1 << 14;
-        let (G_A, G_B) = addresses
-            .par_chunks(chunk_size)
-            .enumerate()
-            .fold(
-                || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
-                |(mut partial_A, mut partial_B), (chunk_idx, chunk)| {
-                    let base_c = chunk_idx * chunk_size;
-                    for (i, addr) in chunk.iter().enumerate() {
-                        if let Some(k) = addr {
-                            let c = base_c + i;
-                            partial_A[*k] += eq_raf[c] + gamma * eq_val[c];
-                            partial_B[*k] += eq_rw[c] + gamma * eq_val[c];
+        // Build split-eq polynomials for all three eq tables
+        let (split_raf, (split_rw, split_val)) = rayon::join(
+            || GruenSplitEqPolynomial::<F>::new(r_cycle_raf, BindingOrder::LowToHigh),
+            || {
+                rayon::join(
+                    || GruenSplitEqPolynomial::<F>::new(r_cycle_rw, BindingOrder::LowToHigh),
+                    || GruenSplitEqPolynomial::<F>::new(r_cycle_val, BindingOrder::LowToHigh),
+                )
+            },
+        );
+
+        // Extract E_in, E_out tables and current_w for each
+        let E_in_raf = split_raf.E_in_current();
+        let E_out_raf = split_raf.E_out_current();
+        let w_raf = split_raf.get_current_w();
+
+        let E_in_rw = split_rw.E_in_current();
+        let E_out_rw = split_rw.E_out_current();
+        let w_rw = split_rw.get_current_w();
+
+        let E_in_val = split_val.E_in_current();
+        let E_out_val = split_val.E_out_current();
+        let w_val = split_val.get_current_w();
+
+        let in_len = E_in_raf.len();
+        let out_len = E_out_raf.len();
+        let x_in_bits = in_len.log_2();
+
+        // Precompute merged inner weights: [E_in[x_in] * (1-w), E_in[x_in] * w]
+        // Store as reduced F for 4-limb additions into 5-limb accumulator
+        let factor_0_raf = F::one() - w_raf;
+        let factor_1_raf: F = w_raf.into();
+        let factor_0_rw = F::one() - w_rw;
+        let factor_1_rw: F = w_rw.into();
+        let factor_0_val = F::one() - w_val;
+        let factor_1_val: F = w_val.into();
+
+        let compute_merged = |e_in: &[F], factor_0: F, factor_1: F| -> Vec<F> {
+            let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
+            merged
+                .par_chunks_exact_mut(2)
+                .zip(e_in.par_iter())
+                .for_each(|(chunk, &e)| {
+                    chunk[0] = e * factor_0;
+                    chunk[1] = e * factor_1;
+                });
+            merged
+        };
+
+        let (merged_raf, (merged_rw, merged_val)) = rayon::join(
+            || compute_merged(E_in_raf, factor_0_raf, factor_1_raf),
+            || {
+                rayon::join(
+                    || compute_merged(E_in_rw, factor_0_rw, factor_1_rw),
+                    || compute_merged(E_in_val, factor_0_val, factor_1_val),
+                )
+            },
+        );
+
+        // Divide work evenly among threads (by x_out index)
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = out_len.div_ceil(num_threads);
+
+        let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
+            .map(|t| {
+                let start = t * chunk_size;
+                let end = std::cmp::min(start + chunk_size, out_len);
+                (start, end)
+            })
+            .filter(|(start, end)| start < end)
+            .collect();
+
+        // Each thread computes partial sums for sum_raf, sum_rw, sum_val
+        // Then combine: G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
+        let (sum_raf, sum_rw, sum_val): (Vec<F>, Vec<F>, Vec<F>) = chunk_ranges
+            .into_par_iter()
+            .map(|(chunk_start, chunk_end)| {
+                // Each thread allocates one set of partial accumulators
+                let mut partial_raf: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut partial_rw: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut partial_val: Vec<F> = unsafe_allocate_zero_vec(K);
+
+                // Reusable local unreduced accumulators (5-limb) and touched flags
+                let mut local_raf: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
+                let mut local_rw: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
+                let mut local_val: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
+                let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
+
+                for x_out in chunk_start..chunk_end {
+                    let e_out_raf = E_out_raf[x_out];
+                    let e_out_rw = E_out_rw[x_out];
+                    let e_out_val = E_out_val[x_out];
+                    let x_out_base = x_out << (x_in_bits + 1);
+
+                    // Clear touched flags and local accumulators for this x_out
+                    for k in touched.ones() {
+                        local_raf[k] = Default::default();
+                        local_rw[k] = Default::default();
+                        local_val[k] = Default::default();
+                    }
+                    touched.clear();
+
+                    // Process all x_in for this x_out
+                    for x_in in 0..in_len {
+                        let j0 = x_out_base + (x_in << 1);
+                        let j1 = j0 + 1;
+                        let off = 2 * x_in;
+
+                        // Get 4-limb unreduced representations
+                        let add_raf_0 = *merged_raf[off].as_unreduced_ref();
+                        let add_raf_1 = *merged_raf[off + 1].as_unreduced_ref();
+                        let add_rw_0 = *merged_rw[off].as_unreduced_ref();
+                        let add_rw_1 = *merged_rw[off + 1].as_unreduced_ref();
+                        let add_val_0 = *merged_val[off].as_unreduced_ref();
+                        let add_val_1 = *merged_val[off + 1].as_unreduced_ref();
+
+                        // Process cycle j0 (last_bit = 0)
+                        if j0 < T {
+                            if let Some(k) = addresses[j0] {
+                                if !touched.contains(k) {
+                                    touched.insert(k);
+                                }
+                                local_raf[k] += add_raf_0;
+                                local_rw[k] += add_rw_0;
+                                local_val[k] += add_val_0;
+                            }
+                        }
+
+                        // Process cycle j1 (last_bit = 1)
+                        if j1 < T {
+                            if let Some(k) = addresses[j1] {
+                                if !touched.contains(k) {
+                                    touched.insert(k);
+                                }
+                                local_raf[k] += add_raf_1;
+                                local_rw[k] += add_rw_1;
+                                local_val[k] += add_val_1;
+                            }
                         }
                     }
-                    (partial_A, partial_B)
-                },
-            )
+
+                    // Barrett reduce and scale by E_out, only for touched indices
+                    for k in touched.ones() {
+                        let reduced_raf = F::from_barrett_reduce::<5>(local_raf[k]);
+                        let reduced_rw = F::from_barrett_reduce::<5>(local_rw[k]);
+                        let reduced_val = F::from_barrett_reduce::<5>(local_val[k]);
+                        partial_raf[k] += e_out_raf * reduced_raf;
+                        partial_rw[k] += e_out_rw * reduced_rw;
+                        partial_val[k] += e_out_val * reduced_val;
+                    }
+                }
+
+                (partial_raf, partial_rw, partial_val)
+            })
             .reduce(
-                || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
-                |(mut acc_A, mut acc_B), (partial_A, partial_B)| {
-                    for (a, p) in acc_A.iter_mut().zip(partial_A) {
-                        *a += p;
-                    }
-                    for (b, p) in acc_B.iter_mut().zip(partial_B) {
-                        *b += p;
-                    }
-                    (acc_A, acc_B)
+                || {
+                    (
+                        unsafe_allocate_zero_vec(K),
+                        unsafe_allocate_zero_vec(K),
+                        unsafe_allocate_zero_vec(K),
+                    )
+                },
+                |(mut acc_raf, mut acc_rw, mut acc_val), (p_raf, p_rw, p_val)| {
+                    acc_raf
+                        .par_iter_mut()
+                        .zip(p_raf.par_iter())
+                        .for_each(|(a, p)| *a += *p);
+                    acc_rw
+                        .par_iter_mut()
+                        .zip(p_rw.par_iter())
+                        .for_each(|(a, p)| *a += *p);
+                    acc_val
+                        .par_iter_mut()
+                        .zip(p_val.par_iter())
+                        .for_each(|(a, p)| *a += *p);
+                    (acc_raf, acc_rw, acc_val)
                 },
             );
+
+        // Combine: G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
+        let (G_A, G_B): (Vec<F>, Vec<F>) = rayon::join(
+            || {
+                sum_raf
+                    .into_par_iter()
+                    .zip(sum_val.par_iter())
+                    .map(|(r, &v)| r + gamma * v)
+                    .collect()
+            },
+            || {
+                sum_rw
+                    .into_par_iter()
+                    .zip(sum_val.par_iter())
+                    .map(|(r, &v)| r + gamma * v)
+                    .collect()
+            },
+        );
 
         (G_A, G_B)
     }
