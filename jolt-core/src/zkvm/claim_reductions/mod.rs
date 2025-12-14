@@ -1,8 +1,12 @@
+pub mod advice;
 pub mod hamming_weight;
 pub mod increments;
 pub mod instruction_lookups;
 pub mod ram_ra;
 
+pub use advice::{
+    AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceClaimReductionVerifier,
+};
 pub use hamming_weight::{
     HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
     HammingWeightClaimReductionVerifier,

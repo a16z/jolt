@@ -37,6 +37,7 @@ use crate::{
     zkvm::{
         bytecode::read_raf_checking::ReadRafSumcheckParams as BytecodeReadRafParams,
         claim_reductions::{
+            AdviceClaimReductionParams, AdviceClaimReductionProver,
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
             IncReductionSumcheckParams, IncReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
@@ -324,10 +325,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage4_sumcheck_proof = self.prove_stage4();
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
-        let (trusted_advice_val_evaluation_proof, trusted_advice_val_final_proof) =
-            self.prove_trusted_advice();
-        let (untrusted_advice_val_evaluation_proof, untrusted_advice_val_final_proof) =
-            self.prove_untrusted_advice();
+        // Advice claims are now reduced in Stage 6 and batched into Stage 8
+        // The old separate advice proofs are no longer generated
         let stage7_sumcheck_proof = self.prove_stage7();
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
@@ -367,10 +366,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
             stage6_sumcheck_proof,
-            trusted_advice_val_evaluation_proof,
-            trusted_advice_val_final_proof,
-            untrusted_advice_val_evaluation_proof,
-            untrusted_advice_val_final_proof,
             stage7_sumcheck_proof,
             // Note: verifier no longer uses this field, but kept for proof format compatibility
             stage7_sumcheck_claims: dory_state.claims.clone(),
@@ -923,6 +918,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
+        // Advice claim reduction - may be None if no advice present
+        let advice_reduction_params = AdviceClaimReductionParams::new(
+            &self.program_io.memory_layout,
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+
         let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
             bytecode_read_raf_params,
             &self.trace,
@@ -951,6 +954,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let inc_reduction =
             IncReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 
+        // Initialize advice reduction prover if there's advice
+        let advice_reduction = advice_reduction_params.map(|params| {
+            AdviceClaimReductionProver::initialize(
+                params,
+                self.advice.trusted_advice_polynomial.clone(),
+                self.advice.untrusted_advice_polynomial.clone(),
+            )
+        });
+
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("BytecodeReadRafSumcheckProver", &bytecode_read_raf);
@@ -962,6 +974,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncReductionSumcheckProver", &inc_reduction);
+            if let Some(ref advice) = advice_reduction {
+                print_data_structure_heap_usage("AdviceClaimReductionProver", advice);
+            }
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
@@ -972,6 +987,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Box::new(lookups_ra_virtual),
             Box::new(inc_reduction),
         ];
+        if let Some(advice) = advice_reduction {
+            instances.push(Box::new(advice));
+        }
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6_start_flamechart.svg");
@@ -988,91 +1006,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         sumcheck_proof
     }
 
-    #[tracing::instrument(skip_all)]
-    fn prove_trusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
-        use crate::poly::opening_proof::SumcheckId;
-        let poly = match &self.advice.trusted_advice_polynomial {
-            Some(p) => p,
-            None => return (None, None),
-        };
-        let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-
-        // Prove at RamValEvaluation point
-        let (point_val, _) = self
-            .opening_accumulator
-            .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
-            .unwrap();
-        let proof_val = PCS::prove(
-            &self.preprocessing.generators,
-            poly,
-            &point_val.r,
-            None,
-            &mut self.transcript,
-        );
-
-        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
-        let proof_val_final =
-            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
-                None
-            } else {
-                let (point_val_final, _) = self
-                    .opening_accumulator
-                    .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                    .unwrap();
-                Some(PCS::prove(
-                    &self.preprocessing.generators,
-                    poly,
-                    &point_val_final.r,
-                    None,
-                    &mut self.transcript,
-                ))
-            };
-
-        (Some(proof_val), proof_val_final)
-    }
-
-    #[tracing::instrument(skip_all)]
-    fn prove_untrusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
-        use crate::poly::opening_proof::SumcheckId;
-        let poly = match &self.advice.untrusted_advice_polynomial {
-            Some(p) => p,
-            None => return (None, None),
-        };
-        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
-
-        // Prove at RamValEvaluation point
-        let (point_val, _) = self
-            .opening_accumulator
-            .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
-            .unwrap();
-        let proof_val = PCS::prove(
-            &self.preprocessing.generators,
-            poly,
-            &point_val.r,
-            None,
-            &mut self.transcript,
-        );
-
-        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
-        let proof_val_final =
-            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
-                None
-            } else {
-                let (point_val_final, _) = self
-                    .opening_accumulator
-                    .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                    .unwrap();
-                Some(PCS::prove(
-                    &self.preprocessing.generators,
-                    poly,
-                    &point_val_final.r,
-                    None,
-                    &mut self.transcript,
-                ))
-            };
-
-        (Some(proof_val), proof_val_final)
-    }
+    // Note: prove_trusted_advice and prove_untrusted_advice have been removed.
+    // Advice claims are now reduced via AdviceClaimReduction in Stage 6 and proven
+    // as part of the batched Stage 8 opening proof.
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
     /// Produces `DoryOpeningState` for Stage 8.
@@ -1177,6 +1113,68 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             );
             claims.push(claim);
             polynomials.push(CommittedPolynomial::RamRa(i));
+        }
+
+        // Advice polynomials (from AdviceClaimReduction in Stage 6)
+        // These have advice_vars dimensions, need a larger Lagrange factor
+        // The advice claims are at the suffix of r_cycle_stage6
+        if self.advice.trusted_advice_polynomial.is_some() {
+            if let Some((advice_point, advice_claim)) = self
+                .opening_accumulator
+                .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+            {
+                // Lagrange factor: ∏_{i=0}^{log_k_chunk + log_T - advice_vars - 1} (1 - r_i)
+                // This accounts for the prefix of the unified point that advice doesn't span
+                let advice_vars = advice_point.r.len();
+                let log_t = self.trace.len().log_2();
+                let log_k_chunk = self.one_hot_params.log_k_chunk;
+                let total_vars = log_k_chunk + log_t;
+                let _prefix_len = total_vars - advice_vars;
+
+                // Apply Lagrange for r_address_stage7 prefix
+                let mut advice_lagrange: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+                // Apply Lagrange for r_cycle prefix (first log_T - advice_vars elements)
+                let r_cycle_prefix_len = log_t - advice_vars;
+                let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::InstructionRa(0),
+                    SumcheckId::Booleanity,
+                );
+                let r_cycle_stage6_full = &unified_point.r[log_k_chunk..];
+                for r_i in r_cycle_stage6_full.iter().take(r_cycle_prefix_len) {
+                    advice_lagrange *= F::one() - *r_i;
+                }
+
+                claims.push(advice_claim * advice_lagrange);
+                polynomials.push(CommittedPolynomial::TrustedAdvice);
+            }
+        }
+
+        if self.advice.untrusted_advice_polynomial.is_some() {
+            if let Some((advice_point, advice_claim)) = self
+                .opening_accumulator
+                .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+            {
+                // Lagrange factor: same calculation as trusted advice
+                let advice_vars = advice_point.r.len();
+                let log_t = self.trace.len().log_2();
+                let log_k_chunk = self.one_hot_params.log_k_chunk;
+                let prefix_len = log_t - advice_vars;
+
+                // Apply Lagrange for r_address_stage7 prefix
+                let mut advice_lagrange: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+                // Apply Lagrange for r_cycle prefix
+                let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::InstructionRa(0),
+                    SumcheckId::Booleanity,
+                );
+                let r_cycle_stage6_full = &unified_point.r[log_k_chunk..];
+                for r_i in r_cycle_stage6_full.iter().take(prefix_len) {
+                    advice_lagrange *= F::one() - *r_i;
+                }
+
+                claims.push(advice_claim * advice_lagrange);
+                polynomials.push(CommittedPolynomial::UntrustedAdvice);
+            }
         }
 
         // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)

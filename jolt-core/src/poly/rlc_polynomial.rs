@@ -227,6 +227,12 @@ impl<F: JoltField> RLCPolynomial<F> {
                 | CommittedPolynomial::RamRa(_) => {
                     onehot_polys.push((*poly_id, *coeff));
                 }
+                CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+                    // TODO: Advice polynomials need to be handled separately -
+                    // they cannot be streamed from trace. For now, the claims are
+                    // included in DoryOpeningState but hints are not combined.
+                    // Full integration requires changing how advice is committed.
+                }
             }
         }
 
@@ -457,6 +463,9 @@ impl<F: JoltField> RLCPolynomial<F> {
             | CommittedPolynomial::RamRa(_) => {
                 panic!("One-hot polynomials should not be passed to extract_dense_value")
             }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+                panic!("Advice polynomials should not be passed to extract_dense_value")
+            }
         }
     }
 
@@ -483,6 +492,9 @@ impl<F: JoltField> RLCPolynomial<F> {
             .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize),
             CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
                 panic!("Dense polynomials should not be passed to extract_onehot_k")
+            }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+                panic!("Advice polynomials should not be passed to extract_onehot_k")
             }
         }
     }
