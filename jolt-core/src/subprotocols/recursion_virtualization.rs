@@ -48,6 +48,14 @@ pub struct VirtualClaims {
     pub mul_rhs_claims: Vec<Fq>,
     pub mul_result_claims: Vec<Fq>,
     pub mul_quotient_claims: Vec<Fq>,
+    // G1 scalar mul claims
+    pub g1_x_a_claims: Vec<Fq>,
+    pub g1_y_a_claims: Vec<Fq>,
+    pub g1_x_t_claims: Vec<Fq>,
+    pub g1_y_t_claims: Vec<Fq>,
+    pub g1_x_a_next_claims: Vec<Fq>,
+    pub g1_y_a_next_claims: Vec<Fq>,
+    pub g1_t_is_infinity_claims: Vec<Fq>,
 }
 
 /// Compute v = Σ_i eq(r_s,i) · v_i for the virtualization protocol
@@ -61,7 +69,7 @@ fn compute_virtualization_claim(
     let mu_size = 1 << params.num_s_vars;
     let mut mu_evals = vec![Fq::zero(); mu_size];
 
-    // Fill μ following the matrix layout with 8 polynomial types
+    // Fill μ following the matrix layout with 15 polynomial types
     for i in 0..params.num_constraints {
         mu_evals[(PolyType::Base as usize) * params.num_constraints_padded + i] =
             claims.base_claims[i];
@@ -79,6 +87,20 @@ fn compute_virtualization_claim(
             claims.mul_result_claims[i];
         mu_evals[(PolyType::MulQuotient as usize) * params.num_constraints_padded + i] =
             claims.mul_quotient_claims[i];
+        mu_evals[(PolyType::G1ScalarMulXA as usize) * params.num_constraints_padded + i] =
+            claims.g1_x_a_claims[i];
+        mu_evals[(PolyType::G1ScalarMulYA as usize) * params.num_constraints_padded + i] =
+            claims.g1_y_a_claims[i];
+        mu_evals[(PolyType::G1ScalarMulXT as usize) * params.num_constraints_padded + i] =
+            claims.g1_x_t_claims[i];
+        mu_evals[(PolyType::G1ScalarMulYT as usize) * params.num_constraints_padded + i] =
+            claims.g1_y_t_claims[i];
+        mu_evals[(PolyType::G1ScalarMulXANext as usize) * params.num_constraints_padded + i] =
+            claims.g1_x_a_next_claims[i];
+        mu_evals[(PolyType::G1ScalarMulYANext as usize) * params.num_constraints_padded + i] =
+            claims.g1_y_a_next_claims[i];
+        mu_evals[(PolyType::G1ScalarMulIndicator as usize) * params.num_constraints_padded + i] =
+            claims.g1_t_is_infinity_claims[i];
     }
 
     // Compute the inner product: Σ_s eq(r_s, s) * μ(s)
@@ -202,6 +224,13 @@ impl RecursionVirtualizationProver {
         let mut mul_rhs_claims = vec![Fq::zero(); params.num_constraints];
         let mut mul_result_claims = vec![Fq::zero(); params.num_constraints];
         let mut mul_quotient_claims = vec![Fq::zero(); params.num_constraints];
+        let mut g1_x_a_claims = vec![Fq::zero(); params.num_constraints];
+        let mut g1_y_a_claims = vec![Fq::zero(); params.num_constraints];
+        let mut g1_x_t_claims = vec![Fq::zero(); params.num_constraints];
+        let mut g1_y_t_claims = vec![Fq::zero(); params.num_constraints];
+        let mut g1_x_a_next_claims = vec![Fq::zero(); params.num_constraints];
+        let mut g1_y_a_next_claims = vec![Fq::zero(); params.num_constraints];
+        let mut g1_t_is_infinity_claims = vec![Fq::zero(); params.num_constraints];
 
         // Collect claims based on constraint type
         for (i, constraint) in constraint_system.constraints.iter().enumerate() {
@@ -253,7 +282,42 @@ impl RecursionVirtualizationProver {
                     mul_quotient_claims[i] = quotient_claim;
                 }
                 ConstraintType::G1ScalarMul { .. } => {
-                    // G1 scalar multiplication constraints don't have Phase 1 virtual polynomial openings yet
+                    let (_, x_a_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulXA(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, y_a_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulYA(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, x_t_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulXT(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, y_t_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulYT(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, x_a_next_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulXANext(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, y_a_next_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulYANext(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, t_is_infinity_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulIndicator(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+
+                    g1_x_a_claims[i] = x_a_claim;
+                    g1_y_a_claims[i] = y_a_claim;
+                    g1_x_t_claims[i] = x_t_claim;
+                    g1_y_t_claims[i] = y_t_claim;
+                    g1_x_a_next_claims[i] = x_a_next_claim;
+                    g1_y_a_next_claims[i] = y_a_next_claim;
+                    g1_t_is_infinity_claims[i] = t_is_infinity_claim;
                 }
             }
         }
@@ -267,6 +331,13 @@ impl RecursionVirtualizationProver {
             mul_rhs_claims,
             mul_result_claims,
             mul_quotient_claims,
+            g1_x_a_claims,
+            g1_y_a_claims,
+            g1_x_t_claims,
+            g1_y_t_claims,
+            g1_x_a_next_claims,
+            g1_y_a_next_claims,
+            g1_t_is_infinity_claims,
         };
 
         Self {
@@ -432,6 +503,13 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
         let mut mul_rhs_claims = vec![Fq::zero(); self.params.num_constraints];
         let mut mul_result_claims = vec![Fq::zero(); self.params.num_constraints];
         let mut mul_quotient_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut g1_x_a_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut g1_y_a_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut g1_x_t_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut g1_y_t_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut g1_x_a_next_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut g1_y_a_next_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut g1_t_is_infinity_claims = vec![Fq::zero(); self.params.num_constraints];
 
         // Collect claims based on constraint type
         for (i, constraint_type) in self.constraint_types.iter().enumerate() {
@@ -483,7 +561,42 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
                     mul_quotient_claims[i] = quotient_claim;
                 }
                 ConstraintType::G1ScalarMul { .. } => {
-                    // TODO: Handle G1 scalar multiplication virtual claims
+                    let (_, x_a_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulXA(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, y_a_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulYA(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, x_t_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulXT(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, y_t_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulYT(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, x_a_next_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulXANext(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, y_a_next_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulYANext(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+                    let (_, t_is_infinity_claim) = accumulator.get_virtual_polynomial_opening(
+                        VirtualPolynomial::RecursionG1ScalarMulIndicator(i),
+                        SumcheckId::G1ScalarMul,
+                    );
+
+                    g1_x_a_claims[i] = x_a_claim;
+                    g1_y_a_claims[i] = y_a_claim;
+                    g1_x_t_claims[i] = x_t_claim;
+                    g1_y_t_claims[i] = y_t_claim;
+                    g1_x_a_next_claims[i] = x_a_next_claim;
+                    g1_y_a_next_claims[i] = y_a_next_claim;
+                    g1_t_is_infinity_claims[i] = t_is_infinity_claim;
                 }
             }
         }
@@ -497,6 +610,13 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
             mul_rhs_claims,
             mul_result_claims,
             mul_quotient_claims,
+            g1_x_a_claims,
+            g1_y_a_claims,
+            g1_x_t_claims,
+            g1_y_t_claims,
+            g1_x_a_next_claims,
+            g1_y_a_next_claims,
+            g1_t_is_infinity_claims,
         };
 
         let r_s_fq: Vec<Fq> = self.r_s.iter().map(|c| (*c).into()).collect();

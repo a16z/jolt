@@ -181,6 +181,7 @@ pub enum SumcheckId {
     // New recursion protocol sumcheck IDs
     SquareAndMultiply,       // Phase 1: GT exp constraint verification
     GtMul,                   // GT multiplication constraint verification
+    G1ScalarMul,             // G1 scalar multiplication constraint verification
     RecursionVirtualization, // Phase 2: virtualization check
     OpeningReduction,
 }

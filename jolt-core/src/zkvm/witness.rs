@@ -540,6 +540,14 @@ pub enum VirtualPolynomial {
     RecursionMulRhs(usize),    // Right operand b(x) for GT mul constraint i
     RecursionMulResult(usize), // Result c(x) for GT mul constraint i
     RecursionMulQuotient(usize), // Quotient Q(x) for GT mul constraint i
+    // G1 scalar multiplication virtual polynomials - indexed by constraint index
+    RecursionG1ScalarMulXA(usize),     // x_A values for G1 scalar mul constraint i
+    RecursionG1ScalarMulYA(usize),     // y_A values for G1 scalar mul constraint i
+    RecursionG1ScalarMulXT(usize),     // x_T values for G1 scalar mul constraint i
+    RecursionG1ScalarMulYT(usize),     // y_T values for G1 scalar mul constraint i
+    RecursionG1ScalarMulXANext(usize), // x_A' values (shifted) for G1 scalar mul constraint i
+    RecursionG1ScalarMulYANext(usize), // y_A' values (shifted) for G1 scalar mul constraint i
+    RecursionG1ScalarMulIndicator(usize), // Infinity indicator for G1 scalar mul constraint i
 }
 
 pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock::new(|| {

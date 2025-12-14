@@ -65,16 +65,19 @@ pub enum PolyType {
     MulQuotient = 7,
 
     // G1 Scalar Multiplication polynomials
-    G1ScalarMulXA = 8,  // x-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
-    G1ScalarMulYA = 9,  // y-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
-    G1ScalarMulXT = 10, // x-coord of doubled point T_i
-    G1ScalarMulYT = 11, // y-coord of doubled point T_i
+    G1ScalarMulXA = 8,      // x-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
+    G1ScalarMulYA = 9,      // y-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
+    G1ScalarMulXT = 10,     // x-coord of doubled point T_i
+    G1ScalarMulYT = 11,     // y-coord of doubled point T_i
+    G1ScalarMulXANext = 12, // x-coord of A_{i+1} (shifted by 1)
+    G1ScalarMulYANext = 13, // y-coord of A_{i+1} (shifted by 1)
+    G1ScalarMulIndicator = 14, // Indicator for T_i = O (point at infinity)
 }
 
 impl PolyType {
-    pub const NUM_TYPES: usize = 12;
+    pub const NUM_TYPES: usize = 15;
 
-    pub fn all() -> [PolyType; 12] {
+    pub fn all() -> [PolyType; 15] {
         [
             PolyType::Base,
             PolyType::RhoPrev,
@@ -88,6 +91,9 @@ impl PolyType {
             PolyType::G1ScalarMulYA,
             PolyType::G1ScalarMulXT,
             PolyType::G1ScalarMulYT,
+            PolyType::G1ScalarMulXANext,
+            PolyType::G1ScalarMulYANext,
+            PolyType::G1ScalarMulIndicator,
         ]
     }
 
@@ -106,6 +112,8 @@ impl PolyType {
             9 => PolyType::G1ScalarMulYA,
             10 => PolyType::G1ScalarMulXT,
             11 => PolyType::G1ScalarMulYT,
+            12 => PolyType::G1ScalarMulXANext,
+            13 => PolyType::G1ScalarMulYANext,
             _ => panic!("Invalid row index"),
         }
     }
@@ -188,7 +196,7 @@ impl DoryMultilinearMatrix {
 pub struct DoryMatrixBuilder {
     num_constraint_vars: usize,
     /// Rows grouped by polynomial type
-    rows_by_type: [Vec<Vec<Fq>>; 12],
+    rows_by_type: [Vec<Vec<Fq>>; 15],
     /// Constraint types for each constraint
     constraint_types: Vec<ConstraintType>,
 }
@@ -198,6 +206,9 @@ impl DoryMatrixBuilder {
         Self {
             num_constraint_vars,
             rows_by_type: [
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -299,7 +310,10 @@ impl DoryMatrixBuilder {
             self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(zero_row.clone());
             self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(zero_row.clone());
             self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(zero_row.clone());
-            self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row);
+            self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(zero_row);
 
             // Store constraint type for this constraint
             self.constraint_types.push(ConstraintType::GtExp {
@@ -385,7 +399,10 @@ impl DoryMatrixBuilder {
         self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(zero_row.clone());
         self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(zero_row.clone());
         self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row);
+        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(zero_row);
 
         // Store constraint type
         self.constraint_types.push(ConstraintType::GtMul);
@@ -398,7 +415,7 @@ impl DoryMatrixBuilder {
         &mut self,
         witness: &crate::poly::commitment::dory::recursion::JoltG1ScalarMulWitness,
     ) {
-        // For now, we'll panic if trying to add G1 witnesses when builder was configured for 4 vars
+        // G1 scalar multiplication requires 8 constraint variables
         if self.num_constraint_vars != 8 {
             panic!(
                 "G1 scalar multiplication requires 8 constraint variables, but builder has {}",
@@ -406,13 +423,15 @@ impl DoryMatrixBuilder {
             );
         }
 
-        let n = witness.bits.len();
+        let _n = witness.bits.len();
 
         // The witness MLEs contain all steps in one MLE
         assert_eq!(witness.x_a_mles.len(), 1, "Expected single MLE for x_a");
         assert_eq!(witness.y_a_mles.len(), 1, "Expected single MLE for y_a");
         assert_eq!(witness.x_t_mles.len(), 1, "Expected single MLE for x_t");
         assert_eq!(witness.y_t_mles.len(), 1, "Expected single MLE for y_t");
+        assert_eq!(witness.x_a_next_mles.len(), 1, "Expected single MLE for x_a_next");
+        assert_eq!(witness.y_a_next_mles.len(), 1, "Expected single MLE for y_a_next");
 
         // Each MLE should have 256 evaluations for 8 variables
         assert_eq!(
@@ -423,12 +442,35 @@ impl DoryMatrixBuilder {
         assert_eq!(witness.y_a_mles[0].len(), 1 << 8);
         assert_eq!(witness.x_t_mles[0].len(), 1 << 8);
         assert_eq!(witness.y_t_mles[0].len(), 1 << 8);
+        assert_eq!(witness.x_a_next_mles[0].len(), 1 << 8);
+        assert_eq!(witness.y_a_next_mles[0].len(), 1 << 8);
+
+        // Compute infinity indicator from T coordinates
+        use ark_ff::Zero;
+        let t_is_infinity: Vec<Fq> = witness.x_t_mles[0]
+            .iter()
+            .zip(witness.y_t_mles[0].iter())
+            .map(|(x_t, y_t)| {
+                if x_t.is_zero() && y_t.is_zero() {
+                    Fq::from(1u64)
+                } else {
+                    Fq::zero()
+                }
+            })
+            .collect();
+        assert_eq!(t_is_infinity.len(), 1 << 8);
 
         // Add the entire MLEs (one per variable type for this scalar multiplication)
         self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(witness.x_a_mles[0].clone());
         self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(witness.y_a_mles[0].clone());
         self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(witness.x_t_mles[0].clone());
         self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(witness.y_t_mles[0].clone());
+        self.rows_by_type[PolyType::G1ScalarMulXANext as usize]
+            .push(witness.x_a_next_mles[0].clone());
+        self.rows_by_type[PolyType::G1ScalarMulYANext as usize]
+            .push(witness.y_a_next_mles[0].clone());
+        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize]
+            .push(t_is_infinity);
 
         // Add empty rows for GT types to maintain consistent indexing
         let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
@@ -443,7 +485,9 @@ impl DoryMatrixBuilder {
 
         // Store one constraint entry for this G1 scalar multiplication
         // The constraint evaluation will handle accessing different indices within the MLEs
-        self.constraint_types.push(ConstraintType::G1ScalarMul);
+        self.constraint_types.push(ConstraintType::G1ScalarMul {
+            base_point: (witness.point_base.x, witness.point_base.y),
+        });
     }
 
     pub fn build(self) -> (DoryMultilinearMatrix, Vec<MatrixConstraint>) {
@@ -545,14 +589,16 @@ impl DoryMatrixBuilder {
 }
 
 /// Type of constraint
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConstraintType {
     /// GT exponentiation constraint with its bit value
     GtExp { bit: bool },
     /// GT multiplication constraint
     GtMul,
-    /// G1 scalar multiplication constraint
-    G1ScalarMul,
+    /// G1 scalar multiplication constraint with base point
+    G1ScalarMul {
+        base_point: (Fq, Fq), // (x_p, y_p)
+    },
 }
 
 /// Constraint metadata for matrix-based evaluation.
@@ -603,6 +649,11 @@ impl ConstraintSystem {
 
         for (_op_id, witness) in witnesses.gt_mul.iter() {
             builder.add_gt_mul_witness(witness);
+        }
+
+        // Add G1 scalar multiplication witnesses
+        for (_op_id, witness) in witnesses.g1_scalar_mul.iter() {
+            builder.add_g1_scalar_mul_witness(witness);
         }
 
         let (matrix, constraints) = builder.build();
@@ -695,6 +746,30 @@ impl ConstraintSystem {
         constraints
     }
 
+    /// Extract G1 scalar mul constraint data for g1_scalar_mul sumcheck
+    pub fn extract_g1_scalar_mul_constraints(&self) -> Vec<(usize, (Fq, Fq), Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>)> {
+        let mut constraints = Vec::new();
+        let num_constraint_vars = self.matrix.num_constraint_vars;
+        let row_size = 1 << num_constraint_vars;
+
+        for (idx, constraint) in self.constraints.iter().enumerate() {
+            if let ConstraintType::G1ScalarMul { base_point } = constraint.constraint_type {
+                // Extract the MLEs for this G1 scalar multiplication
+                let x_a = self.extract_row_poly(PolyType::G1ScalarMulXA, idx, row_size);
+                let y_a = self.extract_row_poly(PolyType::G1ScalarMulYA, idx, row_size);
+                let x_t = self.extract_row_poly(PolyType::G1ScalarMulXT, idx, row_size);
+                let y_t = self.extract_row_poly(PolyType::G1ScalarMulYT, idx, row_size);
+                let x_a_next = self.extract_row_poly(PolyType::G1ScalarMulXANext, idx, row_size);
+                let y_a_next = self.extract_row_poly(PolyType::G1ScalarMulYANext, idx, row_size);
+                let t_is_infinity = self.extract_row_poly(PolyType::G1ScalarMulIndicator, idx, row_size);
+
+                constraints.push((constraint.constraint_index, base_point, x_a, y_a, x_t, y_t, x_a_next, y_a_next, t_is_infinity));
+            }
+        }
+
+        constraints
+    }
+
     /// Helper to extract a row polynomial from the matrix
     fn extract_row_poly(
         &self,
@@ -742,6 +817,9 @@ impl ConstraintSystem {
             PolyType::G1ScalarMulYA => Fq::zero(),
             PolyType::G1ScalarMulXT => Fq::zero(),
             PolyType::G1ScalarMulYT => Fq::zero(),
+            PolyType::G1ScalarMulXANext => Fq::zero(),
+            PolyType::G1ScalarMulYANext => Fq::zero(),
+            PolyType::G1ScalarMulIndicator => Fq::zero(),
         }
     }
 
@@ -841,7 +919,7 @@ impl ConstraintSystem {
                 // GT mul constraint: lhs * rhs - result - quotient * g
                 lhs_eval * rhs_eval - result_eval - quotient_eval * g_eval
             }
-            ConstraintType::G1ScalarMul => {
+            ConstraintType::G1ScalarMul { base_point } => {
                 // G1 scalar multiplication constraint evaluation
                 // We evaluate all 4 constraints (C1-C4) at the given point x
 
@@ -850,39 +928,19 @@ impl ConstraintSystem {
                 let y_a_row = self.matrix.row_index(PolyType::G1ScalarMulYA, idx);
                 let x_t_row = self.matrix.row_index(PolyType::G1ScalarMulXT, idx);
                 let y_t_row = self.matrix.row_index(PolyType::G1ScalarMulYT, idx);
+                let x_a_next_row = self.matrix.row_index(PolyType::G1ScalarMulXANext, idx);
+                let y_a_next_row = self.matrix.row_index(PolyType::G1ScalarMulYANext, idx);
 
                 // Evaluate MLEs at point x
                 let x_a = self.matrix.evaluate_row(x_a_row, x);
                 let y_a = self.matrix.evaluate_row(y_a_row, x);
                 let x_t = self.matrix.evaluate_row(x_t_row, x);
                 let y_t = self.matrix.evaluate_row(y_t_row, x);
+                let x_a_next = self.matrix.evaluate_row(x_a_next_row, x);
+                let y_a_next = self.matrix.evaluate_row(y_a_next_row, x);
 
-                // For x_A' and y_A', we need to evaluate at the "next" index
-                // Create a shifted evaluation point for i+1
-                let mut x_shifted = x.to_vec();
-
-                // To get i+1, we need to increment the binary representation
-                // Starting from LSB (index 0), find first 0 bit and flip it (and all preceding 1s to 0)
-                let mut carry = true;
-                for bit in x_shifted.iter_mut() {
-                    if carry {
-                        if *bit == Fq::one() {
-                            *bit = Fq::zero();
-                        } else {
-                            *bit = Fq::one();
-                            carry = false;
-                        }
-                    }
-                }
-
-                // If we still have carry, we wrapped around (but this shouldn't happen in practice)
-                let x_a_next = self.matrix.evaluate_row(x_a_row, &x_shifted);
-                let y_a_next = self.matrix.evaluate_row(y_a_row, &x_shifted);
-
-                // TODO: We need the base point coordinates (x_P, y_P)
-                // These should be stored as part of the constraint metadata
-                let x_p = Fq::from(1u64); // Placeholder - need actual base point
-                let y_p = Fq::from(1u64); // Placeholder - need actual base point
+                // Extract base point coordinates
+                let (x_p, y_p) = base_point;
 
                 // C1: Doubling x-coordinate constraint
                 // 4y_A^2(x_T + 2x_A) - 9x_A^4 = 0
@@ -1027,7 +1085,23 @@ mod tests {
         .expect("System creation should succeed");
 
         eprintln!("ConstraintSystem::new took: {:?}", start.elapsed());
+        // Count constraints by type
+        let mut gt_exp_count = 0;
+        let mut gt_mul_count = 0;
+        let mut g1_scalar_mul_count = 0;
+
+        for constraint in &system.constraints {
+            match &constraint.constraint_type {
+                ConstraintType::GtExp { .. } => gt_exp_count += 1,
+                ConstraintType::GtMul { .. } => gt_mul_count += 1,
+                ConstraintType::G1ScalarMul { .. } => g1_scalar_mul_count += 1,
+            }
+        }
+
         eprintln!("Number of constraints: {}", system.constraints.len());
+        eprintln!("  GT exp: {}", gt_exp_count);
+        eprintln!("  GT mul: {}", gt_mul_count);
+        eprintln!("  G1 scalar mul: {}", g1_scalar_mul_count);
         // Instead of evaluating the full system, just evaluate constraints at random points
         use rand::{rngs::StdRng, Rng, SeedableRng};
 

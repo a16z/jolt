@@ -475,8 +475,8 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
         let g_eval = {
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-            use jolt_optimizations::get_g_mle;
             use crate::subprotocols::recursion_constraints::DoryMatrixBuilder;
+            use jolt_optimizations::get_g_mle;
 
             // Get 4-var g polynomial and pad to 8 vars
             let g_mle_4var = get_g_mle();
@@ -680,6 +680,48 @@ mod tests {
             None
         };
 
+        // Prepare G1 scalar mul prover if we have G1 scalar mul constraints
+        let g1_scalar_mul_constraints = constraint_system.extract_g1_scalar_mul_constraints();
+        println!(
+            "Extracted {} G1 scalar mul constraints",
+            g1_scalar_mul_constraints.len()
+        );
+        let mut g1_scalar_mul_prover = if !g1_scalar_mul_constraints.is_empty() {
+            use crate::subprotocols::g1_scalar_mul::{
+                G1ScalarMulConstraintPolynomials, G1ScalarMulParams, G1ScalarMulProver,
+            };
+
+            let mut g1_scalar_mul_polys = Vec::new();
+            for (idx, base_point, x_a, y_a, x_t, y_t, x_a_next, y_a_next, t_is_infinity) in
+                g1_scalar_mul_constraints
+            {
+                g1_scalar_mul_polys.push(G1ScalarMulConstraintPolynomials {
+                    x_a,
+                    y_a,
+                    x_t,
+                    y_t,
+                    x_a_next,
+                    y_a_next,
+                    t_is_infinity,
+                    base_point,
+                    constraint_index: idx,
+                });
+            }
+
+            let params_g1_scalar_mul = G1ScalarMulParams::new(g1_scalar_mul_polys.len());
+            let prover = G1ScalarMulProver::new(
+                params_g1_scalar_mul,
+                g1_scalar_mul_polys,
+                &mut prover_transcript,
+            );
+            if gamma == Fq::zero() {
+                gamma = prover.gamma; // Use G1 scalar mul gamma if no other constraints
+            }
+            Some(prover)
+        } else {
+            None
+        };
+
         // Run Phase 1 sumcheck with all provers
         let mut phase1_instances: Vec<&mut dyn SumcheckInstanceProver<Fq, Blake2bTranscript>> =
             Vec::new();
@@ -689,6 +731,10 @@ mod tests {
         }
 
         if let Some(ref mut prover) = gt_mul_prover {
+            phase1_instances.push(prover);
+        }
+
+        if let Some(ref mut prover) = g1_scalar_mul_prover {
             phase1_instances.push(prover);
         }
 
@@ -729,6 +775,17 @@ mod tests {
             .iter()
             .filter(|c| matches!(c.constraint_type, ConstraintType::GtMul))
             .count();
+        let num_g1_scalar_mul = constraint_system
+            .constraints
+            .iter()
+            .filter(|c| matches!(c.constraint_type, ConstraintType::G1ScalarMul { .. }))
+            .count();
+
+        println!(
+            "Constraint counts: GT exp: {}, GT mul: {}, G1 scalar mul: {}",
+            num_gt_exp, num_gt_mul, num_g1_scalar_mul
+        );
+        println!("Total constraints: {}", constraint_system.constraints.len());
 
         // Create verifiers based on what constraints we have
         let mut phase1_ver_instances: Vec<
@@ -776,6 +833,33 @@ mod tests {
             let params_gt_mul = GtMulParams::new(num_gt_mul);
             let verifier =
                 GtMulVerifier::new(params_gt_mul, constraint_indices, &mut verifier_transcript);
+            phase1_ver_instances.push(Box::new(verifier));
+        }
+
+        // Add G1 scalar mul verifier if we have G1 scalar mul constraints
+        if num_g1_scalar_mul > 0 {
+            use crate::subprotocols::g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier};
+
+            // Get constraint indices and base points for G1 scalar mul constraints
+            let (constraint_indices, base_points): (Vec<usize>, Vec<(Fq, Fq)>) = constraint_system
+                .constraints
+                .iter()
+                .filter_map(|c| match &c.constraint_type {
+                    ConstraintType::G1ScalarMul { base_point } => {
+                        Some((c.constraint_index, *base_point))
+                    }
+                    ConstraintType::GtMul => None,
+                    ConstraintType::GtExp { .. } => None,
+                })
+                .unzip();
+
+            let params_g1_scalar_mul = G1ScalarMulParams::new(num_g1_scalar_mul);
+            let verifier = G1ScalarMulVerifier::new(
+                params_g1_scalar_mul,
+                base_points,
+                constraint_indices,
+                &mut verifier_transcript,
+            );
             phase1_ver_instances.push(Box::new(verifier));
         }
 
@@ -914,7 +998,10 @@ mod tests {
         );
 
         let hyrax_setup_duration = hyrax_setup_start.elapsed();
-        println!("Hyrax prover setup completed in: {:?}", hyrax_setup_duration);
+        println!(
+            "Hyrax prover setup completed in: {:?}",
+            hyrax_setup_duration
+        );
 
         // Create polynomial map for prove_single
         let matrix_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
@@ -960,7 +1047,10 @@ mod tests {
             .expect("prove_single should succeed");
 
         let hyrax_proof_duration = hyrax_proof_start.elapsed();
-        println!("Hyrax opening proof generation completed in: {:?}", hyrax_proof_duration);
+        println!(
+            "Hyrax opening proof generation completed in: {:?}",
+            hyrax_proof_duration
+        );
 
         // Setup verifier
         let verifier_setup = <HyraxPCS as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_verifier(
@@ -996,7 +1086,10 @@ mod tests {
         println!("Hyrax Opening Proof: {:?}", hyrax_proof_duration);
         let hyrax_total = hyrax_setup_duration + hyrax_commit_duration + hyrax_proof_duration;
         println!("Hyrax Total: {:?}", hyrax_total);
-        println!("Total time: {:?}", phase1_duration + phase2_duration + hyrax_total);
+        println!(
+            "Total time: {:?}",
+            phase1_duration + phase2_duration + hyrax_total
+        );
         println!("Hyrax polynomial variables: {}", num_hyrax_vars);
         println!("==============================\n");
     }

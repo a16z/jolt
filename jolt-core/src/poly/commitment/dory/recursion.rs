@@ -67,10 +67,12 @@ pub struct JoltG1ScalarMulWitness {
     pub point_base: G1Affine,
     pub scalar: Fr,
     pub result: G1Affine,
-    pub x_a_mles: Vec<Vec<Fq>>,    // x-coords of A_0, A_1, ..., A_n
-    pub y_a_mles: Vec<Vec<Fq>>,    // y-coords of A_0, A_1, ..., A_n
-    pub x_t_mles: Vec<Vec<Fq>>,    // x-coords of T_0, T_1, ..., T_{n-1}
-    pub y_t_mles: Vec<Vec<Fq>>,    // y-coords of T_0, T_1, ..., T_{n-1}
+    pub x_a_mles: Vec<Vec<Fq>>,      // x-coords of A_0, A_1, ..., A_n
+    pub y_a_mles: Vec<Vec<Fq>>,      // y-coords of A_0, A_1, ..., A_n
+    pub x_t_mles: Vec<Vec<Fq>>,      // x-coords of T_0, T_1, ..., T_{n-1}
+    pub y_t_mles: Vec<Vec<Fq>>,      // y-coords of T_0, T_1, ..., T_{n-1}
+    pub x_a_next_mles: Vec<Vec<Fq>>, // x-coords of A_{i+1} (shifted by 1)
+    pub y_a_next_mles: Vec<Vec<Fq>>, // y-coords of A_{i+1} (shifted by 1)
     pub bits: Vec<bool>,
     ark_result: ArkG1,
 }
@@ -179,6 +181,8 @@ impl WitnessGenerator<JoltWitness, BN254> for JoltWitnessGenerator {
             y_a_mles: scalar_mul_steps.y_a_mles,
             x_t_mles: scalar_mul_steps.x_t_mles,
             y_t_mles: scalar_mul_steps.y_t_mles,
+            x_a_next_mles: scalar_mul_steps.x_a_next_mles,
+            y_a_next_mles: scalar_mul_steps.y_a_next_mles,
             bits: scalar_mul_steps.bits,
             ark_result: *result,
         }
