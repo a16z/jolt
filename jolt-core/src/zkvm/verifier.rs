@@ -50,8 +50,8 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        sumcheck_verifier::SumcheckInstanceVerifier,
         booleanity::{BooleanityParams, BooleanityVerifier},
+        sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},

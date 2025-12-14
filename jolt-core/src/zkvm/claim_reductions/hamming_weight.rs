@@ -250,8 +250,8 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             claims_hw.push(hw_claim);
 
             // Booleanity claim (from booleanity sumcheck)
-            let (_, bool_claim) = accumulator
-                .get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity);
+            let (_, bool_claim) =
+                accumulator.get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity);
             claims_bool.push(bool_claim);
 
             // Virtualization claim (with per-polynomial r_addr)
