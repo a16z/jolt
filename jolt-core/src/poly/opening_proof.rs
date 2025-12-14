@@ -19,8 +19,6 @@ use std::sync::Arc;
 use super::{
     commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::MultilinearPolynomial,
 };
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     transcripts::Transcript,

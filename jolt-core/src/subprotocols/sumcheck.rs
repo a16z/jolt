@@ -146,14 +146,6 @@ impl BatchedSumcheck {
                     "round {round}: H(0) + H(1) = {h0} + {h1} != {batched_claim}"
                 );
                 batched_claim = batched_univariate_poly.evaluate(&r_j);
-
-                // Print final batched_claim for Stage 7 debugging
-                if remaining_rounds == 1 && sumcheck_instances.len() == 1 && max_num_rounds <= 8 {
-                    eprintln!(
-                        "BatchedSumcheck::prove final batched_claim={:?}",
-                        batched_claim
-                    );
-                }
             }
 
             for sumcheck in sumcheck_instances.iter_mut() {
