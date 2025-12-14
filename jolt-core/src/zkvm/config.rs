@@ -113,17 +113,17 @@ impl OneHotParams {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn ram_address_chunk(&self, address: u64, idx: usize) -> u16 {
         ((address >> self.ram_shifts[idx]) & self.k_chunk_mask as u64) as u16
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn bytecode_pc_chunk(&self, pc: usize, idx: usize) -> u16 {
         ((pc >> self.bytecode_shifts[idx]) & self.k_chunk_mask) as u16
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn lookup_index_chunk(&self, index: u128, idx: usize) -> u16 {
         ((index >> self.instruction_shifts[idx]) & self.k_chunk_mask as u128) as u16
     }
