@@ -149,10 +149,7 @@ impl BatchedSumcheck {
 
                 // Print final batched_claim for Stage 7 debugging
                 if remaining_rounds == 1 && sumcheck_instances.len() == 1 && max_num_rounds <= 8 {
-                    eprintln!(
-                        "BatchedSumcheck::prove final batched_claim={:?}",
-                        batched_claim
-                    );
+                    eprintln!("BatchedSumcheck::prove final batched_claim={batched_claim:?}");
                 }
             }
 

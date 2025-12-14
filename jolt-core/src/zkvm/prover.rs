@@ -1112,12 +1112,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Dense polynomials: RamInc and RdInc (from IncReduction in Stage 6)
         // These are at r_cycle_stage6 only (length log_T)
-        let (ram_inc_point, ram_inc_claim) =
+        let (_ram_inc_point, ram_inc_claim) =
             self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamInc,
                 SumcheckId::IncReduction,
             );
-        let (rd_inc_point, rd_inc_claim) = self
+        let (_rd_inc_point, rd_inc_claim) = self
             .opening_accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
 
@@ -1132,12 +1132,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             let r_cycle_from_unified = &unified_point.r[log_k_chunk..];
 
             debug_assert_eq!(
-                ram_inc_point.r.as_slice(),
+                _ram_inc_point.r.as_slice(),
                 r_cycle_from_unified,
                 "RamInc opening point should match r_cycle from UnifiedBooleanity"
             );
             debug_assert_eq!(
-                rd_inc_point.r.as_slice(),
+                _rd_inc_point.r.as_slice(),
                 r_cycle_from_unified,
                 "RdInc opening point should match r_cycle from UnifiedBooleanity"
             );
