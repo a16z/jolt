@@ -160,20 +160,21 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_closure = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+                      trusted_advice_hint: Option<<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>> }
         } else {
             quote! {}
         };
 
         let commitment_arg_in_call = if has_trusted_advice {
-            quote! { , trusted_advice_commitment }
+            quote! { , trusted_advice_commitment, trusted_advice_hint }
         } else {
             quote! {}
         };
 
         let return_type = if has_trusted_advice {
             quote! {
-                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>) -> #prove_output_ty + Sync + Send
+                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, Option<<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>>) -> #prove_output_ty + Sync + Send
             }
         } else {
             quote! {
@@ -596,8 +597,10 @@ impl MacroBuilder {
                     None,
                 );
 
-                // Initialize Dory globals with specified parameters
-                let _guard = jolt::DoryGlobals::initialize(1, max_trusted_advice_size as usize / 8);
+                // Initialize Dory globals with Main context dimensions from preprocessing.
+                // This ensures the commitment is compatible with the batch opening in Stage 8.
+                let k_chunk = 1usize << preprocessing.log_k_chunk;
+                let _guard = jolt::DoryGlobals::initialize(k_chunk, preprocessing.max_padded_trace_length);
 
                 let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);
                 let (commitment, hint) = jolt::PCS::commit(&poly, &preprocessing.generators);
@@ -647,15 +650,16 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+                      trusted_advice_hint: Option<<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>> }
         } else {
             quote! {}
         };
 
         let commitment_arg = if has_trusted_advice {
-            quote! { trusted_advice_commitment }
+            quote! { trusted_advice_commitment, trusted_advice_hint }
         } else {
-            quote! { None }
+            quote! { None, None }
         };
 
         quote! {

@@ -108,32 +108,23 @@
 //! This factor accounts for the "zero-prefix" padding: advice is conceptually a
 //! polynomial that is zero everywhere except when all prefix variables are 0.
 //!
-//! ## IMPORTANT: Remaining Work for Full Integration
+//! ## Implementation Notes
 //!
-//! The current implementation reduces advice claims via this sumcheck and collects
-//! them in `DoryOpeningState`. However, **the Dory batch opening proof does not yet
-//! fully include advice** because:
+//! This module is part of the advice batching infrastructure:
 //!
-//! 1. **Commitment context mismatch**: Advice polynomials are currently committed
-//!    using separate `DoryContext` settings (`TrustedAdvice`/`UntrustedAdvice`)
-//!    which have different matrix dimensions than the `Main` context used for
-//!    the batch opening. For full integration, advice needs to be committed with
-//!    the `Main` context (with implicit zero-padding to the full dimensions).
+//! 1. **Commitment with Main context**: Advice polynomials are now committed using
+//!    the Main `DoryContext` (with the same dimensions as other polynomials). This
+//!    enables the batch opening to work correctly. The SDK's `commit_trusted_advice`
+//!    function and the prover's `generate_and_commit_untrusted_advice` both use
+//!    the Main context.
 //!
-//! 2. **Hint combination**: The `RLCPolynomial::new_streaming` function builds
-//!    the RLC from trace data, and advice polynomials are skipped because they
-//!    cannot be streamed from trace. Advice hints need to be stored separately
-//!    and combined with the main polynomial hints in Stage 8.
+//! 2. **Hint storage and combination**: Advice hints are stored in `JoltAdvice` and
+//!    combined with other polynomial hints in `build_streaming_rlc`. Shorter hints
+//!    are zero-padded by `combine_hints` to match the maximum row count.
 //!
-//! 3. **RLC polynomial contribution**: Advice polynomials need to contribute to
-//!    the RLC polynomial evaluation. Currently they're excluded from the RLC.
-//!
-//! Until these are addressed, the advice claims are reduced but the Stage 8
-//! opening proof won't correctly verify them. The verification will fail if
-//! advice is present.
-//!
-//! **Temporary workaround**: If advice is present, the system should fall back
-//! to the original separate advice proofs (not yet implemented in this version).
+//! 3. **Lagrange factors**: Since advice polynomials have fewer variables than the
+//!    unified opening point, Lagrange factors are applied in Stage 7 to account
+//!    for the "zero-prefix" padding.
 
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;

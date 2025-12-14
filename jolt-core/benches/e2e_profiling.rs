@@ -224,6 +224,7 @@ fn prove_example(
             &[],
             &[],
             None,
+            None,
         );
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover.prove();
@@ -276,6 +277,7 @@ fn prove_example_with_trace(
         &serialized_input,
         &[],
         &[],
+        None,
         None,
     );
     let now = Instant::now();

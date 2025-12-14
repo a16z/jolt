@@ -32,6 +32,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
     untrusted_advice_bytes: &[u8],
     trusted_advice_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
+    trusted_advice_hint: Option<<PCS as CommitmentScheme>::OpeningProofHint>,
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
 ) -> (
@@ -48,6 +49,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
         untrusted_advice_bytes,
         trusted_advice_bytes,
         trusted_advice_commitment,
+        trusted_advice_hint,
     );
     let io_device = prover.program_io.clone();
     let (proof, debug_info) = prover.prove();

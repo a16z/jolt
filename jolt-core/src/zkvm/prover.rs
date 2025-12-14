@@ -17,7 +17,7 @@ use crate::{
     poly::{
         commitment::{
             commitment_scheme::StreamingCommitmentScheme,
-            dory::{DoryContext, DoryGlobals},
+            dory::DoryGlobals,
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
@@ -159,6 +159,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
@@ -209,6 +210,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace,
             program_io,
             trusted_advice_commitment,
+            trusted_advice_hint,
             final_memory_state,
         )
     }
@@ -219,6 +221,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         mut trace: Vec<Cycle>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
         // truncate trailing zeros on device outputs
@@ -278,6 +281,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 untrusted_advice_polynomial: None,
                 trusted_advice_commitment,
                 trusted_advice_polynomial: None,
+                untrusted_advice_hint: None,
+                trusted_advice_hint,
             },
             unpadded_trace_len,
             padded_trace_len,
@@ -474,11 +479,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             return None;
         }
 
-        DoryGlobals::initialize_untrusted_advice(
-            1,
-            self.program_io.memory_layout.max_untrusted_advice_size as usize / 8,
-        );
-        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
+        // Use Main DoryContext (already initialized by generate_and_commit_witness_polynomials)
+        // The advice polynomial is implicitly zero-padded to full dimensions.
+        // The hint will be padded when combined with other hints in Stage 8.
 
         let mut untrusted_advice_vec =
             vec![0; self.program_io.memory_layout.max_untrusted_advice_size as usize / 8];
@@ -491,10 +494,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
-        let (commitment, _hint) = PCS::commit(&poly, &self.preprocessing.generators);
+        let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript.append_serializable(&commitment);
 
         self.advice.untrusted_advice_polynomial = Some(poly);
+        self.advice.untrusted_advice_hint = Some(hint);
 
         Some(commitment)
     }
@@ -1231,7 +1235,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
-        let (joint_poly, hint) = self.build_streaming_rlc::<PCS>(
+        let (joint_poly, hint) = self.build_streaming_rlc(
             opening_proof_hints,
             state,
             (
@@ -1254,12 +1258,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     /// Build streaming RLC polynomial from DoryOpeningState.
     /// Does NOT require regenerating witness polynomials - streams directly from trace.
     #[tracing::instrument(skip_all)]
-    fn build_streaming_rlc<PCS2: CommitmentScheme<Field = F>>(
+    fn build_streaming_rlc(
         &self,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS2::OpeningProofHint>,
+        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         state: &DoryOpeningState<F>,
         streaming_context: (TraceSource, Arc<RLCStreamingData>, OneHotParams),
-    ) -> (MultilinearPolynomial<F>, PCS2::OpeningProofHint) {
+    ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         use crate::poly::rlc_polynomial::RLCPolynomial;
         use std::collections::BTreeMap;
 
@@ -1269,6 +1273,27 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
         }
 
+        // Separate advice from other polynomials (advice is not streamed from trace)
+        let mut advice_coeffs = Vec::new();
+        let mut advice_hints = Vec::new();
+
+        // Handle trusted advice
+        if let Some(trusted_coeff) = rlc_map.remove(&CommittedPolynomial::TrustedAdvice) {
+            advice_coeffs.push(trusted_coeff);
+            if let Some(hint) = self.advice.trusted_advice_hint.clone() {
+                advice_hints.push(hint);
+            }
+        }
+
+        // Handle untrusted advice
+        if let Some(untrusted_coeff) = rlc_map.remove(&CommittedPolynomial::UntrustedAdvice) {
+            advice_coeffs.push(untrusted_coeff);
+            if let Some(hint) = self.advice.untrusted_advice_hint.clone() {
+                advice_hints.push(hint);
+            }
+        }
+
+        // Remaining polynomials are streamed from trace
         let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
             rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
 
@@ -1281,12 +1306,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &coeffs,
         ));
 
-        let hints: Vec<PCS2::OpeningProofHint> = rlc_map
+        // Collect hints for streamed polynomials
+        let mut all_hints: Vec<PCS::OpeningProofHint> = rlc_map
             .into_keys()
             .map(|k| opening_hints.remove(&k).unwrap())
             .collect();
+        let mut all_coeffs = coeffs;
 
-        let hint = PCS2::combine_hints(hints, &coeffs);
+        // Add advice hints (they're already in Main context and will be padded by combine_hints)
+        all_hints.extend(advice_hints);
+        all_coeffs.extend(advice_coeffs);
+
+        let hint = PCS::combine_hints(all_hints, &all_coeffs);
 
         (joint_poly, hint)
     }
@@ -1296,6 +1327,10 @@ pub struct JoltAdvice<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub trusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
+    /// Hint for untrusted advice (for batched Dory opening)
+    pub untrusted_advice_hint: Option<PCS::OpeningProofHint>,
+    /// Hint for trusted advice (for batched Dory opening)
+    pub trusted_advice_hint: Option<PCS::OpeningProofHint>,
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -1304,6 +1339,10 @@ pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F
     pub bytecode: BytecodePreprocessing,
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
+    /// Maximum padded trace length (power of 2)
+    pub max_padded_trace_length: usize,
+    /// log2 of chunk size for one-hot encoding
+    pub log_k_chunk: usize,
 }
 
 impl<F, PCS> JoltProverPreprocessing<F, PCS>
@@ -1331,6 +1370,8 @@ where
             bytecode,
             ram,
             memory_layout,
+            max_padded_trace_length: max_T,
+            log_k_chunk: log_chunk,
         }
     }
 
@@ -1410,7 +1451,7 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1444,7 +1485,7 @@ mod tests {
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let log_chunk = 8; // Use default log_chunk for tests
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
 
         assert!(
             prover.padded_trace_len <= (1 << log_chunk),
@@ -1491,7 +1532,7 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1540,7 +1581,7 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1600,21 +1641,20 @@ mod tests {
         let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
-        let trusted_advice_commitment = {
-            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice(
-                1,
-                (max_trusted_advice_size as usize) / 8,
-            );
-            let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
-                crate::poly::commitment::dory::DoryContext::TrustedAdvice,
+        let (trusted_advice_commitment, trusted_advice_hint) = {
+            // Use Main context for batch-compatible commitment
+            let k_chunk = 1usize << preprocessing.log_k_chunk;
+            let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(
+                k_chunk,
+                preprocessing.max_padded_trace_length,
             );
             let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
-            let (trusted_advice_commitment, _hint) =
+            let (commitment, hint) =
                 <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
                     &poly,
                     &preprocessing.generators,
                 );
-            trusted_advice_commitment
+            (commitment, hint)
         };
 
         let prover = RV64IMACProver::gen_from_elf(
@@ -1624,6 +1664,7 @@ mod tests {
             &untrusted_advice,
             &trusted_advice,
             Some(trusted_advice_commitment),
+            Some(trusted_advice_hint),
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1676,7 +1717,7 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[], &[], &[], None);
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[], &[], &[], None, None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1709,7 +1750,7 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1742,7 +1783,7 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[50], &[], &[], None);
+            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[50], &[], &[], None, None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1782,6 +1823,7 @@ mod tests {
             lazy_trace,
             trace,
             program_io.clone(),
+            None,
             None,
             final_memory_state,
         );
@@ -1824,6 +1866,7 @@ mod tests {
             lazy_trace,
             trace,
             program_io.clone(),
+            None,
             None,
             final_memory_state,
         );
