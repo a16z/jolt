@@ -48,6 +48,8 @@ pub struct OneHotParams {
     pub k_chunk: usize,
     /// Bitmask for extracting chunks: `k_chunk - 1`. Use with `& k_chunk_mask` instead of `% k_chunk`.
     k_chunk_mask: usize,
+    /// Bitmask for log_k_chunk: `log_k_chunk - 1`. Use with `& log_k_chunk_mask` instead of `% log_k_chunk`.
+    log_k_chunk_mask: usize,
 
     pub bytecode_k: usize,
     pub ram_k: usize,
@@ -99,6 +101,7 @@ impl OneHotParams {
             lookups_ra_virtual_log_k_chunk,
             k_chunk,
             k_chunk_mask: k_chunk - 1,
+            log_k_chunk_mask: log_k_chunk - 1,
             bytecode_k,
             ram_k,
             instruction_d,
@@ -135,7 +138,7 @@ impl OneHotParams {
             [
                 &vec![
                     F::Challenge::from(0_u128);
-                    self.log_k_chunk - (r_address.len() % self.log_k_chunk)
+                    self.log_k_chunk - (r_address.len() & self.log_k_chunk_mask)
                 ],
                 r_address,
             ]

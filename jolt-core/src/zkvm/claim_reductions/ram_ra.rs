@@ -501,6 +501,8 @@ impl<F: JoltField> PhaseAddressProver<F> {
         let m = round + 1;
         let half_len = self.B_1.len() / 2;
         let inner_len = 1 << m;
+        // Precompute mask for k % (1 << (m - 1)) -> k & f_index_mask
+        let f_index_mask = (1 << (m - 1)) - 1;
 
         let [eval_0, eval_c2] = (0..half_len)
             .into_par_iter()
@@ -530,7 +532,7 @@ impl<F: JoltField> PhaseAddressProver<F> {
                                 },
                                 |mut acc, k| {
                                     let k_m = (k >> (m - 1)) & 1;
-                                    let F_k = self.F[k % (1 << (m - 1))];
+                                    let F_k = self.F[k & f_index_mask];
                                     let G_A_k = self.G_A[k];
                                     let G_B_k = self.G_B[k];
 
@@ -566,7 +568,7 @@ impl<F: JoltField> PhaseAddressProver<F> {
 
                         for k in k_start..k_end {
                             let k_m = (k >> (m - 1)) & 1;
-                            let F_k = self.F[k % (1 << (m - 1))];
+                            let F_k = self.F[k & f_index_mask];
                             let G_A_k = self.G_A[k];
                             let G_B_k = self.G_B[k];
 

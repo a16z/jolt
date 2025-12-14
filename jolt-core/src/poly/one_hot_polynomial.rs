@@ -172,6 +172,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
         } else {
             let num_chunks = rayon::current_num_threads().next_power_of_two();
             let chunk_size = std::cmp::max(1, num_rows / num_chunks);
+            // row_len is always a power of two (from DoryGlobals::calculate_dimensions)
+            let log_row_len = row_len.trailing_zeros();
+            let row_len_mask = (row_len - 1) as u64;
 
             // Iterate over chunks of contiguous rows in parallel
             let mut result: Vec<G> = vec![G::zero(); num_rows];
@@ -182,8 +185,8 @@ impl<F: JoltField> OneHotPolynomial<F> {
             for (t, k) in self.nonzero_indices.iter().enumerate() {
                 if let Some(k) = k {
                     let global_index = *k as u64 * T as u64 + t as u64;
-                    let row_index = (global_index / row_len as u64) as usize;
-                    let col_index = (global_index % row_len as u64) as usize;
+                    let row_index = (global_index >> log_row_len) as usize;
+                    let col_index = (global_index & row_len_mask) as usize;
                     row_indices[row_index].push(col_index);
                 }
             }
@@ -356,6 +359,10 @@ impl<F: JoltField> OneHotPolynomial<F> {
         } else {
             let num_chunks = rayon::current_num_threads().next_power_of_two();
             let chunk_size = std::cmp::max(1, num_columns / num_chunks);
+            // row_len and chunk_size are powers of two (from DoryGlobals and next_power_of_two)
+            let log_row_len = row_len.trailing_zeros();
+            let row_len_mask = (row_len - 1) as u128;
+            let chunk_size_mask = chunk_size - 1;
 
             result
                 .par_chunks_mut(chunk_size)
@@ -366,12 +373,12 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     for (t, k) in self.nonzero_indices.iter().enumerate() {
                         if let Some(k) = k {
                             let global_index = *k as u128 * T as u128 + t as u128;
-                            let col_index = (global_index % row_len as u128) as usize;
+                            let col_index = (global_index & row_len_mask) as usize;
                             // If this coefficient falls in the chunk of rows corresponding
                             // to `chunk_index`, compute its contribution to the result.
                             if col_index >= min_col_index && col_index < max_col_index {
-                                let row_index = (global_index / row_len as u128) as usize;
-                                chunk[col_index % chunk_size] += coeff * left_vec[row_index];
+                                let row_index = (global_index >> log_row_len) as usize;
+                                chunk[col_index & chunk_size_mask] += coeff * left_vec[row_index];
                             }
                         }
                     }

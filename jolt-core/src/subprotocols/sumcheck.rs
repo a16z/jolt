@@ -122,7 +122,6 @@ impl BatchedSumcheck {
                 // Sanity check
                 let h0 = batched_univariate_poly.evaluate::<F>(&F::zero());
                 let h1 = batched_univariate_poly.evaluate::<F>(&F::one());
-
                 assert_eq!(
                     h0 + h1,
                     batched_claim,
