@@ -48,7 +48,6 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
-        split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
     subprotocols::{
@@ -286,6 +285,9 @@ impl<F: JoltField> PhaseAddressProver<F> {
     }
 
     /// Compute G_A[k] = Σ_{c: address[c]=k} eq_cycle_A(c) and G_B similarly.
+    ///
+    /// Uses two-table split-eq: split r_cycle into MSB/LSB halves, compute E_hi and E_lo,
+    /// then eq(r_cycle, c) = E_hi[c_hi] * E_lo[c_lo] where c = (c_hi << lo_bits) | c_lo.
     #[tracing::instrument(skip_all, name = "PhaseAddressProver::compute_G_arrays")]
     fn compute_G_arrays(
         addresses: &[Option<usize>],
@@ -297,66 +299,47 @@ impl<F: JoltField> PhaseAddressProver<F> {
     ) -> (Vec<F>, Vec<F>) {
         let T = addresses.len();
 
-        // Build split-eq polynomials for all three eq tables
-        let (split_raf, (split_rw, split_val)) = rayon::join(
-            || GruenSplitEqPolynomial::<F>::new(r_cycle_raf, BindingOrder::LowToHigh),
+        // Two-table split-eq:
+        // EqPolynomial::evals uses big-endian bit order: r[0] is MSB, r[last] is LSB.
+        // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
+        let log_T = r_cycle_raf.len();
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+
+        let (r_raf_hi, r_raf_lo) = r_cycle_raf.split_at(hi_bits);
+        let (r_rw_hi, r_rw_lo) = r_cycle_rw.split_at(hi_bits);
+        let (r_val_hi, r_val_lo) = r_cycle_val.split_at(hi_bits);
+
+        // Compute all 6 eq tables in parallel
+        let ((E_raf_hi, E_raf_lo), ((E_rw_hi, E_rw_lo), (E_val_hi, E_val_lo))) = rayon::join(
             || {
                 rayon::join(
-                    || GruenSplitEqPolynomial::<F>::new(r_cycle_rw, BindingOrder::LowToHigh),
-                    || GruenSplitEqPolynomial::<F>::new(r_cycle_val, BindingOrder::LowToHigh),
+                    || EqPolynomial::<F>::evals(r_raf_hi),
+                    || EqPolynomial::<F>::evals(r_raf_lo),
+                )
+            },
+            || {
+                rayon::join(
+                    || {
+                        rayon::join(
+                            || EqPolynomial::<F>::evals(r_rw_hi),
+                            || EqPolynomial::<F>::evals(r_rw_lo),
+                        )
+                    },
+                    || {
+                        rayon::join(
+                            || EqPolynomial::<F>::evals(r_val_hi),
+                            || EqPolynomial::<F>::evals(r_val_lo),
+                        )
+                    },
                 )
             },
         );
 
-        // Extract E_in, E_out tables and current_w for each
-        let E_in_raf = split_raf.E_in_current();
-        let E_out_raf = split_raf.E_out_current();
-        let w_raf = split_raf.get_current_w();
+        let in_len = E_raf_lo.len(); // 2^lo_bits
+        let out_len = E_raf_hi.len(); // 2^hi_bits
 
-        let E_in_rw = split_rw.E_in_current();
-        let E_out_rw = split_rw.E_out_current();
-        let w_rw = split_rw.get_current_w();
-
-        let E_in_val = split_val.E_in_current();
-        let E_out_val = split_val.E_out_current();
-        let w_val = split_val.get_current_w();
-
-        let in_len = E_in_raf.len();
-        let out_len = E_out_raf.len();
-        let x_in_bits = in_len.log_2();
-
-        // Precompute merged inner weights: [E_in[x_in] * (1-w), E_in[x_in] * w]
-        // Store as reduced F for 4-limb additions into 5-limb accumulator
-        let factor_0_raf = F::one() - w_raf;
-        let factor_1_raf: F = w_raf.into();
-        let factor_0_rw = F::one() - w_rw;
-        let factor_1_rw: F = w_rw.into();
-        let factor_0_val = F::one() - w_val;
-        let factor_1_val: F = w_val.into();
-
-        let compute_merged = |e_in: &[F], factor_0: F, factor_1: F| -> Vec<F> {
-            let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
-            merged
-                .par_chunks_exact_mut(2)
-                .zip(e_in.par_iter())
-                .for_each(|(chunk, &e)| {
-                    chunk[0] = e * factor_0;
-                    chunk[1] = e * factor_1;
-                });
-            merged
-        };
-
-        let (merged_raf, (merged_rw, merged_val)) = rayon::join(
-            || compute_merged(E_in_raf, factor_0_raf, factor_1_raf),
-            || {
-                rayon::join(
-                    || compute_merged(E_in_rw, factor_0_rw, factor_1_rw),
-                    || compute_merged(E_in_val, factor_0_val, factor_1_val),
-                )
-            },
-        );
-
-        // Divide work evenly among threads (by x_out index)
+        // Divide work evenly among threads (by c_hi index)
         let num_threads = rayon::current_num_threads();
         let chunk_size = out_len.div_ceil(num_threads);
 
@@ -385,13 +368,13 @@ impl<F: JoltField> PhaseAddressProver<F> {
                 let mut local_val: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
                 let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
 
-                for x_out in chunk_start..chunk_end {
-                    let e_out_raf = E_out_raf[x_out];
-                    let e_out_rw = E_out_rw[x_out];
-                    let e_out_val = E_out_val[x_out];
-                    let x_out_base = x_out << (x_in_bits + 1);
+                for c_hi in chunk_start..chunk_end {
+                    let e_hi_raf = E_raf_hi[c_hi];
+                    let e_hi_rw = E_rw_hi[c_hi];
+                    let e_hi_val = E_val_hi[c_hi];
+                    let c_hi_base = c_hi * in_len;
 
-                    // Clear touched flags and local accumulators for this x_out
+                    // Clear touched flags and local accumulators for this c_hi
                     for k in touched.ones() {
                         local_raf[k] = Default::default();
                         local_rw[k] = Default::default();
@@ -399,53 +382,32 @@ impl<F: JoltField> PhaseAddressProver<F> {
                     }
                     touched.clear();
 
-                    // Process all x_in for this x_out
-                    for x_in in 0..in_len {
-                        let j0 = x_out_base + (x_in << 1);
-                        let j1 = j0 + 1;
-                        let off = 2 * x_in;
-
-                        // Get 4-limb unreduced representations
-                        let add_raf_0 = *merged_raf[off].as_unreduced_ref();
-                        let add_raf_1 = *merged_raf[off + 1].as_unreduced_ref();
-                        let add_rw_0 = *merged_rw[off].as_unreduced_ref();
-                        let add_rw_1 = *merged_rw[off + 1].as_unreduced_ref();
-                        let add_val_0 = *merged_val[off].as_unreduced_ref();
-                        let add_val_1 = *merged_val[off + 1].as_unreduced_ref();
-
-                        // Process cycle j0 (last_bit = 0)
-                        if j0 < T {
-                            if let Some(k) = addresses[j0] {
-                                if !touched.contains(k) {
-                                    touched.insert(k);
-                                }
-                                local_raf[k] += add_raf_0;
-                                local_rw[k] += add_rw_0;
-                                local_val[k] += add_val_0;
-                            }
+                    // Process all c_lo for this c_hi (contiguous cycles)
+                    for c_lo in 0..in_len {
+                        let j = c_hi_base + c_lo;
+                        if j >= T {
+                            break;
                         }
 
-                        // Process cycle j1 (last_bit = 1)
-                        if j1 < T {
-                            if let Some(k) = addresses[j1] {
-                                if !touched.contains(k) {
-                                    touched.insert(k);
-                                }
-                                local_raf[k] += add_raf_1;
-                                local_rw[k] += add_rw_1;
-                                local_val[k] += add_val_1;
+                        if let Some(k) = addresses[j] {
+                            if !touched.contains(k) {
+                                touched.insert(k);
                             }
+                            // Accumulate E_lo[c_lo] in unreduced form
+                            local_raf[k] += *E_raf_lo[c_lo].as_unreduced_ref();
+                            local_rw[k] += *E_rw_lo[c_lo].as_unreduced_ref();
+                            local_val[k] += *E_val_lo[c_lo].as_unreduced_ref();
                         }
                     }
 
-                    // Barrett reduce and scale by E_out, only for touched indices
+                    // Barrett reduce and scale by E_hi, only for touched indices
                     for k in touched.ones() {
                         let reduced_raf = F::from_barrett_reduce::<5>(local_raf[k]);
                         let reduced_rw = F::from_barrett_reduce::<5>(local_rw[k]);
                         let reduced_val = F::from_barrett_reduce::<5>(local_val[k]);
-                        partial_raf[k] += e_out_raf * reduced_raf;
-                        partial_rw[k] += e_out_rw * reduced_rw;
-                        partial_val[k] += e_out_val * reduced_val;
+                        partial_raf[k] += e_hi_raf * reduced_raf;
+                        partial_rw[k] += e_hi_rw * reduced_rw;
+                        partial_val[k] += e_hi_val * reduced_val;
                     }
                 }
 

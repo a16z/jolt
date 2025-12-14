@@ -30,8 +30,6 @@ use fixedbitset::FixedBitSet;
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -197,7 +195,8 @@ impl RaIndices {
 /// For one-hot RA polynomials, this simplifies to:
 /// G_i(k) = Σ_{j: chunk_i(j) = k} eq_r_cycle[j]
 ///
-/// Uses GruenSplitEqPolynomial for efficient eq evaluation with E_out/E_in tables.
+/// Uses a two-table split-eq: split `r_cycle` into MSB/LSB halves, compute `E_hi` and `E_lo`,
+/// then `eq(r_cycle, c) = E_hi[c_hi] * E_lo[c_lo]` where `c = (c_hi << lo_bits) | c_lo`.
 ///
 /// Returns G in order: [instruction_0..d, bytecode_0..d, ram_0..d]
 /// Each inner Vec has length k_chunk.
@@ -271,38 +270,25 @@ fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
     let N = instruction_d + bytecode_d + ram_d;
     let T = trace.len();
 
-    // Build split-eq polynomial over r_cycle
-    // This gives us E_out, E_in tables and the current_w (last challenge)
-    let split_eq = GruenSplitEqPolynomial::<F>::new(r_cycle, BindingOrder::LowToHigh);
+    // Two-table split-eq:
+    // EqPolynomial::evals uses big-endian bit order: r_cycle[0] is MSB, r_cycle[last] is LSB.
+    // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
+    let log_T = r_cycle.len();
+    let lo_bits = log_T / 2;
+    let hi_bits = log_T - lo_bits;
+    let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
 
-    let E_in = split_eq.E_in_current();
-    let E_out = split_eq.E_out_current();
-    let w_current = split_eq.get_current_w();
-    let factor_0 = F::one() - w_current;
-    let factor_1: F = w_current.into();
+    let (E_hi, E_lo) = rayon::join(
+        || EqPolynomial::<F>::evals(r_hi),
+        || EqPolynomial::<F>::evals(r_lo),
+    );
 
-    let in_len = E_in.len();
-    let x_in_bits = in_len.log_2();
+    let in_len = E_lo.len(); // 2^lo_bits
 
-    // Precompute merged inner weights as reduced field elements: [E_in[x_in] * (1-w), E_in[x_in] * w]
-    // By storing as F instead of Unreduced<9>, we can accumulate with 4-limb additions
-    // into a 5-limb accumulator (instead of 9-limb additions into 9-limb accumulator)
-    let merged_in: Vec<F> = {
-        let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * in_len);
-        merged
-            .par_chunks_exact_mut(2)
-            .zip(E_in.par_iter())
-            .for_each(|(chunk, &low)| {
-                chunk[0] = low * factor_0;
-                chunk[1] = low * factor_1;
-            });
-        merged
-    };
-
-    // Split E_out into exactly num_threads chunks to minimize allocations
-    // Each thread allocates ONE partial_G and processes its entire chunk
+    // Split E_hi into exactly num_threads chunks to minimize allocations
+    // Each thread allocates ONE partial_G and processes its entire chunk.
     let num_threads = rayon::current_num_threads();
-    let out_len = E_out.len();
+    let out_len = E_hi.len(); // 2^hi_bits
     let chunk_size = out_len.div_ceil(num_threads);
 
     // Create index ranges for each thread chunk
@@ -322,17 +308,17 @@ fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
             // Each thread allocates ONE partial_G for its entire chunk
             let mut partial_G: Vec<F> = unsafe_allocate_zero_vec(N * K);
 
-            // Reusable local_unreduced (5-limb) and touched_flags across x_out iterations
+            // Reusable local_unreduced (5-limb) and touched_flags across c_hi iterations
             // Using 5-limb accumulator since we're adding 4-limb field elements
             let mut local_unreduced: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(N * K);
             let mut touched_flags: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); N];
 
-            // Process all x_out in this thread's chunk
-            for x_out in chunk_start..chunk_end {
-                let e_out = E_out[x_out];
-                let x_out_base = x_out << (x_in_bits + 1);
+            // Process all c_hi in this thread's chunk
+            for c_hi in chunk_start..chunk_end {
+                let e_hi = E_hi[c_hi];
+                let c_hi_base = c_hi * in_len;
 
-                // Clear touched flags and local accumulators for this x_out
+                // Clear touched flags and local accumulators for this c_hi
                 for poly_idx in 0..N {
                     for k in touched_flags[poly_idx].ones() {
                         local_unreduced[poly_idx * K + k] = Default::default();
@@ -340,126 +326,72 @@ fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
                     touched_flags[poly_idx].clear();
                 }
 
-                // Sequential over x_in
-                for x_in in 0..in_len {
-                    let j0 = x_out_base + (x_in << 1);
-                    let j1 = j0 + 1;
-                    let off = 2 * x_in;
+                // Sequential over c_lo (contiguous cycles for this c_hi)
+                for c_lo in 0..in_len {
+                    let j = c_hi_base + c_lo;
+                    if j >= T {
+                        break;
+                    }
+
                     // Get 4-limb unreduced representation (copy, since AddAssign takes owned)
-                    let add0 = *merged_in[off].as_unreduced_ref();
-                    let add1 = *merged_in[off + 1].as_unreduced_ref();
+                    let add = *E_lo[c_lo].as_unreduced_ref();
 
-                    // Process cycle j0 (last_bit = 0)
-                    if j0 < T {
-                        let ra_idx = RaIndices::from_cycle(
-                            &trace[j0],
-                            bytecode,
-                            memory_layout,
-                            one_hot_params,
-                        );
+                    let ra_idx = RaIndices::from_cycle(
+                        &trace[j],
+                        bytecode,
+                        memory_layout,
+                        one_hot_params,
+                    );
 
-                        // Write ra_indices if collecting (disjoint write, each j visited once)
-                        if COLLECT_RA {
-                            // SAFETY: Each j0 value is unique across all parallel iterations,
-                            // so this write is to a disjoint index. No data race possible.
-                            // Convert usize back to pointer.
-                            unsafe {
-                                let ra_ptr = ra_indices_ptr_usize as *mut RaIndices;
-                                *ra_ptr.add(j0) = ra_idx;
-                            }
-                        }
-
-                        // InstructionRa contributions
-                        for i in 0..instruction_d {
-                            let k = ra_idx.instruction[i] as usize;
-                            if !touched_flags[i].contains(k) {
-                                touched_flags[i].insert(k);
-                            }
-                            local_unreduced[i * K + k] += add0;
-                        }
-
-                        // BytecodeRa contributions
-                        for i in 0..bytecode_d {
-                            let poly_idx = instruction_d + i;
-                            let k = ra_idx.bytecode[i] as usize;
-                            if !touched_flags[poly_idx].contains(k) {
-                                touched_flags[poly_idx].insert(k);
-                            }
-                            local_unreduced[poly_idx * K + k] += add0;
-                        }
-
-                        // RamRa contributions (may be None)
-                        for i in 0..ram_d {
-                            let poly_idx = instruction_d + bytecode_d + i;
-                            if let Some(k) = ra_idx.ram[i] {
-                                let k = k as usize;
-                                if !touched_flags[poly_idx].contains(k) {
-                                    touched_flags[poly_idx].insert(k);
-                                }
-                                local_unreduced[poly_idx * K + k] += add0;
-                            }
+                    // Write ra_indices if collecting (disjoint write, each j visited once)
+                    if COLLECT_RA {
+                        // SAFETY: Each j value is unique across all parallel iterations,
+                        // so this write is to a disjoint index. No data race possible.
+                        // Convert usize back to pointer.
+                        unsafe {
+                            let ra_ptr = ra_indices_ptr_usize as *mut RaIndices;
+                            *ra_ptr.add(j) = ra_idx;
                         }
                     }
 
-                    // Process cycle j1 (last_bit = 1)
-                    if j1 < T {
-                        let ra_idx = RaIndices::from_cycle(
-                            &trace[j1],
-                            bytecode,
-                            memory_layout,
-                            one_hot_params,
-                        );
-
-                        // Write ra_indices if collecting (disjoint write, each j visited once)
-                        if COLLECT_RA {
-                            // SAFETY: Each j1 value is unique across all parallel iterations,
-                            // so this write is to a disjoint index. No data race possible.
-                            // Convert usize back to pointer.
-                            unsafe {
-                                let ra_ptr = ra_indices_ptr_usize as *mut RaIndices;
-                                *ra_ptr.add(j1) = ra_idx;
-                            }
+                    // InstructionRa contributions
+                    for i in 0..instruction_d {
+                        let k = ra_idx.instruction[i] as usize;
+                        if !touched_flags[i].contains(k) {
+                            touched_flags[i].insert(k);
                         }
+                        local_unreduced[i * K + k] += add;
+                    }
 
-                        // InstructionRa contributions
-                        for i in 0..instruction_d {
-                            let k = ra_idx.instruction[i] as usize;
-                            if !touched_flags[i].contains(k) {
-                                touched_flags[i].insert(k);
-                            }
-                            local_unreduced[i * K + k] += add1;
+                    // BytecodeRa contributions
+                    for i in 0..bytecode_d {
+                        let poly_idx = instruction_d + i;
+                        let k = ra_idx.bytecode[i] as usize;
+                        if !touched_flags[poly_idx].contains(k) {
+                            touched_flags[poly_idx].insert(k);
                         }
+                        local_unreduced[poly_idx * K + k] += add;
+                    }
 
-                        // BytecodeRa contributions
-                        for i in 0..bytecode_d {
-                            let poly_idx = instruction_d + i;
-                            let k = ra_idx.bytecode[i] as usize;
+                    // RamRa contributions (may be None)
+                    for i in 0..ram_d {
+                        let poly_idx = instruction_d + bytecode_d + i;
+                        if let Some(k) = ra_idx.ram[i] {
+                            let k = k as usize;
                             if !touched_flags[poly_idx].contains(k) {
                                 touched_flags[poly_idx].insert(k);
                             }
-                            local_unreduced[poly_idx * K + k] += add1;
-                        }
-
-                        // RamRa contributions (may be None)
-                        for i in 0..ram_d {
-                            let poly_idx = instruction_d + bytecode_d + i;
-                            if let Some(k) = ra_idx.ram[i] {
-                                let k = k as usize;
-                                if !touched_flags[poly_idx].contains(k) {
-                                    touched_flags[poly_idx].insert(k);
-                                }
-                                local_unreduced[poly_idx * K + k] += add1;
-                            }
+                            local_unreduced[poly_idx * K + k] += add;
                         }
                     }
                 }
 
-                // Barrett reduce and scale by E_out[x_out], only for touched indices
+                // Barrett reduce and scale by E_hi[c_hi], only for touched indices
                 for poly_idx in 0..N {
                     for k in touched_flags[poly_idx].ones() {
                         let reduced =
                             F::from_barrett_reduce::<5>(local_unreduced[poly_idx * K + k]);
-                        partial_G[poly_idx * K + k] += e_out * reduced;
+                        partial_G[poly_idx * K + k] += e_hi * reduced;
                     }
                 }
             }
