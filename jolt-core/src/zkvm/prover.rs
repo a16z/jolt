@@ -27,7 +27,7 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanityParams, BooleanityProver},
+        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProof},
@@ -49,7 +49,7 @@ use crate::{
             read_raf_checking::ReadRafSumcheckParams as InstructionReadRafParams,
         },
         ram::{
-            hamming_booleanity::HammingBooleanityParams,
+            hamming_booleanity::HammingBooleanitySumcheckParams,
             output_check::OutputSumcheckParams,
             populate_memory_states,
             ra_virtual::RamRaVirtualParams,
@@ -896,11 +896,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // RamHammingBooleanity - uses r_cycle from Stage 5's RamRaReduction
-        let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
+        let ram_hamming_booleanity_params =
+            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
 
         // Booleanity: combines instruction, bytecode, and ram booleanity into one
         // (extracts r_address and r_cycle from Stage 5 internally)
-        let booleanity_params = BooleanityParams::new(
+        let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -932,7 +933,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
         // Booleanity prover - handles all three families
-        let booleanity = BooleanityProver::initialize(
+        let booleanity = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
             &self.preprocessing.bytecode,
@@ -958,7 +959,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "ram HammingBooleanitySumcheckProver",
                 &ram_hamming_booleanity,
             );
-            print_data_structure_heap_usage("BooleanityProver", &booleanity);
+            print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncReductionSumcheckProver", &inc_reduction);
