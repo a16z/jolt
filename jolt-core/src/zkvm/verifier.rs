@@ -513,12 +513,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             polynomials.push(CommittedPolynomial::RamRa(i));
         }
 
-        // Note: Advice polynomials are NOT included in Stage 8 batch opening because
-        // they are committed with max_padded_trace_length dimensions (before the actual
-        // trace length is known), which differs from the actual padded_trace_len used
-        // for other polynomials. Advice claims are reduced via AdviceClaimReduction in
-        // Stage 6, and verified directly against the commitment via the sumcheck.
-
         // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
         let mut r_address_be = r_address_stage7.clone();
         r_address_be.reverse();
@@ -532,6 +526,55 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let r_cycle_stage6 = &unified_point.r[log_k_chunk..];
 
         let opening_point = [r_address_be.as_slice(), r_cycle_stage6].concat();
+
+        // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
+        // These are committed with Main context dimensions so they can be batched.
+        // They have fewer variables than main polynomials, so we apply Lagrange factors.
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let advice_vars = advice_point.len();
+            let mut r_le = opening_point.clone();
+            r_le.reverse();
+            let sigma = crate::poly::commitment::dory::DoryGlobals::get_num_columns().log_2();
+            let nu = crate::poly::commitment::dory::DoryGlobals::get_max_num_rows().log_2();
+            debug_assert_eq!(sigma + nu, r_le.len());
+            let (r_cols, r_rows) = r_le.split_at(sigma);
+
+            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let col_prefix_factor: F = r_cols
+                .iter()
+                .skip(advice_vars)
+                .map(|r| F::one() - (*r).into())
+                .product();
+
+            claims.push(advice_claim * row_factor * col_prefix_factor);
+            polynomials.push(CommittedPolynomial::TrustedAdvice);
+        }
+
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let advice_vars = advice_point.len();
+            let mut r_le = opening_point.clone();
+            r_le.reverse();
+            let sigma = crate::poly::commitment::dory::DoryGlobals::get_num_columns().log_2();
+            let nu = crate::poly::commitment::dory::DoryGlobals::get_max_num_rows().log_2();
+            debug_assert_eq!(sigma + nu, r_le.len());
+            let (r_cols, r_rows) = r_le.split_at(sigma);
+
+            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let col_prefix_factor: F = r_cols
+                .iter()
+                .skip(advice_vars)
+                .map(|r| F::one() - (*r).into())
+                .product();
+
+            claims.push(advice_claim * row_factor * col_prefix_factor);
+            polynomials.push(CommittedPolynomial::UntrustedAdvice);
+        }
 
         // 6. Sample gamma and compute powers for RLC
         self.transcript.append_scalars(&claims);
@@ -567,12 +610,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Add advice commitments if they're part of the batch
         if let Some(ref commitment) = self.trusted_advice_commitment {
-            if state.polynomials.contains(&CommittedPolynomial::TrustedAdvice) {
+            if state
+                .polynomials
+                .contains(&CommittedPolynomial::TrustedAdvice)
+            {
                 commitments_map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
             }
         }
         if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
-            if state.polynomials.contains(&CommittedPolynomial::UntrustedAdvice) {
+            if state
+                .polynomials
+                .contains(&CommittedPolynomial::UntrustedAdvice)
+            {
                 commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
             }
         }

@@ -260,9 +260,7 @@ pub struct DoryOpeningState<F: JoltField> {
 impl<F: JoltField> DoryOpeningState<F> {
     /// Build streaming RLC polynomial from this state.
     /// Streams directly from trace - no witness regeneration needed.
-    ///
-    /// Note: Advice polynomials are NOT included in this batch because they are
-    /// committed with different dimensions (max_padded_trace_length vs actual).
+    /// Advice polynomials are passed separately (not streamed from trace).
     #[tracing::instrument(skip_all)]
     pub fn build_streaming_rlc<PCS: CommitmentScheme<Field = F>>(
         &self,
@@ -270,6 +268,7 @@ impl<F: JoltField> DoryOpeningState<F> {
         trace_source: TraceSource,
         rlc_streaming_data: Arc<RLCStreamingData>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        advice_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = BTreeMap::new();
@@ -286,6 +285,7 @@ impl<F: JoltField> DoryOpeningState<F> {
             trace_source,
             poly_ids.clone(),
             &coeffs,
+            advice_polys,
         ));
 
         let hints: Vec<PCS::OpeningProofHint> = rlc_map
@@ -355,7 +355,9 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         &self,
         sumcheck_id: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
         Some((point.clone(), *claim))
     }
 }
@@ -538,6 +540,7 @@ where
             trace_source,
             poly_ids.clone(),
             &coeffs,
+            std::collections::HashMap::new(), // No advice in this path
         ));
 
         let hints: Vec<PCS::OpeningProofHint> = rlc_map
@@ -596,6 +599,7 @@ where
                 trace_source,
                 poly_ids.clone(),
                 &coeffs,
+                std::collections::HashMap::new(), // No advice in this path
             );
             let materialized_rlc = rlc.materialize(&poly_ids, &poly_arcs, &coeffs);
             let joint_poly = MultilinearPolynomial::RLC(materialized_rlc);
@@ -663,7 +667,9 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         &self,
         sumcheck_id: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
         Some((point.clone(), *claim))
     }
 }

@@ -128,9 +128,7 @@
 
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding,
-};
+use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
@@ -173,6 +171,13 @@ pub struct AdviceClaimReductionParams<F: JoltField> {
     pub has_untrusted_advice: bool,
     /// Whether we need single opening (both points are identical)
     pub single_opening: bool,
+    /// Global address-chunk rounds (log_k_chunk) for Stage 6.
+    ///
+    /// We use this to align the advice-reduction sumcheck rounds to the *cycle* segment
+    /// of the Stage 6 batched challenges (instead of always using the suffix).
+    pub log_k_chunk: usize,
+    /// log2 of the trace length (Stage 6 cycle rounds).
+    pub log_t: usize,
 }
 
 impl<F: JoltField> AdviceClaimReductionParams<F> {
@@ -185,6 +190,9 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Option<Self> {
+        let log_t = trace_len.log_2();
+        let log_k_chunk = crate::zkvm::config::get_log_k_chunk(log_t);
+
         let single_opening =
             crate::zkvm::ram::read_write_checking::needs_single_advice_opening(trace_len);
 
@@ -246,6 +254,8 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
             has_trusted_advice,
             has_untrusted_advice,
             single_opening,
+            log_k_chunk,
+            log_t,
         })
     }
 
@@ -283,7 +293,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
 
         // Untrusted advice claims
         if self.has_untrusted_advice {
-            let offset = if self.single_opening { gamma } else { gamma_sqr };
+            let offset = if self.single_opening {
+                gamma
+            } else {
+                gamma_sqr
+            };
             if let Some((_, u1)) =
                 accumulator.get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
             {
@@ -313,7 +327,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
         &self,
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        // The challenges are the LAST advice_vars of r_cycle_stage6
+        // Challenges are instance-local and already correspond to the advice variables.
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
 }
@@ -412,11 +426,11 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
         let mut evals = [F::zero(); DEGREE_BOUND];
 
         // Trusted advice contribution: trusted(a) · eq_trusted(a)
-        if let (Some(ref trusted), Some(ref eq_trusted)) =
-            (&self.trusted_advice, &self.eq_trusted)
+        if let (Some(ref trusted), Some(ref eq_trusted)) = (&self.trusted_advice, &self.eq_trusted)
         {
             for j in 0..half_n.min(trusted.len() / 2) {
-                let t_evals = trusted.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                let t_evals =
+                    trusted.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
                 let eq_evals =
                     eq_trusted.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
@@ -461,9 +475,7 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for AdviceClaimReductionProver<F>
-{
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimReductionProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -510,6 +522,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         }
     }
 
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        // Align to the *start* of Booleanity's cycle segment, so advice variables correspond to
+        // the low Dory column bits (contiguous columns embedding).
+        let booleanity_rounds = self.params.log_k_chunk + self.params.log_t;
+        let booleanity_offset = max_num_rounds - booleanity_rounds;
+        booleanity_offset + self.params.log_k_chunk
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -532,8 +552,12 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Option<Self> {
-        let params =
-            AdviceClaimReductionParams::new_verifier(memory_layout, trace_len, accumulator, transcript)?;
+        let params = AdviceClaimReductionParams::new_verifier(
+            memory_layout,
+            trace_len,
+            accumulator,
+            transcript,
+        )?;
         Some(Self { params })
     }
 }
@@ -629,5 +653,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 opening_point,
             );
         }
+    }
+
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        let booleanity_rounds = self.params.log_k_chunk + self.params.log_t;
+        let booleanity_offset = max_num_rounds - booleanity_rounds;
+        booleanity_offset + self.params.log_k_chunk
     }
 }

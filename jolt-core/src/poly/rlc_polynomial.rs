@@ -57,6 +57,9 @@ impl TraceSource {
 pub struct StreamingRLCContext<F: JoltField> {
     pub dense_polys: Vec<(CommittedPolynomial, F)>,
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
+    /// Advice polynomials with their RLC coefficients.
+    /// These are NOT streamed from trace - they're passed in directly.
+    pub advice_polys: Vec<(F, MultilinearPolynomial<F>)>,
     pub trace_source: TraceSource,
     pub preprocessing: Arc<RLCStreamingData>,
     pub one_hot_params: OneHotParams,
@@ -204,6 +207,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     /// * `trace_source` - Either materialized trace (default) or lazy trace (experimental)
     /// * `poly_ids` - List of polynomial identifiers
     /// * `coefficients` - RLC coefficients for each polynomial
+    /// * `advice_poly_map` - Map of advice polynomial IDs to their actual polynomials
     #[tracing::instrument(skip_all)]
     pub fn new_streaming(
         one_hot_params: OneHotParams,
@@ -211,11 +215,13 @@ impl<F: JoltField> RLCPolynomial<F> {
         trace_source: TraceSource,
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
+        advice_poly_map: std::collections::HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
         let mut dense_polys = Vec::new();
         let mut onehot_polys = Vec::new();
+        let mut advice_polys = Vec::new();
 
         for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
             match poly_id {
@@ -228,10 +234,10 @@ impl<F: JoltField> RLCPolynomial<F> {
                     onehot_polys.push((*poly_id, *coeff));
                 }
                 CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
-                    // TODO: Advice polynomials need to be handled separately -
-                    // they cannot be streamed from trace. For now, the claims are
-                    // included in DoryOpeningState but hints are not combined.
-                    // Full integration requires changing how advice is committed.
+                    // Advice polynomials are passed in directly (not streamed from trace)
+                    if let Some(poly) = advice_poly_map.get(poly_id) {
+                        advice_polys.push((*coeff, poly.clone()));
+                    }
                 }
             }
         }
@@ -242,6 +248,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             streaming_context: Some(Arc::new(StreamingRLCContext {
                 dense_polys,
                 onehot_polys,
+                advice_polys,
                 trace_source,
                 preprocessing,
                 one_hot_params,
@@ -437,6 +444,32 @@ impl<F: JoltField> RLCPolynomial<F> {
                     one_hot.vector_matrix_product(left_vec, *coeff, &mut result);
                 }
                 _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
+            }
+        }
+
+        // Compute the vector-matrix product for advice polynomials (streaming context)
+        // Advice polynomials are small (fewer variables) and stored directly
+        if let Some(ctx) = &self.streaming_context {
+            for (coeff, advice_poly) in ctx.advice_polys.iter() {
+                // Advice polynomial has fewer coefficients than main polynomials.
+                // Treat it as occupying the "bottom-left" corner of the matrix.
+                // With main matrix dimensions, advice fits in the first few rows.
+                let advice_len = advice_poly.original_len();
+                let advice_rows = advice_len.div_ceil(num_columns);
+
+                // Only the first `advice_rows` left_vec elements contribute
+                for row_idx in 0..advice_rows.min(left_vec.len()) {
+                    let row_start = row_idx * num_columns;
+                    let row_end = ((row_idx + 1) * num_columns).min(advice_len);
+                    let row_slice_len = row_end - row_start;
+
+                    // Get coefficient slice for this row
+                    for col_idx in 0..row_slice_len {
+                        let coeff_idx = row_start + col_idx;
+                        let advice_val = advice_poly.get_coeff(coeff_idx);
+                        result[col_idx] += left_vec[row_idx] * *coeff * advice_val;
+                    }
+                }
             }
         }
 

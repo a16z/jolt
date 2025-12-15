@@ -7,18 +7,17 @@ use std::{
     time::Instant,
 };
 
+use crate::poly::commitment::dory::DoryContext;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
+use crate::zkvm::config::get_log_k_chunk as get_log_k_chunk_from_log_t;
 use crate::{
     field::JoltField,
     guest,
     poly::{
-        commitment::{
-            commitment_scheme::StreamingCommitmentScheme,
-            dory::DoryGlobals,
-        },
+        commitment::{commitment_scheme::StreamingCommitmentScheme, dory::DoryGlobals},
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             DoryOpeningState, OpeningAccumulator, ProverOpeningAccumulator, SumcheckId,
@@ -240,6 +239,45 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         } else {
             (trace.len() + 1).next_power_of_two()
         };
+        // We may need extra padding so the main Dory matrix has enough column variables
+        // to embed advice commitments committed in their own 1-row contexts.
+        let mut padded_trace_len = padded_trace_len;
+        let has_trusted_advice = !program_io.trusted_advice.is_empty();
+        let has_untrusted_advice = !program_io.untrusted_advice.is_empty();
+        let mut max_advice_vars = 0usize;
+        if has_trusted_advice {
+            let words = (preprocessing.memory_layout.max_trusted_advice_size as usize) / 8;
+            let cols = words.next_power_of_two().max(1);
+            max_advice_vars = max_advice_vars.max(cols.log_2());
+        }
+        if has_untrusted_advice {
+            let words = (preprocessing.memory_layout.max_untrusted_advice_size as usize) / 8;
+            let cols = words.next_power_of_two().max(1);
+            max_advice_vars = max_advice_vars.max(cols.log_2());
+        }
+        if max_advice_vars > 0 {
+            // Require main sigma (columns exponent) >= max_advice_vars so advice fits in the
+            // leftmost columns of the main matrix.
+            while {
+                let log_t = padded_trace_len.log_2();
+                let log_k_chunk = get_log_k_chunk_from_log_t(log_t);
+                let total_vars = log_k_chunk + log_t;
+                let sigma_main = total_vars.div_ceil(2);
+                sigma_main < max_advice_vars
+            } {
+                // Double T (keep power-of-two) until constraint holds.
+                if padded_trace_len >= preprocessing.max_padded_trace_length {
+                    panic!(
+                        "Trace too small to embed advice into single Dory opening: need main sigma >= {max_advice_vars}, \
+but reached max_padded_trace_length={} (increase max_trace_length in preprocessing or reduce max_*_advice_size)",
+                        preprocessing.max_padded_trace_length
+                    );
+                }
+                padded_trace_len =
+                    (padded_trace_len * 2).min(preprocessing.max_padded_trace_length);
+            }
+        }
+
         trace.resize(padded_trace_len, Cycle::NoOp);
 
         // Calculate K for DoryGlobals initialization
@@ -321,9 +359,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         tracing::info!("bytecode size: {}", self.preprocessing.bytecode.code_size);
 
-        let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
+        let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
+
+        // Add advice hints for batched Stage 8 opening
+        if let Some(hint) = self.advice.trusted_advice_hint.take() {
+            opening_proof_hints.insert(CommittedPolynomial::TrustedAdvice, hint);
+        }
+        if let Some(hint) = self.advice.untrusted_advice_hint.take() {
+            opening_proof_hints.insert(CommittedPolynomial::UntrustedAdvice, hint);
+        }
+
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
         let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof) = self.prove_stage2();
         let stage3_sumcheck_proof = self.prove_stage3();
@@ -333,6 +380,51 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Advice claims are now reduced in Stage 6 and batched into Stage 8
         // The old separate advice proofs are no longer generated
         let stage7_sumcheck_proof = self.prove_stage7();
+
+        #[cfg(test)]
+        {
+            // Compute and store the joint commitment for cross-checking in the verifier.
+            // This helps catch commitment/RLC mismatches early when changing batching logic.
+            if let Some(ref state) = self.opening_accumulator.dory_opening_state {
+                let mut commitments_map: HashMap<CommittedPolynomial, PCS::Commitment> =
+                    HashMap::new();
+                for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
+                    .into_iter()
+                    .zip_eq(&commitments)
+                {
+                    commitments_map.insert(polynomial, commitment.clone());
+                }
+                if let Some(ref commitment) = untrusted_advice_commitment {
+                    if state
+                        .polynomials
+                        .contains(&CommittedPolynomial::UntrustedAdvice)
+                    {
+                        commitments_map
+                            .insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
+                    }
+                }
+                if let Some(ref commitment) = self.advice.trusted_advice_commitment {
+                    if state
+                        .polynomials
+                        .contains(&CommittedPolynomial::TrustedAdvice)
+                    {
+                        commitments_map
+                            .insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
+                    }
+                }
+
+                // Accumulate gamma coefficients per polynomial (merge duplicates).
+                let mut rlc_map = HashMap::new();
+                for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
+                    *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
+                }
+                let (coeffs, comms): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
+                    .into_iter()
+                    .map(|(k, v)| (v, commitments_map.remove(&k).unwrap()))
+                    .unzip();
+                self.joint_commitment_for_test = Some(PCS::combine_commitments(&comms, &coeffs));
+            }
+        }
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
@@ -479,9 +571,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             return None;
         }
 
-        // Use Main DoryContext (already initialized by generate_and_commit_witness_polynomials)
-        // The advice polynomial is implicitly zero-padded to full dimensions.
-        // The hint will be padded when combined with other hints in Stage 8.
+        // Commit untrusted advice in its dedicated Dory context, using a fixed 1-row matrix.
+        //
+        // This makes the advice commitment independent of the trace length, while still allowing
+        // Stage 8 to batch it into the single Dory opening proof by interpreting it as a
+        // zero-padded submatrix of the main polynomial matrix.
 
         let mut untrusted_advice_vec =
             vec![0; self.program_io.memory_layout.max_untrusted_advice_size as usize / 8];
@@ -494,6 +588,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
+        let advice_cols = poly.len();
+        let _guard = DoryGlobals::initialize_untrusted_advice_1row(advice_cols);
+        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript.append_serializable(&commitment);
 
@@ -1120,12 +1217,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             polynomials.push(CommittedPolynomial::RamRa(i));
         }
 
-        // Note: Advice polynomials are NOT included in Stage 8 batch opening because
-        // they are committed with max_padded_trace_length dimensions (before the actual
-        // trace length is known), which differs from the actual padded_trace_len used
-        // for other polynomials. Advice claims are reduced via AdviceClaimReduction in
-        // Stage 6, and the verifier checks them directly against the commitment.
-
         // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
         // Note: r_address_stage7 is little-endian from sumcheck, convert to big-endian
         let mut r_address_be = r_address_stage7.clone();
@@ -1140,6 +1231,58 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let r_cycle_stage6 = &unified_point.r[log_k_chunk..];
 
         let opening_point = [r_address_be.as_slice(), r_cycle_stage6].concat();
+
+        // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
+        // These are committed with Main context dimensions so they can be batched.
+        // They have fewer variables than main polynomials, so we apply Lagrange factors.
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let advice_vars = advice_point.len();
+            // Dory uses little-endian variable order; the commitment layer reverses the opening point.
+            // Compute the embedding selector for a 1-row advice matrix placed in the first 2^advice_vars columns:
+            //   selector = eq(row_bits, 0) * eq(col_bits[advice_vars..], 0)
+            let mut r_le = opening_point.clone();
+            r_le.reverse();
+            let sigma = DoryGlobals::get_num_columns().log_2();
+            let nu = DoryGlobals::get_max_num_rows().log_2();
+            debug_assert_eq!(sigma + nu, r_le.len());
+            let (r_cols, r_rows) = r_le.split_at(sigma);
+
+            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let col_prefix_factor: F = r_cols
+                .iter()
+                .skip(advice_vars)
+                .map(|r| F::one() - (*r).into())
+                .product();
+
+            claims.push(advice_claim * row_factor * col_prefix_factor);
+            polynomials.push(CommittedPolynomial::TrustedAdvice);
+        }
+
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let advice_vars = advice_point.len();
+            let mut r_le = opening_point.clone();
+            r_le.reverse();
+            let sigma = DoryGlobals::get_num_columns().log_2();
+            let nu = DoryGlobals::get_max_num_rows().log_2();
+            debug_assert_eq!(sigma + nu, r_le.len());
+            let (r_cols, r_rows) = r_le.split_at(sigma);
+
+            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let col_prefix_factor: F = r_cols
+                .iter()
+                .skip(advice_vars)
+                .map(|r| F::one() - (*r).into())
+                .product();
+
+            claims.push(advice_claim * row_factor * col_prefix_factor);
+            polynomials.push(CommittedPolynomial::UntrustedAdvice);
+        }
 
         // 6. Sample gamma and compute powers for RLC
         self.transcript.append_scalars(&claims);
@@ -1178,9 +1321,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             memory_layout: self.preprocessing.memory_layout.clone(),
         });
 
-        // Note: Advice hints are NOT added here - advice is not batched into Stage 8
-        // due to dimension mismatch (advice committed with max_padded_trace_length,
-        // but Stage 8 uses actual padded_trace_len).
+        // Build advice polynomials map for RLC
+        let mut advice_polys = HashMap::new();
+        if let Some(poly) = self.advice.trusted_advice_polynomial.take() {
+            advice_polys.insert(CommittedPolynomial::TrustedAdvice, poly);
+        }
+        if let Some(poly) = self.advice.untrusted_advice_polynomial.take() {
+            advice_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
+        }
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
@@ -1189,7 +1337,337 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             TraceSource::Materialized(Arc::clone(&self.trace)),
             streaming_data,
             opening_proof_hints,
+            advice_polys,
         );
+
+        #[cfg(test)]
+        {
+            // Sanity-check joint evaluation using Dory's **little-endian** basis convention.
+            // Dory treats point[0] as the LSB; our commitment wrapper reverses the opening point
+            // before passing it into Dory. Mirror that here.
+            fn lagrange_basis_le<F: JoltField>(point: &[F]) -> Vec<F> {
+                let n = point.len();
+                if n == 0 {
+                    return vec![F::one()];
+                }
+                let mut out = vec![F::zero(); 1 << n];
+                out[0] = F::one() - point[0];
+                out[1] = point[0];
+                for (level, p) in point[1..].iter().enumerate() {
+                    let mid = 1 << (level + 1);
+                    let one_minus_p = F::one() - *p;
+                    for i in 0..mid {
+                        let l_val = out[i];
+                        out[mid + i] = l_val * *p;
+                        out[i] = l_val * one_minus_p;
+                    }
+                }
+                out
+            }
+
+            let num_cols = DoryGlobals::get_num_columns();
+            let num_rows = DoryGlobals::get_max_num_rows();
+            let sigma = num_cols.log_2();
+            let nu = num_rows.log_2();
+            debug_assert_eq!(nu + sigma, state.opening_point.len());
+
+            // Dory uses opposite endianness relative to Jolt: reverse the point.
+            let mut r_le = state.opening_point.clone();
+            r_le.reverse();
+
+            let cols: Vec<F> = r_le[..sigma].iter().map(|c| (*c).into()).collect();
+            let rows: Vec<F> = r_le[sigma..].iter().map(|c| (*c).into()).collect();
+            let right_vec = lagrange_basis_le::<F>(&cols);
+            let left_vec = lagrange_basis_le::<F>(&rows);
+            debug_assert_eq!(right_vec.len(), num_cols);
+            debug_assert_eq!(left_vec.len(), num_rows);
+
+            let vmv: Vec<F> = match &joint_poly {
+                MultilinearPolynomial::RLC(rlc) => rlc.vector_matrix_product(&left_vec),
+                _ => panic!("Expected RLC joint polynomial in Stage 8"),
+            };
+            let eval_from_vmv: F = vmv.iter().zip(right_vec.iter()).map(|(a, b)| *a * *b).sum();
+
+            let joint_claim: F = state
+                .gamma_powers
+                .iter()
+                .zip(state.claims.iter())
+                .map(|(gamma, claim)| *gamma * *claim)
+                .sum();
+
+            // Isolate advice contribution vs base contribution.
+            let base_claim: F = state
+                .gamma_powers
+                .iter()
+                .zip(state.claims.iter())
+                .zip(state.polynomials.iter())
+                .filter(|(_, poly)| {
+                    !matches!(
+                        poly,
+                        CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .map(|((gamma, claim), _)| *gamma * *claim)
+                .sum();
+
+            let advice_claim = joint_claim - base_claim;
+
+            let base_eval: F = match &joint_poly {
+                MultilinearPolynomial::RLC(rlc) => {
+                    if let Some(ctx) = &rlc.streaming_context {
+                        let mut ctx_no_advice = ctx.as_ref().clone();
+                        ctx_no_advice.advice_polys.clear();
+                        let rlc_no_advice = crate::poly::rlc_polynomial::RLCPolynomial::<F> {
+                            dense_rlc: vec![],
+                            one_hot_rlc: vec![],
+                            streaming_context: Some(Arc::new(ctx_no_advice)),
+                        };
+                        let vmv_no_advice = rlc_no_advice.vector_matrix_product(&left_vec);
+                        vmv_no_advice
+                            .iter()
+                            .zip(right_vec.iter())
+                            .map(|(a, b)| *a * *b)
+                            .sum()
+                    } else {
+                        panic!("Expected streaming context for Stage 8 RLC")
+                    }
+                }
+                _ => unreachable!(),
+            };
+
+            let advice_eval = eval_from_vmv - base_eval;
+
+            // Per-advice polynomial diagnostics (Trusted vs Untrusted).
+            let per_advice_eval: Vec<(CommittedPolynomial, F)> = match &joint_poly {
+                MultilinearPolynomial::RLC(rlc) => {
+                    let ctx = rlc
+                        .streaming_context
+                        .as_ref()
+                        .expect("Expected streaming context for Stage 8 RLC");
+                    ctx.advice_polys
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            let mut ctx_one = ctx.as_ref().clone();
+                            ctx_one.advice_polys = vec![ctx.as_ref().advice_polys[i].clone()];
+                            let rlc_one = crate::poly::rlc_polynomial::RLCPolynomial::<F> {
+                                dense_rlc: vec![],
+                                one_hot_rlc: vec![],
+                                streaming_context: Some(Arc::new(ctx_one)),
+                            };
+                            let vmv_one = rlc_one.vector_matrix_product(&left_vec);
+                            let eval_one: F = vmv_one
+                                .iter()
+                                .zip(right_vec.iter())
+                                .map(|(a, b)| *a * *b)
+                                .sum();
+                            // We don't have the polynomial ID here (ctx only stores coeff+poly),
+                            // so we label based on position: TrustedAdvice then UntrustedAdvice.
+                            let poly_id = if i == 0 {
+                                CommittedPolynomial::TrustedAdvice
+                            } else {
+                                CommittedPolynomial::UntrustedAdvice
+                            };
+                            (poly_id, eval_one)
+                        })
+                        .collect()
+                }
+                _ => vec![],
+            };
+
+            debug_assert_eq!(
+                base_eval, base_claim,
+                "Stage 8 base claim mismatch (non-advice)"
+            );
+
+            // If we ever hit the mismatch, provide more context.
+            if advice_eval != advice_claim {
+                // Recompute common row selector (row index 0) from the point.
+                let mut r_le2 = state.opening_point.clone();
+                r_le2.reverse();
+                let sigma2 = DoryGlobals::get_num_columns().log_2();
+                let (r_cols2, r_rows2) = r_le2.split_at(sigma2);
+                let row_factor: F = r_rows2.iter().map(|r| F::one() - (*r).into()).product();
+                let log_k_chunk2 = self.one_hot_params.log_k_chunk;
+                let total_vars2 = state.opening_point.len();
+                let log_t2 = total_vars2 - log_k_chunk2;
+                let cycle_be2 = &state.opening_point[log_k_chunk2..];
+                // Reconstruct Stage 6 batched challenges (little-endian) from the Booleanity opening point.
+                // Booleanity stores (addr_be || cycle_be) where each segment is reversed from the LE
+                // binding order used in sumcheck.
+                let (bool_point_be, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::InstructionRa(0),
+                    SumcheckId::Booleanity,
+                );
+                let addr_be6 = &bool_point_be.r[..log_k_chunk2];
+                let cycle_be6 = &bool_point_be.r[log_k_chunk2..];
+                let mut r_sumcheck_reconstructed_le: Vec<F::Challenge> =
+                    Vec::with_capacity(addr_be6.len() + cycle_be6.len());
+                // address_le then cycle_le
+                r_sumcheck_reconstructed_le.extend(addr_be6.iter().copied().rev());
+                r_sumcheck_reconstructed_le.extend(cycle_be6.iter().copied().rev());
+
+                #[allow(dead_code)]
+                #[derive(Debug)]
+                struct AdvicePolyDebug<F: JoltField> {
+                    poly_id: CommittedPolynomial,
+                    eval_contrib: F,
+                    claim_contrib: F,
+                    coeff_sum: F,
+                    claim_scaled: Option<F>,
+                    raw_opening: Option<F>,
+                    predicted_scaled: Option<F>,
+                    embedded_eval: Option<F>,
+                    row_factor: F,
+                    col_prefix_factor: F,
+                    point_matches: bool,
+                    actual_point_le_pos_in_cols: Option<usize>,
+                    actual_point_be_pos_in_cycle_be: Option<usize>,
+                    actual_point_le_pos_in_r_sumcheck: Option<usize>,
+                    expected_point_be: Vec<F::Challenge>,
+                    actual_point_be: Option<Vec<F::Challenge>>,
+                }
+
+                let mut per_poly_details: Vec<AdvicePolyDebug<F>> = Vec::new();
+                for (poly_id, eval_contrib) in &per_advice_eval {
+                    // Find the claim+gamma for this polynomial in the state
+                    let mut claim_contrib = F::zero();
+                    let mut coeff_sum = F::zero();
+                    let mut claim_scaled_opt = None;
+                    for ((gamma, claim), poly) in state
+                        .gamma_powers
+                        .iter()
+                        .zip(state.claims.iter())
+                        .zip(state.polynomials.iter())
+                    {
+                        if poly == poly_id {
+                            claim_contrib += *gamma * *claim;
+                            coeff_sum += *gamma;
+                            claim_scaled_opt = Some(*claim);
+                        }
+                    }
+
+                    // Raw claim from AdviceClaimReduction opening
+                    let raw_opening = match poly_id {
+                        CommittedPolynomial::TrustedAdvice => self
+                            .opening_accumulator
+                            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+                            .map(|(_, c)| c),
+                        CommittedPolynomial::UntrustedAdvice => self
+                            .opening_accumulator
+                            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+                            .map(|(_, c)| c),
+                        _ => None,
+                    };
+
+                    // Column selector depends on advice_vars (opening point length for that advice)
+                    let advice_vars = match poly_id {
+                        CommittedPolynomial::TrustedAdvice => self
+                            .opening_accumulator
+                            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+                            .map(|(p, _)| p.len())
+                            .unwrap_or(0),
+                        CommittedPolynomial::UntrustedAdvice => self
+                            .opening_accumulator
+                            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+                            .map(|(p, _)| p.len())
+                            .unwrap_or(0),
+                        _ => 0,
+                    };
+                    let col_prefix_factor: F = r_cols2
+                        .iter()
+                        .skip(advice_vars)
+                        .map(|r| F::one() - (*r).into())
+                        .product();
+
+                    let predicted_scaled =
+                        raw_opening.map(|raw| raw * row_factor * col_prefix_factor);
+
+                    // Recover embedded evaluation (divide out coeff_sum if nonzero)
+                    let embedded_eval = if coeff_sum.is_zero() {
+                        None
+                    } else {
+                        Some(*eval_contrib * coeff_sum.inverse().unwrap())
+                    };
+
+                    // Expected advice opening point (big-endian) derived from the Stage 8 opening point:
+                    // take the low `advice_vars` column challenges (little-endian), then reverse to big-endian.
+                    let expected_point_be: Vec<F::Challenge> =
+                        r_cols2.iter().take(advice_vars).copied().rev().collect();
+
+                    // Actual advice opening point from the accumulator (big-endian).
+                    let actual_point_be: Option<Vec<F::Challenge>> = match poly_id {
+                        CommittedPolynomial::TrustedAdvice => self
+                            .opening_accumulator
+                            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+                            .map(|(p, _)| p.r.clone()),
+                        CommittedPolynomial::UntrustedAdvice => self
+                            .opening_accumulator
+                            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+                            .map(|(p, _)| p.r.clone()),
+                        _ => None,
+                    };
+                    let point_matches = actual_point_be
+                        .as_ref()
+                        .map(|p| p.as_slice() == expected_point_be.as_slice())
+                        .unwrap_or(false);
+
+                    // If it doesn't match, try to locate where the actual point sits within the
+                    // Stage-8 column challenges (in little-endian order).
+                    let actual_point_le_pos_in_cols: Option<usize> =
+                        actual_point_be.as_ref().and_then(|p_be| {
+                            let p_le: Vec<F::Challenge> =
+                                p_be.iter().copied().rev().collect::<Vec<_>>();
+                            r_cols2
+                                .windows(advice_vars)
+                                .position(|w| w == p_le.as_slice())
+                        });
+
+                    // Also locate where the big-endian point appears inside the big-endian
+                    // cycle segment of the Stage 8 opening point.
+                    let actual_point_be_pos_in_cycle_be: Option<usize> =
+                        actual_point_be.as_ref().and_then(|p_be| {
+                            cycle_be2
+                                .windows(advice_vars)
+                                .position(|w| w == p_be.as_slice())
+                        });
+
+                    // Locate the instance-local LE challenges inside the reconstructed global LE r_sumcheck.
+                    let actual_point_le_pos_in_r_sumcheck: Option<usize> =
+                        actual_point_be.as_ref().and_then(|p_be| {
+                            let p_le: Vec<F::Challenge> =
+                                p_be.iter().copied().rev().collect::<Vec<_>>();
+                            r_sumcheck_reconstructed_le
+                                .windows(advice_vars)
+                                .position(|w| w == p_le.as_slice())
+                        });
+
+                    per_poly_details.push(AdvicePolyDebug {
+                        poly_id: *poly_id,
+                        eval_contrib: *eval_contrib,
+                        claim_contrib,
+                        coeff_sum,
+                        claim_scaled: claim_scaled_opt,
+                        raw_opening,
+                        predicted_scaled,
+                        embedded_eval,
+                        row_factor,
+                        col_prefix_factor,
+                        point_matches,
+                        actual_point_le_pos_in_cols,
+                        actual_point_be_pos_in_cycle_be,
+                        actual_point_le_pos_in_r_sumcheck,
+                        expected_point_be,
+                        actual_point_be,
+                    });
+                }
+
+                panic!(
+                    "Stage 8 advice mismatch details:\n  log_k_chunk={log_k_chunk2} log_t={log_t2} sigma={sigma2} nu={} \n  per_advice_eval={per_advice_eval:?}\n  per_poly_details={per_poly_details:?}\n  advice_eval={advice_eval}\n  advice_claim={advice_claim}\n  base_eval={base_eval}\n  base_claim={base_claim}\n  joint_eval={eval_from_vmv}\n  joint_claim={joint_claim}",
+                    r_rows2.len().log_2()
+                );
+            }
+        }
 
         // Dory opening proof at the unified point
         PCS::prove(
@@ -1329,8 +1807,15 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1363,8 +1848,15 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let log_chunk = 8; // Use default log_chunk for tests
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+        );
 
         assert!(
             prover.padded_trace_len <= (1 << log_chunk),
@@ -1410,8 +1902,15 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1459,8 +1958,15 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
@@ -1506,7 +2012,7 @@ mod tests {
         let mut trusted_advice = postcard::to_stdvec(&leaf2).unwrap();
         trusted_advice.extend(postcard::to_stdvec(&leaf3).unwrap());
 
-        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        let (_, _trace, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
         let preprocessing = JoltProverPreprocessing::gen(
             bytecode.clone(),
@@ -1520,22 +2026,22 @@ mod tests {
         let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
-        let trusted_advice_commitment = {
-            // Use separate TrustedAdvice context (advice is NOT batched in Stage 8)
-            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice(
-                1,
-                (max_trusted_advice_size as usize) / 8,
-            );
+
+        let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
+        let advice_cols = poly.len();
+        // Commit trusted advice in its dedicated Dory context, using a fixed 1-row matrix.
+        // This makes the commitment preprocessing-only (independent of trace length) while still
+        // allowing it to be batched into the single Stage 8 Dory opening proof.
+        let _guard =
+            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice_1row(advice_cols);
+        let (trusted_advice_commitment, trusted_advice_hint) = {
             let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
                 crate::poly::commitment::dory::DoryContext::TrustedAdvice,
             );
-            let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
-            let (commitment, _hint) =
-                <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
-                    &poly,
-                    &preprocessing.generators,
-                );
-            commitment
+            <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
+                &poly,
+                &preprocessing.generators,
+            )
         };
 
         let prover = RV64IMACProver::gen_from_elf(
@@ -1545,7 +2051,7 @@ mod tests {
             &untrusted_advice,
             &trusted_advice,
             Some(trusted_advice_commitment),
-            None, // No hint needed - advice is not batched in Stage 8
+            Some(trusted_advice_hint), // Pass hint for batched Stage 8 opening
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1630,8 +2136,15 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None, None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 

@@ -62,6 +62,7 @@ impl BatchedSumcheck {
 
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
+        let two_inv = F::from_u64(2).inverse().unwrap();
 
         for round in 0..max_num_rounds {
             #[cfg(not(target_arch = "wasm32"))]
@@ -70,26 +71,39 @@ impl BatchedSumcheck {
                 print_current_memory_usage(label.as_str());
             }
 
-            let remaining_rounds = max_num_rounds - round;
-
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
                 .iter_mut()
                 .zip(individual_claims.iter())
                 .map(|(sumcheck, previous_claim)| {
                     let num_rounds = sumcheck.num_rounds();
-                    if remaining_rounds > num_rounds {
-                        // We haven't gotten to this sumcheck's variables yet, so
-                        // the univariate polynomial is just a constant equal to
-                        // the input claim, scaled by a power of 2.
-                        let num_rounds = sumcheck.num_rounds();
-                        let scaled_input_claim = sumcheck
-                            .input_claim(opening_accumulator)
-                            .mul_pow_2(remaining_rounds - num_rounds - 1);
-                        // Constant polynomial
-                        UniPoly::from_coeff(vec![scaled_input_claim])
+                    let offset = sumcheck.round_offset(max_num_rounds);
+                    let active = round >= offset && round < offset + num_rounds;
+                    if active {
+                        // If this instance is not placed as a suffix, then there can be dummy rounds
+                        // *after* the active window. Those dummy variables are still summed over
+                        // during the active rounds, contributing a constant scaling factor 2^{dummy_after}.
+                        //
+                        // To keep existing instance implementations unchanged (they assume no trailing
+                        // dummy vars), we:
+                        // - divide the current scaled claim by 2^{dummy_after} before calling compute_message
+                        // - scale the resulting univariate polynomial by 2^{dummy_after}
+                        //
+                        // This reduces to a no-op for the default suffix placement (dummy_after = 0).
+                        let dummy_after = max_num_rounds - (offset + num_rounds);
+                        if dummy_after == 0 {
+                            sumcheck.compute_message(round - offset, *previous_claim)
+                        } else {
+                            let scale = F::one().mul_pow_2(dummy_after);
+                            let inv_scale = scale.inverse().unwrap();
+                            let prev_unscaled = *previous_claim * inv_scale;
+                            let poly_unscaled =
+                                sumcheck.compute_message(round - offset, prev_unscaled);
+                            poly_unscaled * scale
+                        }
                     } else {
-                        let offset = max_num_rounds - sumcheck.num_rounds();
-                        sumcheck.compute_message(round - offset, *previous_claim)
+                        // Variable is "dummy" for this instance: polynomial is independent of it,
+                        // so the round univariate is constant with H(0)=H(1)=previous_claim/2.
+                        UniPoly::from_coeff(vec![*previous_claim * two_inv])
                     }
                 })
                 .collect();
@@ -131,11 +145,10 @@ impl BatchedSumcheck {
             }
 
             for sumcheck in sumcheck_instances.iter_mut() {
-                // If a sumcheck instance has fewer than `max_num_rounds`,
-                // we wait until there are <= `sumcheck.num_rounds()` left
-                // before binding its variables.
-                if remaining_rounds <= sumcheck.num_rounds() {
-                    let offset = max_num_rounds - sumcheck.num_rounds();
+                let num_rounds = sumcheck.num_rounds();
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let active = round >= offset && round < offset + num_rounds;
+                if active {
                     sumcheck.ingest_challenge(r_j, round - offset);
                 }
             }
@@ -150,12 +163,9 @@ impl BatchedSumcheck {
             .unwrap();
 
         for sumcheck in sumcheck_instances.iter() {
-            // If a sumcheck instance has fewer than `max_num_rounds`,
-            // we wait until there are <= `sumcheck.num_rounds()` left
-            // before binding its variables.
-            // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
-            // values of `r_sumcheck`.
-            let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+            // Instance-local slice can start at a custom global offset.
+            let offset = sumcheck.round_offset(max_num_rounds);
+            let r_slice = &r_sumcheck[offset..offset + sumcheck.num_rounds()];
 
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
@@ -211,12 +221,8 @@ impl BatchedSumcheck {
             .iter()
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
-                // If a sumcheck instance has fewer than `max_num_rounds`,
-                // we wait until there are <= `sumcheck.num_rounds()` left
-                // before binding its variables.
-                // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
-                // values of `r_sumcheck`.
-                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let r_slice = &r_sumcheck[offset..offset + sumcheck.num_rounds()];
 
                 // Cache polynomial opening claims, to be proven using either an
                 // opening proof or sumcheck (in the case of virtual polynomials).

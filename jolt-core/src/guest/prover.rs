@@ -24,7 +24,7 @@ pub fn preprocess(
     JoltProverPreprocessing::gen(bytecode, memory_layout, memory_init, max_trace_length)
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 #[cfg(feature = "prover")]
 pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
     guest: &Program,

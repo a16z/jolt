@@ -161,7 +161,7 @@ impl MacroBuilder {
 
         let commitment_param_in_closure = if has_trusted_advice {
             quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-                      trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
+            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
         } else {
             quote! {}
         };
@@ -598,9 +598,14 @@ impl MacroBuilder {
                 );
 
                 // Initialize Dory globals with Main context dimensions from preprocessing.
-                // This ensures the commitment is compatible with the batch opening in Stage 8.
-                let k_chunk = 1usize << preprocessing.log_k_chunk;
-                let _guard = jolt::DoryGlobals::initialize(k_chunk, preprocessing.max_padded_trace_length);
+                // Commit trusted advice in its dedicated Dory context, using a fixed 1-row matrix.
+                //
+                // This makes the commitment independent of the trace length (preprocessing-only),
+                // while still allowing the prover to batch the advice opening into the single
+                // Stage 8 Dory opening proof by interpreting it as a zero-padded submatrix of the
+                // main polynomial matrix.
+                let _guard = jolt::DoryGlobals::initialize_trusted_advice_1row(trusted_advice_vec.len().next_power_of_two());
+                let _ctx = jolt::DoryGlobals::with_context(jolt::DoryContext::TrustedAdvice);
 
                 let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);
                 let (commitment, hint) = jolt::PCS::commit(&poly, &preprocessing.generators);
@@ -651,7 +656,7 @@ impl MacroBuilder {
 
         let commitment_param = if has_trusted_advice {
             quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-                      trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
+            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
         } else {
             quote! {}
         };
