@@ -15,6 +15,7 @@ pub fn init_inlines() -> Result<(), String> {
         KECCAK256_FUNCT7,
         KECCAK256_NAME,
         std::boxed::Box::new(sequence_builder::keccak256_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())

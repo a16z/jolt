@@ -13,6 +13,7 @@ pub fn init_inlines() -> Result<(), String> {
         BLAKE2_FUNCT7,
         BLAKE2_NAME,
         std::boxed::Box::new(sequence_builder::blake2b_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())

@@ -18,6 +18,7 @@ pub fn init_inlines() -> Result<(), String> {
         SHA256_FUNCT7,
         SHA256_NAME,
         std::boxed::Box::new(sequence_builder::sha2_inline_sequence_builder),
+        None,
     )?;
 
     register_inline(
@@ -26,6 +27,7 @@ pub fn init_inlines() -> Result<(), String> {
         SHA256_INIT_FUNCT7,
         SHA256_INIT_NAME,
         std::boxed::Box::new(sequence_builder::sha2_init_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())
