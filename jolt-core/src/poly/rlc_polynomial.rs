@@ -447,33 +447,45 @@ impl<F: JoltField> RLCPolynomial<F> {
             }
         }
 
-        // Compute the vector-matrix product for advice polynomials (streaming context)
-        // Advice polynomials are small (fewer variables) and stored directly
-        if let Some(ctx) = &self.streaming_context {
-            for (coeff, advice_poly) in ctx.advice_polys.iter() {
-                // Advice polynomial has fewer coefficients than main polynomials.
-                // Treat it as occupying the "bottom-left" corner of the matrix.
-                // With main matrix dimensions, advice fits in the first few rows.
-                let advice_len = advice_poly.original_len();
-                let advice_rows = advice_len.div_ceil(num_columns);
+        result
+    }
 
-                // Only the first `advice_rows` left_vec elements contribute
-                for row_idx in 0..advice_rows.min(left_vec.len()) {
-                    let row_start = row_idx * num_columns;
-                    let row_end = ((row_idx + 1) * num_columns).min(advice_len);
-                    let row_slice_len = row_end - row_start;
-
-                    // Get coefficient slice for this row
-                    for col_idx in 0..row_slice_len {
-                        let coeff_idx = row_start + col_idx;
-                        let advice_val = advice_poly.get_coeff(coeff_idx);
-                        result[col_idx] += left_vec[row_idx] * *coeff * advice_val;
-                    }
-                }
-            }
+    /// Add the VMV contribution of advice polynomials for the streaming path.
+    ///
+    /// Advice polynomials are not streamed from the trace; they are stored directly in the
+    /// streaming context and are expected to fit into a **single main-matrix row**:
+    /// they occupy **row index 0** and the **leftmost** `advice_len` columns.
+    #[inline]
+    fn add_streaming_advice_vmv(
+        result: &mut [F],
+        left_vec: &[F],
+        num_columns: usize,
+        ctx: &StreamingRLCContext<F>,
+    ) {
+        if ctx.advice_polys.is_empty() {
+            return;
+        }
+        let left0 = match left_vec.first() {
+            Some(v) => *v,
+            None => return,
+        };
+        if left0.is_zero() {
+            return;
         }
 
-        result
+        for (coeff, advice_poly) in ctx.advice_polys.iter() {
+            let advice_len = advice_poly.original_len();
+            debug_assert!(
+                advice_len <= num_columns,
+                "Advice polynomial length ({advice_len}) must fit in one main row (num_columns={num_columns}); \
+this requires main sigma >= advice_vars (guardrail in gen_from_trace should ensure this)."
+            );
+            let cols = advice_len.min(num_columns);
+            for col_idx in 0..cols {
+                let advice_val = advice_poly.get_coeff(col_idx);
+                result[col_idx] += left0 * *coeff * advice_val;
+            }
+        }
     }
 
     /// Extract dense polynomial value from a cycle
@@ -579,7 +591,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         let dense_coeffs: Vec<_> = ctx.dense_polys.iter().map(|(id, c)| (*id, *c)).collect();
         let onehot_coeffs: Vec<_> = ctx.onehot_polys.iter().map(|(id, c)| (*id, *c)).collect();
 
-        (0..num_rows)
+        let mut result = (0..num_rows)
             .collect::<Vec<_>>()
             .par_chunks(rows_per_thread)
             .map(|row_chunk| {
@@ -686,7 +698,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                     }
                     a
                 },
-            )
+            );
+
+        // Advice contribution is small and independent of the trace; add it after the streamed pass.
+        Self::add_streaming_advice_vmv(&mut result, left_vec, num_columns, ctx);
+        result
     }
 
     /// Lazy VMV over lazy trace iterator (experimental, re-runs tracer).
@@ -704,7 +720,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         let dense_coeffs: Vec<_> = ctx.dense_polys.iter().map(|(id, c)| (*id, *c)).collect();
         let onehot_coeffs: Vec<_> = ctx.onehot_polys.iter().map(|(id, c)| (*id, *c)).collect();
 
-        lazy_trace
+        let mut result = lazy_trace
             .pad_using(T, |_| Cycle::NoOp)
             .iter_chunks(num_columns)
             .enumerate()
@@ -757,6 +773,10 @@ impl<F: JoltField> RLCPolynomial<F> {
                     );
                     acc
                 },
-            )
+            );
+
+        // Advice contribution is small and independent of the trace; add it after the streamed pass.
+        Self::add_streaming_advice_vmv(&mut result, left_vec, num_columns, ctx);
+        result
     }
 }
