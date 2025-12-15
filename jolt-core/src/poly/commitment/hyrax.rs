@@ -1,6 +1,5 @@
 //! This file implements the Hyrax polynomial commitment scheme used in snark composition
 use super::commitment_scheme::CommitmentScheme;
-use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -12,11 +11,31 @@ use crate::utils::math::Math;
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{UniformRand, vec::Vec};
 use num_integer::Roots;
+use rand::SeedableRng;
 use rayon::prelude::*;
 use std::borrow::Borrow;
-use std::marker::PhantomData;
 use tracing::trace_span;
+
+/// Pedersen generators for commitment scheme
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct PedersenGenerators<G: CurveGroup> {
+    pub(crate) generators: Vec<G::Affine>,
+}
+
+impl<G: CurveGroup> PedersenGenerators<G> {
+    pub fn new(size: usize, label: &[u8]) -> Self {
+        // Deterministic generation using label as seed
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(
+            label.iter().fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+        );
+
+        Self {
+            generators: (0..size).map(|_| G::rand(&mut rng).into_affine()).collect(),
+        }
+    }
+}
 
 /// Hyrax commits to a multilinear polynomial by interpreting its coefficients as a
 /// matrix. Given the number of variables in the polynomial, and the desired "aspect
@@ -37,18 +56,6 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
     (col_size, row_size)
 }
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyraxGenerators<const RATIO: usize, G: CurveGroup> {
-    pub gens: PedersenGenerators<G>,
-}
-
-impl<const RATIO: usize, G: CurveGroup> HyraxGenerators<RATIO, G> {
-    pub fn new(num_vars: usize) -> Self {
-        let (_left, right) = matrix_dimensions(num_vars, RATIO);
-        let gens = PedersenGenerators::new(right, b"Jolt v1 Hyrax generators");
-        HyraxGenerators { gens }
-    }
-}
 
 #[derive(Default, Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
@@ -61,28 +68,18 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         poly: &DensePolynomial<G::ScalarField>,
         generators: &PedersenGenerators<G>,
     ) -> Self {
-        let start = std::time::Instant::now();
         let n = poly.len();
         let ell = n.log_2();
 
         let (L_size, R_size) = matrix_dimensions(ell, 1);
         assert_eq!(L_size * R_size, n);
 
-        tracing::debug!(
-            poly_size = n,
-            L_size,
-            R_size,
-            "Committing single polynomial"
-        );
-
         let gens = &generators.generators[..R_size];
         let row_commitments = poly
             .Z
             .chunks(R_size)
-            .map(|row| PedersenCommitment::commit_vector(row, gens))
+            .map(|row| G::msm_unchecked(gens, row))
             .collect();
-
-        tracing::debug!(duration_ms = start.elapsed().as_millis(), "Commit complete");
 
         Self { row_commitments }
     }
@@ -110,13 +107,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         ratio: usize,
     ) -> HyraxOpeningProof<RATIO, G> {
-        let start = std::time::Instant::now();
-        tracing::debug!(
-            num_vars = poly.get_num_vars(),
-            poly_size = poly.len(),
-            "Generating Hyrax opening proof"
-        );
-
         assert_eq!(poly.get_num_vars(), opening_point.len());
 
         // compute the L and R vectors
@@ -125,11 +115,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
 
         // compute vector-matrix product between L and Z viewed as a matrix
         let vector_matrix_product = Self::vector_matrix_product(poly, &L, ratio);
-
-        tracing::debug!(
-            duration_ms = start.elapsed().as_millis(),
-            "Hyrax opening proof complete"
-        );
 
         HyraxOpeningProof {
             vector_matrix_product,
@@ -390,9 +375,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
 
 /// Wrapper struct for Hyrax to implement CommitmentScheme trait
 #[derive(Clone)]
-pub struct Hyrax<const RATIO: usize, G: CurveGroup> {
-    _phantom: PhantomData<G>,
-}
+pub struct Hyrax<const RATIO: usize, G: CurveGroup>(std::marker::PhantomData<G>);
 
 impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme
     for Hyrax<RATIO, G>
@@ -446,30 +429,23 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> Commitmen
         coeffs: &[Self::Field],
     ) -> Self::Commitment {
         assert_eq!(commitments.len(), coeffs.len());
-        if commitments.is_empty() {
-            return HyraxCommitment::default();
-        }
 
-        // Get the size from the first commitment
-        let first = commitments[0].borrow();
-        let row_count = first.row_commitments.len();
+        if let Some(first) = commitments.first() {
+            let row_count = first.borrow().row_commitments.len();
 
-        // Compute the linear combination of row commitments
-        let combined_rows: Vec<G> = (0..row_count)
-            .map(|row_idx| {
-                commitments
-                    .iter()
-                    .zip(coeffs.iter())
-                    .map(|(commitment, coeff)| {
-                        let c = commitment.borrow();
-                        c.row_commitments[row_idx] * coeff
-                    })
-                    .fold(G::zero(), |acc, point| acc + point)
-            })
-            .collect();
+            let row_commitments = (0..row_count)
+                .map(|row_idx| {
+                    commitments
+                        .iter()
+                        .zip(coeffs)
+                        .map(|(commitment, &coeff)| commitment.borrow().row_commitments[row_idx] * coeff)
+                        .sum()
+                })
+                .collect();
 
-        HyraxCommitment {
-            row_commitments: combined_rows,
+            HyraxCommitment { row_commitments }
+        } else {
+            HyraxCommitment::default()
         }
     }
 
