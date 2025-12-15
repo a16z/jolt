@@ -185,9 +185,42 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Option<Self> {
-        let has_trusted_advice = memory_layout.max_trusted_advice_size > 0;
-        let has_untrusted_advice = memory_layout.max_untrusted_advice_size > 0;
+        let single_opening =
+            crate::zkvm::ram::read_write_checking::needs_single_advice_opening(trace_len);
 
+        // Fetch opening points from accumulator - only if they actually exist
+        // This checks whether advice was actually accumulated, not just whether
+        // the memory layout allows for it
+        let r_trusted_val_eval = accumulator
+            .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
+            .map(|(point, _)| point);
+
+        let r_trusted_val_final = if !single_opening {
+            accumulator
+                .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                .map(|(point, _)| point)
+        } else {
+            None
+        };
+
+        let r_untrusted_val_eval = accumulator
+            .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
+            .map(|(point, _)| point);
+
+        let r_untrusted_val_final = if !single_opening {
+            accumulator
+                .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                .map(|(point, _)| point)
+        } else {
+            None
+        };
+
+        // Determine if we actually have advice based on whether openings exist,
+        // not just whether the memory layout allows for it
+        let has_trusted_advice = r_trusted_val_eval.is_some();
+        let has_untrusted_advice = r_untrusted_val_eval.is_some();
+
+        // Return None if no advice openings were accumulated
         if !has_trusted_advice && !has_untrusted_advice {
             return None;
         }
@@ -196,48 +229,12 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         let gamma_sqr = gamma.square();
         let gamma_cub = gamma_sqr * gamma;
 
-        let single_opening =
-            crate::zkvm::ram::read_write_checking::needs_single_advice_opening(trace_len);
-
         // Determine advice_vars from the larger of the two advice sizes
         let max_advice_size = std::cmp::max(
             memory_layout.max_trusted_advice_size,
             memory_layout.max_untrusted_advice_size,
         ) as usize;
         let advice_vars = (max_advice_size / 8).next_power_of_two().log_2();
-
-        // Fetch opening points from accumulator
-        let r_trusted_val_eval = if has_trusted_advice {
-            accumulator
-                .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
-                .map(|(point, _)| point)
-        } else {
-            None
-        };
-
-        let r_trusted_val_final = if has_trusted_advice && !single_opening {
-            accumulator
-                .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                .map(|(point, _)| point)
-        } else {
-            None
-        };
-
-        let r_untrusted_val_eval = if has_untrusted_advice {
-            accumulator
-                .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
-                .map(|(point, _)| point)
-        } else {
-            None
-        };
-
-        let r_untrusted_val_final = if has_untrusted_advice && !single_opening {
-            accumulator
-                .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                .map(|(point, _)| point)
-        } else {
-            None
-        };
 
         Some(Self {
             gamma_powers: [gamma, gamma_sqr, gamma_cub],

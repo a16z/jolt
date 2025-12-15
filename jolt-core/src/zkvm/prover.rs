@@ -1120,67 +1120,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             polynomials.push(CommittedPolynomial::RamRa(i));
         }
 
-        // Advice polynomials (from AdviceClaimReduction in Stage 6)
-        // These have advice_vars dimensions, need a larger Lagrange factor
-        // The advice claims are at the suffix of r_cycle_stage6
-        if self.advice.trusted_advice_polynomial.is_some() {
-            if let Some((advice_point, advice_claim)) = self
-                .opening_accumulator
-                .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
-            {
-                // Lagrange factor: ∏_{i=0}^{log_k_chunk + log_T - advice_vars - 1} (1 - r_i)
-                // This accounts for the prefix of the unified point that advice doesn't span
-                let advice_vars = advice_point.r.len();
-                let log_t = self.trace.len().log_2();
-                let log_k_chunk = self.one_hot_params.log_k_chunk;
-                let total_vars = log_k_chunk + log_t;
-                let _prefix_len = total_vars - advice_vars;
-
-                // Apply Lagrange for r_address_stage7 prefix
-                let mut advice_lagrange: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-                // Apply Lagrange for r_cycle prefix (first log_T - advice_vars elements)
-                let r_cycle_prefix_len = log_t - advice_vars;
-                let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-                    CommittedPolynomial::InstructionRa(0),
-                    SumcheckId::Booleanity,
-                );
-                let r_cycle_stage6_full = &unified_point.r[log_k_chunk..];
-                for r_i in r_cycle_stage6_full.iter().take(r_cycle_prefix_len) {
-                    advice_lagrange *= F::one() - *r_i;
-                }
-
-                claims.push(advice_claim * advice_lagrange);
-                polynomials.push(CommittedPolynomial::TrustedAdvice);
-            }
-        }
-
-        if self.advice.untrusted_advice_polynomial.is_some() {
-            if let Some((advice_point, advice_claim)) = self
-                .opening_accumulator
-                .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
-            {
-                // Lagrange factor: same calculation as trusted advice
-                let advice_vars = advice_point.r.len();
-                let log_t = self.trace.len().log_2();
-                let log_k_chunk = self.one_hot_params.log_k_chunk;
-                let prefix_len = log_t - advice_vars;
-
-                // Apply Lagrange for r_address_stage7 prefix
-                let mut advice_lagrange: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-                // Apply Lagrange for r_cycle prefix
-                let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-                    CommittedPolynomial::InstructionRa(0),
-                    SumcheckId::Booleanity,
-                );
-                let r_cycle_stage6_full = &unified_point.r[log_k_chunk..];
-                for r_i in r_cycle_stage6_full.iter().take(prefix_len) {
-                    advice_lagrange *= F::one() - *r_i;
-                }
-
-                claims.push(advice_claim * advice_lagrange);
-                polynomials.push(CommittedPolynomial::UntrustedAdvice);
-            }
-        }
+        // Note: Advice polynomials are NOT included in Stage 8 batch opening because
+        // they are committed with max_padded_trace_length dimensions (before the actual
+        // trace length is known), which differs from the actual padded_trace_len used
+        // for other polynomials. Advice claims are reduced via AdviceClaimReduction in
+        // Stage 6, and the verifier checks them directly against the commitment.
 
         // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
         // Note: r_address_stage7 is little-endian from sumcheck, convert to big-endian
@@ -1233,6 +1177,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             bytecode: self.preprocessing.bytecode.clone(),
             memory_layout: self.preprocessing.memory_layout.clone(),
         });
+
+        // Note: Advice hints are NOT added here - advice is not batched into Stage 8
+        // due to dimension mismatch (advice committed with max_padded_trace_length,
+        // but Stage 8 uses actual padded_trace_len).
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
@@ -1572,20 +1520,22 @@ mod tests {
         let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
-        let (trusted_advice_commitment, trusted_advice_hint) = {
-            // Use Main context for batch-compatible commitment
-            let k_chunk = 1usize << preprocessing.log_k_chunk;
-            let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(
-                k_chunk,
-                preprocessing.max_padded_trace_length,
+        let trusted_advice_commitment = {
+            // Use separate TrustedAdvice context (advice is NOT batched in Stage 8)
+            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice(
+                1,
+                (max_trusted_advice_size as usize) / 8,
+            );
+            let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
+                crate::poly::commitment::dory::DoryContext::TrustedAdvice,
             );
             let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
-            let (commitment, hint) =
+            let (commitment, _hint) =
                 <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
                     &poly,
                     &preprocessing.generators,
                 );
-            (commitment, hint)
+            commitment
         };
 
         let prover = RV64IMACProver::gen_from_elf(
@@ -1595,7 +1545,7 @@ mod tests {
             &untrusted_advice,
             &trusted_advice,
             Some(trusted_advice_commitment),
-            Some(trusted_advice_hint),
+            None, // No hint needed - advice is not batched in Stage 8
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();

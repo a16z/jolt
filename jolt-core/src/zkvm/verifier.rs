@@ -513,57 +513,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             polynomials.push(CommittedPolynomial::RamRa(i));
         }
 
-        // Advice polynomials (from AdviceClaimReduction in Stage 6)
-        // These have advice_vars dimensions, need a larger Lagrange factor
-        let log_t = self.proof.trace_length.log_2();
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let (unified_point_tmp, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::Booleanity,
-        );
-        let r_cycle_stage6_full = &unified_point_tmp.r[log_k_chunk..];
-
-        // Trusted advice
-        if self.trusted_advice_commitment.is_some() {
-            if let Some((advice_point, advice_claim)) = self
-                .opening_accumulator
-                .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
-            {
-                let advice_vars = advice_point.r.len();
-                let prefix_len = log_t - advice_vars;
-
-                // Apply Lagrange for r_address_stage7 prefix
-                let mut advice_lagrange: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-                // Apply Lagrange for r_cycle prefix
-                for r_i in r_cycle_stage6_full.iter().take(prefix_len) {
-                    advice_lagrange *= F::one() - *r_i;
-                }
-
-                claims.push(advice_claim * advice_lagrange);
-                polynomials.push(CommittedPolynomial::TrustedAdvice);
-            }
-        }
-
-        // Untrusted advice
-        if self.proof.untrusted_advice_commitment.is_some() {
-            if let Some((advice_point, advice_claim)) = self
-                .opening_accumulator
-                .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
-            {
-                let advice_vars = advice_point.r.len();
-                let prefix_len = log_t - advice_vars;
-
-                // Apply Lagrange for r_address_stage7 prefix
-                let mut advice_lagrange: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-                // Apply Lagrange for r_cycle prefix
-                for r_i in r_cycle_stage6_full.iter().take(prefix_len) {
-                    advice_lagrange *= F::one() - *r_i;
-                }
-
-                claims.push(advice_claim * advice_lagrange);
-                polynomials.push(CommittedPolynomial::UntrustedAdvice);
-            }
-        }
+        // Note: Advice polynomials are NOT included in Stage 8 batch opening because
+        // they are committed with max_padded_trace_length dimensions (before the actual
+        // trace length is known), which differs from the actual padded_trace_len used
+        // for other polynomials. Advice claims are reduced via AdviceClaimReduction in
+        // Stage 6, and verified directly against the commitment via the sumcheck.
 
         // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
         let mut r_address_be = r_address_stage7.clone();

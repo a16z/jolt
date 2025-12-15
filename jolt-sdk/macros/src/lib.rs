@@ -161,7 +161,7 @@ impl MacroBuilder {
 
         let commitment_param_in_closure = if has_trusted_advice {
             quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-                      trusted_advice_hint: Option<<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>> }
+                      trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
         } else {
             quote! {}
         };
@@ -174,7 +174,7 @@ impl MacroBuilder {
 
         let return_type = if has_trusted_advice {
             quote! {
-                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, Option<<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>>) -> #prove_output_ty + Sync + Send
+                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>) -> #prove_output_ty + Sync + Send
             }
         } else {
             quote! {
@@ -651,7 +651,7 @@ impl MacroBuilder {
 
         let commitment_param = if has_trusted_advice {
             quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-                      trusted_advice_hint: Option<<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>> }
+                      trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
         } else {
             quote! {}
         };

@@ -260,6 +260,9 @@ pub struct DoryOpeningState<F: JoltField> {
 impl<F: JoltField> DoryOpeningState<F> {
     /// Build streaming RLC polynomial from this state.
     /// Streams directly from trace - no witness regeneration needed.
+    ///
+    /// Note: Advice polynomials are NOT included in this batch because they are
+    /// committed with different dimensions (max_padded_trace_length vs actual).
     #[tracing::instrument(skip_all)]
     pub fn build_streaming_rlc<PCS: CommitmentScheme<Field = F>>(
         &self,
