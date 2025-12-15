@@ -1795,7 +1795,7 @@ mod tests {
             &inputs,
             &[],
             &trusted_advice,
-            Some(trusted_commitment.clone()),
+            Some(trusted_commitment),
             Some(trusted_hint),
         );
         let io_device = prover.program_io.clone();
@@ -1859,7 +1859,7 @@ mod tests {
             lazy_trace,
             trace,
             io_device,
-            Some(trusted_commitment.clone()),
+            Some(trusted_commitment),
             Some(trusted_hint),
             final_memory_state,
         );
