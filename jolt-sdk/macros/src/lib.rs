@@ -669,6 +669,7 @@ impl MacroBuilder {
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            #[allow(clippy::too_many_arguments)]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
