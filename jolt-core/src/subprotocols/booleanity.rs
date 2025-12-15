@@ -56,11 +56,6 @@ use crate::{
 /// Degree bound of the sumcheck round polynomials.
 const DEGREE_BOUND: usize = 3;
 
-/// Family indices for the booleanity sumcheck.
-pub const FAMILY_INSTRUCTION: usize = 0;
-pub const FAMILY_BYTECODE: usize = 1;
-pub const FAMILY_RAM: usize = 2;
-
 /// Parameters for the booleanity sumcheck.
 pub struct BooleanitySumcheckParams<F: JoltField> {
     /// Log of chunk size (shared across all families)
@@ -75,10 +70,6 @@ pub struct BooleanitySumcheckParams<F: JoltField> {
     pub r_cycle: Vec<F::Challenge>,
     /// Polynomial types for all families
     pub polynomial_types: Vec<CommittedPolynomial>,
-    /// Family index for each polynomial (0=instruction, 1=bytecode, 2=ram)
-    pub family: Vec<usize>,
-    /// Number of polynomials per family [instruction_d, bytecode_d, ram_d]
-    pub d_per_family: [usize; 3],
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
@@ -166,19 +157,15 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
 
         // Build polynomial types and family mapping
         let mut polynomial_types = Vec::with_capacity(total_d);
-        let mut family = Vec::with_capacity(total_d);
 
         for i in 0..instruction_d {
             polynomial_types.push(CommittedPolynomial::InstructionRa(i));
-            family.push(FAMILY_INSTRUCTION);
         }
         for i in 0..bytecode_d {
             polynomial_types.push(CommittedPolynomial::BytecodeRa(i));
-            family.push(FAMILY_BYTECODE);
         }
         for i in 0..ram_d {
             polynomial_types.push(CommittedPolynomial::RamRa(i));
-            family.push(FAMILY_RAM);
         }
 
         // Sample batching challenges (TODO: we can also reuse prior challenges from Stage 5)
@@ -191,8 +178,6 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             r_address,
             r_cycle,
             polynomial_types,
-            family,
-            d_per_family: [instruction_d, bytecode_d, ram_d],
         }
     }
 }
