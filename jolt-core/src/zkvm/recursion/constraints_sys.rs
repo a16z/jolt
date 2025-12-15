@@ -624,6 +624,96 @@ pub struct ConstraintSystem {
 }
 
 impl ConstraintSystem {
+    /// Create constraint system from witness data
+    pub fn from_witness(
+        constraint_types: Vec<ConstraintType>,
+        g_poly: DensePolynomial<Fq>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        // For now, create a simple matrix with padding
+        let num_constraints = constraint_types.len();
+        let num_constraint_vars = 8; // Using 8 for G1 scalar mul compatibility
+
+        let mut builder = DoryMatrixBuilder::new(num_constraint_vars);
+
+        // Add dummy data for each constraint type
+        // This is a placeholder - should be replaced with actual witness data
+        let zero_row = vec![Fq::zero(); 1 << num_constraint_vars];
+
+        for constraint_type in &constraint_types {
+            match constraint_type {
+                ConstraintType::GtExp { .. } => {
+                    // Add GT exp rows
+                    builder.rows_by_type[PolyType::Base as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::RhoCurr as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::Quotient as usize].push(zero_row.clone());
+
+                    // Add empty rows for other types
+                    for poly_type in 4..15 {
+                        builder.rows_by_type[poly_type].push(zero_row.clone());
+                    }
+
+                    builder.constraint_types.push(constraint_type.clone());
+                }
+                ConstraintType::GtMul => {
+                    // Add empty rows for GT exp types
+                    for poly_type in 0..4 {
+                        builder.rows_by_type[poly_type].push(zero_row.clone());
+                    }
+
+                    // Add GT mul rows
+                    builder.rows_by_type[PolyType::MulLhs as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::MulRhs as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::MulResult as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::MulQuotient as usize].push(zero_row.clone());
+
+                    // Add empty rows for G1 types
+                    for poly_type in 8..15 {
+                        builder.rows_by_type[poly_type].push(zero_row.clone());
+                    }
+
+                    builder.constraint_types.push(constraint_type.clone());
+                }
+                ConstraintType::G1ScalarMul { .. } => {
+                    // Add empty rows for GT types
+                    for poly_type in 0..8 {
+                        builder.rows_by_type[poly_type].push(zero_row.clone());
+                    }
+
+                    // Add G1 scalar mul rows
+                    for poly_type in 8..15 {
+                        builder.rows_by_type[poly_type].push(zero_row.clone());
+                    }
+
+                    builder.constraint_types.push(constraint_type.clone());
+                }
+            }
+        }
+
+        let (matrix, constraints) = builder.build();
+
+        Ok(Self {
+            matrix,
+            g_poly,
+            constraints,
+        })
+    }
+
+    /// Get the number of variables in the constraint system
+    pub fn num_vars(&self) -> usize {
+        self.matrix.num_vars
+    }
+
+    /// Get the number of constraints
+    pub fn num_constraints(&self) -> usize {
+        self.constraints.len()
+    }
+
+    /// Get the number of s variables (for virtualization)
+    pub fn num_s_vars(&self) -> usize {
+        self.matrix.num_s_vars
+    }
+
     pub fn new<T>(
         proof: &ArkDoryProof,
         setup: &ArkworksVerifierSetup,
@@ -679,25 +769,11 @@ impl ConstraintSystem {
         ))
     }
 
-    pub fn num_constraints(&self) -> usize {
-        self.constraints.len()
-    }
-
-    /// Number of s variables (for binding in Phase 2)
-    pub fn num_s_vars(&self) -> usize {
-        self.matrix.num_s_vars
-    }
-
-    /// Total variables: s + x
-    pub fn num_vars(&self) -> usize {
-        self.matrix.num_vars
-    }
-
-    /// Extract constraint polynomials for square-and-multiply sumcheck (Phase 1)
+    /// Extract constraint polynomials for square-and-multiply sumcheck (Stage 1)
     /// Only returns GT exp constraints
     pub fn extract_constraint_polynomials(
         &self,
-    ) -> Vec<crate::subprotocols::square_and_multiply::ConstraintPolynomials> {
+    ) -> Vec<crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials> {
         let mut polys = Vec::new();
         let num_constraint_vars = self.matrix.num_constraint_vars;
         let row_size = 1 << num_constraint_vars;
@@ -711,7 +787,7 @@ impl ConstraintSystem {
                 let quotient = self.extract_row_poly(PolyType::Quotient, idx, row_size);
 
                 polys.push(
-                    crate::subprotocols::square_and_multiply::ConstraintPolynomials {
+                    crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials {
                         base,
                         rho_prev,
                         rho_curr,
@@ -823,7 +899,7 @@ impl ConstraintSystem {
         }
     }
 
-    /// Evaluate the constraint system for Phase 1 sumcheck
+    /// Evaluate the constraint system for Stage 1 sumcheck
     ///
     /// Takes only x variables and evaluates F(x) = Σ_i γ^i * C_i(x)
     /// This is used in the square-and-multiply sumcheck.
@@ -1034,7 +1110,6 @@ mod tests {
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     };
     use ark_bn254::Fr;
-    use rayon::prelude::*;
     use serial_test::serial;
 
     #[test]

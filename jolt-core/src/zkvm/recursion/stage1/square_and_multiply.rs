@@ -2,7 +2,7 @@
 //! Proves: 0 = Σ_x eq(r_x, x) * Σ_i γ^i * C_i(x)
 //! Where C_i(x) = ρ_{i+1}(x) - ρ_i(x)² × a(x)^{b_i} - Q_i(x) × g(x)
 //!
-//! This is Phase 1 of the new two-phase recursion protocol.
+//! This is Stage 1 of the new two-stage recursion protocol.
 //! Output: Virtual polynomial claims for each polynomial in each constraint
 
 use crate::{
@@ -18,9 +18,10 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        recursion_constraints::ConstraintType, sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
+    zkvm::recursion::constraints_sys::ConstraintType,
     transcripts::Transcript,
     zkvm::witness::VirtualPolynomial,
 };
@@ -475,7 +476,7 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
         let g_eval = {
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-            use crate::subprotocols::recursion_constraints::DoryMatrixBuilder;
+            use crate::zkvm::recursion::constraints_sys::DoryMatrixBuilder;
             use jolt_optimizations::get_g_mle;
 
             // Get 4-var g polynomial and pad to 8 vars
@@ -547,7 +548,8 @@ mod tests {
             commitment::commitment_scheme::CommitmentScheme,
             opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
         },
-        subprotocols::{recursion_constraints::ConstraintSystem, sumcheck::BatchedSumcheck},
+        subprotocols::sumcheck::BatchedSumcheck,
+        zkvm::recursion::constraints_sys::ConstraintSystem,
         transcripts::Blake2bTranscript,
         zkvm::witness::CommittedPolynomial,
     };
@@ -555,7 +557,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_two_phase_recursion_protocol_e2e() {
+    fn test_two_stage_recursion_protocol_e2e() {
         use crate::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
         use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
         use ark_bn254::Fr;
@@ -610,21 +612,21 @@ mod tests {
 
         let num_constraints = constraint_system.num_constraints();
 
-        // Create transcripts for the two-phase protocol
-        let mut prover_transcript = Blake2bTranscript::new(b"two_phase_recursion");
-        let mut verifier_transcript = Blake2bTranscript::new(b"two_phase_recursion");
+        // Create transcripts for the two-stage protocol
+        let mut prover_transcript = Blake2bTranscript::new(b"two_stage_recursion");
+        let mut verifier_transcript = Blake2bTranscript::new(b"two_stage_recursion");
 
         // Extract g polynomial
         let g_poly = constraint_system.g_poly.clone();
 
-        // ============ PHASE 1: Constraint Sumchecks ============
-        println!("Starting Phase 1 (Constraint Sumchecks)...");
-        let phase1_start = std::time::Instant::now();
+        // ============ STAGE 1: Constraint Sumchecks ============
+        println!("Starting Stage 1 (Constraint Sumchecks)...");
+        let stage1_start = std::time::Instant::now();
 
         // Extract GT exp constraints for square-and-multiply
         let gt_exp_constraint_polys = constraint_system.extract_constraint_polynomials();
 
-        // Create prover accumulator for Phase 1
+        // Create prover accumulator for Stage 1
         // log_T should match the constraint system size
         let log_T = constraint_system.num_vars();
         let mut prover_accumulator = ProverOpeningAccumulator::<Fq>::new(log_T);
@@ -650,7 +652,7 @@ mod tests {
         // Prepare GT mul prover if we have GT mul constraints
         let gt_mul_constraints = constraint_system.extract_gt_mul_constraints();
         let mut gt_mul_prover = if !gt_mul_constraints.is_empty() {
-            use crate::subprotocols::gt_mul::{
+            use crate::zkvm::recursion::stage1::gt_mul::{
                 GtMulConstraintPolynomials, GtMulParams, GtMulProver,
             };
 
@@ -687,7 +689,7 @@ mod tests {
             g1_scalar_mul_constraints.len()
         );
         let mut g1_scalar_mul_prover = if !g1_scalar_mul_constraints.is_empty() {
-            use crate::subprotocols::g1_scalar_mul::{
+            use crate::zkvm::recursion::stage1::g1_scalar_mul::{
                 G1ScalarMulConstraintPolynomials, G1ScalarMulParams, G1ScalarMulProver,
             };
 
@@ -722,34 +724,34 @@ mod tests {
             None
         };
 
-        // Run Phase 1 sumcheck with all provers
-        let mut phase1_instances: Vec<&mut dyn SumcheckInstanceProver<Fq, Blake2bTranscript>> =
+        // Run Stage 1 sumcheck with all provers
+        let mut stage1_instances: Vec<&mut dyn SumcheckInstanceProver<Fq, Blake2bTranscript>> =
             Vec::new();
 
         if let Some(ref mut prover) = sq_mul_prover {
-            phase1_instances.push(prover);
+            stage1_instances.push(prover);
         }
 
         if let Some(ref mut prover) = gt_mul_prover {
-            phase1_instances.push(prover);
+            stage1_instances.push(prover);
         }
 
         if let Some(ref mut prover) = g1_scalar_mul_prover {
-            phase1_instances.push(prover);
+            stage1_instances.push(prover);
         }
 
-        let (phase1_proof, r_phase1) = BatchedSumcheck::prove(
-            phase1_instances,
+        let (stage1_proof, r_stage1) = BatchedSumcheck::prove(
+            stage1_instances,
             &mut prover_accumulator,
             &mut prover_transcript,
         );
 
-        let phase1_duration = phase1_start.elapsed();
-        println!("Phase 1 completed in: {:?}", phase1_duration);
+        let stage1_duration = stage1_start.elapsed();
+        println!("Stage 1 completed in: {:?}", stage1_duration);
 
-        // ============ PHASE 2: Virtualization Sumcheck ============
-        println!("Starting Phase 2 (Virtualization Sumcheck)...");
-        let phase2_start = std::time::Instant::now();
+        // ============ STAGE 2: Virtualization Sumcheck ============
+        println!("Starting Stage 2 (Virtualization Sumcheck)...");
+        let stage2_start = std::time::Instant::now();
 
         // ============ VERIFICATION ============
 
@@ -788,7 +790,7 @@ mod tests {
         println!("Total constraints: {}", constraint_system.constraints.len());
 
         // Create verifiers based on what constraints we have
-        let mut phase1_ver_instances: Vec<
+        let mut stage1_ver_instances: Vec<
             Box<dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>>,
         > = Vec::new();
 
@@ -812,12 +814,12 @@ mod tests {
                 constraint_indices,
                 &mut verifier_transcript,
             );
-            phase1_ver_instances.push(Box::new(verifier));
+            stage1_ver_instances.push(Box::new(verifier));
         }
 
         // Add GT mul verifier if we have GT mul constraints
         if num_gt_mul > 0 {
-            use crate::subprotocols::gt_mul::{GtMulParams, GtMulVerifier};
+            use crate::zkvm::recursion::stage1::gt_mul::{GtMulParams, GtMulVerifier};
 
             // Get constraint indices for GT mul constraints
             let constraint_indices: Vec<usize> = constraint_system
@@ -833,12 +835,12 @@ mod tests {
             let params_gt_mul = GtMulParams::new(num_gt_mul);
             let verifier =
                 GtMulVerifier::new(params_gt_mul, constraint_indices, &mut verifier_transcript);
-            phase1_ver_instances.push(Box::new(verifier));
+            stage1_ver_instances.push(Box::new(verifier));
         }
 
         // Add G1 scalar mul verifier if we have G1 scalar mul constraints
         if num_g1_scalar_mul > 0 {
-            use crate::subprotocols::g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier};
+            use crate::zkvm::recursion::stage1::g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier};
 
             // Get constraint indices and base points for G1 scalar mul constraints
             let (constraint_indices, base_points): (Vec<usize>, Vec<(Fq, Fq)>) = constraint_system
@@ -860,60 +862,60 @@ mod tests {
                 constraint_indices,
                 &mut verifier_transcript,
             );
-            phase1_ver_instances.push(Box::new(verifier));
+            stage1_ver_instances.push(Box::new(verifier));
         }
 
-        // Verify Phase 1 with all verifiers
-        let phase1_ver_instances_refs: Vec<&dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>> =
-            phase1_ver_instances.iter().map(|v| &**v).collect();
+        // Verify Stage 1 with all verifiers
+        let stage1_ver_instances_refs: Vec<&dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>> =
+            stage1_ver_instances.iter().map(|v| &**v).collect();
 
-        let r_phase1_ver = BatchedSumcheck::verify(
-            &phase1_proof,
-            phase1_ver_instances_refs,
+        let r_stage1_ver = BatchedSumcheck::verify(
+            &stage1_proof,
+            stage1_ver_instances_refs,
             &mut verifier_accumulator,
             &mut verifier_transcript,
         )
-        .expect("Phase 1 verification should succeed");
+        .expect("Stage 1 verification should succeed");
 
-        // ============ PHASE 2: Virtualization Sumcheck ============
+        // ============ STAGE 2: Virtualization Sumcheck ============
 
-        use crate::subprotocols::recursion_virtualization::{
+        use crate::zkvm::recursion::stage2::virtualization::{
             RecursionVirtualizationParams, RecursionVirtualizationProver,
             RecursionVirtualizationVerifier,
         };
 
-        // Create Phase 2 parameters
+        // Create Stage 2 parameters
         let num_s_vars = constraint_system.matrix.num_s_vars;
         let num_constraints_padded = constraint_system.matrix.num_constraints_padded;
-        let phase2_params = RecursionVirtualizationParams::new(
+        let stage2_params = RecursionVirtualizationParams::new(
             num_s_vars,
             num_constraints,
             num_constraints_padded,
             CommittedPolynomial::DoryConstraintMatrix,
         );
 
-        // Create Phase 2 prover
-        let phase2_prover = RecursionVirtualizationProver::new(
-            phase2_params.clone(),
+        // Create Stage 2 prover
+        let stage2_prover = RecursionVirtualizationProver::new(
+            stage2_params.clone(),
             &constraint_system,
             &mut prover_transcript,
-            r_phase1.clone(), // x_star from Phase 1
+            r_stage1.clone(), // x_star from Stage 1
             &prover_accumulator,
             gamma,
         );
 
-        // Run Phase 2 sumcheck
-        let mut phase2_prover = phase2_prover;
-        let phase2_instances: Vec<&mut dyn SumcheckInstanceProver<Fq, Blake2bTranscript>> =
-            vec![&mut phase2_prover];
+        // Run Stage 2 sumcheck
+        let mut stage2_prover = stage2_prover;
+        let stage2_instances: Vec<&mut dyn SumcheckInstanceProver<Fq, Blake2bTranscript>> =
+            vec![&mut stage2_prover];
 
-        let (phase2_proof, r_phase2) = BatchedSumcheck::prove(
-            phase2_instances,
+        let (stage2_proof, r_stage2) = BatchedSumcheck::prove(
+            stage2_instances,
             &mut prover_accumulator,
             &mut prover_transcript,
         );
 
-        // Add Phase 2 dense polynomial claims to verifier accumulator
+        // Add Stage 2 dense polynomial claims to verifier accumulator
         // In a real proof, these would come from proof.opening_claims
         for (key, (_, claim)) in &prover_accumulator.openings {
             if !verifier_accumulator.openings.contains_key(key) {
@@ -923,42 +925,42 @@ mod tests {
             }
         }
 
-        // Get all constraint types for Phase 2 verifier
+        // Get all constraint types for Stage 2 verifier
         let constraint_types: Vec<ConstraintType> = constraint_system
             .constraints
             .iter()
             .map(|c| c.constraint_type.clone())
             .collect();
 
-        // Create Phase 2 verifier
-        let phase2_verifier = RecursionVirtualizationVerifier::new(
-            phase2_params,
+        // Create Stage 2 verifier
+        let stage2_verifier = RecursionVirtualizationVerifier::new(
+            stage2_params,
             constraint_types,
             &mut verifier_transcript,
-            r_phase1_ver.clone(), // x_star from Phase 1 verification
+            r_stage1_ver.clone(), // x_star from Stage 1 verification
             gamma,
         );
 
-        // Verify Phase 2
-        let phase2_ver_instances: Vec<&dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>> =
-            vec![&phase2_verifier];
+        // Verify Stage 2
+        let stage2_ver_instances: Vec<&dyn SumcheckInstanceVerifier<Fq, Blake2bTranscript>> =
+            vec![&stage2_verifier];
 
-        let r_phase2_ver = BatchedSumcheck::verify(
-            &phase2_proof,
-            phase2_ver_instances,
+        let r_stage2_ver = BatchedSumcheck::verify(
+            &stage2_proof,
+            stage2_ver_instances,
             &mut verifier_accumulator,
             &mut verifier_transcript,
         )
-        .expect("Phase 2 verification should succeed");
+        .expect("Stage 2 verification should succeed");
 
         assert_eq!(
-            r_phase2.len(),
-            r_phase2_ver.len(),
-            "Phase 2 challenge lengths should match"
+            r_stage2.len(),
+            r_stage2_ver.len(),
+            "Stage 2 challenge lengths should match"
         );
 
-        let phase2_duration = phase2_start.elapsed();
-        println!("Phase 2 completed in: {:?}", phase2_duration);
+        let stage2_duration = stage2_start.elapsed();
+        println!("Stage 2 completed in: {:?}", stage2_duration);
 
         // ============ HYRAX OPENING PROOF ============
 
@@ -988,7 +990,7 @@ mod tests {
         const RATIO: usize = 1;
         type HyraxPCS = Hyrax<RATIO, GrumpkinProjective>;
 
-        // 1. Hyrax Setup Phase
+        // 1. Hyrax Setup Stage
         println!("Starting Hyrax prover setup...");
         let hyrax_setup_start = std::time::Instant::now();
 
@@ -1012,8 +1014,8 @@ mod tests {
             matrix_poly.clone(),
         );
 
-        // 2. Hyrax Commit Phase
-        println!("Starting Hyrax commitment phase...");
+        // 2. Hyrax Commit Stage
+        println!("Starting Hyrax commitment stage...");
         let hyrax_commit_start = std::time::Instant::now();
 
         // Commit to the matrix polynomial using Hyrax (reuse matrix_poly from above)
@@ -1033,11 +1035,11 @@ mod tests {
         > = HashMap::new();
         commitments_map.insert(CommittedPolynomial::DoryConstraintMatrix, matrix_commitment);
 
-        // 3. Hyrax Opening Proof Phase
+        // 3. Hyrax Opening Proof Stage
         println!("Starting Hyrax opening proof generation...");
         let hyrax_proof_start = std::time::Instant::now();
 
-        // Run prove_single for the single opening from Phase 2
+        // Run prove_single for the single opening from Stage 2
         let opening_proof = prover_accumulator
             .prove_single::<Blake2bTranscript, HyraxPCS>(
                 polynomials_map,
@@ -1079,8 +1081,8 @@ mod tests {
         );
 
         println!("\n======== Test Summary ========");
-        println!("Phase 1 (Constraint Sumchecks): {:?}", phase1_duration);
-        println!("Phase 2 (Virtualization Sumcheck): {:?}", phase2_duration);
+        println!("Stage 1 (Constraint Sumchecks): {:?}", stage1_duration);
+        println!("Stage 2 (Virtualization Sumcheck): {:?}", stage2_duration);
         println!("Hyrax Prover Setup: {:?}", hyrax_setup_duration);
         println!("Hyrax Commitment: {:?}", hyrax_commit_duration);
         println!("Hyrax Opening Proof: {:?}", hyrax_proof_duration);
@@ -1088,7 +1090,7 @@ mod tests {
         println!("Hyrax Total: {:?}", hyrax_total);
         println!(
             "Total time: {:?}",
-            phase1_duration + phase2_duration + hyrax_total
+            stage1_duration + stage2_duration + hyrax_total
         );
         println!("Hyrax polynomial variables: {}", num_hyrax_vars);
         println!("==============================\n");

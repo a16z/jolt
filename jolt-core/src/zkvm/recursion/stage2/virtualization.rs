@@ -1,15 +1,15 @@
-//! Virtualization sumcheck for recursion protocol (Phase 2)
+//! Virtualization sumcheck for recursion protocol (Stage 2)
 //!
 //! Protocol:
 //! 1. V→P: r_s ← F^m (random challenge for virtualization)
-//! 2. Both compute: v = Σ_i eq(r_s,i) · v_i (where v_i are virtual claims from Phase 1)
+//! 2. Both compute: v = Σ_i eq(r_s,i) · v_i (where v_i are virtual claims from Stage 1)
 //! 3. Sumcheck on: Σ_s eq(r_s,s) · M(s,r_x) = v
 //! 4. Output claim: M(r_s_final,r_x) = c_m / eq(r_s,r_s_final)
 //!
 //! Where:
 //! - M(s,x) is the packed MLE: M(i,b) = p_i(b) for all virtual polynomials p_i
 //! - s is a unified index that selects both constraint and polynomial type
-//! - r_x is the evaluation point from Phase 1 (sumcheck challenge)
+//! - r_x is the evaluation point from Stage 1 (sumcheck challenge)
 //! - r_s is the random challenge for virtualization
 //! - r_s_final is the final sumcheck challenge point
 
@@ -25,10 +25,10 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        recursion_constraints::{ConstraintSystem, ConstraintType, PolyType},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
+    zkvm::recursion::constraints_sys::{ConstraintSystem, ConstraintType, PolyType},
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
@@ -65,7 +65,7 @@ fn compute_virtualization_claim(
     eq_evals: &[Fq],
     claims: &VirtualClaims,
 ) -> Fq {
-    // Build μ evaluations from Phase 1 claims
+    // Build μ evaluations from Stage 1 claims
     let mu_size = 1 << params.num_s_vars;
     let mut mu_evals = vec![Fq::zero(); mu_size];
 
@@ -167,16 +167,16 @@ pub struct RecursionVirtualizationProver {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub eq_r_s: MultilinearPolynomial<Fq>,
 
-    /// Evaluation point from Phase 1 sumcheck (r_x from square-and-multiply)
+    /// Evaluation point from Stage 1 sumcheck (r_x from square-and-multiply)
     pub r_x_prev: Vec<<Fq as JoltField>::Challenge>,
 
     /// Random challenge r_s for virtualization
     pub r_s: Vec<<Fq as JoltField>::Challenge>,
 
-    /// Gamma coefficient from Phase 1
+    /// Gamma coefficient from Stage 1
     pub gamma: Fq,
 
-    /// Virtual claims from Phase 1 for all constraints
+    /// Virtual claims from Stage 1 for all constraints
     pub virtual_claims: VirtualClaims,
 
     /// Current round
@@ -192,7 +192,7 @@ impl RecursionVirtualizationProver {
         constraint_system: &ConstraintSystem,
         transcript: &mut T,
         r_x_prev: Vec<<Fq as JoltField>::Challenge>,
-        phase1_accumulator: &ProverOpeningAccumulator<Fq>,
+        stage1_accumulator: &ProverOpeningAccumulator<Fq>,
         gamma: Fq,
     ) -> Self {
         let r_s: Vec<<Fq as JoltField>::Challenge> = (0..params.num_rounds())
@@ -236,19 +236,19 @@ impl RecursionVirtualizationProver {
         for (i, constraint) in constraint_system.constraints.iter().enumerate() {
             match constraint.constraint_type {
                 ConstraintType::GtExp { .. } => {
-                    let (_, base_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, base_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionBase(i),
                         SumcheckId::SquareAndMultiply,
                     );
-                    let (_, rho_prev_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, rho_prev_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionRhoPrev(i),
                         SumcheckId::SquareAndMultiply,
                     );
-                    let (_, rho_curr_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, rho_curr_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionRhoCurr(i),
                         SumcheckId::SquareAndMultiply,
                     );
-                    let (_, quotient_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, quotient_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionQuotient(i),
                         SumcheckId::SquareAndMultiply,
                     );
@@ -259,19 +259,19 @@ impl RecursionVirtualizationProver {
                     quotient_claims[i] = quotient_claim;
                 }
                 ConstraintType::GtMul => {
-                    let (_, lhs_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, lhs_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionMulLhs(i),
                         SumcheckId::GtMul,
                     );
-                    let (_, rhs_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, rhs_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionMulRhs(i),
                         SumcheckId::GtMul,
                     );
-                    let (_, result_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, result_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionMulResult(i),
                         SumcheckId::GtMul,
                     );
-                    let (_, quotient_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, quotient_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionMulQuotient(i),
                         SumcheckId::GtMul,
                     );
@@ -282,31 +282,31 @@ impl RecursionVirtualizationProver {
                     mul_quotient_claims[i] = quotient_claim;
                 }
                 ConstraintType::G1ScalarMul { .. } => {
-                    let (_, x_a_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, x_a_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionG1ScalarMulXA(i),
                         SumcheckId::G1ScalarMul,
                     );
-                    let (_, y_a_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, y_a_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionG1ScalarMulYA(i),
                         SumcheckId::G1ScalarMul,
                     );
-                    let (_, x_t_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, x_t_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionG1ScalarMulXT(i),
                         SumcheckId::G1ScalarMul,
                     );
-                    let (_, y_t_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, y_t_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionG1ScalarMulYT(i),
                         SumcheckId::G1ScalarMul,
                     );
-                    let (_, x_a_next_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, x_a_next_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionG1ScalarMulXANext(i),
                         SumcheckId::G1ScalarMul,
                     );
-                    let (_, y_a_next_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, y_a_next_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionG1ScalarMulYANext(i),
                         SumcheckId::G1ScalarMul,
                     );
-                    let (_, t_is_infinity_claim) = phase1_accumulator.get_virtual_polynomial_opening(
+                    let (_, t_is_infinity_claim) = stage1_accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::RecursionG1ScalarMulIndicator(i),
                         SumcheckId::G1ScalarMul,
                     );

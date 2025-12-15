@@ -18,7 +18,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -473,7 +473,7 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for GtMulVerifier {
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
             use jolt_optimizations::get_g_mle;
-            use crate::subprotocols::recursion_constraints::DoryMatrixBuilder;
+            use crate::zkvm::recursion::constraints_sys::DoryMatrixBuilder;
 
             // Get 4-var g polynomial and pad to 8 vars
             let g_mle_4var = get_g_mle();
