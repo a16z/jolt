@@ -84,15 +84,19 @@ impl VirtualRegisterAllocator {
                 .all(|allocated| !*allocated),
             "All allocated virtual registers have to be dropped before inline finalization"
         );
-        // Return the list of registers that need to be reset
-        self.pending_clearing_inline
+        // Return the list of registers that need to be reset and clear the pending array
+        let mut pending = self
+            .pending_clearing_inline
             .lock()
-            .expect("Failed to lock virtual register allocator")
+            .expect("Failed to lock virtual register allocator");
+        let result = pending
             .iter()
             .enumerate()
-            .filter(|(_, pending)| **pending)
+            .filter(|(_, p)| **p)
             .map(|(i, _)| i as u8 + RISCV_REGISTER_BASE)
-            .collect::<Vec<u8>>()
+            .collect::<Vec<u8>>();
+        *pending = [false; NUM_VIRTUAL_REGISTERS];
+        result
     }
 
     fn deallocate(&self, index: u8) {
