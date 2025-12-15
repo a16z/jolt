@@ -42,6 +42,8 @@ struct Sha256SequenceBuilder {
     message: [VirtualRegisterGuard; 16],
     /// Initial state values for final addition (8 registers, only used when !initial)
     iv: Vec<VirtualRegisterGuard>,
+    /// Temporary registers
+    tmp: [VirtualRegisterGuard; 4],
     /// Operands
     operands: FormatInline,
     /// Whether this is the initial compression (use BLOCK constants)
@@ -59,6 +61,7 @@ impl Sha256SequenceBuilder {
                 .map(|_| asm.allocator.allocate_for_inline())
                 .collect()
         };
+        let tmp = array::from_fn(|_| asm.allocator.allocate_for_inline());
 
         Sha256SequenceBuilder {
             asm,
@@ -66,6 +69,7 @@ impl Sha256SequenceBuilder {
             state,
             message,
             iv,
+            tmp,
             operands,
             initial,
         }
@@ -97,11 +101,11 @@ impl Sha256SequenceBuilder {
             self.asm
                 .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
         }
-        // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps per round) = 36
-        // The temps are allocated/deallocated per round, but we need to reserve space for them
+        // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps) = 36
         drop(self.state);
         drop(self.message);
         drop(self.iv);
+        drop(self.tmp);
         self.asm.finalize_inline()
     }
 
@@ -133,13 +137,8 @@ impl Sha256SequenceBuilder {
     /// Performs one round of SHA256 compression
     fn round(&mut self) {
         assert!(self.round < 64);
-        let t1 = self.asm.allocator.allocate_for_inline();
-        let t2 = self.asm.allocator.allocate_for_inline();
-        let ss = self.asm.allocator.allocate_for_inline();
-        let ss2 = self.asm.allocator.allocate_for_inline();
-
-        let t1_val = self.compute_t1(*t1, *ss, *ss2);
-        let t2_val = self.compute_t2(*t2, *ss, *ss2);
+        let t1_val = self.compute_t1(*self.tmp[0], *self.tmp[2], *self.tmp[3]);
+        let t2_val = self.compute_t2(*self.tmp[1], *self.tmp[2], *self.tmp[3]);
         let old_d = self.vri('D');
         self.apply_round_update(t1_val, t2_val, old_d);
     }
