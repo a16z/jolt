@@ -13,35 +13,110 @@ use crate::{
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpeningRef {
     Committed(CommittedPolynomial),
     Virtual(VirtualPolynomial),
 }
 
 impl OpeningRef {
-    fn get_cached_opening<F: JoltField>(&self, acc: &impl OpeningAccumulator<F>, sumcheck_id: SumcheckId) -> F {
+    fn get_cached_opening<F: JoltField>(
+        &self,
+        sumcheck_id: SumcheckId,
+        acc: &impl OpeningAccumulator<F>,
+    ) -> F {
         match self {
             Self::Committed(poly) => acc.get_committed_polynomial_opening(*poly, sumcheck_id),
             Self::Virtual(poly) => acc.get_virtual_polynomial_opening(*poly, sumcheck_id),
-        }.1
+        }
+        .1
     }
 
-    fn get_point<F: JoltField>(&self, acc: &impl OpeningAccumulator<F>, sumcheck_id: SumcheckId) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn get_point<F: JoltField>(
+        &self,
+        sumcheck_id: SumcheckId,
+        acc: &impl OpeningAccumulator<F>,
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         match self {
             Self::Committed(poly) => acc.get_committed_polynomial_opening(*poly, sumcheck_id),
             Self::Virtual(poly) => acc.get_virtual_polynomial_opening(*poly, sumcheck_id),
-        }.0
+        }
+        .0
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChallengePart {
+    Address,
+    Cycle,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CachedPointRef {
+    pub opening: OpeningRef,
+    pub sumcheck: SumcheckId,
+    pub part: ChallengePart,
+    pub reverse: bool,
+}
+
+impl CachedPointRef {
+    fn get_point<F: JoltField>(
+        &self,
+        n_cycle_vars: usize,
+        acc: &impl OpeningAccumulator<F>,
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let point = self.opening.get_point(self.sumcheck, acc);
+        // TODO: Handle getting address / cycle parts, e.g.,
+        //let point_part = match self.part {
+        //    ChallengePart::Address => point.split_at(n_cycle_vars.unwrap()).0,
+        //    ChallengePart::Cycle => point.split_at(n_cycle_vars.unwrap()).1,
+        //    ChallengePart::Both => point,
+        //};
+        let point_part = if point.len() > n_cycle_vars {
+            point.split_at(point.len() - n_cycle_vars - 1).1
+        } else {
+            point
+        };
+        if self.reverse {
+            OpeningPoint::<BIG_ENDIAN, F> {
+                r: point_part.r.into_iter().rev().collect(),
+            }
+        } else {
+            point_part
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BatchingPolynomial {
-    Cycle(OpeningRef),
-    NextCycle(OpeningRef),
-    LtCycle(OpeningRef),
-    Address(OpeningRef),
+    Eq(CachedPointRef),
+    EqPlusOne(CachedPointRef),
+    Lt(CachedPointRef),
     Identity,
+    NoBatching,
+}
+
+impl BatchingPolynomial {
+    fn evaluate<F: JoltField>(
+        &self,
+        r: &OpeningPoint<BIG_ENDIAN, F>,
+        acc: &impl OpeningAccumulator<F>,
+    ) -> F {
+        match self {
+            BatchingPolynomial::Eq(point_ref) => {
+                let tau = point_ref.get_point(r.len(), acc);
+                EqPolynomial::mle_endian(&tau, r)
+            }
+            BatchingPolynomial::EqPlusOne(point_ref) => {
+                let tau = point_ref.get_point(r.len(), acc);
+                EqPlusOnePolynomial::new(tau.r).evaluate(&r.r)
+            }
+            BatchingPolynomial::Lt(_opening_ref) => todo!(),
+            BatchingPolynomial::Identity => todo!(),
+            BatchingPolynomial::NoBatching => F::one(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -62,37 +137,19 @@ impl<F: JoltField> ClaimExpr<F> {
         Self::Var(OpeningRef::Virtual(poly))
     }
 
-    fn evaluate(&self, acc: &impl OpeningAccumulator<F>, sumcheck_id: SumcheckId) -> F {
+    fn evaluate(&self, sumcheck_id: SumcheckId, acc: &impl OpeningAccumulator<F>) -> F {
         match self {
             ClaimExpr::Val(f) => *f,
-            ClaimExpr::Var(opening_ref) => opening_ref.get_cached_opening(acc, sumcheck_id),
+            ClaimExpr::Var(opening_ref) => opening_ref.get_cached_opening(sumcheck_id, acc),
             ClaimExpr::Add(e1, e2) => {
-                F::add(e1.evaluate(acc, sumcheck_id), e2.evaluate(acc, sumcheck_id))
+                F::add(e1.evaluate(sumcheck_id, acc), e2.evaluate(sumcheck_id, acc))
             }
             ClaimExpr::Mul(e1, e2) => {
-                F::mul(e1.evaluate(acc, sumcheck_id), e2.evaluate(acc, sumcheck_id))
+                F::mul(e1.evaluate(sumcheck_id, acc), e2.evaluate(sumcheck_id, acc))
             }
             ClaimExpr::Sub(e1, e2) => {
-                F::sub(e1.evaluate(acc, sumcheck_id), e2.evaluate(acc, sumcheck_id))
+                F::sub(e1.evaluate(sumcheck_id, acc), e2.evaluate(sumcheck_id, acc))
             }
-        }
-    }
-
-    /// We use this to get the `r_cycle_stage` opening point from an input claim to use in the
-    /// corresponding output claim. We need this because we need to know the polynomial ID and
-    /// whether to call `get_committed_polynomial_opening` or `get_virtual_polynomial_opening`.
-    // TODO: Better way to do this?
-    fn get_first_opening_point(
-        &self,
-        acc: &impl OpeningAccumulator<F>,
-        sumcheck_id: SumcheckId,
-    ) -> Option<OpeningPoint<BIG_ENDIAN, F>> {
-        match self {
-            ClaimExpr::Val(_) => None,
-            ClaimExpr::Var(opening_ref) => Some(opening_ref.get_point(acc, sumcheck_id)),
-            ClaimExpr::Add(e1, e2) | ClaimExpr::Mul(e1, e2) | ClaimExpr::Sub(e1, e2) => e1
-                .get_first_opening_point(acc, sumcheck_id)
-                .or(e2.get_first_opening_point(acc, sumcheck_id)),
         }
     }
 }
@@ -144,8 +201,8 @@ impl<F> Sub for ClaimExpr<F> {
 pub struct Claim<F: JoltField> {
     pub input_sumcheck_id: SumcheckId,
     pub input_claim_expr: ClaimExpr<F>,
+    pub batching_poly: BatchingPolynomial,
     pub expected_output_claim_expr: ClaimExpr<F>,
-    pub is_offset: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -162,7 +219,7 @@ impl<F: JoltField> InputOutputClaims<F> {
             .map(|(claim, gamma_pow)| {
                 let claim_eval = claim
                     .input_claim_expr
-                    .evaluate(acc, claim.input_sumcheck_id);
+                    .evaluate(claim.input_sumcheck_id, acc);
                 *gamma_pow * claim_eval
             })
             .sum()
@@ -174,48 +231,19 @@ impl<F: JoltField> InputOutputClaims<F> {
         gamma_pows: &[F],
         acc: &impl OpeningAccumulator<F>,
     ) -> F {
-        let mut eq_eval_cache: HashMap<SumcheckId, F> = HashMap::new();
-        let mut eq_plus_one_eval_cache: HashMap<SumcheckId, F> = HashMap::new();
+        let mut batching_poly_eval_cache: HashMap<BatchingPolynomial, F> = HashMap::new();
 
         self.claims
             .iter()
             .zip(gamma_pows)
             .map(|(claim, gamma_pow)| {
-                let eq_eval = if claim.is_offset {
-                    eq_plus_one_eval_cache
-                        .entry(claim.input_sumcheck_id)
-                        .or_insert_with(|| {
-                            let opening_point = claim
-                                .input_claim_expr
-                                .get_first_opening_point(acc, claim.input_sumcheck_id)
-                                .unwrap();
-                            let r_cycle_stage = if r.len() < opening_point.len() {
-                                opening_point.split_at(opening_point.len() - 1 - r.len()).1
-                            } else {
-                                opening_point
-                            };
-                            EqPlusOnePolynomial::new(r_cycle_stage.r).evaluate(&r.r)
-                        })
-                } else {
-                    eq_eval_cache
-                        .entry(claim.input_sumcheck_id)
-                        .or_insert_with(|| {
-                            let opening_point = claim
-                                .input_claim_expr
-                                .get_first_opening_point(acc, claim.input_sumcheck_id)
-                                .unwrap();
-                            let r_cycle_stage = if r.len() < opening_point.len() {
-                                opening_point.split_at(opening_point.len() - 1 - r.len()).1
-                            } else {
-                                opening_point
-                            };
-                            EqPolynomial::mle_endian(&r_cycle_stage, r)
-                        })
-                };
+                let batching_poly_eval = batching_poly_eval_cache
+                    .entry(claim.batching_poly)
+                    .or_insert_with(|| claim.batching_poly.evaluate(r, acc));
                 let claim_eval = claim
                     .expected_output_claim_expr
-                    .evaluate(acc, self.output_sumcheck_id);
-                *gamma_pow * *eq_eval * claim_eval
+                    .evaluate(self.output_sumcheck_id, acc);
+                *gamma_pow * *batching_poly_eval * claim_eval
             })
             .sum()
     }

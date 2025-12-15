@@ -16,7 +16,10 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend},
+        sumcheck_claim::{
+            BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+            OpeningRef, SumcheckFrontend,
+        },
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
@@ -605,31 +608,44 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
         let left_instruction_input_eval = left_is_rs1 * rs1_value + left_is_pc * unexpanded_pc;
         let right_instruction_input_eval = right_is_rs2 * rs2_value + right_is_imm * imm;
 
+        let eq_r_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
+            sumcheck: SumcheckId::SpartanOuter,
+            part: ChallengePart::Cycle,
+            reverse: false,
+        });
+        let eq_r_stage2 = BatchingPolynomial::Eq(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
+            sumcheck: SumcheckId::ProductVirtualization,
+            part: ChallengePart::Cycle,
+            reverse: false,
+        });
+
         InputOutputClaims {
             claims: vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: right_instruction_input.clone(),
+                    batching_poly: eq_r_stage1,
                     expected_output_claim_expr: right_instruction_input_eval.clone(),
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: left_instruction_input.clone(),
+                    batching_poly: eq_r_stage1,
                     expected_output_claim_expr: left_instruction_input_eval.clone(),
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::ProductVirtualization,
                     input_claim_expr: right_instruction_input,
+                    batching_poly: eq_r_stage2,
                     expected_output_claim_expr: right_instruction_input_eval,
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::ProductVirtualization,
                     input_claim_expr: left_instruction_input,
+                    batching_poly: eq_r_stage2,
                     expected_output_claim_expr: left_instruction_input_eval,
-                    is_offset: false,
                 },
             ],
             output_sumcheck_id: SumcheckId::InstructionInputVirtualization,

@@ -16,7 +16,10 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend};
+use crate::subprotocols::sumcheck_claim::{
+    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    OpeningRef, SumcheckFrontend,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -333,37 +336,50 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
         let is_noop: ClaimExpr<F> =
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop).into();
 
+        let outer_sumcheck_r = BatchingPolynomial::EqPlusOne(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::NextPC),
+            sumcheck: SumcheckId::SpartanOuter,
+            part: ChallengePart::Cycle,
+            reverse: false,
+        });
+        let product_sumcheck_r = BatchingPolynomial::EqPlusOne(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::NextIsNoop),
+            sumcheck: SumcheckId::ProductVirtualization,
+            part: ChallengePart::Cycle,
+            reverse: false,
+        });
+
         InputOutputClaims {
             claims: vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: next_unexpanded_pc,
+                    batching_poly: outer_sumcheck_r,
                     expected_output_claim_expr: unexpanded_pc,
-                    is_offset: true,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: next_pc,
+                    batching_poly: outer_sumcheck_r,
                     expected_output_claim_expr: pc,
-                    is_offset: true,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: next_is_virtual,
+                    batching_poly: outer_sumcheck_r,
                     expected_output_claim_expr: is_virtual,
-                    is_offset: true,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: next_is_first_in_sequence,
+                    batching_poly: outer_sumcheck_r,
                     expected_output_claim_expr: is_first_in_sequence,
-                    is_offset: true,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::ProductVirtualization,
                     input_claim_expr: ClaimExpr::Val(F::one()) - next_is_noop,
+                    batching_poly: product_sumcheck_r,
                     expected_output_claim_expr: ClaimExpr::Val(F::one()) - is_noop,
-                    is_offset: true,
                 },
             ],
             output_sumcheck_id: SumcheckId::SpartanShift,

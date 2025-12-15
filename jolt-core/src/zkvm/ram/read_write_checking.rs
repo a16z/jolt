@@ -6,7 +6,10 @@ use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend};
+use crate::subprotocols::sumcheck_claim::{
+    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    OpeningRef, SumcheckFrontend,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -539,19 +542,26 @@ impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
         let ram_val: ClaimExpr<F> = VirtualPolynomial::RamVal.into();
         let ram_inc: ClaimExpr<F> = CommittedPolynomial::RamInc.into();
 
+        let eq_cycle_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::RamReadValue),
+            sumcheck: SumcheckId::SpartanOuter,
+            part: ChallengePart::Cycle,
+            reverse: false,
+        });
+
         InputOutputClaims {
             claims: vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: ram_read_value,
+                    batching_poly: eq_cycle_stage1,
                     expected_output_claim_expr: ram_ra.clone() * ram_val.clone(),
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: ram_write_value,
+                    batching_poly: eq_cycle_stage1,
                     expected_output_claim_expr: ram_ra * (ram_val + ram_inc),
-                    is_offset: false,
                 },
             ],
             output_sumcheck_id: SumcheckId::RamReadWriteChecking,

@@ -6,7 +6,10 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend};
+use crate::subprotocols::sumcheck_claim::{
+    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    OpeningRef, SumcheckFrontend,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -168,11 +171,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r = OpeningPoint::new(
-            sumcheck_challenges
-                .iter()
-                .cloned()
-                .rev()
-                .collect::<Vec<F::Challenge>>(),
+            sumcheck_challenges.to_vec(),
         );
         let result =
             Self::input_output_claims().expected_output_claim(&r, &[F::one()], accumulator);
@@ -227,20 +226,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
 impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> {
     fn input_output_claims() -> InputOutputClaims<F> {
-        let lookup_output: ClaimExpr<F> = VirtualPolynomial::LookupOutput.into();
         let ram_hamming_weight: ClaimExpr<F> = VirtualPolynomial::RamHammingWeight.into();
         let ram_hamming_weight_squared = ram_hamming_weight.clone() * ram_hamming_weight.clone();
+
+        let eq_r_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::LookupOutput),
+            sumcheck: SumcheckId::SpartanOuter,
+            part: ChallengePart::Cycle,
+            reverse: true,
+        });
 
         InputOutputClaims {
             claims: vec![Claim {
                 // NOTE: In this case, the input claim is 0, so this is just the sumcheck to
                 // take r_cycle from.
                 input_sumcheck_id: SumcheckId::SpartanOuter,
-                // FIXME: This is a kludge. Should just be 0, but then how do we know which
-                // virtual polynomial to use to get the opening from the accumulator?
-                input_claim_expr: ClaimExpr::Val(F::zero()) * lookup_output,
+                input_claim_expr: F::zero().into(),
+                batching_poly: eq_r_stage1,
                 expected_output_claim_expr: ram_hamming_weight_squared - ram_hamming_weight,
-                is_offset: false,
             }],
             output_sumcheck_id: SumcheckId::RamHammingBooleanity,
         }

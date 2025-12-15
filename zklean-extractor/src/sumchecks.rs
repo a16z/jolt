@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use jolt_core::{
     field::JoltField,
     poly::opening_proof::SumcheckId,
-    subprotocols::sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend},
+    subprotocols::sumcheck_claim::{
+        BatchingPolynomial, Claim, ClaimExpr, InputOutputClaims, OpeningRef, SumcheckFrontend,
+    },
     zkvm::{
         ram::read_write_checking::RamReadWriteCheckingVerifier,
         registers::read_write_checking::RegistersReadWriteCheckingVerifier,
@@ -39,7 +41,7 @@ pub struct ZkLeanSumcheck<F: JoltField> {
 impl<F: JoltField> ZkLeanSumcheck<F> {
     fn insert_var(&mut self, var: &String) {
         // TODO Use something better than linear search?
-        if self.vars.iter().position(|v| v == var).is_none() {
+        if !self.vars.iter().any(|v| v == var) {
             self.vars.push(var.clone())
         }
     }
@@ -60,10 +62,10 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
     fn insert_vars_from_claim_expr(&mut self, sumcheck_id: SumcheckId, expr: &ClaimExpr<F>) {
         match expr {
             ClaimExpr::Add(e1, e2) | ClaimExpr::Mul(e1, e2) | ClaimExpr::Sub(e1, e2) => {
-                self.insert_vars_from_claim_expr(sumcheck_id, &e1);
-                self.insert_vars_from_claim_expr(sumcheck_id, &e2);
+                self.insert_vars_from_claim_expr(sumcheck_id, e1);
+                self.insert_vars_from_claim_expr(sumcheck_id, e2);
             }
-            ClaimExpr::CommittedVar(committed_polynomial) => {
+            ClaimExpr::Var(OpeningRef::Committed(committed_polynomial)) => {
                 let var_name = committed_var_ident(committed_polynomial);
                 self.sumchecks
                     .entry(sumcheck_id)
@@ -73,7 +75,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                         vars: vec![var_name],
                     });
             }
-            ClaimExpr::VirtualVar(virtual_polynomial) => {
+            ClaimExpr::Var(OpeningRef::Virtual(virtual_polynomial)) => {
                 let var_name = virtual_var_ident(virtual_polynomial);
                 self.sumchecks
                     .entry(sumcheck_id)
@@ -127,7 +129,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
 
         let mut vars_types: Vec<String> = vec![];
         for (id, sumcheck) in &sumchecks.sumchecks {
-            if sumcheck.vars.len() > 0 {
+            if !sumcheck.vars.is_empty() {
                 let typename = sumcheck_ident(id);
                 vars_types.push(typename.clone());
                 writeln!(
@@ -164,47 +166,54 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
 
         let mut single_step_claims_funs: Vec<String> = vec![];
         let mut cross_step_claims_funs: Vec<String> = vec![];
-        for (_, sumcheck) in &sumchecks.sumchecks {
-            match &sumcheck.claims {
-                Some(claims) => {
-                    let (cross_step_claims, single_step_claims): (Vec<&Claim<F>>, Vec<&Claim<F>>) =
-                        claims.claims.iter().partition(|c| c.is_offset);
-                    if single_step_claims.len() > 0 {
-                        let fun_name = format!(
-                            "{}.{single_step_claims_fun_name}",
-                            sumcheck_ident(&claims.output_sumcheck_id)
-                        );
-                        single_step_claims_funs.push(fun_name.clone());
-                        pretty_print_claims_fun(
-                            f,
-                            &fun_name,
-                            &sumcheck_vars_typ,
-                            &single_step_claims,
-                            &claims.output_sumcheck_id,
-                            false,
-                            indent_level,
-                        )?;
-                        writeln!(f)?;
-                    }
-                    if cross_step_claims.len() > 0 {
-                        let fun_name = format!(
-                            "{}.{cross_step_claims_fun_name}",
-                            sumcheck_ident(&claims.output_sumcheck_id)
-                        );
-                        cross_step_claims_funs.push(fun_name.clone());
-                        pretty_print_claims_fun(
-                            f,
-                            &fun_name,
-                            &sumcheck_vars_typ,
-                            &cross_step_claims,
-                            &claims.output_sumcheck_id,
-                            true,
-                            indent_level,
-                        )?;
-                        writeln!(f)?;
-                    }
+        for sumcheck in sumchecks.sumchecks.values() {
+            if let Some(claims) = &sumcheck.claims {
+                let (cross_step_claims, single_step_claims): (Vec<&Claim<F>>, Vec<&Claim<F>>) =
+                    claims.claims.iter().partition(|c| {
+                        // TODO This function currently only handles constraints quantified by Eq
+                        // and EqPlusOne. We should handle the rest.
+                        match c.batching_poly {
+                            BatchingPolynomial::Eq(_cached_point_ref) => false,
+                            BatchingPolynomial::EqPlusOne(_cached_point_ref) => true,
+                            BatchingPolynomial::Lt(_cached_point_ref) => todo!(),
+                            BatchingPolynomial::Identity => todo!(),
+                            BatchingPolynomial::NoBatching => todo!(),
+                        }
+                    });
+                if !single_step_claims.is_empty() {
+                    let fun_name = format!(
+                        "{}.{single_step_claims_fun_name}",
+                        sumcheck_ident(&claims.output_sumcheck_id)
+                    );
+                    single_step_claims_funs.push(fun_name.clone());
+                    pretty_print_claims_fun(
+                        f,
+                        &fun_name,
+                        sumcheck_vars_typ,
+                        &single_step_claims,
+                        &claims.output_sumcheck_id,
+                        false,
+                        indent_level,
+                    )?;
+                    writeln!(f)?;
                 }
-                None => (),
+                if !cross_step_claims.is_empty() {
+                    let fun_name = format!(
+                        "{}.{cross_step_claims_fun_name}",
+                        sumcheck_ident(&claims.output_sumcheck_id)
+                    );
+                    cross_step_claims_funs.push(fun_name.clone());
+                    pretty_print_claims_fun(
+                        f,
+                        &fun_name,
+                        sumcheck_vars_typ,
+                        &cross_step_claims,
+                        &claims.output_sumcheck_id,
+                        true,
+                        indent_level,
+                    )?;
+                    writeln!(f)?;
+                }
             }
         }
 
@@ -312,6 +321,27 @@ fn pretty_print_claims_fun<F: JoltField>(
     Ok(())
 }
 
+fn pretty_print_opening_ref(
+    f: &mut impl std::io::Write,
+    vars_ident: &str,
+    sumcheck_id: &SumcheckId,
+    opening_ref: &OpeningRef,
+) -> std::io::Result<()> {
+    let vars_type = sumcheck_ident(sumcheck_id);
+    match opening_ref {
+        OpeningRef::Committed(committed_polynomial) => {
+            let var_name = committed_var_ident(committed_polynomial);
+            write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
+        }
+        OpeningRef::Virtual(virtual_polynomial) => {
+            let var_name = virtual_var_ident(virtual_polynomial);
+            write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
+        }
+    }
+
+    Ok(())
+}
+
 fn pretty_print_claim_expr<F: JoltField>(
     f: &mut impl std::io::Write,
     vars_ident: &str,
@@ -356,15 +386,8 @@ fn pretty_print_claim_expr<F: JoltField>(
                 write!(f, ")")?;
             }
         }
-        ClaimExpr::CommittedVar(committed_polynomial) => {
-            let vars_type = sumcheck_ident(sumcheck_id);
-            let var_name = committed_var_ident(committed_polynomial);
-            write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
-        }
-        ClaimExpr::VirtualVar(virtual_polynomial) => {
-            let vars_type = sumcheck_ident(sumcheck_id);
-            let var_name = virtual_var_ident(virtual_polynomial);
-            write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
+        ClaimExpr::Var(opening_ref) => {
+            pretty_print_opening_ref(f, vars_ident, sumcheck_id, opening_ref)?;
         }
     }
 

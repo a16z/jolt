@@ -1,7 +1,10 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck_claim::{Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend};
+use crate::subprotocols::sumcheck_claim::{
+    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    OpeningRef, SumcheckFrontend,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -1581,37 +1584,50 @@ impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F>
         let rd_wa: ClaimExpr<F> = VirtualPolynomial::RdWa.into();
         let rd_inc: ClaimExpr<F> = CommittedPolynomial::RdInc.into();
 
+        let eq_r_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::Rs1Value),
+            sumcheck: SumcheckId::SpartanOuter,
+            part: ChallengePart::Cycle,
+            reverse: false,
+        });
+        let eq_r_stage3 = BatchingPolynomial::Eq(CachedPointRef {
+            opening: OpeningRef::Virtual(VirtualPolynomial::Rs1Value),
+            sumcheck: SumcheckId::InstructionInputVirtualization,
+            part: ChallengePart::Cycle,
+            reverse: false,
+        });
+
         InputOutputClaims {
             claims: vec![
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: rd_write_value,
+                    batching_poly: eq_r_stage1,
                     expected_output_claim_expr: rd_wa * (registers_val.clone() + rd_inc.clone()),
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: rs1_value.clone(),
+                    batching_poly: eq_r_stage1,
                     expected_output_claim_expr: rs1_ra.clone() * registers_val.clone(),
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: rs2_value.clone(),
+                    batching_poly: eq_r_stage1,
                     expected_output_claim_expr: rs2_ra.clone() * registers_val.clone(),
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::InstructionInputVirtualization,
                     input_claim_expr: rs1_value,
+                    batching_poly: eq_r_stage3,
                     expected_output_claim_expr: rs1_ra * registers_val.clone(),
-                    is_offset: false,
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::InstructionInputVirtualization,
                     input_claim_expr: rs2_value,
+                    batching_poly: eq_r_stage3,
                     expected_output_claim_expr: rs2_ra * registers_val,
-                    is_offset: false,
                 },
             ],
             output_sumcheck_id: SumcheckId::RegistersReadWriteChecking,
