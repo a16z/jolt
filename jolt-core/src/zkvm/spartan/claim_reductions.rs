@@ -274,13 +274,11 @@ impl<F: JoltField> InstructionLookupsPhase1Prover<F> {
     fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let Self { P, Q, .. } = self;
         let mut evals = [F::zero(); DEGREE_BOUND];
-        let mut eval_at_1 = F::zero();
 
         for j in 0..P.len() / 2 {
             let p_evals = P.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             let q_evals = Q.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             evals = array::from_fn(|i| evals[i] + p_evals[i] * q_evals[i]);
-            eval_at_1 += P.get_bound_coeff(j * 2 + 1) * Q.get_bound_coeff(j * 2 + 1);
         }
 
         UniPoly::from_evals_and_hint(previous_claim, &evals)
@@ -750,13 +748,11 @@ impl<F: JoltField> RegistersPhase1Prover<F> {
     fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let Self { P, Q, .. } = self;
         let mut evals = [F::zero(); DEGREE_BOUND];
-        let mut eval_at_1 = F::zero();
 
         for j in 0..P.len() / 2 {
             let p_evals = P.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             let q_evals = Q.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             evals = array::from_fn(|i| evals[i] + p_evals[i] * q_evals[i]);
-            eval_at_1 += P.get_bound_coeff(j * 2 + 1) * Q.get_bound_coeff(j * 2 + 1);
         }
 
         UniPoly::from_evals_and_hint(previous_claim, &evals)
