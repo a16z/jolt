@@ -51,7 +51,7 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanityParams, BooleanityVerifier},
+        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -389,13 +389,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Booleanity: combines instruction, bytecode, and ram booleanity into one
         // (extracts r_address and r_cycle from Stage 5 internally)
-        let booleanity_params = BooleanityParams::new(
+        let booleanity_params = BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let booleanity = BooleanityVerifier::new(booleanity_params);
+        let booleanity = BooleanitySumcheckVerifier::new(booleanity_params);
 
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,

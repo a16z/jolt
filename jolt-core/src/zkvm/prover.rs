@@ -27,7 +27,7 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanityParams, BooleanityProver},
+        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProof},
@@ -50,7 +50,7 @@ use crate::{
             read_raf_checking::ReadRafSumcheckParams as InstructionReadRafParams,
         },
         ram::{
-            hamming_booleanity::HammingBooleanityParams,
+            hamming_booleanity::HammingBooleanitySumcheckParams,
             output_check::OutputSumcheckParams,
             populate_memory_states,
             ra_virtual::RamRaVirtualParams,
@@ -895,11 +895,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // RamHammingBooleanity - uses r_cycle from Stage 5's RamRaReduction
-        let ram_hamming_booleanity_params = HammingBooleanityParams::new(&self.opening_accumulator);
+        let ram_hamming_booleanity_params =
+            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
 
         // Booleanity: combines instruction, bytecode, and ram booleanity into one
         // (extracts r_address and r_cycle from Stage 5 internally)
-        let booleanity_params = BooleanityParams::new(
+        let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -939,7 +940,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
         // Booleanity prover - handles all three families
-        let booleanity = BooleanityProver::initialize(
+        let booleanity = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
             &self.preprocessing.bytecode,
@@ -974,7 +975,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "ram HammingBooleanitySumcheckProver",
                 &ram_hamming_booleanity,
             );
-            print_data_structure_heap_usage("BooleanityProver", &booleanity);
+            print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncReductionSumcheckProver", &inc_reduction);
@@ -1061,7 +1062,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .opening_accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
 
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         {
             // Verify that Inc openings are at the same point as r_cycle from Booleanity
             let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1235,14 +1236,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
-        let (joint_poly, hint) = self.build_streaming_rlc(
+        let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
+            self.one_hot_params.clone(),
+            TraceSource::Materialized(Arc::clone(&self.trace)),
+            streaming_data,
             opening_proof_hints,
-            state,
-            (
-                TraceSource::Materialized(Arc::clone(&self.trace)),
-                streaming_data,
-                self.one_hot_params.clone(),
-            ),
         );
 
         // Dory opening proof at the unified point
@@ -1253,73 +1251,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Some(hint),
             &mut self.transcript,
         )
-    }
-
-    /// Build streaming RLC polynomial from DoryOpeningState.
-    /// Does NOT require regenerating witness polynomials - streams directly from trace.
-    #[tracing::instrument(skip_all)]
-    fn build_streaming_rlc(
-        &self,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        state: &DoryOpeningState<F>,
-        streaming_context: (TraceSource, Arc<RLCStreamingData>, OneHotParams),
-    ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
-        use crate::poly::rlc_polynomial::RLCPolynomial;
-        use std::collections::BTreeMap;
-
-        // Accumulate gamma coefficients per polynomial
-        let mut rlc_map = BTreeMap::new();
-        for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
-            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-        }
-
-        // Separate advice from other polynomials (advice is not streamed from trace)
-        let mut advice_coeffs = Vec::new();
-        let mut advice_hints = Vec::new();
-
-        // Handle trusted advice
-        if let Some(trusted_coeff) = rlc_map.remove(&CommittedPolynomial::TrustedAdvice) {
-            advice_coeffs.push(trusted_coeff);
-            if let Some(hint) = self.advice.trusted_advice_hint.clone() {
-                advice_hints.push(hint);
-            }
-        }
-
-        // Handle untrusted advice
-        if let Some(untrusted_coeff) = rlc_map.remove(&CommittedPolynomial::UntrustedAdvice) {
-            advice_coeffs.push(untrusted_coeff);
-            if let Some(hint) = self.advice.untrusted_advice_hint.clone() {
-                advice_hints.push(hint);
-            }
-        }
-
-        // Remaining polynomials are streamed from trace
-        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
-            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
-
-        let (trace_source, preprocessing, one_hot_params) = streaming_context;
-        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
-            one_hot_params,
-            preprocessing,
-            trace_source,
-            poly_ids.clone(),
-            &coeffs,
-        ));
-
-        // Collect hints for streamed polynomials
-        let mut all_hints: Vec<PCS::OpeningProofHint> = rlc_map
-            .into_keys()
-            .map(|k| opening_hints.remove(&k).unwrap())
-            .collect();
-        let mut all_coeffs = coeffs;
-
-        // Add advice hints (they're already in Main context and will be padded by combine_hints)
-        all_hints.extend(advice_hints);
-        all_coeffs.extend(advice_coeffs);
-
-        let hint = PCS::combine_hints(all_hints, &all_coeffs);
-
-        (joint_poly, hint)
     }
 }
 

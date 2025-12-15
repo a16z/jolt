@@ -37,6 +37,8 @@ use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+use fixedbitset::FixedBitSet;
+
 use crate::{
     field::JoltField,
     poly::{
@@ -283,6 +285,9 @@ impl<F: JoltField> PhaseAddressProver<F> {
     }
 
     /// Compute G_A[k] = Σ_{c: address[c]=k} eq_cycle_A(c) and G_B similarly.
+    ///
+    /// Uses two-table split-eq: split r_cycle into MSB/LSB halves, compute E_hi and E_lo,
+    /// then eq(r_cycle, c) = E_hi[c_hi] * E_lo[c_lo] where c = (c_hi << lo_bits) | c_lo.
     #[tracing::instrument(skip_all, name = "PhaseAddressProver::compute_G_arrays")]
     fn compute_G_arrays(
         addresses: &[Option<usize>],
@@ -292,40 +297,164 @@ impl<F: JoltField> PhaseAddressProver<F> {
         r_cycle_val: &[F::Challenge],
         gamma: F,
     ) -> (Vec<F>, Vec<F>) {
-        let eq_raf = EqPolynomial::<F>::evals(r_cycle_raf);
-        let eq_rw = EqPolynomial::<F>::evals(r_cycle_rw);
-        let eq_val = EqPolynomial::<F>::evals(r_cycle_val);
+        let T = addresses.len();
 
-        let chunk_size = 1 << 14;
-        let (G_A, G_B) = addresses
-            .par_chunks(chunk_size)
-            .enumerate()
-            .fold(
-                || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
-                |(mut partial_A, mut partial_B), (chunk_idx, chunk)| {
-                    let base_c = chunk_idx * chunk_size;
-                    for (i, addr) in chunk.iter().enumerate() {
-                        if let Some(k) = addr {
-                            let c = base_c + i;
-                            partial_A[*k] += eq_raf[c] + gamma * eq_val[c];
-                            partial_B[*k] += eq_rw[c] + gamma * eq_val[c];
+        // Two-table split-eq:
+        // EqPolynomial::evals uses big-endian bit order: r[0] is MSB, r[last] is LSB.
+        // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
+        let log_T = r_cycle_raf.len();
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+
+        let (r_raf_hi, r_raf_lo) = r_cycle_raf.split_at(hi_bits);
+        let (r_rw_hi, r_rw_lo) = r_cycle_rw.split_at(hi_bits);
+        let (r_val_hi, r_val_lo) = r_cycle_val.split_at(hi_bits);
+
+        // Compute all 6 eq tables in parallel
+        let ((E_raf_hi, E_raf_lo), ((E_rw_hi, E_rw_lo), (E_val_hi, E_val_lo))) = rayon::join(
+            || {
+                rayon::join(
+                    || EqPolynomial::<F>::evals(r_raf_hi),
+                    || EqPolynomial::<F>::evals(r_raf_lo),
+                )
+            },
+            || {
+                rayon::join(
+                    || {
+                        rayon::join(
+                            || EqPolynomial::<F>::evals(r_rw_hi),
+                            || EqPolynomial::<F>::evals(r_rw_lo),
+                        )
+                    },
+                    || {
+                        rayon::join(
+                            || EqPolynomial::<F>::evals(r_val_hi),
+                            || EqPolynomial::<F>::evals(r_val_lo),
+                        )
+                    },
+                )
+            },
+        );
+
+        let in_len = E_raf_lo.len(); // 2^lo_bits
+        let out_len = E_raf_hi.len(); // 2^hi_bits
+
+        // Divide work evenly among threads (by c_hi index)
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = out_len.div_ceil(num_threads);
+
+        let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
+            .map(|t| {
+                let start = t * chunk_size;
+                let end = std::cmp::min(start + chunk_size, out_len);
+                (start, end)
+            })
+            .filter(|(start, end)| start < end)
+            .collect();
+
+        // Each thread computes partial sums for sum_raf, sum_rw, sum_val
+        // Then combine: G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
+        let (sum_raf, sum_rw, sum_val): (Vec<F>, Vec<F>, Vec<F>) = chunk_ranges
+            .into_par_iter()
+            .map(|(chunk_start, chunk_end)| {
+                // Each thread allocates one set of partial accumulators
+                let mut partial_raf: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut partial_rw: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut partial_val: Vec<F> = unsafe_allocate_zero_vec(K);
+
+                // Reusable local unreduced accumulators (5-limb) and touched flags
+                let mut local_raf: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
+                let mut local_rw: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
+                let mut local_val: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
+                let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
+
+                for c_hi in chunk_start..chunk_end {
+                    let e_hi_raf = E_raf_hi[c_hi];
+                    let e_hi_rw = E_rw_hi[c_hi];
+                    let e_hi_val = E_val_hi[c_hi];
+                    let c_hi_base = c_hi * in_len;
+
+                    // Clear touched flags and local accumulators for this c_hi
+                    for k in touched.ones() {
+                        local_raf[k] = Default::default();
+                        local_rw[k] = Default::default();
+                        local_val[k] = Default::default();
+                    }
+                    touched.clear();
+
+                    // Process all c_lo for this c_hi (contiguous cycles)
+                    for c_lo in 0..in_len {
+                        let j = c_hi_base + c_lo;
+                        if j >= T {
+                            break;
+                        }
+
+                        if let Some(k) = addresses[j] {
+                            if !touched.contains(k) {
+                                touched.insert(k);
+                            }
+                            // Accumulate E_lo[c_lo] in unreduced form
+                            local_raf[k] += *E_raf_lo[c_lo].as_unreduced_ref();
+                            local_rw[k] += *E_rw_lo[c_lo].as_unreduced_ref();
+                            local_val[k] += *E_val_lo[c_lo].as_unreduced_ref();
                         }
                     }
-                    (partial_A, partial_B)
-                },
-            )
+
+                    // Barrett reduce and scale by E_hi, only for touched indices
+                    for k in touched.ones() {
+                        let reduced_raf = F::from_barrett_reduce::<5>(local_raf[k]);
+                        let reduced_rw = F::from_barrett_reduce::<5>(local_rw[k]);
+                        let reduced_val = F::from_barrett_reduce::<5>(local_val[k]);
+                        partial_raf[k] += e_hi_raf * reduced_raf;
+                        partial_rw[k] += e_hi_rw * reduced_rw;
+                        partial_val[k] += e_hi_val * reduced_val;
+                    }
+                }
+
+                (partial_raf, partial_rw, partial_val)
+            })
             .reduce(
-                || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
-                |(mut acc_A, mut acc_B), (partial_A, partial_B)| {
-                    for (a, p) in acc_A.iter_mut().zip(partial_A) {
-                        *a += p;
-                    }
-                    for (b, p) in acc_B.iter_mut().zip(partial_B) {
-                        *b += p;
-                    }
-                    (acc_A, acc_B)
+                || {
+                    (
+                        unsafe_allocate_zero_vec(K),
+                        unsafe_allocate_zero_vec(K),
+                        unsafe_allocate_zero_vec(K),
+                    )
+                },
+                |(mut acc_raf, mut acc_rw, mut acc_val), (p_raf, p_rw, p_val)| {
+                    acc_raf
+                        .par_iter_mut()
+                        .zip(p_raf.par_iter())
+                        .for_each(|(a, p)| *a += *p);
+                    acc_rw
+                        .par_iter_mut()
+                        .zip(p_rw.par_iter())
+                        .for_each(|(a, p)| *a += *p);
+                    acc_val
+                        .par_iter_mut()
+                        .zip(p_val.par_iter())
+                        .for_each(|(a, p)| *a += *p);
+                    (acc_raf, acc_rw, acc_val)
                 },
             );
+
+        // Combine: G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
+        let (G_A, G_B): (Vec<F>, Vec<F>) = rayon::join(
+            || {
+                sum_raf
+                    .into_par_iter()
+                    .zip(sum_val.par_iter())
+                    .map(|(r, &v)| r + gamma * v)
+                    .collect()
+            },
+            || {
+                sum_rw
+                    .into_par_iter()
+                    .zip(sum_val.par_iter())
+                    .map(|(r, &v)| r + gamma * v)
+                    .collect()
+            },
+        );
 
         (G_A, G_B)
     }
@@ -334,6 +463,8 @@ impl<F: JoltField> PhaseAddressProver<F> {
         let m = round + 1;
         let half_len = self.B_1.len() / 2;
         let inner_len = 1 << m;
+        // Precompute mask for k % (1 << (m - 1)) -> k & f_index_mask
+        let f_index_mask = (1 << (m - 1)) - 1;
 
         let [eval_0, eval_c2] = (0..half_len)
             .into_par_iter()
@@ -363,7 +494,7 @@ impl<F: JoltField> PhaseAddressProver<F> {
                                 },
                                 |mut acc, k| {
                                     let k_m = (k >> (m - 1)) & 1;
-                                    let F_k = self.F[k % (1 << (m - 1))];
+                                    let F_k = self.F[k & f_index_mask];
                                     let G_A_k = self.G_A[k];
                                     let G_B_k = self.G_B[k];
 
@@ -399,7 +530,7 @@ impl<F: JoltField> PhaseAddressProver<F> {
 
                         for k in k_start..k_end {
                             let k_m = (k >> (m - 1)) & 1;
-                            let F_k = self.F[k % (1 << (m - 1))];
+                            let F_k = self.F[k & f_index_mask];
                             let G_A_k = self.G_A[k];
                             let G_B_k = self.G_B[k];
 

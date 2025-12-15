@@ -123,6 +123,7 @@ impl RAMPreprocessing {
 
 /// Returns Some(address) if there was read/write
 /// Returns None if there was no read/write
+#[inline(always)]
 pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> {
     if address == 0 {
         return None;

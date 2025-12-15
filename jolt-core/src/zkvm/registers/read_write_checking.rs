@@ -276,6 +276,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
 
     fn phase1_compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
         const BATCH_SIZE: usize = 2;
+
+        // Precompute mask for j % (1 << round) -> j & round_mask
+        let round_mask = (1 << round) - 1;
+
         let Self {
             addresses,
             I,
@@ -323,7 +327,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                             let j_prime = inc_chunk[0].0; // row index
 
                             for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j % (1 << round);
+                                let j_bound = j & round_mask;
 
                                 let k = addresses[j].0;
                                 unsafe {
@@ -345,7 +349,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                             }
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j % (1 << round);
+                                let j_bound = j & round_mask;
 
                                 let k = addresses[j].0;
                                 unsafe {
@@ -529,7 +533,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                             let j_prime = inc_chunk[0].0; // row index
 
                             for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j % (1 << round);
+                                let j_bound = j & round_mask;
 
                                 let k = addresses[j].0;
                                 unsafe {
@@ -551,7 +555,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                             }
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j % (1 << round);
+                                let j_bound = j & round_mask;
 
                                 let k = addresses[j].0;
                                 unsafe {

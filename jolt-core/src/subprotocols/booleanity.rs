@@ -62,7 +62,7 @@ pub const FAMILY_BYTECODE: usize = 1;
 pub const FAMILY_RAM: usize = 2;
 
 /// Parameters for the booleanity sumcheck.
-pub struct BooleanityParams<F: JoltField> {
+pub struct BooleanitySumcheckParams<F: JoltField> {
     /// Log of chunk size (shared across all families)
     pub log_k_chunk: usize,
     /// Log of trace length
@@ -81,7 +81,7 @@ pub struct BooleanityParams<F: JoltField> {
     pub d_per_family: [usize; 3],
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for BooleanityParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
     fn degree(&self) -> usize {
         DEGREE_BOUND
     }
@@ -105,7 +105,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanityParams<F> {
     }
 }
 
-impl<F: JoltField> BooleanityParams<F> {
+impl<F: JoltField> BooleanitySumcheckParams<F> {
     /// Create booleanity params by taking r_cycle and r_address from Stage 5.
     ///
     /// Stage 5 produces challenges in order: address (LOG_K_INSTRUCTION) => cycle (log_t).
@@ -199,7 +199,7 @@ impl<F: JoltField> BooleanityParams<F> {
 
 /// Booleanity Sumcheck Prover.
 #[derive(Allocative)]
-pub struct BooleanityProver<F: JoltField> {
+pub struct BooleanitySumcheckProver<F: JoltField> {
     /// B: split-eq over address-chunk variables (phase 1, LowToHigh).
     B: GruenSplitEqPolynomial<F>,
     /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
@@ -218,19 +218,19 @@ pub struct BooleanityProver<F: JoltField> {
     #[allocative(skip)]
     one_hot_params: OneHotParams,
     #[allocative(skip)]
-    params: BooleanityParams<F>,
+    params: BooleanitySumcheckParams<F>,
 }
 
-impl<F: JoltField> BooleanityProver<F> {
-    /// Initialize a BooleanityProver with all three families.
+impl<F: JoltField> BooleanitySumcheckProver<F> {
+    /// Initialize a BooleanitySumcheckProver with all three families.
     ///
     /// All heavy computation is done here:
     /// - Compute G polynomials and RA indices in a single pass over the trace
     /// - Initialize split-eq polynomials for address (B) and cycle (D) variables
     /// - Initialize expanding table for phase 1
-    #[tracing::instrument(skip_all, name = "BooleanityProver::initialize")]
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::initialize")]
     pub fn initialize(
-        params: BooleanityParams<F>,
+        params: BooleanitySumcheckParams<F>,
         trace: &[Cycle],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
@@ -366,12 +366,12 @@ impl<F: JoltField> BooleanityProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanityProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanityProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_k_chunk {
             self.compute_phase1_message(round, previous_claim)
@@ -380,7 +380,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanityPro
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BooleanityProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.params.log_k_chunk {
             // Phase 1: Bind B and update F
@@ -445,17 +445,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanityPro
 }
 
 /// Booleanity Sumcheck Verifier.
-pub struct BooleanityVerifier<F: JoltField> {
-    params: BooleanityParams<F>,
+pub struct BooleanitySumcheckVerifier<F: JoltField> {
+    params: BooleanitySumcheckParams<F>,
 }
 
-impl<F: JoltField> BooleanityVerifier<F> {
-    pub fn new(params: BooleanityParams<F>) -> Self {
+impl<F: JoltField> BooleanitySumcheckVerifier<F> {
+    pub fn new(params: BooleanitySumcheckParams<F>) -> Self {
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityVerifier<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanitySumcheckVerifier<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }

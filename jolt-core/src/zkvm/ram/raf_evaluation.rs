@@ -1,4 +1,5 @@
 use common::jolt_device::MemoryLayout;
+use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 
 use allocative::Allocative;
@@ -115,38 +116,98 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     ) -> Self {
         let T = trace.len();
         let K = 1 << params.log_K;
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = (T / num_chunks).max(1);
 
-        // TODO(moodlezoup): reuse
-        let eq_r_cycle: Vec<F> = EqPolynomial::evals(&params.r_cycle.r);
+        // Two-table split-eq:
+        // EqPolynomial::evals uses big-endian bit order: r_cycle[0] is MSB, r_cycle[last] is LSB.
+        // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
+        let r_cycle = &params.r_cycle.r;
+        let log_T = r_cycle.len();
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+        let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
 
-        let ra_evals: Vec<F> = trace
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
-                let mut result = unsafe_allocate_zero_vec(K);
-                let mut j = chunk_index * chunk_size;
-                for cycle in trace_chunk {
-                    if let Some(k) =
-                        remap_address(cycle.ram_access().address() as u64, memory_layout)
-                    {
-                        result[k as usize] += eq_r_cycle[j];
+        let (E_hi, E_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
+        );
+
+        let in_len = E_lo.len(); // 2^lo_bits
+
+        // Split E_hi into exactly num_threads chunks to minimize allocations
+        let num_threads = rayon::current_num_threads();
+        let out_len = E_hi.len(); // 2^hi_bits
+        let chunk_size = out_len.div_ceil(num_threads);
+
+        let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
+            .map(|t| {
+                let start = t * chunk_size;
+                let end = std::cmp::min(start + chunk_size, out_len);
+                (start, end)
+            })
+            .filter(|(start, end)| start < end)
+            .collect();
+
+        // Each thread computes partial ra_evals using split-eq optimization
+        let ra_evals: Vec<F> = chunk_ranges
+            .into_par_iter()
+            .map(|(chunk_start, chunk_end)| {
+                let mut partial: Vec<F> = unsafe_allocate_zero_vec(K);
+
+                // Reusable local unreduced accumulator (5-limb) and touched flags
+                let mut local_unreduced: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
+                let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
+
+                for c_hi in chunk_start..chunk_end {
+                    let e_hi = E_hi[c_hi];
+                    let c_hi_base = c_hi * in_len;
+
+                    // Clear touched flags and local accumulators for this c_hi
+                    for k in touched.ones() {
+                        local_unreduced[k] = Default::default();
                     }
-                    j += 1;
+                    touched.clear();
+
+                    // Process all c_lo for this c_hi (contiguous cycles)
+                    for c_lo in 0..in_len {
+                        let j = c_hi_base + c_lo;
+                        if j >= T {
+                            break;
+                        }
+
+                        // Get 4-limb unreduced representation
+                        let add = *E_lo[c_lo].as_unreduced_ref();
+
+                        if let Some(k) =
+                            remap_address(trace[j].ram_access().address() as u64, memory_layout)
+                        {
+                            let k = k as usize;
+                            if !touched.contains(k) {
+                                touched.insert(k);
+                            }
+                            local_unreduced[k] += add;
+                        }
+                    }
+
+                    // Barrett reduce and scale by E_hi[c_hi], only for touched indices
+                    for k in touched.ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_unreduced[k]);
+                        partial[k] += e_hi * reduced;
+                    }
                 }
-                result
+
+                partial
             })
             .reduce(
                 || unsafe_allocate_zero_vec(K),
                 |mut running, new| {
                     running
                         .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
+                        .zip(new.par_iter())
+                        .for_each(|(x, y)| *x += *y);
                     running
                 },
             );
+
         let ra = MultilinearPolynomial::from(ra_evals);
         let lowest_memory_address = memory_layout.get_lowest_address();
         let unmap = UnmapRamAddressPolynomial::new(K.log_2(), lowest_memory_address);

@@ -257,6 +257,45 @@ pub struct DoryOpeningState<F: JoltField> {
     pub polynomials: Vec<CommittedPolynomial>,
 }
 
+impl<F: JoltField> DoryOpeningState<F> {
+    /// Build streaming RLC polynomial from this state.
+    /// Streams directly from trace - no witness regeneration needed.
+    #[tracing::instrument(skip_all)]
+    pub fn build_streaming_rlc<PCS: CommitmentScheme<Field = F>>(
+        &self,
+        one_hot_params: OneHotParams,
+        trace_source: TraceSource,
+        rlc_streaming_data: Arc<RLCStreamingData>,
+        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
+        // Accumulate gamma coefficients per polynomial
+        let mut rlc_map = BTreeMap::new();
+        for (gamma, poly) in self.gamma_powers.iter().zip(self.polynomials.iter()) {
+            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
+        }
+
+        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
+            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
+
+        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
+            one_hot_params,
+            rlc_streaming_data,
+            trace_source,
+            poly_ids.clone(),
+            &coeffs,
+        ));
+
+        let hints: Vec<PCS::OpeningProofHint> = rlc_map
+            .into_keys()
+            .map(|k| opening_hints.remove(&k).unwrap())
+            .collect();
+
+        let hint = PCS::combine_hints(hints, &coeffs);
+
+        (joint_poly, hint)
+    }
+}
+
 impl<F> Default for ProverOpeningAccumulator<F>
 where
     F: JoltField,

@@ -46,6 +46,10 @@ pub struct OneHotParams {
     pub log_k_chunk: usize,
     pub lookups_ra_virtual_log_k_chunk: usize,
     pub k_chunk: usize,
+    /// Bitmask for extracting chunks: `k_chunk - 1`. Use with `& k_chunk_mask` instead of `% k_chunk`.
+    k_chunk_mask: usize,
+    /// Bitmask for log_k_chunk: `log_k_chunk - 1`. Use with `& log_k_chunk_mask` instead of `% log_k_chunk`.
+    log_k_chunk_mask: usize,
 
     pub bytecode_k: usize,
     pub ram_k: usize,
@@ -91,10 +95,13 @@ impl OneHotParams {
             .map(|i| log_k_chunk * (bytecode_d - 1 - i))
             .collect();
 
+        let k_chunk = 1 << log_k_chunk;
         Self {
             log_k_chunk,
             lookups_ra_virtual_log_k_chunk,
-            k_chunk: 1 << log_k_chunk,
+            k_chunk,
+            k_chunk_mask: k_chunk - 1,
+            log_k_chunk_mask: log_k_chunk - 1,
             bytecode_k,
             ram_k,
             instruction_d,
@@ -106,16 +113,19 @@ impl OneHotParams {
         }
     }
 
+    #[inline(always)]
     pub fn ram_address_chunk(&self, address: u64, idx: usize) -> u16 {
-        ((address >> self.ram_shifts[idx]) % self.k_chunk as u64) as u16
+        ((address >> self.ram_shifts[idx]) & self.k_chunk_mask as u64) as u16
     }
 
+    #[inline(always)]
     pub fn bytecode_pc_chunk(&self, pc: usize, idx: usize) -> u16 {
-        ((pc >> self.bytecode_shifts[idx]) % self.k_chunk) as u16
+        ((pc >> self.bytecode_shifts[idx]) & self.k_chunk_mask) as u16
     }
 
+    #[inline(always)]
     pub fn lookup_index_chunk(&self, index: u128, idx: usize) -> u16 {
-        ((index >> self.instruction_shifts[idx]) % self.k_chunk as u128) as u16
+        ((index >> self.instruction_shifts[idx]) & self.k_chunk_mask as u128) as u16
     }
 
     pub fn compute_r_address_chunks<F: JoltField>(
@@ -128,7 +138,7 @@ impl OneHotParams {
             [
                 &vec![
                     F::Challenge::from(0_u128);
-                    self.log_k_chunk - (r_address.len() % self.log_k_chunk)
+                    self.log_k_chunk - (r_address.len() & self.log_k_chunk_mask)
                 ],
                 r_address,
             ]
