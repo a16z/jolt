@@ -594,8 +594,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                             debug_assert_eq!(
                                 Self::extract_dense_value(poly_id, &Cycle::NoOp),
                                 F::zero(),
-                                "Expected zero dense value for NoOp, got non-zero for {:?}",
-                                poly_id
+                                "Expected zero dense value for NoOp, got non-zero for {poly_id:?}"
                             );
                         }
 
@@ -613,16 +612,13 @@ impl<F: JoltField> RLCPolynomial<F> {
                                     debug_assert_eq!(
                                         k,
                                         Some(0),
-                                        "Expected Some(0) for {:?} on NoOp, got {:?}",
-                                        poly_id,
-                                        k
+                                        "Expected Some(0) for {poly_id:?} on NoOp, got {k:?}"
                                     );
                                 }
                                 CommittedPolynomial::RamRa(_) => {
                                     debug_assert_eq!(
                                         k, None,
-                                        "Expected None for RamRa on NoOp, got {:?}",
-                                        k
+                                        "Expected None for RamRa on NoOp, got {k:?}"
                                     );
                                 }
                                 _ => unreachable!(),
