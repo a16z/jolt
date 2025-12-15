@@ -1791,6 +1791,40 @@ mod tests {
     use ark_bn254::Fr;
     use serial_test::serial;
 
+    fn commit_trusted_advice_preprocessing_only(
+        preprocessing: &JoltProverPreprocessing<Fr, DoryCommitmentScheme>,
+        trusted_advice_bytes: &[u8],
+    ) -> (
+        <DoryCommitmentScheme as crate::poly::commitment::commitment_scheme::CommitmentScheme>::Commitment,
+        <DoryCommitmentScheme as crate::poly::commitment::commitment_scheme::CommitmentScheme>::OpeningProofHint,
+    ) {
+        use crate::poly::{
+            commitment::commitment_scheme::CommitmentScheme,
+            multilinear_polynomial::MultilinearPolynomial,
+        };
+        use crate::zkvm::ram::populate_memory_states;
+
+        let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
+        let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
+        populate_memory_states(0, trusted_advice_bytes, Some(&mut trusted_advice_words), None);
+
+        let poly = MultilinearPolynomial::<Fr>::from(trusted_advice_words);
+        let advice_cols = poly.len();
+
+        let _guard =
+            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice_1row(advice_cols);
+        let (commitment, hint) = {
+            let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
+                crate::poly::commitment::dory::DoryContext::TrustedAdvice,
+            );
+            <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
+                &poly,
+                &preprocessing.generators,
+            )
+        };
+        (commitment, hint)
+    }
+
     #[test]
     #[serial]
     fn fib_e2e_dory() {
@@ -1989,6 +2023,129 @@ mod tests {
             io_device.outputs, expected_output,
             "Outputs mismatch: expected {:?}, got {:?}",
             expected_output, io_device.outputs
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn sha2_e2e_dory_with_untrusted_advice_noise() {
+        // SHA2 guest does not consume advice, but providing untrusted advice should still:
+        // - commit it in its dedicated 1-row Dory context,
+        // - reduce its claims in Stage 6,
+        // - batch it into the single Stage 8 Dory opening proof (streaming VMV path).
+        let mut program = host::Program::new("sha2-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+
+        // Add some untrusted advice bytes (well below max_untrusted_advice_size).
+        let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
+
+        // Trace once to obtain the program IO (memory layout).
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &[]);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &untrusted_advice,
+            &[],
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+
+        let expected_output = &[
+            0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
+            0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
+            0x3b, 0x50, 0xd2, 0x57,
+        ];
+        assert_eq!(
+            io_device.outputs, expected_output,
+            "Outputs mismatch (untrusted advice noise should not affect sha2 output)"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn sha2_e2e_dory_with_trusted_advice_noise() {
+        // SHA2 guest does not consume advice, but providing trusted advice should still:
+        // - use preprocessing-only commit (TrustedAdvice 1-row context),
+        // - reduce its claims in Stage 6,
+        // - batch it into the single Stage 8 Dory opening proof (streaming VMV path).
+        let mut program = host::Program::new("sha2-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+
+        // Add some trusted advice bytes (well below max_trusted_advice_size).
+        let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
+
+        // Trace once to obtain the program IO (memory layout).
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &trusted_advice);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+
+        let (trusted_commitment, trusted_hint) =
+            commit_trusted_advice_preprocessing_only(&preprocessing, &trusted_advice);
+
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &trusted_advice,
+            Some(trusted_commitment.clone()),
+            Some(trusted_hint),
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            Some(trusted_commitment),
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+
+        let expected_output = &[
+            0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
+            0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
+            0x3b, 0x50, 0xd2, 0x57,
+        ];
+        assert_eq!(
+            io_device.outputs, expected_output,
+            "Outputs mismatch (trusted advice noise should not affect sha2 output)"
         );
     }
 
