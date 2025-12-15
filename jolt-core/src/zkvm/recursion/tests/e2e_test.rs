@@ -83,7 +83,7 @@ fn test_recursion_snark_e2e_with_dory() {
     // Create prover using Dory witness generation
     let mut witness_transcript: Blake2bTranscript = Transcript::new(b"dory_test_proof");
 
-    let prover = RecursionProver::new_from_dory_proof(
+    let prover = RecursionProver::<Fq>::new_from_dory_proof(
         &ark_proof,
         &verifier_setup,
         &mut witness_transcript,
@@ -177,7 +177,7 @@ fn test_recursion_snark_e2e_with_dory() {
     };
 
     // Create verifier
-    let verifier = RecursionVerifier::new(verifier_input);
+    let verifier = RecursionVerifier::<Fq>::new(verifier_input);
 
     // Create transcript for verification
     let mut verifier_transcript = Blake2bTranscript::new(b"recursion_snark");

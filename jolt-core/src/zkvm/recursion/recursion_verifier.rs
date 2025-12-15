@@ -7,6 +7,7 @@
 //! The verifier returns an opening accumulator for PCS verification.
 
 use crate::{
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::VerifierOpeningAccumulator,
@@ -49,27 +50,38 @@ pub struct RecursionVerifierInput {
 }
 
 /// Unified verifier for the recursion SNARK
-pub struct RecursionVerifier {
+pub struct RecursionVerifier<F: JoltField = Fq> {
     /// Input parameters for verification
     input: RecursionVerifierInput,
+    /// Phantom data for the field type
+    _phantom: std::marker::PhantomData<F>,
 }
 
-impl RecursionVerifier {
+impl<F: JoltField> RecursionVerifier<F> {
     /// Create a new recursion verifier
     pub fn new(input: RecursionVerifierInput) -> Self {
-        Self { input }
+        Self {
+            input,
+            _phantom: std::marker::PhantomData,
+        }
     }
 
     /// Verify the full two-stage recursion proof and PCS opening
-    pub fn verify<T: Transcript, PCS: CommitmentScheme<Field = Fq>>(
+    pub fn verify<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         &self,
-        proof: &RecursionProof<Fq, T, PCS>,
+        proof: &RecursionProof<F, T, PCS>,
         transcript: &mut T,
         matrix_commitment: &PCS::Commitment,
         verifier_setup: &PCS::VerifierSetup,
     ) -> Result<bool, Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for recursion SNARK
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK requires F = Fq");
+        }
         // Initialize opening accumulator
-        let mut accumulator = VerifierOpeningAccumulator::<Fq>::new(self.input.num_vars);
+        let mut accumulator = VerifierOpeningAccumulator::<F>::new(self.input.num_vars);
 
         // Populate accumulator with opening claims from proof
         for (key, value) in &proof.opening_claims {
@@ -110,14 +122,20 @@ impl RecursionVerifier {
     /// Verify Stage 1: Constraint sumchecks
     fn verify_stage1<T: Transcript>(
         &self,
-        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<Fq, T>,
+        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
         transcript: &mut T,
-        accumulator: &mut VerifierOpeningAccumulator<Fq>,
-        gamma: Fq,
-        delta: Fq,
-    ) -> Result<Vec<<Fq as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        gamma: F,
+        delta: F,
+    ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for recursion SNARK
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK requires F = Fq");
+        }
         // Create verifiers for each constraint type
-        let mut verifiers: Vec<Box<dyn SumcheckInstanceVerifier<Fq, T>>> = Vec::new();
+        let mut verifiers: Vec<Box<dyn SumcheckInstanceVerifier<F, T>>> = Vec::new();
 
         // Count constraints by type
         let mut num_gt_exp = 0;
@@ -190,7 +208,7 @@ impl RecursionVerifier {
         }
 
         // Run batched sumcheck verification for all verifiers
-        let verifier_refs: Vec<&dyn SumcheckInstanceVerifier<Fq, T>> =
+        let verifier_refs: Vec<&dyn SumcheckInstanceVerifier<F, T>> =
             verifiers.iter().map(|v| &**v).collect();
 
         let r_stage1 = BatchedSumcheck::verify(
@@ -206,12 +224,18 @@ impl RecursionVerifier {
     /// Verify Stage 2: Virtualization sumcheck
     fn verify_stage2<T: Transcript>(
         &self,
-        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<Fq, T>,
+        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
         transcript: &mut T,
-        accumulator: &mut VerifierOpeningAccumulator<Fq>,
-        r_stage1: &[<Fq as crate::field::JoltField>::Challenge],
-        gamma: Fq,
-    ) -> Result<Vec<<Fq as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        r_stage1: &[<F as crate::field::JoltField>::Challenge],
+        gamma: F,
+    ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for recursion SNARK
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK requires F = Fq");
+        }
         // Create virtualization parameters
         let params = RecursionVirtualizationParams::new(
             self.input.num_s_vars,
@@ -237,10 +261,7 @@ impl RecursionVerifier {
             transcript,
         )?;
 
-        // Convert r_stage2 to Challenge type
-        let r_stage2_challenges: Vec<<Fq as crate::field::JoltField>::Challenge> =
-            r_stage2.iter().map(|&x| x.into()).collect();
-        Ok(r_stage2_challenges)
+        Ok(r_stage2)
     }
 }
 

@@ -22,12 +22,12 @@ use dory::backends::arkworks::ArkGT;
 use jolt_optimizations::{fq12_to_multilinear_evals, get_g_mle};
 
 /// Convert index to binary representation as field elements (little-endian)
-pub fn index_to_binary(index: usize, num_vars: usize) -> Vec<Fq> {
+pub fn index_to_binary<F: JoltField>(index: usize, num_vars: usize) -> Vec<F> {
     let mut binary = Vec::with_capacity(num_vars);
     let mut idx = index;
 
     for _ in 0..num_vars {
-        binary.push(if idx & 1 == 1 { Fq::one() } else { Fq::zero() });
+        binary.push(if idx & 1 == 1 { F::one() } else { F::zero() });
         idx >>= 1;
     }
 
@@ -179,7 +179,7 @@ impl DoryMultilinearMatrix {
 
         let mut result = Fq::zero();
         for row in 0..self.num_rows {
-            let row_binary = index_to_binary(row, self.num_s_vars);
+            let row_binary = index_to_binary::<Fq>(row, self.num_s_vars);
             let eq_eval = EqPolynomial::mle(&row_binary, s_vars);
 
             let row_poly_eval = self.evaluate_row(row, constraint_vars);
@@ -773,7 +773,7 @@ impl ConstraintSystem {
     /// Only returns GT exp constraints
     pub fn extract_constraint_polynomials(
         &self,
-    ) -> Vec<crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials> {
+    ) -> Vec<crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials<Fq>> {
         let mut polys = Vec::new();
         let num_constraint_vars = self.matrix.num_constraint_vars;
         let row_size = 1 << num_constraint_vars;
@@ -787,7 +787,7 @@ impl ConstraintSystem {
                 let quotient = self.extract_row_poly(PolyType::Quotient, idx, row_size);
 
                 polys.push(
-                    crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials {
+                    crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials::<Fq> {
                         base,
                         rho_prev,
                         rho_curr,
@@ -947,7 +947,7 @@ impl ConstraintSystem {
             // Check all 4 row indices that correspond to this constraint
             for poly_type in PolyType::all() {
                 let row_idx = (poly_type as usize) * num_constraints_padded + constraint_padded_idx;
-                let row_binary = index_to_binary(row_idx, num_s_vars);
+                let row_binary = index_to_binary::<Fq>(row_idx, num_s_vars);
                 let eq_eval = EqPolynomial::mle(&row_binary, s_vars);
 
                 let constraint_eval = self.evaluate_constraint(constraint, x_vars);

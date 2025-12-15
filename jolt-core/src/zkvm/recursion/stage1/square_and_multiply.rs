@@ -21,25 +21,22 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
-    zkvm::recursion::constraints_sys::ConstraintType,
     transcripts::Transcript,
     zkvm::witness::VirtualPolynomial,
 };
-use ark_bn254::Fq;
-use ark_ff::{One, Zero};
 use rayon::prelude::*;
 
 /// Helper to append all virtual claims for a constraint
-fn append_constraint_virtual_claims<T: Transcript>(
-    accumulator: &mut ProverOpeningAccumulator<Fq>,
+fn append_constraint_virtual_claims<F: JoltField, T: Transcript>(
+    accumulator: &mut ProverOpeningAccumulator<F>,
     transcript: &mut T,
     constraint_idx: usize,
     sumcheck_id: SumcheckId,
-    opening_point: &OpeningPoint<BIG_ENDIAN, Fq>,
-    base_claim: Fq,
-    rho_prev_claim: Fq,
-    rho_curr_claim: Fq,
-    quotient_claim: Fq,
+    opening_point: &OpeningPoint<BIG_ENDIAN, F>,
+    base_claim: F,
+    rho_prev_claim: F,
+    rho_curr_claim: F,
+    quotient_claim: F,
 ) {
     accumulator.append_virtual(
         transcript,
@@ -72,11 +69,11 @@ fn append_constraint_virtual_claims<T: Transcript>(
 }
 
 /// Helper to retrieve all virtual claims for a constraint
-fn get_constraint_virtual_claims(
-    accumulator: &VerifierOpeningAccumulator<Fq>,
+fn get_constraint_virtual_claims<F: JoltField>(
+    accumulator: &VerifierOpeningAccumulator<F>,
     constraint_idx: usize,
     sumcheck_id: SumcheckId,
-) -> (Fq, Fq, Fq, Fq) {
+) -> (F, F, F, F) {
     let (_, base_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionBase(constraint_idx),
         sumcheck_id,
@@ -98,12 +95,12 @@ fn get_constraint_virtual_claims(
 }
 
 /// Helper to append virtual opening points for a constraint (verifier side)
-fn append_constraint_virtual_openings<T: Transcript>(
-    accumulator: &mut VerifierOpeningAccumulator<Fq>,
+fn append_constraint_virtual_openings<F: JoltField, T: Transcript>(
+    accumulator: &mut VerifierOpeningAccumulator<F>,
     transcript: &mut T,
     constraint_idx: usize,
     sumcheck_id: SumcheckId,
-    opening_point: &OpeningPoint<BIG_ENDIAN, Fq>,
+    opening_point: &OpeningPoint<BIG_ENDIAN, F>,
 ) {
     accumulator.append_virtual(
         transcript,
@@ -133,11 +130,11 @@ fn append_constraint_virtual_openings<T: Transcript>(
 
 /// Individual polynomial data for a single constraint
 #[derive(Clone)]
-pub struct ConstraintPolynomials {
-    pub base: Vec<Fq>,
-    pub rho_prev: Vec<Fq>,
-    pub rho_curr: Vec<Fq>,
-    pub quotient: Vec<Fq>,
+pub struct ConstraintPolynomials<F: JoltField> {
+    pub base: Vec<F>,
+    pub rho_prev: Vec<F>,
+    pub rho_curr: Vec<F>,
+    pub quotient: Vec<F>,
     pub bit: bool,
     pub constraint_index: usize,
 }
@@ -167,7 +164,7 @@ impl SquareAndMultiplyParams {
 
 /// Prover for square-and-multiply sumcheck
 #[cfg_attr(feature = "allocative", derive(Allocative))]
-pub struct SquareAndMultiplyProver {
+pub struct SquareAndMultiplyProver<F: JoltField> {
     /// Parameters
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub params: SquareAndMultiplyParams,
@@ -180,58 +177,58 @@ pub struct SquareAndMultiplyProver {
 
     /// g(x) polynomial for constraint evaluation
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub g_poly: MultilinearPolynomial<Fq>,
+    pub g_poly: MultilinearPolynomial<F>,
 
     /// Equality polynomial for constraint variables x
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub eq_x: MultilinearPolynomial<Fq>,
+    pub eq_x: MultilinearPolynomial<F>,
 
     /// Random challenge for eq(r_x, x)
-    pub r_x: Vec<<Fq as JoltField>::Challenge>,
+    pub r_x: Vec<F::Challenge>,
 
     /// Gamma coefficient for batching constraints
-    pub gamma: Fq,
+    pub gamma: F,
 
     /// Base polynomials as multilinear
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub base_mlpoly: Vec<MultilinearPolynomial<Fq>>,
+    pub base_mlpoly: Vec<MultilinearPolynomial<F>>,
 
     /// Rho_prev polynomials as multilinear
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub rho_prev_mlpoly: Vec<MultilinearPolynomial<Fq>>,
+    pub rho_prev_mlpoly: Vec<MultilinearPolynomial<F>>,
 
     /// Rho_curr polynomials as multilinear
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub rho_curr_mlpoly: Vec<MultilinearPolynomial<Fq>>,
+    pub rho_curr_mlpoly: Vec<MultilinearPolynomial<F>>,
 
     /// Quotient polynomials as multilinear
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub quotient_mlpoly: Vec<MultilinearPolynomial<Fq>>,
+    pub quotient_mlpoly: Vec<MultilinearPolynomial<F>>,
 
     /// Individual claims for each constraint (not batched)
-    pub base_claims: Vec<Fq>,
-    pub rho_prev_claims: Vec<Fq>,
-    pub rho_curr_claims: Vec<Fq>,
-    pub quotient_claims: Vec<Fq>,
+    pub base_claims: Vec<F>,
+    pub rho_prev_claims: Vec<F>,
+    pub rho_curr_claims: Vec<F>,
+    pub quotient_claims: Vec<F>,
 
     /// Current round
     pub round: usize,
 }
 
-impl SquareAndMultiplyProver {
+impl<F: JoltField> SquareAndMultiplyProver<F> {
     pub fn new<T: Transcript>(
         params: SquareAndMultiplyParams,
-        constraint_polys: Vec<ConstraintPolynomials>,
-        g_poly: DensePolynomial<Fq>,
+        constraint_polys: Vec<ConstraintPolynomials<F>>,
+        g_poly: DensePolynomial<F>,
         transcript: &mut T,
     ) -> Self {
-        let r_x: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_vars)
-            .map(|_| transcript.challenge_scalar_optimized::<Fq>())
+        let r_x: Vec<F::Challenge> = (0..params.num_constraint_vars)
+            .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
 
-        let gamma = transcript.challenge_scalar_optimized::<Fq>();
+        let gamma = transcript.challenge_scalar_optimized::<F>();
 
-        let eq_x = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_x));
+        let eq_x = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_x));
         let mut constraint_bits = Vec::new();
         let mut constraint_indices = Vec::new();
         let mut base_mlpoly = Vec::new();
@@ -269,7 +266,7 @@ impl SquareAndMultiplyProver {
     }
 }
 
-impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for SquareAndMultiplyProver<F> {
     fn degree(&self) -> usize {
         4 // Degree from constraint: rho_prev^2 * base
     }
@@ -278,12 +275,12 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
         self.params.num_constraint_vars
     }
 
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<Fq>) -> Fq {
-        Fq::zero()
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
+        F::zero()
     }
 
     #[tracing::instrument(skip_all, name = "SquareAndMultiply::compute_message")]
-    fn compute_message(&mut self, _round: usize, previous_claim: Fq) -> UniPoly<Fq> {
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         const DEGREE: usize = 4;
         let num_x_remaining = self.eq_x.get_num_vars();
         let x_half = 1 << (num_x_remaining - 1);
@@ -298,7 +295,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
                     .g_poly
                     .sumcheck_evals_array::<DEGREE>(x_idx, BindingOrder::LowToHigh);
 
-                let mut x_evals = [Fq::zero(); DEGREE];
+                let mut x_evals = [F::zero(); DEGREE];
                 let mut gamma_power = self.gamma;
 
                 for i in 0..self.constraint_bits.len() {
@@ -316,7 +313,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
                         let base_power = if self.constraint_bits[i] {
                             base_evals_hint[t]
                         } else {
-                            Fq::one()
+                            F::one()
                         };
                         let constraint_val = rho_curr_evals_hint[t]
                             - rho_prev_evals_hint[t] * rho_prev_evals_hint[t] * base_power
@@ -330,7 +327,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
                 x_evals
             })
             .reduce(
-                || [Fq::zero(); DEGREE],
+                || [F::zero(); DEGREE],
                 |mut acc, evals| {
                     for (a, e) in acc.iter_mut().zip(evals.iter()) {
                         *a += *e;
@@ -343,7 +340,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
     }
 
     #[tracing::instrument(skip_all, name = "SquareAndMultiply::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: <Fq as JoltField>::Challenge, round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         self.eq_x.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.g_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -383,11 +380,11 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
 
     fn cache_openings(
         &self,
-        accumulator: &mut ProverOpeningAccumulator<Fq>,
+        accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
-        sumcheck_challenges: &[<Fq as JoltField>::Challenge],
+        sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = OpeningPoint::<BIG_ENDIAN, Fq>::new(sumcheck_challenges.to_vec());
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(sumcheck_challenges.to_vec());
 
         for i in 0..self.constraint_bits.len() {
             append_constraint_virtual_claims(
@@ -412,27 +409,27 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for SquareAndMultiplyProver {
 
 /// Verifier for square-and-multiply sumcheck
 #[cfg_attr(feature = "allocative", derive(Allocative))]
-pub struct SquareAndMultiplyVerifier {
+pub struct SquareAndMultiplyVerifier<F: JoltField> {
     pub params: SquareAndMultiplyParams,
-    pub r_x: Vec<<Fq as JoltField>::Challenge>,
-    pub gamma: Fq,
+    pub r_x: Vec<F::Challenge>,
+    pub gamma: F,
     pub num_constraints: usize,
     pub constraint_bits: Vec<bool>,
     pub constraint_indices: Vec<usize>,
 }
 
-impl SquareAndMultiplyVerifier {
+impl<F: JoltField> SquareAndMultiplyVerifier<F> {
     pub fn new<T: Transcript>(
         params: SquareAndMultiplyParams,
         constraint_bits: Vec<bool>,
         constraint_indices: Vec<usize>,
         transcript: &mut T,
     ) -> Self {
-        let r_x: Vec<<Fq as JoltField>::Challenge> = (0..params.num_constraint_vars)
-            .map(|_| transcript.challenge_scalar_optimized::<Fq>())
+        let r_x: Vec<F::Challenge> = (0..params.num_constraint_vars)
+            .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
 
-        let gamma = transcript.challenge_scalar_optimized::<Fq>();
+        let gamma = transcript.challenge_scalar_optimized::<F>();
         let num_constraints = params.num_constraints;
 
         Self {
@@ -446,7 +443,7 @@ impl SquareAndMultiplyVerifier {
     }
 }
 
-impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifier {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for SquareAndMultiplyVerifier<F> {
     fn degree(&self) -> usize {
         4
     }
@@ -455,43 +452,58 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
         self.params.num_constraint_vars
     }
 
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<Fq>) -> Fq {
-        Fq::zero()
+    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        F::zero()
     }
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<Fq>,
-        sumcheck_challenges: &[<Fq as JoltField>::Challenge],
-    ) -> Fq {
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F {
         use crate::poly::eq_poly::EqPolynomial;
 
-        let r_x_fq: Vec<Fq> = self.r_x.iter().map(|c| (*c).into()).collect();
-        let r_star_fq: Vec<Fq> = sumcheck_challenges
+        let r_x_f: Vec<F> = self.r_x.iter().map(|c| (*c).into()).collect();
+        let r_star_f: Vec<F> = sumcheck_challenges
             .iter()
             .rev()
             .map(|c| (*c).into())
             .collect();
-        let eq_eval = EqPolynomial::mle(&r_x_fq, &r_star_fq);
-        let g_eval = {
+        let eq_eval = EqPolynomial::mle(&r_x_f, &r_star_f);
+        let g_eval: F = {
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
             use crate::zkvm::recursion::constraints_sys::DoryMatrixBuilder;
             use jolt_optimizations::get_g_mle;
 
+            // The g polynomial is specific to Fq12 arithmetic
+            // For the recursion SNARK, F must be Fq
+            // TODO: Abstract this for true genericity
+            use ark_bn254::Fq;
+            use std::any::TypeId;
+
+            // Runtime check that F = Fq
+            if TypeId::of::<F>() != TypeId::of::<Fq>() {
+                panic!("g polynomial evaluation requires F = Fq for recursion SNARK");
+            }
+
             // Get 4-var g polynomial and pad to 8 vars
             let g_mle_4var = get_g_mle();
-            let g_mle_8var = if r_star_fq.len() == 8 {
+            let g_mle_8var = if r_star_f.len() == 8 {
                 DoryMatrixBuilder::pad_4var_to_8var(&g_mle_4var)
             } else {
                 g_mle_4var
             };
-            let g_poly =
-                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_8var));
-            g_poly.evaluate_dot_product(&r_star_fq)
+
+            // Create polynomial and evaluate
+            // SAFETY: We checked F = Fq above, so this transmute is safe
+            let g_poly_fq = MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_8var));
+            let r_star_fq: &Vec<Fq> = unsafe { std::mem::transmute(&r_star_f) };
+            let g_eval_fq = g_poly_fq.evaluate_dot_product(r_star_fq);
+            unsafe { std::mem::transmute_copy(&g_eval_fq) }
         };
 
-        let mut total = Fq::zero();
+        let mut total = F::zero();
         let mut gamma_power = self.gamma;
 
         for i in 0..self.num_constraints {
@@ -506,7 +518,7 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
             let base_power = if self.constraint_bits[i] {
                 base_claim
             } else {
-                Fq::one()
+                F::one()
             };
 
             let constraint_value = rho_curr_claim
@@ -522,11 +534,11 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for SquareAndMultiplyVerifie
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<Fq>,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
-        sumcheck_challenges: &[<Fq as JoltField>::Challenge],
+        sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = OpeningPoint::<BIG_ENDIAN, Fq>::new(sumcheck_challenges.to_vec());
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(sumcheck_challenges.to_vec());
 
         for i in 0..self.num_constraints {
             append_constraint_virtual_openings(
@@ -549,10 +561,12 @@ mod tests {
             opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
         },
         subprotocols::sumcheck::BatchedSumcheck,
-        zkvm::recursion::constraints_sys::ConstraintSystem,
+        zkvm::recursion::constraints_sys::{ConstraintSystem, ConstraintType},
         transcripts::Blake2bTranscript,
         zkvm::witness::CommittedPolynomial,
     };
+    use ark_bn254::Fq;
+    use ark_ff::Zero;
     use serial_test::serial;
 
     #[test]
@@ -637,7 +651,7 @@ mod tests {
         // Prepare square-and-multiply prover if we have GT exp constraints
         let mut sq_mul_prover = if !gt_exp_constraint_polys.is_empty() {
             let params_sq_mul = SquareAndMultiplyParams::new(gt_exp_constraint_polys.len());
-            let prover = SquareAndMultiplyProver::new(
+            let prover = SquareAndMultiplyProver::<Fq>::new(
                 params_sq_mul.clone(),
                 gt_exp_constraint_polys,
                 g_poly.clone(),
@@ -668,7 +682,7 @@ mod tests {
             }
 
             let params_gt_mul = GtMulParams::new(gt_mul_polys.len());
-            let prover = GtMulProver::<Blake2bTranscript>::new(
+            let prover = GtMulProver::<Fq, Blake2bTranscript>::new(
                 params_gt_mul,
                 gt_mul_polys,
                 g_poly.clone(),
@@ -808,7 +822,7 @@ mod tests {
                 .unzip();
 
             let params_sq_mul = SquareAndMultiplyParams::new(num_gt_exp);
-            let verifier = SquareAndMultiplyVerifier::new(
+            let verifier = SquareAndMultiplyVerifier::<Fq>::new(
                 params_sq_mul,
                 constraint_bits,
                 constraint_indices,
@@ -834,7 +848,7 @@ mod tests {
 
             let params_gt_mul = GtMulParams::new(num_gt_mul);
             let verifier =
-                GtMulVerifier::new(params_gt_mul, constraint_indices, &mut verifier_transcript);
+                GtMulVerifier::<Fq>::new(params_gt_mul, constraint_indices, &mut verifier_transcript);
             stage1_ver_instances.push(Box::new(verifier));
         }
 
@@ -856,7 +870,7 @@ mod tests {
                 .unzip();
 
             let params_g1_scalar_mul = G1ScalarMulParams::new(num_g1_scalar_mul);
-            let verifier = G1ScalarMulVerifier::new(
+            let verifier = G1ScalarMulVerifier::<Fq>::new(
                 params_g1_scalar_mul,
                 base_points,
                 constraint_indices,

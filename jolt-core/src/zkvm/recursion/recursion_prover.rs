@@ -32,7 +32,7 @@ use dory::{backends::arkworks::ArkGT};
 use std::collections::HashMap;
 
 use super::{
-    constraints_sys::{ConstraintSystem, ConstraintType},
+    constraints_sys::ConstraintSystem,
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
         gt_mul::{GtMulParams, GtMulProver},
@@ -68,16 +68,16 @@ pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Fie
 type BatchedSumcheckProof<F> = crate::subprotocols::sumcheck::SumcheckInstanceProof<F, crate::transcripts::Blake2bTranscript>;
 
 /// Unified prover for the recursion SNARK
-pub struct RecursionProver {
+pub struct RecursionProver<F: JoltField = Fq> {
     /// The constraint system containing all constraints and witness data
     pub constraint_system: ConstraintSystem,
     /// Gamma value for batching across constraints
-    pub gamma: Fq,
+    pub gamma: F,
     /// Delta value for batching within constraints
-    pub delta: Fq,
+    pub delta: F,
 }
 
-impl RecursionProver {
+impl RecursionProver<Fq> {
     /// Create a new recursion prover by generating witnesses from a Dory proof
     pub fn new_from_dory_proof<T: Transcript>(
         dory_proof: &ArkDoryProof,
@@ -293,17 +293,24 @@ impl RecursionProver {
             g_poly,
         })
     }
+}
 
-
+impl<F: JoltField> RecursionProver<F> {
     /// Run the full two-stage recursion prover and generate PCS opening proof
-    pub fn prove<T: Transcript, PCS: CommitmentScheme<Field = Fq> + RecursionExt<Fq>>(
+    pub fn prove<T: Transcript, PCS: CommitmentScheme<Field = F> + RecursionExt<F>>(
         self,
         transcript: &mut T,
         prover_setup: &PCS::ProverSetup,
-    ) -> Result<RecursionProof<Fq, T, PCS>, Box<dyn std::error::Error>> {
+    ) -> Result<RecursionProof<F, T, PCS>, Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for recursion SNARK
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK requires F = Fq");
+        }
         // Initialize opening accumulator
         let log_T = self.constraint_system.num_vars();
-        let mut accumulator = ProverOpeningAccumulator::<Fq>::new(log_T);
+        let mut accumulator = ProverOpeningAccumulator::<F>::new(log_T);
 
         // ============ STAGE 1: Constraint Sumchecks ============
         let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
@@ -317,10 +324,14 @@ impl RecursionProver {
 
         // ============ PCS OPENING PROOF ============
         // Create polynomial map for prove_single
-        let matrix_poly = MultilinearPolynomial::from(
-            self.constraint_system.matrix.evaluations.clone()
-        );
-        let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<Fq>> =
+        // Convert matrix evaluations from Fq to F (safe because F = Fq for recursion SNARK)
+        let matrix_evaluations_f = unsafe {
+            std::mem::transmute::<Vec<Fq>, Vec<F>>(
+                self.constraint_system.matrix.evaluations.clone()
+            )
+        };
+        let matrix_poly = MultilinearPolynomial::from(matrix_evaluations_f);
+        let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
             HashMap::new();
         polynomials_map.insert(
             CommittedPolynomial::DoryConstraintMatrix,
@@ -353,14 +364,20 @@ impl RecursionProver {
     }
 
     /// Run the full two-stage recursion prover for any PCS (without requiring RecursionExt)
-    pub fn prove_with_pcs<T: Transcript, PCS: CommitmentScheme<Field = Fq>>(
+    pub fn prove_with_pcs<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         self,
         transcript: &mut T,
         prover_setup: &PCS::ProverSetup,
-    ) -> Result<RecursionProof<Fq, T, PCS>, Box<dyn std::error::Error>> {
+    ) -> Result<RecursionProof<F, T, PCS>, Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for recursion SNARK
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK requires F = Fq");
+        }
         // Initialize opening accumulator
         let log_T = self.constraint_system.num_vars();
-        let mut accumulator = ProverOpeningAccumulator::<Fq>::new(log_T);
+        let mut accumulator = ProverOpeningAccumulator::<F>::new(log_T);
 
         // ============ STAGE 1: Constraint Sumchecks ============
         let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
@@ -374,10 +391,14 @@ impl RecursionProver {
 
         // ============ PCS OPENING PROOF ============
         // Create polynomial map for prove_single
-        let matrix_poly = MultilinearPolynomial::from(
-            self.constraint_system.matrix.evaluations.clone()
-        );
-        let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<Fq>> =
+        // Convert matrix evaluations from Fq to F (safe because F = Fq for recursion SNARK)
+        let matrix_evaluations_f = unsafe {
+            std::mem::transmute::<Vec<Fq>, Vec<F>>(
+                self.constraint_system.matrix.evaluations.clone()
+            )
+        };
+        let matrix_poly = MultilinearPolynomial::from(matrix_evaluations_f);
+        let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
             HashMap::new();
         polynomials_map.insert(
             CommittedPolynomial::DoryConstraintMatrix,
@@ -414,19 +435,41 @@ impl RecursionProver {
     fn prove_stage1<T: Transcript>(
         &self,
         transcript: &mut T,
-        accumulator: &mut ProverOpeningAccumulator<Fq>,
-    ) -> Result<(crate::subprotocols::sumcheck::SumcheckInstanceProof<Fq, T>, Vec<<Fq as JoltField>::Challenge>), Box<dyn std::error::Error>> {
+        accumulator: &mut ProverOpeningAccumulator<F>,
+    ) -> Result<(crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>, Vec<<F as JoltField>::Challenge>), Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for constraint system operations
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK constraint system requires F = Fq");
+        }
         // Create provers for each constraint type
-        let mut provers: Vec<Box<dyn SumcheckInstanceProver<Fq, T>>> = Vec::new();
+        let mut provers: Vec<Box<dyn SumcheckInstanceProver<F, T>>> = Vec::new();
 
         // Add GT exp prover if we have GT exp constraints
         let gt_exp_constraints = self.constraint_system.extract_constraint_polynomials();
         if !gt_exp_constraints.is_empty() {
             let params = SquareAndMultiplyParams::new(gt_exp_constraints.len());
+
+            // Convert Fq constraints to F (safe because we checked F = Fq)
+            let gt_exp_constraints_f = unsafe {
+                std::mem::transmute::<
+                    Vec<crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials<Fq>>,
+                    Vec<crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials<F>>
+                >(gt_exp_constraints)
+            };
+
+            // Convert g_poly from Fq to F
+            let g_poly_f = unsafe {
+                std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
+                    self.constraint_system.g_poly.clone()
+                )
+            };
+
             let prover = SquareAndMultiplyProver::new(
                 params,
-                gt_exp_constraints,
-                self.constraint_system.g_poly.clone(),
+                gt_exp_constraints_f,
+                g_poly_f,
                 transcript,
             );
             provers.push(Box::new(prover));
@@ -438,7 +481,7 @@ impl RecursionProver {
             use super::stage1::gt_mul::GtMulConstraintPolynomials;
 
             // Convert tuples to structured type
-            let gt_mul_constraints: Vec<GtMulConstraintPolynomials> = gt_mul_constraints_tuples
+            let gt_mul_constraints_fq: Vec<GtMulConstraintPolynomials<Fq>> = gt_mul_constraints_tuples
                 .into_iter()
                 .map(|(idx, lhs, rhs, result, quotient)| GtMulConstraintPolynomials {
                     lhs,
@@ -449,11 +492,27 @@ impl RecursionProver {
                 })
                 .collect();
 
-            let params = GtMulParams::new(gt_mul_constraints.len());
+            let params = GtMulParams::new(gt_mul_constraints_fq.len());
+
+            // Convert Fq constraints to F (safe because we checked F = Fq)
+            let gt_mul_constraints_f = unsafe {
+                std::mem::transmute::<
+                    Vec<GtMulConstraintPolynomials<Fq>>,
+                    Vec<GtMulConstraintPolynomials<F>>
+                >(gt_mul_constraints_fq)
+            };
+
+            // Convert g_poly from Fq to F
+            let g_poly_f = unsafe {
+                std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
+                    self.constraint_system.g_poly.clone()
+                )
+            };
+
             let prover = GtMulProver::new(
                 params,
-                gt_mul_constraints,
-                self.constraint_system.g_poly.clone(),
+                gt_mul_constraints_f,
+                g_poly_f,
                 transcript,
             );
             provers.push(Box::new(prover));
@@ -509,9 +568,15 @@ impl RecursionProver {
     fn prove_stage2<T: Transcript>(
         &self,
         transcript: &mut T,
-        accumulator: &mut ProverOpeningAccumulator<Fq>,
-        r_stage1: &[<Fq as JoltField>::Challenge],
-    ) -> Result<(crate::subprotocols::sumcheck::SumcheckInstanceProof<Fq, T>, Vec<<Fq as JoltField>::Challenge>), Box<dyn std::error::Error>> {
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        r_stage1: &[<F as JoltField>::Challenge],
+    ) -> Result<(crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>, Vec<<F as JoltField>::Challenge>), Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for constraint system operations
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK constraint system requires F = Fq");
+        }
         // Create virtualization parameters
         let num_s_vars = self.constraint_system.num_s_vars();
         let num_constraints = self.constraint_system.num_constraints();

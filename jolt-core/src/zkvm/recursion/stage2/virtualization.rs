@@ -33,41 +33,40 @@ use crate::{
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use ark_bn254::Fq;
-use ark_ff::Zero;
 use rayon::prelude::*;
 
 /// Virtual claims for all constraint types
-pub struct VirtualClaims {
+pub struct VirtualClaims<F: JoltField> {
     // GT exp claims
-    pub base_claims: Vec<Fq>,
-    pub rho_prev_claims: Vec<Fq>,
-    pub rho_curr_claims: Vec<Fq>,
-    pub quotient_claims: Vec<Fq>,
+    pub base_claims: Vec<F>,
+    pub rho_prev_claims: Vec<F>,
+    pub rho_curr_claims: Vec<F>,
+    pub quotient_claims: Vec<F>,
     // GT mul claims
-    pub mul_lhs_claims: Vec<Fq>,
-    pub mul_rhs_claims: Vec<Fq>,
-    pub mul_result_claims: Vec<Fq>,
-    pub mul_quotient_claims: Vec<Fq>,
+    pub mul_lhs_claims: Vec<F>,
+    pub mul_rhs_claims: Vec<F>,
+    pub mul_result_claims: Vec<F>,
+    pub mul_quotient_claims: Vec<F>,
     // G1 scalar mul claims
-    pub g1_x_a_claims: Vec<Fq>,
-    pub g1_y_a_claims: Vec<Fq>,
-    pub g1_x_t_claims: Vec<Fq>,
-    pub g1_y_t_claims: Vec<Fq>,
-    pub g1_x_a_next_claims: Vec<Fq>,
-    pub g1_y_a_next_claims: Vec<Fq>,
-    pub g1_t_is_infinity_claims: Vec<Fq>,
+    pub g1_x_a_claims: Vec<F>,
+    pub g1_y_a_claims: Vec<F>,
+    pub g1_x_t_claims: Vec<F>,
+    pub g1_y_t_claims: Vec<F>,
+    pub g1_x_a_next_claims: Vec<F>,
+    pub g1_y_a_next_claims: Vec<F>,
+    pub g1_t_is_infinity_claims: Vec<F>,
 }
 
 /// Compute v = Σ_i eq(r_s,i) · v_i for the virtualization protocol
 /// This is shared by both prover and verifier
-fn compute_virtualization_claim(
+fn compute_virtualization_claim<F: JoltField>(
     params: &RecursionVirtualizationParams,
-    eq_evals: &[Fq],
-    claims: &VirtualClaims,
-) -> Fq {
+    eq_evals: &[F],
+    claims: &VirtualClaims<F>,
+) -> F {
     // Build μ evaluations from Stage 1 claims
     let mu_size = 1 << params.num_s_vars;
-    let mut mu_evals = vec![Fq::zero(); mu_size];
+    let mut mu_evals = vec![F::zero(); mu_size];
 
     // Fill μ following the matrix layout with 15 polynomial types
     for i in 0..params.num_constraints {
@@ -154,60 +153,68 @@ impl RecursionVirtualizationParams {
 
 /// Prover for recursion virtualization sumcheck
 #[cfg_attr(feature = "allocative", derive(Allocative))]
-pub struct RecursionVirtualizationProver {
+pub struct RecursionVirtualizationProver<F: JoltField, T: Transcript> {
     /// Parameters
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub params: RecursionVirtualizationParams,
 
     /// Materialized M(s, x) as a multilinear polynomial (bound to x*)
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub m_poly: MultilinearPolynomial<Fq>,
+    pub m_poly: MultilinearPolynomial<F>,
 
     /// Equality polynomial eq(r_s, s)
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    pub eq_r_s: MultilinearPolynomial<Fq>,
+    pub eq_r_s: MultilinearPolynomial<F>,
 
     /// Evaluation point from Stage 1 sumcheck (r_x from square-and-multiply)
-    pub r_x_prev: Vec<<Fq as JoltField>::Challenge>,
+    pub r_x_prev: Vec<F::Challenge>,
 
     /// Random challenge r_s for virtualization
-    pub r_s: Vec<<Fq as JoltField>::Challenge>,
+    pub r_s: Vec<F::Challenge>,
 
     /// Gamma coefficient from Stage 1
-    pub gamma: Fq,
+    pub gamma: F,
 
     /// Virtual claims from Stage 1 for all constraints
-    pub virtual_claims: VirtualClaims,
+    pub virtual_claims: VirtualClaims<F>,
 
     /// Current round
     pub round: usize,
 
     /// Number of constraint variables (x) - fixed at 4 for Fq12
     pub num_constraint_vars: usize,
+
+    pub _marker: std::marker::PhantomData<T>,
 }
 
-impl RecursionVirtualizationProver {
-    pub fn new<T: Transcript>(
+impl<F: JoltField, T: Transcript> RecursionVirtualizationProver<F, T> {
+    pub fn new(
         params: RecursionVirtualizationParams,
         constraint_system: &ConstraintSystem,
         transcript: &mut T,
-        r_x_prev: Vec<<Fq as JoltField>::Challenge>,
-        stage1_accumulator: &ProverOpeningAccumulator<Fq>,
-        gamma: Fq,
+        r_x_prev: Vec<F::Challenge>,
+        stage1_accumulator: &ProverOpeningAccumulator<F>,
+        gamma: F,
     ) -> Self {
-        let r_s: Vec<<Fq as JoltField>::Challenge> = (0..params.num_rounds())
-            .map(|_| transcript.challenge_scalar_optimized::<Fq>())
+        // Runtime check that F = Fq for constraint system matrix
+        use std::any::TypeId;
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Virtualization requires F = Fq for constraint system matrix");
+        }
+
+        let r_s: Vec<F::Challenge> = (0..params.num_rounds())
+            .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
 
-        let eq_r_s = MultilinearPolynomial::from(EqPolynomial::<Fq>::evals(&r_s));
-        let mut m_poly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
+        let eq_r_s = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_s));
+        // SAFETY: We checked F = Fq above, so this transmute is safe
+        let matrix_evals_f: Vec<F> = unsafe { std::mem::transmute(constraint_system.matrix.evaluations.clone()) };
+        let mut m_poly = MultilinearPolynomial::from(matrix_evals_f);
 
         // Matrix layout is [x_bits, s_bits] in little-endian
         // We need to bind the low-order x bits to r_x_prev
-        let r_x_prev_fq: Vec<Fq> = r_x_prev.iter().map(|c| (*c).into()).collect();
-
         for i in 0..constraint_system.matrix.num_constraint_vars {
-            m_poly.bind_parallel(r_x_prev_fq[i].into(), BindingOrder::LowToHigh);
+            m_poly.bind_parallel(r_x_prev[i], BindingOrder::LowToHigh);
         }
         assert_eq!(
             m_poly.get_num_vars(),
@@ -216,21 +223,21 @@ impl RecursionVirtualizationProver {
         );
 
         // Initialize claim vectors with zeros
-        let mut base_claims = vec![Fq::zero(); params.num_constraints];
-        let mut rho_prev_claims = vec![Fq::zero(); params.num_constraints];
-        let mut rho_curr_claims = vec![Fq::zero(); params.num_constraints];
-        let mut quotient_claims = vec![Fq::zero(); params.num_constraints];
-        let mut mul_lhs_claims = vec![Fq::zero(); params.num_constraints];
-        let mut mul_rhs_claims = vec![Fq::zero(); params.num_constraints];
-        let mut mul_result_claims = vec![Fq::zero(); params.num_constraints];
-        let mut mul_quotient_claims = vec![Fq::zero(); params.num_constraints];
-        let mut g1_x_a_claims = vec![Fq::zero(); params.num_constraints];
-        let mut g1_y_a_claims = vec![Fq::zero(); params.num_constraints];
-        let mut g1_x_t_claims = vec![Fq::zero(); params.num_constraints];
-        let mut g1_y_t_claims = vec![Fq::zero(); params.num_constraints];
-        let mut g1_x_a_next_claims = vec![Fq::zero(); params.num_constraints];
-        let mut g1_y_a_next_claims = vec![Fq::zero(); params.num_constraints];
-        let mut g1_t_is_infinity_claims = vec![Fq::zero(); params.num_constraints];
+        let mut base_claims = vec![F::zero(); params.num_constraints];
+        let mut rho_prev_claims = vec![F::zero(); params.num_constraints];
+        let mut rho_curr_claims = vec![F::zero(); params.num_constraints];
+        let mut quotient_claims = vec![F::zero(); params.num_constraints];
+        let mut mul_lhs_claims = vec![F::zero(); params.num_constraints];
+        let mut mul_rhs_claims = vec![F::zero(); params.num_constraints];
+        let mut mul_result_claims = vec![F::zero(); params.num_constraints];
+        let mut mul_quotient_claims = vec![F::zero(); params.num_constraints];
+        let mut g1_x_a_claims = vec![F::zero(); params.num_constraints];
+        let mut g1_y_a_claims = vec![F::zero(); params.num_constraints];
+        let mut g1_x_t_claims = vec![F::zero(); params.num_constraints];
+        let mut g1_y_t_claims = vec![F::zero(); params.num_constraints];
+        let mut g1_x_a_next_claims = vec![F::zero(); params.num_constraints];
+        let mut g1_y_a_next_claims = vec![F::zero(); params.num_constraints];
+        let mut g1_t_is_infinity_claims = vec![F::zero(); params.num_constraints];
 
         // Collect claims based on constraint type
         for (i, constraint) in constraint_system.constraints.iter().enumerate() {
@@ -350,11 +357,12 @@ impl RecursionVirtualizationProver {
             virtual_claims,
             round: 0,
             num_constraint_vars: constraint_system.matrix.num_constraint_vars,
+            _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationProver {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RecursionVirtualizationProver<F, T> {
     fn degree(&self) -> usize {
         2 // Degree 2 because eq(r_s, s) * M(s, x) in the s variables
     }
@@ -363,7 +371,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
         self.params.num_rounds()
     }
 
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<Fq>) -> Fq {
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
         let eq_evals = match &self.eq_r_s {
             MultilinearPolynomial::LargeScalars(poly) => poly.Z.clone(),
             _ => panic!("Expected eq_r_s to be LargeScalars variant"),
@@ -373,7 +381,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
     }
 
     #[tracing::instrument(skip_all, name = "RecursionVirtualization::compute_message")]
-    fn compute_message(&mut self, round: usize, previous_claim: Fq) -> UniPoly<Fq> {
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         const DEGREE: usize = 2;
         let num_s_remaining = self.eq_r_s.get_num_vars();
         let s_half = 1 << (num_s_remaining - 1);
@@ -391,7 +399,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
                     .m_poly
                     .sumcheck_evals_array::<DEGREE>(s_idx, BindingOrder::LowToHigh);
 
-                let mut s_evals = [Fq::zero(); DEGREE];
+                let mut s_evals = [F::zero(); DEGREE];
 
                 for t in 0..DEGREE {
                     s_evals[t] = eq_r_s_evals[t] * m_evals[t];
@@ -400,7 +408,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
                 s_evals
             })
             .reduce(
-                || [Fq::zero(); DEGREE],
+                || [F::zero(); DEGREE],
                 |mut acc, evals| {
                     for (a, e) in acc.iter_mut().zip(evals.iter()) {
                         *a += *e;
@@ -413,7 +421,7 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
     }
 
     #[tracing::instrument(skip_all, name = "RecursionVirtualization::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: <Fq as JoltField>::Challenge, round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         self.eq_r_s.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.m_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -422,12 +430,12 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
 
     fn cache_openings(
         &self,
-        accumulator: &mut ProverOpeningAccumulator<Fq>,
+        accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
-        sumcheck_challenges: &[<Fq as JoltField>::Challenge],
+        sumcheck_challenges: &[F::Challenge],
     ) {
         // Construct opening point for M: (r_x_prev, r_s_final) in big-endian order
-        let opening_point = OpeningPoint::<BIG_ENDIAN, Fq>::new(
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(
             sumcheck_challenges
                 .iter()
                 .rev()
@@ -454,24 +462,24 @@ impl<T: Transcript> SumcheckInstanceProver<Fq, T> for RecursionVirtualizationPro
 
 /// Verifier for recursion virtualization sumcheck
 #[cfg_attr(feature = "allocative", derive(Allocative))]
-pub struct RecursionVirtualizationVerifier {
+pub struct RecursionVirtualizationVerifier<F: JoltField> {
     pub params: RecursionVirtualizationParams,
-    pub r_x_prev: Vec<<Fq as JoltField>::Challenge>,
-    pub r_s: Vec<<Fq as JoltField>::Challenge>,
-    pub gamma: Fq,
+    pub r_x_prev: Vec<F::Challenge>,
+    pub r_s: Vec<F::Challenge>,
+    pub gamma: F,
     pub constraint_types: Vec<ConstraintType>,
 }
 
-impl RecursionVirtualizationVerifier {
+impl<F: JoltField> RecursionVirtualizationVerifier<F> {
     pub fn new<T: Transcript>(
         params: RecursionVirtualizationParams,
         constraint_types: Vec<ConstraintType>,
         transcript: &mut T,
-        r_x_prev: Vec<<Fq as JoltField>::Challenge>,
-        gamma: Fq,
+        r_x_prev: Vec<F::Challenge>,
+        gamma: F,
     ) -> Self {
-        let r_s: Vec<<Fq as JoltField>::Challenge> = (0..params.num_rounds())
-            .map(|_| transcript.challenge_scalar_optimized::<Fq>())
+        let r_s: Vec<F::Challenge> = (0..params.num_rounds())
+            .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
 
         Self {
@@ -484,7 +492,7 @@ impl RecursionVirtualizationVerifier {
     }
 }
 
-impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationVerifier {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RecursionVirtualizationVerifier<F> {
     fn degree(&self) -> usize {
         2 // Degree 2 because eq(r_s, s) * M(s, x) in the s variables
     }
@@ -493,23 +501,23 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
         self.params.num_rounds()
     }
 
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<Fq>) -> Fq {
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
         // Initialize claim vectors with zeros
-        let mut base_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut rho_prev_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut rho_curr_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut quotient_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut mul_lhs_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut mul_rhs_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut mul_result_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut mul_quotient_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut g1_x_a_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut g1_y_a_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut g1_x_t_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut g1_y_t_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut g1_x_a_next_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut g1_y_a_next_claims = vec![Fq::zero(); self.params.num_constraints];
-        let mut g1_t_is_infinity_claims = vec![Fq::zero(); self.params.num_constraints];
+        let mut base_claims = vec![F::zero(); self.params.num_constraints];
+        let mut rho_prev_claims = vec![F::zero(); self.params.num_constraints];
+        let mut rho_curr_claims = vec![F::zero(); self.params.num_constraints];
+        let mut quotient_claims = vec![F::zero(); self.params.num_constraints];
+        let mut mul_lhs_claims = vec![F::zero(); self.params.num_constraints];
+        let mut mul_rhs_claims = vec![F::zero(); self.params.num_constraints];
+        let mut mul_result_claims = vec![F::zero(); self.params.num_constraints];
+        let mut mul_quotient_claims = vec![F::zero(); self.params.num_constraints];
+        let mut g1_x_a_claims = vec![F::zero(); self.params.num_constraints];
+        let mut g1_y_a_claims = vec![F::zero(); self.params.num_constraints];
+        let mut g1_x_t_claims = vec![F::zero(); self.params.num_constraints];
+        let mut g1_y_t_claims = vec![F::zero(); self.params.num_constraints];
+        let mut g1_x_a_next_claims = vec![F::zero(); self.params.num_constraints];
+        let mut g1_y_a_next_claims = vec![F::zero(); self.params.num_constraints];
+        let mut g1_t_is_infinity_claims = vec![F::zero(); self.params.num_constraints];
 
         // Collect claims based on constraint type
         for (i, constraint_type) in self.constraint_types.iter().enumerate() {
@@ -619,28 +627,28 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
             g1_t_is_infinity_claims,
         };
 
-        let r_s_fq: Vec<Fq> = self.r_s.iter().map(|c| (*c).into()).collect();
-        let eq_evals = EqPolynomial::<Fq>::evals(&r_s_fq);
+        let r_s_f: Vec<F> = self.r_s.iter().map(|c| (*c).into()).collect();
+        let eq_evals = EqPolynomial::<F>::evals(&r_s_f);
 
         compute_virtualization_claim(&self.params, &eq_evals, &virtual_claims)
     }
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<Fq>,
-        sumcheck_challenges: &[<Fq as JoltField>::Challenge],
-    ) -> Fq {
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F {
         // Step 4: Output claim M(r_s_final,r_x) = c_m / eq(r_s,r_s_final)
         let (_, m_claim) = accumulator
             .get_committed_polynomial_opening(self.params.polynomial, self.params.sumcheck_id);
 
-        let r_s_final: Vec<Fq> = sumcheck_challenges
+        let r_s_final: Vec<F> = sumcheck_challenges
             .iter()
             .rev()
             .map(|c| (*c).into())
             .collect();
-        let r_s_fq: Vec<Fq> = self.r_s.iter().map(|c| (*c).into()).collect();
-        let eq_eval = EqPolynomial::mle(&r_s_fq, &r_s_final);
+        let r_s_f: Vec<F> = self.r_s.iter().map(|c| (*c).into()).collect();
+        let eq_eval = EqPolynomial::mle(&r_s_f, &r_s_final);
 
         // Expected output: eq(r_s, r_s_final) * M(r_s_final, r_x)
         // This matches the spec: if output_claim = c_m, then M(r_s_final,r_x) = c_m / eq(r_s,r_s_final)
@@ -649,12 +657,12 @@ impl<T: Transcript> SumcheckInstanceVerifier<Fq, T> for RecursionVirtualizationV
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<Fq>,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
-        sumcheck_challenges: &[<Fq as JoltField>::Challenge],
+        sumcheck_challenges: &[F::Challenge],
     ) {
         // Construct opening point for M: (r_x_prev, r_s_final) in big-endian order
-        let opening_point = OpeningPoint::<BIG_ENDIAN, Fq>::new(
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(
             sumcheck_challenges
                 .iter()
                 .rev()
