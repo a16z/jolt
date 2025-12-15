@@ -177,6 +177,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                             BatchingPolynomial::EqPlusOne(_cached_point_ref) => true,
                             BatchingPolynomial::Lt(_cached_point_ref) => todo!(),
                             BatchingPolynomial::Identity => todo!(),
+                            BatchingPolynomial::UnmapRamAddress => todo!(),
                             BatchingPolynomial::NoBatching => todo!(),
                         }
                     });

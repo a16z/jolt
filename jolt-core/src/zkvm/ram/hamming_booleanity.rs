@@ -170,9 +170,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r = OpeningPoint::new(
-            sumcheck_challenges.to_vec(),
-        );
+        let r = OpeningPoint::new(sumcheck_challenges.to_vec());
         let result =
             Self::input_output_claims().expected_output_claim(&r, &[F::one()], accumulator);
 

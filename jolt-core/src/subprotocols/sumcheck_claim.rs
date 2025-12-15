@@ -8,8 +8,11 @@ use crate::{
     poly::{
         eq_plus_one_poly::EqPlusOnePolynomial,
         eq_poly::EqPolynomial,
+        identity_poly::UnmapRamAddressPolynomial,
+        multilinear_polynomial::PolynomialEvaluation as _,
         opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
+    utils::math::Math as _,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -49,7 +52,7 @@ impl OpeningRef {
 pub enum ChallengePart {
     Address,
     Cycle,
-    Both,
+    Full,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,20 +66,18 @@ pub struct CachedPointRef {
 impl CachedPointRef {
     fn get_point<F: JoltField>(
         &self,
-        n_cycle_vars: usize,
+        n_vars: usize,
         acc: &impl OpeningAccumulator<F>,
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         let point = self.opening.get_point(self.sumcheck, acc);
-        // TODO: Handle getting address / cycle parts, e.g.,
-        //let point_part = match self.part {
-        //    ChallengePart::Address => point.split_at(n_cycle_vars.unwrap()).0,
-        //    ChallengePart::Cycle => point.split_at(n_cycle_vars.unwrap()).1,
-        //    ChallengePart::Both => point,
-        //};
-        let point_part = if point.len() > n_cycle_vars {
-            point.split_at(point.len() - n_cycle_vars - 1).1
-        } else {
-            point
+        let point_part = match self.part {
+            // Take address part to be initial elements of challenge point
+            ChallengePart::Address if point.len() > n_vars => point.split_at(n_vars).0,
+            // Take cycle part to be final elements of challenge point
+            ChallengePart::Cycle if point.len() > n_vars => {
+                point.split_at(point.len() - n_vars - 1).1
+            }
+            _ => point,
         };
         if self.reverse {
             OpeningPoint::<BIG_ENDIAN, F> {
@@ -88,18 +89,47 @@ impl CachedPointRef {
     }
 }
 
+/// These are parameters needed to evaluate some batching polynomials, but not all. They're
+/// available in only some sumcheck verifier instances, so we allow them to be options.
+// TODO: Find a better way to do this
+#[derive(Debug, Clone)]
+pub struct BatchingEvaluationParams {
+    ram_k: Option<usize>,
+    ram_start_address: Option<u64>,
+}
+
+impl BatchingEvaluationParams {
+    pub fn new(ram_k: usize, ram_start_address: u64) -> Self {
+        BatchingEvaluationParams {
+            ram_k: Some(ram_k),
+            ram_start_address: Some(ram_start_address),
+        }
+    }
+
+    pub fn empty() -> Self {
+        BatchingEvaluationParams {
+            ram_k: None,
+            ram_start_address: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BatchingPolynomial {
     Eq(CachedPointRef),
     EqPlusOne(CachedPointRef),
     Lt(CachedPointRef),
     Identity,
+    // TODO: We could handle this using Identity, but we would need to add binary ops and constants
+    // within this struct.
+    UnmapRamAddress,
     NoBatching,
 }
 
 impl BatchingPolynomial {
     fn evaluate<F: JoltField>(
         &self,
+        eval_params: &BatchingEvaluationParams,
         r: &OpeningPoint<BIG_ENDIAN, F>,
         acc: &impl OpeningAccumulator<F>,
     ) -> F {
@@ -114,6 +144,11 @@ impl BatchingPolynomial {
             }
             BatchingPolynomial::Lt(_opening_ref) => todo!(),
             BatchingPolynomial::Identity => todo!(),
+            BatchingPolynomial::UnmapRamAddress => UnmapRamAddressPolynomial::<F>::new(
+                eval_params.ram_k.unwrap().log_2(),
+                eval_params.ram_start_address.unwrap(),
+            )
+            .evaluate(&r.r),
             BatchingPolynomial::NoBatching => F::one(),
         }
     }
@@ -231,6 +266,17 @@ impl<F: JoltField> InputOutputClaims<F> {
         gamma_pows: &[F],
         acc: &impl OpeningAccumulator<F>,
     ) -> F {
+        let eval_params = BatchingEvaluationParams::empty();
+        self.expected_output_claim_with_batching_parameters(&eval_params, r, gamma_pows, acc)
+    }
+
+    pub fn expected_output_claim_with_batching_parameters(
+        &self,
+        eval_params: &BatchingEvaluationParams,
+        r: &OpeningPoint<BIG_ENDIAN, F>,
+        gamma_pows: &[F],
+        acc: &impl OpeningAccumulator<F>,
+    ) -> F {
         let mut batching_poly_eval_cache: HashMap<BatchingPolynomial, F> = HashMap::new();
 
         self.claims
@@ -239,7 +285,7 @@ impl<F: JoltField> InputOutputClaims<F> {
             .map(|(claim, gamma_pow)| {
                 let batching_poly_eval = batching_poly_eval_cache
                     .entry(claim.batching_poly)
-                    .or_insert_with(|| claim.batching_poly.evaluate(r, acc));
+                    .or_insert_with(|| claim.batching_poly.evaluate(eval_params, r, acc));
                 let claim_eval = claim
                     .expected_output_claim_expr
                     .evaluate(self.output_sumcheck_id, acc);
