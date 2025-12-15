@@ -7,7 +7,6 @@ use rayon::prelude::*;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
-use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
     field::JoltField,
     poly::{eq_poly::EqPolynomial, unipoly::UniPoly},
@@ -165,29 +164,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 }
             }
         }
-    }
-
-    /// Returns an interleaved vector merging the current bit `w` with `E_in_current()`.
-    ///
-    /// For each entry `low = E_in_current()[x_in]`, produces the pair:
-    ///   [ low * (1 - w), low * w ]
-    ///
-    /// The returned vector has length `2 * E_in_current_len()`, laid out as
-    ///   [low0_0, low0_1, low1_0, low1_1, ...] matching index pairs (j, j+1).
-    pub fn merged_in_with_current_w(&self) -> Vec<F> {
-        let e_in = self.E_in_current();
-        let w = self.get_current_w();
-        let mut merged: Vec<F> = unsafe_allocate_zero_vec(2 * e_in.len());
-        merged
-            .par_chunks_exact_mut(2)
-            .zip(e_in.par_iter())
-            .for_each(|(chunk, &low)| {
-                let eval1 = low * w;
-                let eval0 = low - eval1;
-                chunk[0] = eval0;
-                chunk[1] = eval1;
-            });
-        merged
     }
 
     /// Compute the cubic polynomial s(X) = l(X) * q(X), where l(X) is the
