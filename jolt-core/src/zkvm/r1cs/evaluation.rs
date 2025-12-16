@@ -138,6 +138,29 @@ pub struct AzFirstGroup {
     pub must_start_sequence: bool, // NextIsVirtual && !NextIsFirstInSequence
 }
 
+impl AzFirstGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `az_at_r_first_group`
+    /// but keeps the result in an `Acc5U` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc5U<F>,
+    ) {
+        acc.fmadd(&w[0], &self.not_load_store);
+        acc.fmadd(&w[1], &self.load_a);
+        acc.fmadd(&w[2], &self.load_b);
+        acc.fmadd(&w[3], &self.store);
+        acc.fmadd(&w[4], &self.add_sub_mul);
+        acc.fmadd(&w[5], &self.not_add_sub_mul);
+        acc.fmadd(&w[6], &self.assert_flag);
+        acc.fmadd(&w[7], &self.should_jump);
+        acc.fmadd(&w[8], &self.virtual_instruction);
+        acc.fmadd(&w[9], &self.must_start_sequence);
+    }
+}
+
 /// Magnitudes for the first group (kept small: bool/u64/S64)
 #[derive(Clone, Copy, Debug)]
 pub struct BzFirstGroup {
@@ -151,6 +174,29 @@ pub struct BzFirstGroup {
     pub next_unexp_pc_minus_lookup_output: S64,      // NextUnexpandedPC - LookupOutput
     pub next_pc_minus_pc_plus_one: S64,              // NextPC - (PC + 1)
     pub one_minus_do_not_update_unexpanded_pc: bool, // 1 - DoNotUpdateUnexpandedPC
+}
+
+impl BzFirstGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `bz_at_r_first_group`
+    /// but keeps the result in an `Acc6S` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc6S<F>,
+    ) {
+        acc.fmadd(&w[0], &self.ram_addr);
+        acc.fmadd(&w[1], &self.ram_read_minus_ram_write);
+        acc.fmadd(&w[2], &self.ram_read_minus_rd_write);
+        acc.fmadd(&w[3], &self.rs2_minus_ram_write);
+        acc.fmadd(&w[4], &self.left_lookup);
+        acc.fmadd(&w[5], &self.left_lookup_minus_left_input);
+        acc.fmadd(&w[6], &self.lookup_output_minus_one);
+        acc.fmadd(&w[7], &self.next_unexp_pc_minus_lookup_output);
+        acc.fmadd(&w[8], &self.next_pc_minus_pc_plus_one);
+        acc.fmadd(&w[9], &self.one_minus_do_not_update_unexpanded_pc);
+    }
 }
 
 /// Guards for the second group (all booleans except two u8 flags)
@@ -167,6 +213,28 @@ pub struct AzSecondGroup {
     pub not_jump_or_branch: bool,     // !(Jump || ShouldBranch)
 }
 
+impl AzSecondGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `az_at_r_second_group`
+    /// but keeps the result in an `Acc5U` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc5U<F>,
+    ) {
+        acc.fmadd(&w[0], &self.load_or_store);
+        acc.fmadd(&w[1], &self.add);
+        acc.fmadd(&w[2], &self.sub);
+        acc.fmadd(&w[3], &self.mul);
+        acc.fmadd(&w[4], &self.not_add_sub_mul_advice);
+        acc.fmadd(&w[5], &self.write_lookup_to_rd);
+        acc.fmadd(&w[6], &self.write_pc_to_rd);
+        acc.fmadd(&w[7], &self.should_branch);
+        acc.fmadd(&w[8], &self.not_jump_or_branch);
+    }
+}
+
 /// Magnitudes for the second group (mixed precision up to S160)
 #[derive(Clone, Copy, Debug)]
 pub struct BzSecondGroup {
@@ -179,6 +247,28 @@ pub struct BzSecondGroup {
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
     pub next_unexp_pc_minus_pc_plus_imm: i128, // NextUnexpandedPC - (UnexpandedPC + Imm)
     pub next_unexp_pc_minus_expected: S64, // NextUnexpandedPC - (UnexpandedPC + const)
+}
+
+impl BzSecondGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `bz_at_r_second_group`
+    /// but keeps the result in an `Acc7S` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc7S<F>,
+    ) {
+        acc.fmadd(&w[0], &self.ram_addr_minus_rs1_plus_imm);
+        acc.fmadd(&w[1], &self.right_lookup_minus_add_result);
+        acc.fmadd(&w[2], &self.right_lookup_minus_sub_result);
+        acc.fmadd(&w[3], &self.right_lookup_minus_product);
+        acc.fmadd(&w[4], &self.right_lookup_minus_right_input);
+        acc.fmadd(&w[5], &self.rd_write_minus_lookup_output);
+        acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
+        acc.fmadd(&w[7], &self.next_unexp_pc_minus_pc_plus_imm);
+        acc.fmadd(&w[8], &self.next_unexp_pc_minus_expected);
+    }
 }
 
 /// Unified evaluator wrapper with typed accessors for both groups
@@ -291,6 +381,22 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[8], &bz.next_pc_minus_pc_plus_one);
         acc.fmadd(&w[9], &bz.one_minus_do_not_update_unexpanded_pc);
         acc.barrett_reduce()
+    }
+
+    /// Fused accumulate of first-group Az and Bz into unreduced accumulators using
+    /// Lagrange weights `w`. This keeps everything in unreduced form; callers are
+    /// responsible for reducing at the end.
+    #[inline]
+    pub fn fmadd_first_group_at_r(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc_az: &mut Acc5U<F>,
+        acc_bz: &mut Acc6S<F>,
+    ) {
+        let az = self.eval_az_first_group();
+        az.fmadd_at_r(w, acc_az);
+        let bz = self.eval_bz_first_group();
+        bz.fmadd_at_r(w, acc_bz);
     }
 
     /// Product Az·Bz at the j-th extended uniskip target for the first group (uses precomputed weights).
@@ -517,6 +623,22 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &bz.next_unexp_pc_minus_expected);
         acc.barrett_reduce()
+    }
+
+    /// Fused accumulate of second-group Az and Bz into unreduced accumulators
+    /// using Lagrange weights `w`. This keeps everything in unreduced form; callers
+    /// are responsible for reducing at the end.
+    #[inline]
+    pub fn fmadd_second_group_at_r(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc_az: &mut Acc5U<F>,
+        acc_bz: &mut Acc7S<F>,
+    ) {
+        let az = self.eval_az_second_group();
+        az.fmadd_at_r(w, acc_az);
+        let bz = self.eval_bz_second_group();
+        bz.fmadd_at_r(w, acc_bz);
     }
 
     /// Product Az·Bz at the j-th extended uniskip target for the second group (uses precomputed weights).
