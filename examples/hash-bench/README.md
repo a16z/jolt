@@ -112,11 +112,11 @@ RUST_LOG=info cargo run --release
 
 | ref | inline | Speedup |
 |-----|--------|---------|
-| 3,145 | **685** | **4.6x** |
+| 3,145 | **661** | **4.8x** |
 
 ## Performance Ranking (64B)
 
-1. **Blake3 keyed64**: 685 cycles
+1. **Blake3 keyed64**: 661 cycles
 2. **Blake3**: 870 cycles
 3. **Blake2b**: 1,264 cycles
 4. **Keccak256**: 3,680 cycles
