@@ -7,28 +7,9 @@ use allocative::Allocative;
 /// This trait defines when to switch from streaming mode to linear-time / materialized mode,
 /// and how to partition rounds into "windows" for the streaming data structure.
 pub trait StreamingSchedule: Send + Sync + Allocative {
-    /// Returns `true` if this round is the switch-over round where we finally
-    /// materialise the sumcheck polynomials (Az, Bz) in memory.
-    ///
-    /// Prior to this round, prover messages are computed directly from the trace
-    /// using a streaming data structure.
-    fn is_switch_over_point(&self, round: usize) -> bool {
-        self.switch_over_point() == round
-    }
-
-    /// Returns `true` if the given round is before the switch-over point
-    /// (i.e., still in streaming mode).
-    fn before_switch_over_point(&self, round: usize) -> bool {
-        round < self.switch_over_point()
-    }
-
-    /// Returns `true` if the given round is after the switch-over point
-    /// (i.e., in linear-time mode with materialized polynomials).
-    fn after_switch_over_point(&self, round: usize) -> bool {
-        round > self.switch_over_point()
-    }
-
     /// Returns the round at which we switch from streaming to linear-time mode.
+    /// Prior to this round, prover messages are computed directly from the trace.
+    /// At and after this round, polynomials are materialized in memory.
     fn switch_over_point(&self) -> usize;
 
     /// Returns `true` if we are starting a new streaming window at this round.
@@ -554,22 +535,9 @@ mod tests {
     #[test]
     fn test_switch_over_point() {
         let schedule = HalfSplitSchedule::new(20, DEGREE_2);
+        let switch_over = schedule.switch_over_point();
 
-        // Before switch-over (streaming phase)
-        assert!(schedule.before_switch_over_point(0));
-        assert!(schedule.before_switch_over_point(8));
-        assert!(!schedule.before_switch_over_point(10));
-
-        // At switch-over
-        assert!(schedule.is_switch_over_point(10));
-        assert!(!schedule.is_switch_over_point(8));
-        assert!(!schedule.is_switch_over_point(11));
-
-        // After switch-over (linear phase)
-        assert!(schedule.after_switch_over_point(11));
-        assert!(schedule.after_switch_over_point(19));
-        assert!(!schedule.after_switch_over_point(10));
-        assert!(!schedule.after_switch_over_point(8));
+        assert_eq!(switch_over, 10);
     }
 
     #[test]

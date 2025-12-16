@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use allocative::Allocative;
 
 use crate::field::{JoltField, MaybeAllocative};
@@ -117,36 +119,40 @@ where
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        // Number of unbounded vars in this window
         let num_unbound_vars = self.schedule.num_unbound_vars(round);
+        let switch_over = self.schedule.switch_over_point();
 
-        if self.schedule.before_switch_over_point(round) {
-            // STREAMING MODE
-            if self.schedule.is_window_start(round) {
-                // WINDOW START - initialize streaming stage
-                self.streaming = Some(Streaming::initialize(&mut self.shared, num_unbound_vars))
+        match round.cmp(&switch_over) {
+            Ordering::Less => {
+                // STREAMING MODE
+                if self.schedule.is_window_start(round) {
+                    self.streaming =
+                        Some(Streaming::initialize(&mut self.shared, num_unbound_vars));
+                }
             }
-        } else if self.schedule.is_switch_over_point(round) {
-            // SWITCHING TO LINEAR MODE
-            assert!(
-                self.schedule.is_window_start(round),
-                "switch over is not a window start"
-            );
-            self.linear = Some(Linear::initialize(
-                self.streaming.take(),
-                &mut self.shared,
-                num_unbound_vars,
-            ));
-        } else if self.schedule.after_switch_over_point(round) {
-            // LINEAR MODE
-            assert!(
-                self.schedule.is_window_start(round),
-                "round is not a window start in linear mode"
-            );
-            self.linear
-                .as_mut()
-                .expect("no linear")
-                .next_window(&mut self.shared, num_unbound_vars);
+            Ordering::Equal => {
+                // SWITCHING TO LINEAR MODE
+                assert!(
+                    self.schedule.is_window_start(round),
+                    "switch over is not a window start"
+                );
+                self.linear = Some(Linear::initialize(
+                    self.streaming.take(),
+                    &mut self.shared,
+                    num_unbound_vars,
+                ));
+            }
+            Ordering::Greater => {
+                // LINEAR MODE
+                assert!(
+                    self.schedule.is_window_start(round),
+                    "round is not a window start in linear mode"
+                );
+                self.linear
+                    .as_mut()
+                    .expect("no linear")
+                    .next_window(&mut self.shared, num_unbound_vars);
+            }
         }
 
         if let Some(streaming) = &mut self.streaming {
