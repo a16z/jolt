@@ -471,17 +471,17 @@ impl<F: JoltField> OuterStreamingProverParams<F> {
             SumcheckId::SpartanOuter,
         );
         debug_assert_eq!(r_uni_skip.len(), 1);
-        // num_cycles_bits is the number of cycle variables = tau.len() - 1
-        // (tau includes the constraint variable, eq_poly uses tau_low = tau[..tau.len()-1])
+        // tau.len() = num_rows_bits() = num_cycle_vars + 2
+        // num_cycles_bits = num_cycle_vars = tau.len() - 2
         Self {
-            num_cycles_bits: uni_skip_params.tau.len() - 1,
+            num_cycles_bits: uni_skip_params.tau.len() - 2,
             r0_uniskip: r_uni_skip[0],
         }
     }
 
     fn num_rounds(&self) -> usize {
-        // Number of rounds equals the number of cycle variables
-        self.num_cycles_bits
+        // Total rounds = 1 + num_cycles_bits (one extra for streaming window)
+        1 + self.num_cycles_bits
     }
 
     fn get_inputs_opening_point(
@@ -1264,19 +1264,6 @@ impl<F: JoltField> OuterLinearStage<F> {
         let three_pow_dim = 3_usize.pow(num_vars as u32);
         let grid_size = 1 << num_vars;
         let (E_out, E_in) = eq_poly.E_out_in_for_window(num_vars);
-
-        // When the polynomial is smaller than what the grid computation expects,
-        // we've reached the final evaluation point. Set t_prime_poly to a constant.
-        if n < grid_size * E_out.len() {
-            // Compute the product of final values scaled by eq poly
-            let mut result = F::zero();
-            for i in 0..n.min(E_out.len()) {
-                result += az[i] * bz[i] * E_out[i];
-            }
-            let ans = vec![result; three_pow_dim];
-            shared.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
-            return;
-        }
 
         let ans: Vec<F> = if E_in.len() == 1 {
             (0..E_out.len())
