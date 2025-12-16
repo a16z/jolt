@@ -521,7 +521,7 @@ impl Mmu {
 
     /// Records the memory word being accessed by a load instruction. The memory
     /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
-    fn trace_load(&self, effective_address: u64) -> RAMRead {
+    fn trace_load(&mut self, effective_address: u64) -> RAMRead {
         let word_address = (effective_address >> 2) << 2;
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -1108,7 +1108,7 @@ impl MemoryWrapper {
         self.memory.init(capacity);
     }
 
-    pub fn read_byte(&self, p_address: u64) -> u8 {
+    pub fn read_byte(&mut self, p_address: u64) -> u8 {
         debug_assert!(
             p_address >= DRAM_BASE,
             "Memory address must equals to or bigger than DRAM_BASE. {p_address:X}"

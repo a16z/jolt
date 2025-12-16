@@ -1,44 +1,72 @@
+use std::collections::HashMap;
+
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
 
-/// Emulates main memory.
-#[derive(Clone, Debug, Default)]
-pub struct Memory {
-    /// Memory content
-    pub data: Vec<u64>,
+pub trait MemoryData: Clone + Default + std::fmt::Debug {
+    fn init_with_capacity(&mut self, capacity: u64);
+
+    fn get_num_doublewords(&self) -> usize;
+
+    // NOTE: This is mutable to support inserting into the checkpointing hashmap. Note that we need
+    // to do this even when we're not writing.
+    fn get_u64(&mut self, index: usize) -> &mut u64;
 }
 
-impl Memory {
+impl MemoryData for Vec<u64> {
+    fn init_with_capacity(&mut self, capacity: u64) {
+        for _i in 0..capacity.div_ceil(8) {
+            self.push(0);
+        }
+    }
+
+    fn get_num_doublewords(&self) -> usize {
+        self.len()
+    }
+
+    fn get_u64(&mut self, index: usize) -> &mut u64 {
+        &mut self[index]
+    }
+}
+
+/// Emulates main memory.
+#[derive(Clone, Debug, Default)]
+pub struct MemoryBackend<Data> {
+    /// Memory content
+    pub data: Data,
+}
+
+pub type Memory = MemoryBackend<Vec<u64>>;
+
+impl<Data: MemoryData> MemoryBackend<Data> {
     /// Initializes memory content.
     /// This method is expected to be called only once.
     ///
     /// # Arguments
     /// * `capacity`
     pub fn init(&mut self, capacity: u64) {
-        for _i in 0..capacity.div_ceil(8) {
-            self.data.push(0);
-        }
+        self.data.init_with_capacity(capacity)
     }
 
     /// Reads a byte from memory.
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_byte(&self, address: u64) -> u8 {
+    pub fn read_byte(&mut self, address: u64) -> u8 {
         let index = (address >> 3) as usize;
         let pos = (address % 8) * 8;
-        (self.data[index] >> pos) as u8
+        (*self.data.get_u64(index) >> pos) as u8
     }
 
     /// Reads two bytes from memory.
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_halfword(&self, address: u64) -> u16 {
+    pub fn read_halfword(&mut self, address: u64) -> u16 {
         if address.is_multiple_of(2) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
-            (self.data[index] >> pos) as u16
+            (*self.data.get_u64(index) >> pos) as u16
         } else {
             self.read_bytes(address, 2) as u16
         }
@@ -48,11 +76,11 @@ impl Memory {
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_word(&self, address: u64) -> u32 {
+    pub fn read_word(&mut self, address: u64) -> u32 {
         if address.is_multiple_of(4) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
-            (self.data[index] >> pos) as u32
+            (*self.data.get_u64(index) >> pos) as u32
         } else {
             self.read_bytes(address, 4) as u32
         }
@@ -62,10 +90,10 @@ impl Memory {
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_doubleword(&self, address: u64) -> u64 {
+    pub fn read_doubleword(&mut self, address: u64) -> u64 {
         if address.is_multiple_of(8) {
             let index = (address >> 3) as usize;
-            self.data[index]
+            *self.data.get_u64(index)
         } else if address.is_multiple_of(4) {
             (self.read_word(address) as u64)
                 | ((self.read_word(address.wrapping_add(4)) as u64) << 32)
@@ -79,7 +107,7 @@ impl Memory {
     /// # Arguments
     /// * `address`
     /// * `width` up to eight
-    pub fn read_bytes(&self, address: u64, width: u64) -> u64 {
+    pub fn read_bytes(&mut self, address: u64, width: u64) -> u64 {
         let mut data = 0_u64;
         for i in 0..width {
             data |= (self.read_byte(address.wrapping_add(i)) as u64) << (i * 8);
@@ -95,7 +123,8 @@ impl Memory {
     pub fn write_byte(&mut self, address: u64, value: u8) {
         let index = (address >> 3) as usize;
         let pos = (address % 8) * 8;
-        self.data[index] = (self.data[index] & !(0xff << pos)) | ((value as u64) << pos);
+        *self.data.get_u64(index) =
+            (*self.data.get_u64(index) & !(0xff << pos)) | ((value as u64) << pos);
     }
 
     /// Writes two bytes to memory.
@@ -107,7 +136,8 @@ impl Memory {
         if address.is_multiple_of(2) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
-            self.data[index] = (self.data[index] & !(0xffff << pos)) | ((value as u64) << pos);
+            *self.data.get_u64(index) =
+                (*self.data.get_u64(index) & !(0xffff << pos)) | ((value as u64) << pos);
         } else {
             self.write_bytes(address, value as u64, 2);
         }
@@ -122,7 +152,8 @@ impl Memory {
         if address.is_multiple_of(4) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
-            self.data[index] = (self.data[index] & !(0xffffffff << pos)) | ((value as u64) << pos);
+            *self.data.get_u64(index) =
+                (*self.data.get_u64(index) & !(0xffffffff << pos)) | ((value as u64) << pos);
         } else {
             self.write_bytes(address, value as u64, 4);
         }
@@ -136,7 +167,7 @@ impl Memory {
     pub fn write_doubleword(&mut self, address: u64, value: u64) {
         if address.is_multiple_of(8) {
             let index = (address >> 3) as usize;
-            self.data[index] = value;
+            *self.data.get_u64(index) = value;
         } else if address.is_multiple_of(4) {
             self.write_word(address, (value & 0xffffffff) as u32);
             self.write_word(address.wrapping_add(4), (value >> 32) as u32);
@@ -163,6 +194,6 @@ impl Memory {
     /// * `address`
     pub fn validate_address(&self, address: u64) -> bool {
         let word_index = (address >> 3) as usize;
-        word_index < self.data.len()
+        word_index < self.data.get_num_doublewords()
     }
 }
