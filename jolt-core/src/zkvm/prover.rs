@@ -1,4 +1,4 @@
-use crate::subprotocols::streaming_schedule::HalfSplitSchedule;
+use crate::subprotocols::streaming_schedule::LinearOnlySchedule;
 use std::{
     collections::HashMap,
     fs::File,
@@ -606,7 +606,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Using LinearOnlySchedule to benchmark linear-only mode (no streaming).
         // Outer remaining sumcheck has degree 3 (multiquadratic)
         // Number of rounds = tau.len() - 1 (cycle variables only)
-        let schedule = HalfSplitSchedule::new(uni_skip_params.tau.len() - 1, 3);
+        let schedule = LinearOnlySchedule::new(uni_skip_params.tau.len() - 1);
         let shared = OuterSharedState::new(
             Arc::clone(&self.trace),
             &self.preprocessing.bytecode,
