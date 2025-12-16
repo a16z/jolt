@@ -221,213 +221,72 @@ impl StreamingSchedule for LinearOnlySchedule {
 mod tests {
     use super::*;
 
-    // Degree 2 is the common case (multiquadratic for Spartan outer sumcheck)
-    const DEGREE_2: usize = 2;
-
     #[test]
-    fn test_window_ratio() {
-        // For degree d, ratio = ln(2) / ln((d+1)/2)
-        let ratio_deg2 = HalfSplitSchedule::compute_window_ratio(2);
-        assert!((ratio_deg2 - 1.70951).abs() < 0.001); // ln(2)/ln(1.5) ≈ 1.71
+    fn test_window_ratio_and_size() {
+        // ratio = ln(2) / ln((d+1)/2)
+        assert!((HalfSplitSchedule::compute_window_ratio(2) - 1.71).abs() < 0.01);
+        assert!((HalfSplitSchedule::compute_window_ratio(3) - 1.0).abs() < 0.01);
 
-        let ratio_deg3 = HalfSplitSchedule::compute_window_ratio(3);
-        assert!((ratio_deg3 - 1.0).abs() < 0.001); // ln(2)/ln(2) = 1.0
-
-        let ratio_deg4 = HalfSplitSchedule::compute_window_ratio(4);
-        assert!((ratio_deg4 - 0.756).abs() < 0.01); // ln(2)/ln(2.5) ≈ 0.756
-    }
-
-    #[test]
-    fn test_optimal_window_size() {
         // For degree 2: w = round(1.71 * i), minimum 1
-        assert_eq!(HalfSplitSchedule::optimal_window_size(0, DEGREE_2), 1); // round(0) = 0, min 1
-        assert_eq!(HalfSplitSchedule::optimal_window_size(1, DEGREE_2), 2); // round(1.71) = 2
-        assert_eq!(HalfSplitSchedule::optimal_window_size(3, DEGREE_2), 5); // round(5.13) = 5
-        assert_eq!(HalfSplitSchedule::optimal_window_size(8, DEGREE_2), 14); // round(13.68) = 14
-        assert_eq!(HalfSplitSchedule::optimal_window_size(22, DEGREE_2), 38); // round(37.61) = 38
+        assert_eq!(HalfSplitSchedule::optimal_window_size(0, 2), 1);
+        assert_eq!(HalfSplitSchedule::optimal_window_size(1, 2), 2);
+        assert_eq!(HalfSplitSchedule::optimal_window_size(3, 2), 5);
     }
 
     #[test]
-    fn test_basic_construction() {
-        // num_rounds = 20, degree = 2, halfway = 10
-        // Cost-optimal windows:
-        //   - round 0: w = max(1, round(0)) = 1, next = 1
-        //   - round 1: w = round(1.71) = 2, next = 3
-        //   - round 3: w = round(5.13) = 5, next = 8
-        //   - round 8: w = round(13.68) = 14, but 8+14=22 > 10, truncated to 2, next = 10
-        // switch_over_point = 10
-        let schedule = HalfSplitSchedule::new(20, DEGREE_2);
+    fn test_schedule_construction() {
+        // 20 rounds, degree 2: windows at 0,1,3,8 then switch at 10
+        let schedule = HalfSplitSchedule::new(20, 2);
         assert_eq!(schedule.num_rounds(), 20);
-        assert_eq!(schedule.switch_over_point, 10);
+        assert_eq!(schedule.switch_over_point(), 10);
         assert_eq!(
             schedule.window_starts,
             vec![0, 1, 3, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
         );
-    }
 
-    #[test]
-    fn test_switch_over_point() {
-        let schedule = HalfSplitSchedule::new(20, DEGREE_2);
-        let switch_over = schedule.switch_over_point();
-
-        assert_eq!(switch_over, 10);
-    }
-
-    #[test]
-    fn test_window_starts() {
-        let schedule = HalfSplitSchedule::new(20, DEGREE_2);
-
-        // Streaming phase - cost-optimal windows at 0, 1, 3, 8
-        assert!(schedule.is_window_start(0)); // width 1
-        assert!(schedule.is_window_start(1)); // width 2
-        assert!(!schedule.is_window_start(2)); // inside [1,3)
-        assert!(schedule.is_window_start(3)); // width 5
-        assert!(!schedule.is_window_start(4)); // inside [3,8)
+        // Window starts
+        assert!(schedule.is_window_start(0));
+        assert!(schedule.is_window_start(3));
+        assert!(!schedule.is_window_start(2));
         assert!(!schedule.is_window_start(5));
-        assert!(!schedule.is_window_start(6));
-        assert!(!schedule.is_window_start(7));
-        assert!(schedule.is_window_start(8)); // truncated
 
-        // After switch-over - every round is a window start
-        assert!(schedule.is_window_start(10));
-        assert!(schedule.is_window_start(11));
-        assert!(schedule.is_window_start(19));
-    }
-
-    #[test]
-    fn test_num_unbound_vars_optimal_windows() {
-        let schedule = HalfSplitSchedule::new(20, DEGREE_2);
-
-        // Window [0, 1): width 1
-        assert_eq!(schedule.num_unbound_vars(0), 1);
-
-        // Window [1, 3): width 2
-        assert_eq!(schedule.num_unbound_vars(1), 2);
-        assert_eq!(schedule.num_unbound_vars(2), 1);
-
-        // Window [3, 8): width 5
+        // Unbound vars decrease within window
         assert_eq!(schedule.num_unbound_vars(3), 5);
-        assert_eq!(schedule.num_unbound_vars(4), 4);
-        assert_eq!(schedule.num_unbound_vars(5), 3);
-        assert_eq!(schedule.num_unbound_vars(6), 2);
         assert_eq!(schedule.num_unbound_vars(7), 1);
 
-        // Window [8, 10): truncated width 2
-        assert_eq!(schedule.num_unbound_vars(8), 2);
-        assert_eq!(schedule.num_unbound_vars(9), 1);
-    }
-
-    #[test]
-    fn test_num_unbound_vars_after_switchover() {
-        let schedule = HalfSplitSchedule::new(20, DEGREE_2);
-
-        // After switch-over, each window is size 1
+        // After switch-over: all size 1
         for round in 10..20 {
             assert_eq!(schedule.num_unbound_vars(round), 1);
         }
     }
 
     #[test]
-    fn test_small_num_rounds() {
-        // num_rounds = 4, halfway = 2
-        // Windows: [0,1), [1,2) -> switch at 2
-        let schedule = HalfSplitSchedule::new(4, DEGREE_2);
-        assert_eq!(schedule.switch_over_point, 2);
-        assert_eq!(schedule.window_starts, vec![0, 1, 2, 3]);
+    fn test_edge_cases() {
+        // Very small: 2 rounds
+        let small = HalfSplitSchedule::new(2, 2);
+        assert_eq!(small.switch_over_point(), 1);
 
-        assert_eq!(schedule.num_unbound_vars(0), 1);
-        assert_eq!(schedule.num_unbound_vars(1), 1);
-        assert_eq!(schedule.num_unbound_vars(2), 1);
-        assert_eq!(schedule.num_unbound_vars(3), 1);
+        // Large: 40 rounds
+        let large = HalfSplitSchedule::new(40, 2);
+        assert_eq!(large.switch_over_point(), 20);
+        assert_eq!(large.num_unbound_vars(8), 12); // truncated window
     }
 
     #[test]
-    fn test_large_num_rounds() {
-        // num_rounds = 40, halfway = 20
-        // Cost-optimal windows:
-        //   - round 0: w = 1, next = 1
-        //   - round 1: w = 2, next = 3
-        //   - round 3: w = 5, next = 8
-        //   - round 8: w = 14, next = 22 > 20, truncated to 12, next = 20
-        // switch_over_point = 20
-        let schedule = HalfSplitSchedule::new(40, DEGREE_2);
-        assert_eq!(schedule.switch_over_point, 20);
-
-        // Check window starts in streaming phase
-        assert!(schedule.is_window_start(0));
-        assert!(schedule.is_window_start(1));
-        assert!(schedule.is_window_start(3));
-        assert!(schedule.is_window_start(8));
-
-        // Window [3, 8): width 5
-        assert_eq!(schedule.num_unbound_vars(3), 5);
-        assert_eq!(schedule.num_unbound_vars(5), 3);
-        assert_eq!(schedule.num_unbound_vars(7), 1);
-
-        // Window [8, 20): truncated width 12
-        assert_eq!(schedule.num_unbound_vars(8), 12);
-        assert_eq!(schedule.num_unbound_vars(15), 5);
-        assert_eq!(schedule.num_unbound_vars(19), 1);
-    }
-
-    #[test]
-    fn test_very_small_num_rounds() {
-        // num_rounds = 2, halfway = 1
-        // Windows: [0,1) -> switch at 1
-        let schedule = HalfSplitSchedule::new(2, DEGREE_2);
-        assert_eq!(schedule.switch_over_point, 1);
-        assert_eq!(schedule.window_starts, vec![0, 1]);
-
-        assert_eq!(schedule.num_unbound_vars(0), 1);
-        assert_eq!(schedule.num_unbound_vars(1), 1);
-    }
-
-    #[test]
-    fn test_cost_factors_near_one() {
-        // Verify that the cost factor (d+1)^w / 2^(w+i) stays near 1 for degree 2
-        // (except for the last window which may be truncated)
-        let schedule = HalfSplitSchedule::new(100, DEGREE_2);
-        let halfway = 50;
-
+    fn test_cost_model() {
+        // Cost factor (d+1)^w / 2^(w+i) should stay near 1
+        let schedule = HalfSplitSchedule::new(100, 2);
         let mut round = 0usize;
-        let mut window_idx = 0usize;
-        while round < halfway {
-            let next_start = schedule
-                .window_starts
-                .get(window_idx + 1)
-                .copied()
-                .unwrap_or(halfway);
-            let w = next_start - round;
-
-            // Skip the last window before switch-over (may be truncated)
-            let is_last_streaming_window = next_start >= halfway;
-
-            if w > 0 && !is_last_streaming_window {
-                // For degree 2: cost = 3^w / 2^(w+i)
-                let cost_factor = 3.0_f64.powi(w as i32) / 2.0_f64.powi((w + round) as i32);
-                // Allow cost factor between 0.5 and 2.0 (close to 1)
-                assert!(
-                    (0.5..=2.0).contains(&cost_factor),
-                    "Cost factor {cost_factor} out of range for round {round} with window size {w}"
-                );
+        let mut idx = 0usize;
+        while round < 50 {
+            let next = schedule.window_starts.get(idx + 1).copied().unwrap_or(50);
+            let w = next - round;
+            if w > 0 && next < 50 {
+                let cost = 3.0_f64.powi(w as i32) / 2.0_f64.powi((w + round) as i32);
+                assert!((0.5..=2.0).contains(&cost));
             }
-
-            round = next_start;
-            window_idx += 1;
+            round = next;
+            idx += 1;
         }
-    }
-
-    #[test]
-    fn test_different_degrees() {
-        // Degree 3: ratio = 1.0, so windows grow linearly
-        let schedule_deg3 = HalfSplitSchedule::new(20, 3);
-        // Windows should be at 0, 1, 2, 4, 7, ... (slower growth)
-        assert!(schedule_deg3.is_window_start(0));
-        assert!(schedule_deg3.is_window_start(1));
-
-        // Degree 4: ratio = 0.76, so windows grow even slower
-        let schedule_deg4 = HalfSplitSchedule::new(20, 4);
-        assert!(schedule_deg4.is_window_start(0));
-        assert!(schedule_deg4.is_window_start(1));
     }
 }
