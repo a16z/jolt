@@ -283,21 +283,28 @@ fn prove_example_with_trace(
     let prove_duration = now.elapsed();
     drop(span);
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
-    let proof_size_full_compressed = proof_size
-        - jolt_proof
-            .reduced_opening_proof
-            .serialized_size(ark_serialize::Compress::Yes)
-        + (jolt_proof
-            .reduced_opening_proof
-            .serialized_size(ark_serialize::Compress::No)
-            / 3)
-        - jolt_proof
-            .commitments
-            .serialized_size(ark_serialize::Compress::Yes)
-        + (jolt_proof
-            .commitments
-            .serialized_size(ark_serialize::Compress::No)
-            / 3);
+
+    // Stage 8: Dory opening proof (curve points - benefits from compression)
+    let stage8_size_compressed = jolt_proof
+        .joint_opening_proof
+        .serialized_size(ark_serialize::Compress::Yes);
+    let stage8_size_uncompressed = jolt_proof
+        .joint_opening_proof
+        .serialized_size(ark_serialize::Compress::No);
+
+    // Commitments (curve points - benefits from compression)
+    let commitments_size_compressed = jolt_proof
+        .commitments
+        .serialized_size(ark_serialize::Compress::Yes);
+    let commitments_size_uncompressed = jolt_proof
+        .commitments
+        .serialized_size(ark_serialize::Compress::No);
+
+    // Estimate proof size with full Dory compression (assuming ~3x compression ratio)
+    let proof_size_full_compressed = proof_size - stage8_size_compressed
+        + (stage8_size_uncompressed / 3)
+        - commitments_size_compressed
+        + (commitments_size_uncompressed / 3);
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
     let verifier =

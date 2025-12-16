@@ -3,14 +3,10 @@
 use allocative::Allocative;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
-use itertools::Itertools;
-use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
-use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -22,7 +18,7 @@ use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::{
     field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
-    zkvm::{lookup_table::LookupTables, ram::remap_address},
+    zkvm::ram::remap_address,
 };
 
 use super::instruction::{CircuitFlags, LookupQuery};
@@ -47,8 +43,6 @@ pub enum CommittedPolynomial {
     /// there is at most one load or store per cycle.
     RamRa(usize),
 }
-
-pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
 struct WitnessData {
     // Simple polynomial coefficients
@@ -87,85 +81,19 @@ impl WitnessData {
     }
 }
 
-pub struct AllCommittedPolynomials();
-impl AllCommittedPolynomials {
-    pub fn initialize(one_hot_params: &OneHotParams) -> Self {
-        unsafe {
-            if let Some(existing) = ALL_COMMITTED_POLYNOMIALS.get() {
-                // Check if existing polynomials match requested dimensions
-                let existing_ram_d = existing
-                    .iter()
-                    .filter(|p| matches!(p, CommittedPolynomial::RamRa(_)))
-                    .count();
-                let existing_bytecode_d = existing
-                    .iter()
-                    .filter(|p| matches!(p, CommittedPolynomial::BytecodeRa(_)))
-                    .count();
-
-                let existing_instruction_d = existing
-                    .iter()
-                    .filter(|p| matches!(p, CommittedPolynomial::InstructionRa(_)))
-                    .count();
-
-                if existing_instruction_d == one_hot_params.instruction_d
-                    && existing_ram_d == one_hot_params.ram_d
-                    && existing_bytecode_d == one_hot_params.bytecode_d
-                {
-                    // Parameters match, reuse existing polynomials
-                    return AllCommittedPolynomials();
-                } else {
-                    // Parameters differ, need to reinitialize
-                    ALL_COMMITTED_POLYNOMIALS.take();
-                }
-            }
-        };
-
-        let mut polynomials = vec![CommittedPolynomial::RdInc, CommittedPolynomial::RamInc];
-        for i in 0..one_hot_params.instruction_d {
-            polynomials.push(CommittedPolynomial::InstructionRa(i));
-        }
-        for i in 0..one_hot_params.ram_d {
-            polynomials.push(CommittedPolynomial::RamRa(i));
-        }
-        for i in 0..one_hot_params.bytecode_d {
-            polynomials.push(CommittedPolynomial::BytecodeRa(i));
-        }
-
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .set(polynomials)
-                .expect("ALL_COMMITTED_POLYNOMIALS is already initialized");
-        }
-
-        AllCommittedPolynomials()
+/// Returns a list of symbols representing all committed polynomials.
+pub fn all_committed_polynomials(one_hot_params: &OneHotParams) -> Vec<CommittedPolynomial> {
+    let mut polynomials = vec![CommittedPolynomial::RdInc, CommittedPolynomial::RamInc];
+    for i in 0..one_hot_params.instruction_d {
+        polynomials.push(CommittedPolynomial::InstructionRa(i));
     }
-
-    pub fn iter() -> impl Iterator<Item = &'static CommittedPolynomial> {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-        }
+    for i in 0..one_hot_params.ram_d {
+        polynomials.push(CommittedPolynomial::RamRa(i));
     }
-
-    pub fn par_iter() -> impl ParallelIterator<Item = &'static CommittedPolynomial> {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .par_iter()
-        }
+    for i in 0..one_hot_params.bytecode_d {
+        polynomials.push(CommittedPolynomial::BytecodeRa(i));
     }
-
-    pub fn len() -> usize {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .len()
-        }
-    }
+    polynomials
 }
 
 impl CommittedPolynomial {
@@ -237,37 +165,6 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
-        }
-    }
-
-    pub fn len() -> usize {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .len()
-        }
-    }
-
-    // TODO(moodlezoup): return Result<Self>
-    pub fn from_index(index: usize) -> Self {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")[index]
-        }
-    }
-
-    // TODO(moodlezoup): return Result<usize>
-    pub fn to_index(&self) -> usize {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-                .find_position(|poly| *poly == self)
-                .unwrap()
-                .0
         }
     }
 
@@ -506,7 +403,7 @@ pub enum VirtualPolynomial {
     LookupOutput,
     InstructionRaf,
     InstructionRafFlag,
-    InstructionRa,
+    InstructionRa(usize),
     RegistersVal,
     RamAddress,
     RamRa,
@@ -516,76 +413,8 @@ pub enum VirtualPolynomial {
     RamValInit,
     RamValFinal,
     RamHammingWeight,
+    UnivariateSkip,
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
-}
-
-pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock::new(|| {
-    let mut polynomials = vec![
-        VirtualPolynomial::PC,
-        VirtualPolynomial::UnexpandedPC,
-        VirtualPolynomial::NextPC,
-        VirtualPolynomial::NextUnexpandedPC,
-        VirtualPolynomial::NextIsNoop,
-        VirtualPolynomial::NextIsVirtual,
-        VirtualPolynomial::NextIsFirstInSequence,
-        VirtualPolynomial::LeftLookupOperand,
-        VirtualPolynomial::RightLookupOperand,
-        VirtualPolynomial::LeftInstructionInput,
-        VirtualPolynomial::RightInstructionInput,
-        VirtualPolynomial::Product,
-        VirtualPolynomial::ShouldJump,
-        VirtualPolynomial::ShouldBranch,
-        VirtualPolynomial::WritePCtoRD,
-        VirtualPolynomial::WriteLookupOutputToRD,
-        VirtualPolynomial::Rd,
-        VirtualPolynomial::Imm,
-        VirtualPolynomial::Rs1Value,
-        VirtualPolynomial::Rs2Value,
-        VirtualPolynomial::RdWriteValue,
-        VirtualPolynomial::Rs1Ra,
-        VirtualPolynomial::Rs2Ra,
-        VirtualPolynomial::RdWa,
-        VirtualPolynomial::LookupOutput,
-        VirtualPolynomial::InstructionRaf,
-        VirtualPolynomial::InstructionRafFlag,
-        VirtualPolynomial::InstructionRa,
-        VirtualPolynomial::RegistersVal,
-        VirtualPolynomial::RamAddress,
-        VirtualPolynomial::RamRa,
-        VirtualPolynomial::RamReadValue,
-        VirtualPolynomial::RamWriteValue,
-        VirtualPolynomial::RamVal,
-        VirtualPolynomial::RamValInit,
-        VirtualPolynomial::RamValFinal,
-        VirtualPolynomial::RamHammingWeight,
-    ];
-    for flag in CircuitFlags::iter() {
-        polynomials.push(VirtualPolynomial::OpFlags(flag));
-    }
-    for flag in InstructionFlags::iter() {
-        polynomials.push(VirtualPolynomial::InstructionFlags(flag));
-    }
-    for table in LookupTables::iter() {
-        polynomials.push(VirtualPolynomial::LookupTableFlag(
-            LookupTables::<XLEN>::enum_index(&table),
-        ));
-    }
-
-    polynomials
-});
-
-impl VirtualPolynomial {
-    pub fn from_index(index: usize) -> Self {
-        ALL_VIRTUAL_POLYNOMIALS[index]
-    }
-
-    pub fn to_index(&self) -> usize {
-        ALL_VIRTUAL_POLYNOMIALS
-            .iter()
-            .find_position(|poly| *poly == self)
-            .unwrap()
-            .0
-    }
 }

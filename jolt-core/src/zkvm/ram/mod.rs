@@ -1,6 +1,50 @@
+//! RAM checking module for Jolt.
+//!
+//! This module implements the RAM checking protocol, which verifies that memory
+//! reads and writes are consistent throughout program execution.
+//!
+//! # Important: Sumcheck Stage Constraints
+//!
+//! The RAM RA reduction sumcheck (`ra_reduction.rs`) consolidates four RA claims
+//! into a single claim. For this to work correctly, certain challenge coincidences
+//! must hold. These coincidences are guaranteed by the following constraints on
+//! how sumchecks are batched:
+//!
+//! ## Required Coincidences
+//!
+//! The four RA claims use these opening points:
+//!
+//! | Sumcheck | Opening Point | Stage |
+//! |----------|---------------|-------|
+//! | RamReadWriteChecking | `ra(r_address_rw, r_cycle_rw)` | Stage 2 |
+//! | RamRafEvaluation | `ra(r_address_raf, r_cycle_raf)` | Stage 2 |
+//! | RamValEvaluation | `ra(r_address_rw, r_cycle_val)` | Stage 4 |
+//! | RamValFinal | `ra(r_address_raf, r_cycle_val)` | Stage 4 |
+//!
+//! The following equalities must hold:
+//! - `r_address_raf = r_address_val_final`
+//! - `r_address_val_eval = r_address_rw`
+//! - `r_cycle_val_eval = r_cycle_val_final`
+//!
+//! ## Constraints to Ensure Coincidences
+//!
+//! **These constraints MUST be maintained when modifying the prover/verifier:**
+//!
+//! 1. **OutputCheck and RafEvaluation** MUST be in the same batched sumcheck (currently Stage 2),
+//!    and both must use challenges `[0 .. log_K]` for `r_address`.
+//!
+//! 2. **ValEvaluation and ValFinal** MUST be in the same batched sumcheck (currently Stage 4),
+//!    and have the same `num_rounds = log_T`.
+//!
+//! 3. **ValEvaluation** MUST read `r_address` from RamReadWriteChecking's opening.
+//!
+//! 4. **ValFinal** MUST read `r_address` from OutputCheck's opening.
+//!
+//! Violating these constraints will cause the RA reduction sumcheck to fail with
+//! mismatched challenge vectors.
+
 #![allow(clippy::too_many_arguments)]
 
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
     HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
@@ -11,7 +55,10 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
+        opening_proof::{
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
+        },
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
@@ -31,11 +78,12 @@ use tracer::JoltDevice;
 
 pub mod hamming_booleanity;
 pub mod output_check;
+pub mod ra_reduction;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
-pub mod sparse_matrix_poly;
 pub mod val_evaluation;
+pub mod val_final;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
@@ -126,6 +174,13 @@ pub fn populate_memory_states(
 }
 
 /// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
+///
+/// When `single_opening` is true (all cycle vars bound in phase 1):
+/// - Only opens at `r_address_rw` (the two points are identical)
+///
+/// Otherwise opens at TWO points:
+/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
+/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
 pub fn prover_accumulate_advice<F: JoltField>(
     untrusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     trusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
@@ -133,47 +188,96 @@ pub fn prover_accumulate_advice<F: JoltField>(
     one_hot_params: &OneHotParams,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
+    single_opening: bool,
 ) {
-    let accumulate_closure = |opening_accumulator: &ProverOpeningAccumulator<F>,
-                              advice_poly: &MultilinearPolynomial<F>,
-                              max_advice_size: usize| {
-        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (r_address, _) = r.split_at(one_hot_params.ram_k.log_2());
+    let total_variables = one_hot_params.ram_k.log_2();
 
-        let total_variables = one_hot_params.ram_k.log_2();
+    // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
+    let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RamVal,
+        SumcheckId::RamReadWriteChecking,
+    );
+    let (r_address_rw, _) = r_rw.split_at(total_variables);
+
+    let compute_advice_opening = |advice_poly: &MultilinearPolynomial<F>,
+                                  r_address: &OpeningPoint<BIG_ENDIAN, F>,
+                                  max_advice_size: usize| {
         let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
-
-        // Use the last number_of_vals elements for evaluation
         let eval = advice_poly.evaluate(&r_address.r[total_variables - advice_variables..]);
-
         let mut advice_point = r_address.clone();
         advice_point.r = r_address.r[total_variables - advice_variables..].to_vec();
         (advice_point, eval)
     };
 
     if let Some(ref untrusted_advice_poly) = untrusted_advice_polynomial {
-        let (point, eval) = accumulate_closure(
-            opening_accumulator,
-            untrusted_advice_poly,
-            memory_layout.max_untrusted_advice_size as usize,
+        let max_size = memory_layout.max_untrusted_advice_size as usize;
+
+        // Opening at r_address_rw (for ValEvaluation)
+        let (point_rw, eval_rw) =
+            compute_advice_opening(untrusted_advice_poly, &r_address_rw, max_size);
+        opening_accumulator.append_untrusted_advice(
+            transcript,
+            SumcheckId::RamValEvaluation,
+            point_rw,
+            eval_rw,
         );
-        opening_accumulator.append_untrusted_advice(transcript, point, eval);
+
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let (point_raf, eval_raf) =
+                compute_advice_opening(untrusted_advice_poly, &r_raf, max_size);
+            opening_accumulator.append_untrusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+                eval_raf,
+            );
+        }
     }
 
     if let Some(ref trusted_advice_poly) = trusted_advice_polynomial {
-        let (point, eval) = accumulate_closure(
-            opening_accumulator,
-            trusted_advice_poly,
-            memory_layout.max_trusted_advice_size as usize,
+        let max_size = memory_layout.max_trusted_advice_size as usize;
+
+        // Opening at r_address_rw (for ValEvaluation)
+        let (point_rw, eval_rw) =
+            compute_advice_opening(trusted_advice_poly, &r_address_rw, max_size);
+        opening_accumulator.append_trusted_advice(
+            transcript,
+            SumcheckId::RamValEvaluation,
+            point_rw,
+            eval_rw,
         );
-        opening_accumulator.append_trusted_advice(transcript, point, eval);
+
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let (point_raf, eval_raf) =
+                compute_advice_opening(trusted_advice_poly, &r_raf, max_size);
+            opening_accumulator.append_trusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+                eval_raf,
+            );
+        }
     }
 }
 
 /// Accumulates advice commitments into the verifier's accumulator.
+///
+/// When `single_opening` is true (all cycle vars bound in phase 1):
+/// - Only opens at `r_address_rw` (the two points are identical)
+///
+/// Otherwise opens at TWO points:
+/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
+/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
 pub fn verifier_accumulate_advice<F: JoltField>(
     ram_K: usize,
     program_io: &JoltDevice,
@@ -181,37 +285,74 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     has_trusted_advice_commitment: bool,
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
+    single_opening: bool,
 ) {
-    let get_advice_point = |opening_accumulator: &VerifierOpeningAccumulator<F>,
-                            max_advice_size: usize| {
-        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (r_address, _) = r.split_at(ram_K.log_2());
+    let total_vars = ram_K.log_2();
 
-        let total_vars = r_address.r.len();
+    // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
+    let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RamVal,
+        SumcheckId::RamReadWriteChecking,
+    );
+    let (r_address_rw, _) = r_rw.split_at(total_vars);
+
+    let compute_advice_point = |r_address: &OpeningPoint<BIG_ENDIAN, F>, max_advice_size: usize| {
         let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
-
         let mut advice_point = r_address.clone();
         advice_point.r = r_address.r[total_vars - advice_variables..].to_vec();
         advice_point
     };
 
     if has_untrusted_advice_commitment {
-        let point = get_advice_point(
-            opening_accumulator,
-            program_io.memory_layout.max_untrusted_advice_size as usize,
+        let max_size = program_io.memory_layout.max_untrusted_advice_size as usize;
+
+        // Opening at r_address_rw (for ValEvaluation)
+        let point_rw = compute_advice_point(&r_address_rw, max_size);
+        opening_accumulator.append_untrusted_advice(
+            transcript,
+            SumcheckId::RamValEvaluation,
+            point_rw,
         );
-        opening_accumulator.append_untrusted_advice(transcript, point);
+
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let point_raf = compute_advice_point(&r_raf, max_size);
+            opening_accumulator.append_untrusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+            );
+        }
     }
 
     if has_trusted_advice_commitment {
-        let point = get_advice_point(
-            opening_accumulator,
-            program_io.memory_layout.max_trusted_advice_size as usize,
+        let max_size = program_io.memory_layout.max_trusted_advice_size as usize;
+
+        // Opening at r_address_rw (for ValEvaluation)
+        let point_rw = compute_advice_point(&r_address_rw, max_size);
+        opening_accumulator.append_trusted_advice(
+            transcript,
+            SumcheckId::RamValEvaluation,
+            point_rw,
         );
-        opening_accumulator.append_trusted_advice(transcript, point);
+
+        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        if !single_opening {
+            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValFinal,
+                SumcheckId::RamOutputCheck,
+            );
+            let point_raf = compute_advice_point(&r_raf, max_size);
+            opening_accumulator.append_trusted_advice(
+                transcript,
+                SumcheckId::RamValFinalEvaluation,
+                point_raf,
+            );
+        }
     }
 }
 
@@ -328,7 +469,8 @@ pub fn gen_ram_memory_states<F: JoltField>(
     // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
     // so we will still need to populate `final_memory_state` with the contents of
     // `program_io`, which lives at addresses < `RAM_START_ADDRESS`
-    final_memory_state[dram_start_index..]
+    let final_memory_words = final_memory.data.len().min(K - dram_start_index);
+    final_memory_state[dram_start_index..dram_start_index + final_memory_words]
         .par_iter_mut()
         .enumerate()
         .for_each(|(k, word)| {
@@ -425,7 +567,7 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
     )
     .unwrap() as usize;
     // Convert input bytes into words and populate
-    // `initial_memory_state` and `final_memory_state`
+    // `initial_memory_state`
     for chunk in program_io.inputs.chunks(8) {
         let mut word = [0u8; 8];
         for (i, byte) in chunk.iter().enumerate() {
@@ -439,58 +581,56 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
     initial_memory_state
 }
 
-pub fn gen_ra_booleanity_prover<F: JoltField>(
-    trace: &[Cycle],
-    memory_layout: &MemoryLayout,
+pub fn ra_booleanity_params<F: JoltField>(
+    trace_len: usize,
     one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
-) -> BooleanitySumcheckProver<F> {
-    let log_t = trace.len().log_2();
-
-    let r_cycle = transcript.challenge_vector_optimized::<F>(log_t);
+) -> BooleanitySumcheckParams<F> {
+    let r_cycle = transcript.challenge_vector_optimized::<F>(trace_len.log_2());
     let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
-
-    // Compute G and H for RAM
-    let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
-    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
-    let H_indices = compute_ram_h_indices(trace, memory_layout, one_hot_params);
-
     let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
         .map(CommittedPolynomial::RamRa)
         .collect();
-
     let gammas: Vec<F::Challenge> =
         transcript.challenge_vector_optimized::<F>(one_hot_params.ram_d);
 
-    let params = BooleanitySumcheckParams {
+    BooleanitySumcheckParams {
         d: one_hot_params.ram_d,
         log_k_chunk: one_hot_params.log_k_chunk,
-        log_t,
+        log_t: trace_len.log_2(),
         gammas,
         r_address,
         r_cycle,
         polynomial_types,
         sumcheck_id: SumcheckId::RamBooleanity,
-        virtual_poly: None, // No virtual polynomial for RAM
-    };
-
-    BooleanitySumcheckProver::gen(params, G, H_indices)
+    }
 }
 
-pub fn gen_ra_hamming_weight_prover<F: JoltField>(
+pub fn gen_ra_booleanity_prover<F: JoltField>(
+    params: BooleanitySumcheckParams<F>,
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
-    opening_accumulator: &ProverOpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
-) -> HammingWeightSumcheckProver<F> {
-    let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
-        VirtualPolynomial::RamHammingWeight,
-        SumcheckId::RamHammingBooleanity,
-    );
-    let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
-
+) -> BooleanitySumcheckProver<F> {
+    // Compute G and H for RAM
+    let eq_r_cycle = EqPolynomial::<F>::evals(&params.r_cycle);
     let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
+    let H_indices = compute_ram_h_indices(trace, memory_layout, one_hot_params);
+    BooleanitySumcheckProver::gen(params, G, H_indices)
+}
+
+pub fn ra_hamming_weight_params<F: JoltField>(
+    one_hot_params: &OneHotParams,
+    opening_accumulator: &dyn OpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+) -> HammingWeightSumcheckParams<F> {
+    let r_cycle = opening_accumulator
+        .get_virtual_polynomial_opening(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        )
+        .0
+        .r;
 
     let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.ram_d);
 
@@ -498,68 +638,43 @@ pub fn gen_ra_hamming_weight_prover<F: JoltField>(
         .map(CommittedPolynomial::RamRa)
         .collect();
 
-    let params = HammingWeightSumcheckParams {
+    HammingWeightSumcheckParams {
         d: one_hot_params.ram_d,
         num_rounds: one_hot_params.log_k_chunk,
         gamma_powers,
         polynomial_types,
         sumcheck_id: SumcheckId::RamHammingWeight,
-        virtual_poly: Some(VirtualPolynomial::RamHammingWeight),
-        r_cycle_sumcheck_id: SumcheckId::RamHammingBooleanity,
-    };
+        r_cycle,
+    }
+}
+
+pub fn gen_ra_hamming_weight_prover<F: JoltField>(
+    params: HammingWeightSumcheckParams<F>,
+    trace: &[Cycle],
+    memory_layout: &MemoryLayout,
+    one_hot_params: &OneHotParams,
+) -> HammingWeightSumcheckProver<F> {
+    let eq_r_cycle = EqPolynomial::evals(&params.r_cycle);
+    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, one_hot_params);
 
     HammingWeightSumcheckProver::gen(params, G)
 }
 
 pub fn new_ra_booleanity_verifier<F: JoltField>(
-    n_cycle_vars: usize,
+    trace_len: usize,
     one_hot_params: &OneHotParams,
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckVerifier<F> {
-    let r_cycle = transcript.challenge_vector_optimized::<F>(n_cycle_vars);
-    let r_address = transcript.challenge_vector_optimized::<F>(one_hot_params.log_k_chunk);
-
-    let gammas = transcript.challenge_vector_optimized::<F>(one_hot_params.ram_d);
-
-    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
-        .map(CommittedPolynomial::RamRa)
-        .collect();
-
-    let params = BooleanitySumcheckParams {
-        d: one_hot_params.ram_d,
-        log_k_chunk: one_hot_params.log_k_chunk,
-        log_t: n_cycle_vars,
-        gammas,
-        r_address,
-        r_cycle,
-        polynomial_types,
-        sumcheck_id: SumcheckId::RamBooleanity,
-        virtual_poly: None,
-    };
-
+    let params = ra_booleanity_params(trace_len, one_hot_params, transcript);
     BooleanitySumcheckVerifier::new(params)
 }
 
 pub fn new_ra_hamming_weight_verifier<F: JoltField>(
     one_hot_params: &OneHotParams,
+    opening_accumulator: &dyn OpeningAccumulator<F>,
     transcript: &mut impl Transcript,
 ) -> HammingWeightSumcheckVerifier<F> {
-    let gamma_powers = transcript.challenge_scalar_powers(one_hot_params.ram_d);
-
-    let polynomial_types: Vec<CommittedPolynomial> = (0..one_hot_params.ram_d)
-        .map(CommittedPolynomial::RamRa)
-        .collect();
-
-    let params = HammingWeightSumcheckParams {
-        d: one_hot_params.ram_d,
-        num_rounds: one_hot_params.log_k_chunk,
-        gamma_powers,
-        polynomial_types,
-        sumcheck_id: SumcheckId::RamHammingWeight,
-        virtual_poly: Some(VirtualPolynomial::RamHammingWeight),
-        r_cycle_sumcheck_id: SumcheckId::RamHammingBooleanity,
-    };
-
+    let params = ra_hamming_weight_params(one_hot_params, opening_accumulator, transcript);
     HammingWeightSumcheckVerifier::new(params)
 }
 
