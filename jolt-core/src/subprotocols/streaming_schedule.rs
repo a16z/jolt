@@ -12,15 +12,24 @@ pub trait StreamingSchedule: Send + Sync + Allocative {
     ///
     /// Prior to this round, prover messages are computed directly from the trace
     /// using a streaming data structure.
-    fn is_switch_over_point(&self, round: usize) -> bool;
+    fn is_switch_over_point(&self, round: usize) -> bool {
+        self.switch_over_point() == round
+    }
 
     /// Returns `true` if the given round is before the switch-over point
     /// (i.e., still in streaming mode).
-    fn before_switch_over_point(&self, round: usize) -> bool;
+    fn before_switch_over_point(&self, round: usize) -> bool {
+        round < self.switch_over_point()
+    }
 
     /// Returns `true` if the given round is after the switch-over point
     /// (i.e., in linear-time mode with materialized polynomials).
-    fn after_switch_over_point(&self, round: usize) -> bool;
+    fn after_switch_over_point(&self, round: usize) -> bool {
+        round > self.switch_over_point()
+    }
+
+    /// Returns the round at which we switch from streaming to linear-time mode.
+    fn switch_over_point(&self) -> usize;
 
     /// Returns `true` if we are starting a new streaming window at this round.
     ///
@@ -165,16 +174,8 @@ impl HalfSplitSchedule {
 }
 
 impl StreamingSchedule for HalfSplitSchedule {
-    fn is_switch_over_point(&self, round: usize) -> bool {
-        self.switch_over_point == round
-    }
-
-    fn after_switch_over_point(&self, round: usize) -> bool {
-        round > self.switch_over_point
-    }
-
-    fn before_switch_over_point(&self, round: usize) -> bool {
-        round < self.switch_over_point
+    fn switch_over_point(&self) -> usize {
+        self.switch_over_point
     }
 
     fn is_window_start(&self, round: usize) -> bool {
@@ -222,16 +223,8 @@ impl StreamingSchedule for LinearOnlySchedule {
         true
     }
 
-    fn after_switch_over_point(&self, round: usize) -> bool {
-        round > 0
-    }
-
-    fn before_switch_over_point(&self, _round: usize) -> bool {
-        false
-    }
-
-    fn is_switch_over_point(&self, round: usize) -> bool {
-        round == 0
+    fn switch_over_point(&self) -> usize {
+        0
     }
 
     fn num_rounds(&self) -> usize {
@@ -486,16 +479,8 @@ impl ExperimentalSchedule {
 }
 
 impl StreamingSchedule for ExperimentalSchedule {
-    fn is_switch_over_point(&self, round: usize) -> bool {
-        self.switch_over_point == round
-    }
-
-    fn after_switch_over_point(&self, round: usize) -> bool {
-        round > self.switch_over_point
-    }
-
-    fn before_switch_over_point(&self, round: usize) -> bool {
-        round < self.switch_over_point
+    fn switch_over_point(&self) -> usize {
+        self.switch_over_point
     }
 
     fn is_window_start(&self, round: usize) -> bool {
