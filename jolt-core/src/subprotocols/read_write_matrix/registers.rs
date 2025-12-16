@@ -62,71 +62,160 @@ pub struct RegistersCycleMajorEntry<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
+    /// Count how many distinct registers this cycle touches (0–3).
+    #[inline]
+    fn entry_count_for_cycle(cycle: &Cycle) -> u8 {
+        let mut regs: [Option<_>; 3] = [None, None, None];
+        let mut len = 0;
+
+        if let Some((rs1, _)) = cycle.rs1_read() {
+            if !regs[..len].iter().any(|r| *r == Some(rs1)) {
+                regs[len] = Some(rs1);
+                len += 1;
+            }
+        }
+        if let Some((rs2, _)) = cycle.rs2_read() {
+            if !regs[..len].iter().any(|r| *r == Some(rs2)) {
+                regs[len] = Some(rs2);
+                len += 1;
+            }
+        }
+        if let Some((rd, ..)) = cycle.rd_write() {
+            if !regs[..len].iter().any(|r| *r == Some(rd)) {
+                regs[len] = Some(rd);
+                len += 1;
+            }
+        }
+
+        len as u8
+    }
+
+    /// Fill the per-cycle entries into `out` (length 0–3), sorted by `col`.
+    #[inline]
+    fn fill_entries_for_cycle(row: usize, cycle: &Cycle, out: &mut [RegistersCycleMajorEntry<F>]) {
+        debug_assert!(out.len() <= 3);
+        let mut len = 0usize;
+
+        if let Some((rs1, rs1_val)) = cycle.rs1_read() {
+            out[len] = RegistersCycleMajorEntry {
+                row,
+                col: rs1,
+                prev_val: rs1_val,
+                next_val: rs1_val,
+                val_coeff: F::from_u64(rs1_val),
+                rs1_ra_coeff: F::one(),
+                rs2_ra_coeff: F::zero(),
+                rd_wa_coeff: F::zero(),
+            };
+            len += 1;
+        }
+
+        if let Some((rs2, rs2_val)) = cycle.rs2_read() {
+            if let Some(e) = out[..len].iter_mut().find(|e| e.col == rs2) {
+                e.rs2_ra_coeff = F::one();
+            } else {
+                out[len] = RegistersCycleMajorEntry {
+                    row,
+                    col: rs2,
+                    prev_val: rs2_val,
+                    next_val: rs2_val,
+                    val_coeff: F::from_u64(rs2_val),
+                    rs1_ra_coeff: F::zero(),
+                    rs2_ra_coeff: F::one(),
+                    rd_wa_coeff: F::zero(),
+                };
+                len += 1;
+            }
+        }
+
+        if let Some((rd, rd_pre_val, rd_post_val)) = cycle.rd_write() {
+            if let Some(e) = out[..len].iter_mut().find(|e| e.col == rd) {
+                // Same register is read and then written this cycle.
+                e.rd_wa_coeff = F::one();
+                e.next_val = rd_post_val;
+            } else {
+                out[len] = RegistersCycleMajorEntry {
+                    row,
+                    col: rd,
+                    prev_val: rd_pre_val,
+                    next_val: rd_post_val,
+                    // val_coeff stores the value *before* any access at this cycle.
+                    val_coeff: F::from_u64(rd_pre_val),
+                    rs1_ra_coeff: F::zero(),
+                    rs2_ra_coeff: F::zero(),
+                    rd_wa_coeff: F::one(),
+                };
+                len += 1;
+            }
+        }
+
+        debug_assert_eq!(len, out.len());
+
+        // Sort by col for this row; len <= 3 so do a tiny manual sort.
+        match len {
+            0 | 1 => {}
+            2 => {
+                if out[0].col > out[1].col {
+                    out.swap(0, 1);
+                }
+            }
+            3 => {
+                if out[0].col > out[1].col {
+                    out.swap(0, 1);
+                }
+                if out[1].col > out[2].col {
+                    out.swap(1, 2);
+                }
+                if out[0].col > out[1].col {
+                    out.swap(0, 1);
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
     /// Creates a new `ReadWriteMatrixCycleMajor` to represent the ra, wa and Val polynomials
     /// for the registers read/write checking sumcheck.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
     pub fn new(trace: &[Cycle]) -> Self {
-        let entries: Vec<_> = trace
+        // ---- Pass 1: per-cycle entry counts (parallel) ----
+        let counts: Vec<u8> = trace
             .par_iter()
-            .enumerate()
-            .flat_map_iter(|(j, cycle)| {
-                let mut entries: Vec<RegistersCycleMajorEntry<F>> = Vec::with_capacity(3);
-                if let Some((rs1, rs1_val)) = cycle.rs1_read() {
-                    entries.push(RegistersCycleMajorEntry {
-                        row: j,
-                        col: rs1,
-                        prev_val: rs1_val,
-                        next_val: rs1_val,
-                        val_coeff: F::from_u64(rs1_val),
-                        rs1_ra_coeff: F::one(),
-                        rs2_ra_coeff: F::zero(),
-                        rd_wa_coeff: F::zero(),
-                    });
-                }
-
-                if let Some((rs2, rs2_val)) = cycle.rs2_read() {
-                    if let Some(entry) = entries.iter_mut().find(|entry| entry.col == rs2) {
-                        entry.rs2_ra_coeff = F::one();
-                    } else {
-                        entries.push(RegistersCycleMajorEntry {
-                            row: j,
-                            col: rs2,
-                            prev_val: rs2_val,
-                            next_val: rs2_val,
-                            val_coeff: F::from_u64(rs2_val),
-                            rs1_ra_coeff: F::zero(),
-                            rs2_ra_coeff: F::one(),
-                            rd_wa_coeff: F::zero(),
-                        });
-                    };
-                }
-
-                if let Some((rd, rd_pre_val, rd_post_val)) = cycle.rd_write() {
-                    if let Some(entry) = entries.iter_mut().find(|entry| entry.col == rd) {
-                        entry.rd_wa_coeff = F::one();
-                        entry.next_val = rd_post_val;
-                    } else {
-                        entries.push(RegistersCycleMajorEntry {
-                            row: j,
-                            col: rd,
-                            prev_val: rd_pre_val,
-                            next_val: rd_post_val,
-                            // val_coeff stores the value *before* any access at this cycle.
-                            val_coeff: F::from_u64(rd_pre_val),
-                            rs1_ra_coeff: F::zero(),
-                            rs2_ra_coeff: F::zero(),
-                            rd_wa_coeff: F::one(),
-                        });
-                    };
-                }
-
-                // Ensure registers are in increasing order for this cycle so that the
-                // global entries vector is sorted by (row, col) without a global sort.
-                entries.sort_unstable_by(|a, b| a.col.cmp(&b.col));
-
-                entries
-            })
+            .map(|cycle| Self::entry_count_for_cycle(cycle))
             .collect();
+
+        // ---- Prefix sum: counts -> offsets (sequential, linear) ----
+        let mut offsets: Vec<usize> = Vec::with_capacity(counts.len() + 1);
+        offsets.push(0);
+        let mut total: usize = 0;
+        for &c in &counts {
+            total += c as usize;
+            offsets.push(total);
+        }
+        let total_entries = total;
+
+        // ---- Allocate entries and set_len unsafely; we'll fill everything in pass 2 ----
+        let mut entries: Vec<RegistersCycleMajorEntry<F>> = Vec::with_capacity(total_entries);
+        unsafe {
+            entries.set_len(total_entries);
+        }
+        let entries_ptr = entries.as_mut_ptr() as usize;
+
+        // ---- Pass 2: fill entries in parallel, disjoint slices per row ----
+        trace.par_iter().enumerate().for_each(|(j, cycle)| {
+            let count = counts[j] as usize;
+            if count == 0 {
+                return;
+            }
+
+            let start = offsets[j] as isize;
+            let entries_ptr = entries_ptr as *mut RegistersCycleMajorEntry<F>;
+            unsafe {
+                let dst = entries_ptr.offset(start);
+                let slice = std::slice::from_raw_parts_mut(dst, count);
+                Self::fill_entries_for_cycle(j, cycle, slice);
+            }
+        });
 
         ReadWriteMatrixCycleMajor {
             entries,
