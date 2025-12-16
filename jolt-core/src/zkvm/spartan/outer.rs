@@ -556,6 +556,10 @@ impl<F: JoltField> OuterSharedState<F> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterSharedState::extrapolate_from_binary_grid_to_tertiary_grid"
+    )]
     fn extrapolate_from_binary_grid_to_tertiary_grid(
         &self,
         acc_az: &mut [Acc5U<F>],
@@ -746,6 +750,7 @@ impl<F: JoltField> OuterSharedState<F> {
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, res));
     }
 
+    #[tracing::instrument(skip_all, name = "OuterSharedState::compute_t_evals")]
     pub fn compute_t_evals(&self, window_size: usize) -> (F, F) {
         let t_prime_poly = self
             .t_prime_poly
@@ -786,6 +791,7 @@ pub struct OuterStreamingWindow<F: JoltField> {
 impl<F: JoltField> StreamingSumcheckWindow<F> for OuterStreamingWindow<F> {
     type Shared = OuterSharedState<F>;
 
+    #[tracing::instrument(skip_all, name = "OuterStreamingWindow::initialize")]
     fn initialize(shared: &mut Self::Shared, window_size: usize) -> Self {
         shared.compute_evaluation_grid_from_trace(window_size);
         Self {
@@ -793,6 +799,7 @@ impl<F: JoltField> StreamingSumcheckWindow<F> for OuterStreamingWindow<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OuterStreamingWindow::compute_message")]
     fn compute_message(
         &self,
         shared: &Self::Shared,
@@ -805,6 +812,7 @@ impl<F: JoltField> StreamingSumcheckWindow<F> for OuterStreamingWindow<F> {
             .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
     }
 
+    #[tracing::instrument(skip_all, name = "OuterStreamingWindow::ingest_challenge")]
     fn ingest_challenge(&mut self, shared: &mut Self::Shared, r_j: F::Challenge, _round: usize) {
         shared.split_eq_poly.bind(r_j);
 
@@ -823,6 +831,10 @@ pub struct OuterLinearStage<F: JoltField> {
 }
 
 impl<F: JoltField> OuterLinearStage<F> {
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterLinearStage::fused_materialise_polynomials_general_with_multiquadratic"
+    )]
     fn fused_materialise_polynomials_general_with_multiquadratic(
         shared: &mut OuterSharedState<F>,
         window_size: usize,
@@ -1007,6 +1019,10 @@ impl<F: JoltField> OuterLinearStage<F> {
         )
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterLinearStage::fused_materialise_polynomials_round_zero"
+    )]
     fn fused_materialise_polynomials_round_zero(
         shared: &mut OuterSharedState<F>,
         num_vars: usize,
@@ -1371,6 +1387,7 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
     type Shared = OuterSharedState<F>;
     type Streaming = OuterStreamingWindow<F>;
 
+    #[tracing::instrument(skip_all, name = "OuterLinearStage::initialize")]
     fn initialize(
         _streaming: Option<Self::Streaming>,
         shared: &mut Self::Shared,
@@ -1386,10 +1403,12 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
         Self { az, bz }
     }
 
+    #[tracing::instrument(skip_all, name = "OuterLinearStage::next_window")]
     fn next_window(&mut self, shared: &mut Self::Shared, window_size: usize) {
         self.compute_evaluation_grid_from_polynomials_parallel(shared, window_size);
     }
 
+    #[tracing::instrument(skip_all, name = "OuterLinearStage::compute_message")]
     fn compute_message(
         &self,
         shared: &Self::Shared,
@@ -1402,6 +1421,7 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
             .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
     }
 
+    #[tracing::instrument(skip_all, name = "OuterLinearStage::ingest_challenge")]
     fn ingest_challenge(&mut self, shared: &mut Self::Shared, r_j: F::Challenge, _round: usize) {
         shared.split_eq_poly.bind(r_j);
 
@@ -1415,6 +1435,7 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
         );
     }
 
+    #[tracing::instrument(skip_all, name = "OuterLinearStage::cache_openings")]
     fn cache_openings<T: Transcript>(
         &self,
         shared: &Self::Shared,
