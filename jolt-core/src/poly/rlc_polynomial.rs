@@ -328,7 +328,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     fn extract_dense_value(poly_id: &CommittedPolynomial, cycle: &Cycle) -> F {
         match poly_id {
             CommittedPolynomial::RdInc => {
-                let (_, pre_value, post_value) = cycle.rd_write();
+                let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
                 F::from_i128(post_value as i128 - pre_value as i128)
             }
             CommittedPolynomial::RamInc => match cycle.ram_access() {

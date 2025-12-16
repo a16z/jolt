@@ -24,12 +24,16 @@ impl InstructionRegisterState for AssertAlignRegisterState {
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
         Self {
-            rs1: if operands.rs1 == 0 { 0 } else { rng.next_u64() },
+            rs1: if operands.rs1.unwrap() == 0 {
+                0
+            } else {
+                rng.next_u64()
+            },
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 }
 
@@ -62,7 +66,7 @@ impl InstructionFormat for AssertAlignFormat {
 impl From<NormalizedOperands> for AssertAlignFormat {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rs1: operands.rs1,
+            rs1: operands.rs1.unwrap(),
             imm: operands.imm as i64,
         }
     }
@@ -71,9 +75,9 @@ impl From<NormalizedOperands> for AssertAlignFormat {
 impl From<AssertAlignFormat> for NormalizedOperands {
     fn from(format: AssertAlignFormat) -> Self {
         Self {
-            rs1: format.rs1,
-            rs2: 0,
-            rd: 0,
+            rs1: Some(format.rs1),
+            rs2: None,
+            rd: None,
             imm: format.imm as i128,
         }
     }

@@ -34,13 +34,18 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
-        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+        let rs1_value = if operands.rs1.unwrap() == 0 {
+            0
+        } else {
+            rng.next_u64()
+        };
 
         let shift = rng.next_u64() & 0x3F;
         let ones = (1u128 << (64 - shift)) - 1;
 
         debug_assert_ne!(
-            operands.rs2, 0,
+            operands.rs2.unwrap(),
+            0,
             "rs2 cannot be 0 in VirtualRightShift instruction"
         );
         debug_assert_ne!(
@@ -64,16 +69,16 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rs2_value(&self) -> u64 {
-        self.rs2
+    fn rs2_value(&self) -> Option<u64> {
+        Some(self.rs2)
     }
 
-    fn rd_values(&self) -> (u64, u64) {
-        self.rd
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        Some(self.rd)
     }
 }
 
@@ -118,9 +123,9 @@ impl InstructionFormat for FormatVirtualRightShiftR {
 impl From<NormalizedOperands> for FormatVirtualRightShiftR {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
-            rs2: operands.rs2,
+            rd: operands.rd.unwrap(),
+            rs1: operands.rs1.unwrap(),
+            rs2: operands.rs2.unwrap(),
         }
     }
 }
@@ -128,9 +133,9 @@ impl From<NormalizedOperands> for FormatVirtualRightShiftR {
 impl From<FormatVirtualRightShiftR> for NormalizedOperands {
     fn from(format: FormatVirtualRightShiftR) -> Self {
         Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: format.rs2,
+            rd: Some(format.rd),
+            rs1: Some(format.rs1),
+            rs2: Some(format.rs2),
             imm: 0,
         }
     }

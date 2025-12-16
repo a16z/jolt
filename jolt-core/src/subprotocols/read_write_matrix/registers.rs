@@ -70,53 +70,55 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
             .par_iter()
             .enumerate()
             .flat_map_iter(|(j, cycle)| {
-                let (rs1, rs1_val) = cycle.rs1_read();
-                let (rs2, rs2_val) = cycle.rs2_read();
-                let (rd, rd_pre_val, rd_post_val) = cycle.rd_write();
-
                 let mut entries: Vec<RegistersCycleMajorEntry<F>> = Vec::with_capacity(3);
-                entries.push(RegistersCycleMajorEntry {
-                    row: j,
-                    col: rs1,
-                    prev_val: rs1_val,
-                    next_val: rs1_val,
-                    val_coeff: F::from_u64(rs1_val),
-                    rs1_ra_coeff: F::one(),
-                    rs2_ra_coeff: F::zero(),
-                    rd_wa_coeff: F::zero(),
-                });
-
-                if let Some(entry) = entries.iter_mut().find(|entry| entry.col == rs2) {
-                    entry.rs2_ra_coeff = F::one();
-                } else {
+                if let Some((rs1, rs1_val)) = cycle.rs1_read() {
                     entries.push(RegistersCycleMajorEntry {
                         row: j,
-                        col: rs2,
-                        prev_val: rs2_val,
-                        next_val: rs2_val,
-                        val_coeff: F::from_u64(rs2_val),
-                        rs1_ra_coeff: F::zero(),
-                        rs2_ra_coeff: F::one(),
+                        col: rs1,
+                        prev_val: rs1_val,
+                        next_val: rs1_val,
+                        val_coeff: F::from_u64(rs1_val),
+                        rs1_ra_coeff: F::one(),
+                        rs2_ra_coeff: F::zero(),
                         rd_wa_coeff: F::zero(),
                     });
-                };
+                }
 
-                if let Some(entry) = entries.iter_mut().find(|entry| entry.col == rd) {
-                    entry.rd_wa_coeff = F::one();
-                    entry.next_val = rd_post_val;
-                } else {
-                    entries.push(RegistersCycleMajorEntry {
-                        row: j,
-                        col: rd,
-                        prev_val: rd_pre_val,
-                        next_val: rd_post_val,
-                        // val_coeff stores the value *before* any access at this cycle.
-                        val_coeff: F::from_u64(rd_pre_val),
-                        rs1_ra_coeff: F::zero(),
-                        rs2_ra_coeff: F::zero(),
-                        rd_wa_coeff: F::one(),
-                    });
-                };
+                if let Some((rs2, rs2_val)) = cycle.rs2_read() {
+                    if let Some(entry) = entries.iter_mut().find(|entry| entry.col == rs2) {
+                        entry.rs2_ra_coeff = F::one();
+                    } else {
+                        entries.push(RegistersCycleMajorEntry {
+                            row: j,
+                            col: rs2,
+                            prev_val: rs2_val,
+                            next_val: rs2_val,
+                            val_coeff: F::from_u64(rs2_val),
+                            rs1_ra_coeff: F::zero(),
+                            rs2_ra_coeff: F::one(),
+                            rd_wa_coeff: F::zero(),
+                        });
+                    };
+                }
+
+                if let Some((rd, rd_pre_val, rd_post_val)) = cycle.rd_write() {
+                    if let Some(entry) = entries.iter_mut().find(|entry| entry.col == rd) {
+                        entry.rd_wa_coeff = F::one();
+                        entry.next_val = rd_post_val;
+                    } else {
+                        entries.push(RegistersCycleMajorEntry {
+                            row: j,
+                            col: rd,
+                            prev_val: rd_pre_val,
+                            next_val: rd_post_val,
+                            // val_coeff stores the value *before* any access at this cycle.
+                            val_coeff: F::from_u64(rd_pre_val),
+                            rs1_ra_coeff: F::zero(),
+                            rs2_ra_coeff: F::zero(),
+                            rd_wa_coeff: F::one(),
+                        });
+                    };
+                }
 
                 // Ensure registers are in increasing order for this cycle so that the
                 // global entries vector is sorted by (row, col) without a global sort.

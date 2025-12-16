@@ -114,7 +114,7 @@ impl CommittedPolynomial {
                 let row: Vec<i128> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let (_, pre_value, post_value) = cycle.rd_write();
+                        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
@@ -190,7 +190,7 @@ impl CommittedPolynomial {
                 let cycle = &trace[i];
                 let batch_ref = unsafe { &mut *batch_cell.0.get() };
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                let (_, pre_rd, post_rd) = cycle.rd_write();
+                let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
@@ -326,7 +326,7 @@ impl CommittedPolynomial {
                 let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let (_, pre_value, post_value) = cycle.rd_write();
+                        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
                         post_value as i128 - pre_value as i128
                     })
                     .collect();

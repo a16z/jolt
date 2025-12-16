@@ -1069,7 +1069,13 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
                     .chain(once(instr.operands.rd))
                     .chain(once(instr.operands.rs1))
                     .chain(once(instr.operands.rs2))
-                    .map(|r| eq_r_register[r as usize])
+                    .map(|r| {
+                        if let Some(r) = r {
+                            eq_r_register[r as usize]
+                        } else {
+                            F::zero()
+                        }
+                    })
                     .zip(gamma_powers)
                     .map(|(claim, gamma)| claim * gamma)
                     .sum::<F>()
@@ -1123,7 +1129,10 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             .map(|instruction| {
                 let instr = instruction.normalize();
                 let flags = instruction.circuit_flags();
-                let mut linear_combination = eq_r_register[instr.operands.rd as usize];
+                let mut linear_combination = F::zero();
+                if let Some(rd) = instr.operands.rd {
+                    linear_combination += eq_r_register[rd as usize];
+                }
 
                 if !flags.is_interleaved_operands() {
                     linear_combination += gamma_powers[1];

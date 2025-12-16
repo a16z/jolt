@@ -305,9 +305,9 @@ impl R1CSCycleInputs {
         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
         // Registers
-        let rs1_read_value = cycle.rs1_read().1;
-        let rs2_read_value = cycle.rs2_read().1;
-        let rd_write_value = cycle.rd_write().2;
+        let rs1_read_value = cycle.rs1_read().unwrap_or_default().1;
+        let rs2_read_value = cycle.rs2_read().unwrap_or_default().1;
+        let rd_write_value = cycle.rd_write().unwrap_or_default().2;
 
         // RAM
         let ram_addr = cycle.ram_access().address() as u64;
