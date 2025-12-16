@@ -142,6 +142,7 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
+sha2 = "0.10"
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
