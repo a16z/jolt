@@ -156,6 +156,87 @@ impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d22, 22, eval_prod
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d26, 26, eval_prod_26_assign);
 impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d32, 32, eval_prod_32_assign);
 
+/// Compute evaluations for a **sum of products**:
+///
+/// ```text
+/// q(X) = Σ_{t=0}^{n_products-1}  ∏_{i=0}^{D-1} mle_{t,i}(X, ·)
+/// ```
+///
+/// on the split-eq grid `U_D = [1, 2, ..., D - 1, ∞]` (i.e. returns
+/// `[q(1), q(2), ..., q(D-1), q(∞)]`), using a single `par_fold_out_in_unreduced`
+/// pass.
+///
+/// This is useful when multiple product terms share the same split-eq weights
+/// (same `eq_poly`), allowing us to:
+/// - form the weighted sum of product terms **before** multiplying by `e_in`,
+/// - thus paying the `e_in` multiplication once per `q` lane rather than once
+///   per product term.
+///
+/// Intended for cases where per-product scalars are already absorbed into one
+/// factor of each product term (e.g. by pre-scaling the first MLE in each product).
+macro_rules! impl_mles_sum_of_products_evals_d {
+    ($fn_name:ident, $d:expr, $eval_prod:ident) => {
+        #[inline]
+        pub fn $fn_name<F: JoltField>(
+            mles: &[RaPolynomial<u16, F>],
+            n_products: usize,
+            eq_poly: &GruenSplitEqPolynomial<F>,
+        ) -> Vec<F> {
+            debug_assert!(n_products > 0);
+            debug_assert_eq!(mles.len(), n_products * $d);
+
+            let current_scalar = eq_poly.get_current_scalar();
+
+            let sum_evals_arr: [F; $d] = eq_poly.par_fold_out_in_unreduced::<9, $d>(&|g| {
+                let mut sums = [F::zero(); $d];
+
+                for t in 0..n_products {
+                    let base = t * $d;
+
+                    // Build pairs[(p0, p1); D] on the stack for this product term.
+                    let pairs: [(F, F); $d] = core::array::from_fn(|i| {
+                        let p0 = mles[base + i].get_bound_coeff(2 * g);
+                        let p1 = mles[base + i].get_bound_coeff(2 * g + 1);
+                        (p0, p1)
+                    });
+
+                    // Evaluate ∏ p_i(x) on U_D.
+                    let mut endpoints = [F::zero(); $d];
+                    $eval_prod::<F>(&pairs, &mut endpoints);
+
+                    // Accumulate across product terms.
+                    for k in 0..$d {
+                        sums[k] += endpoints[k];
+                    }
+                }
+
+                sums
+            });
+
+            sum_evals_arr
+                .into_iter()
+                .map(|x| x * current_scalar)
+                .collect()
+        }
+    };
+}
+
+impl_mles_sum_of_products_evals_d!(
+    compute_mles_product_sum_evals_sum_of_products_d4,
+    4,
+    eval_prod_4_assign
+);
+impl_mles_sum_of_products_evals_d!(
+    compute_mles_product_sum_evals_sum_of_products_d8,
+    8,
+    eval_prod_8_assign
+);
+impl_mles_sum_of_products_evals_d!(
+    compute_mles_product_sum_evals_sum_of_products_d16,
+    16,
+    eval_prod_16_assign
+);
+
 /// Given the evaluations of `g(X) / eq(X, r[round])` on the grid
 /// `[1, 2, ..., d - 1, ∞]`, recover the full univariate polynomial
 /// `g(X) = eq(X, r[round]) * (interpolated quotient)` such that
@@ -2085,7 +2166,7 @@ fn product_eval_univariate_naive_accumulate<F: JoltField>(
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
-    use ark_std::{test_rng, UniformRand};
+    use ark_std::{test_rng, UniformRand, Zero};
     use std::array::from_fn;
 
     use crate::{
@@ -2093,11 +2174,19 @@ mod tests {
         poly::{
             dense_mlpoly::DensePolynomial,
             eq_poly::EqPolynomial,
-            multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation},
+            multilinear_polynomial::{
+                BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            },
             ra_poly::RaPolynomial,
             split_eq_poly::GruenSplitEqPolynomial,
         },
-        subprotocols::mles_product_sum::compute_mles_product_sum,
+        subprotocols::mles_product_sum::{
+            compute_mles_product_sum, compute_mles_product_sum_evals_d16,
+            compute_mles_product_sum_evals_d4, compute_mles_product_sum_evals_d8,
+            compute_mles_product_sum_evals_sum_of_products_d16,
+            compute_mles_product_sum_evals_sum_of_products_d4,
+            compute_mles_product_sum_evals_sum_of_products_d8,
+        },
     };
 
     fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {
@@ -2193,5 +2282,75 @@ mod tests {
     #[test]
     fn optimized_product_sum_matches_naive_32_mles() {
         check_optimized_product_sum_matches_naive::<32>();
+    }
+
+    fn check_sum_of_products_evals_match_sum_of_individual_products<const D: usize>() {
+        let mut rng = &mut test_rng();
+
+        // Use enough variables to exercise the split-eq inner loop (E_in_len > 1).
+        let n_vars = 6;
+        let w: Vec<<Fr as JoltField>::Challenge> = (0..n_vars)
+            .map(|_| <Fr as JoltField>::Challenge::rand(&mut rng))
+            .collect();
+        let mut eq_poly = GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
+
+        // Number of product terms to sum; keep small for test runtime.
+        let n_products = 3;
+        let total_mles = n_products * D;
+
+        let mut mles: Vec<RaPolynomial<u16, Fr>> = (0..total_mles)
+            .map(|_| random_mle(n_vars, rng))
+            .map(RaPolynomial::RoundN)
+            .collect();
+
+        // Compare at a few successive binding states (rounds).
+        for _round in 0..3 {
+            let mut expected = vec![Fr::zero(); D];
+            for t in 0..n_products {
+                let base = t * D;
+                let evals_t: Vec<Fr> = match D {
+                    4 => compute_mles_product_sum_evals_d4(&mles[base..base + 4], &eq_poly),
+                    8 => compute_mles_product_sum_evals_d8(&mles[base..base + 8], &eq_poly),
+                    16 => compute_mles_product_sum_evals_d16(&mles[base..base + 16], &eq_poly),
+                    _ => unreachable!("unsupported D for this test"),
+                };
+                for k in 0..D {
+                    expected[k] += evals_t[k];
+                }
+            }
+
+            let actual: Vec<Fr> = match D {
+                4 => compute_mles_product_sum_evals_sum_of_products_d4(&mles, n_products, &eq_poly),
+                8 => compute_mles_product_sum_evals_sum_of_products_d8(&mles, n_products, &eq_poly),
+                16 => {
+                    compute_mles_product_sum_evals_sum_of_products_d16(&mles, n_products, &eq_poly)
+                }
+                _ => unreachable!("unsupported D for this test"),
+            };
+
+            assert_eq!(actual, expected);
+
+            // Advance one round of binding (simulate sumcheck).
+            let r_j = <Fr as JoltField>::Challenge::rand(&mut rng);
+            for mle in mles.iter_mut() {
+                mle.bind_parallel(r_j, BindingOrder::LowToHigh);
+            }
+            eq_poly.bind(r_j);
+        }
+    }
+
+    #[test]
+    fn sum_of_products_evals_d4_matches_sum_of_individual_products() {
+        check_sum_of_products_evals_match_sum_of_individual_products::<4>();
+    }
+
+    #[test]
+    fn sum_of_products_evals_d8_matches_sum_of_individual_products() {
+        check_sum_of_products_evals_match_sum_of_individual_products::<8>();
+    }
+
+    #[test]
+    fn sum_of_products_evals_d16_matches_sum_of_individual_products() {
+        check_sum_of_products_evals_match_sum_of_individual_products::<16>();
     }
 }
