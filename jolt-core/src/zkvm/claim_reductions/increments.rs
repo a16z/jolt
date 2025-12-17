@@ -400,51 +400,51 @@ impl<F: JoltField> IncReductionPhase1Prover<F> {
 
     fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let [gamma, gamma_sqr, gamma_cub] = self.params.gamma_powers;
+        let half_n = self.P_ram[0].len() / 2;
 
-        let mut evals = [F::zero(); DEGREE_BOUND];
-        let mut eval_at_1 = F::zero();
+        let evals = (0..half_n)
+            .into_par_iter()
+            .fold(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, j| {
+                    let p_ram_0 = self.P_ram[0]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let p_ram_1 = self.P_ram[1]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let p_rd_0 = self.P_rd[0]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let p_rd_1 = self.P_rd[1]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
-        for j in 0..self.P_ram[0].len() / 2 {
-            let p_ram_0 =
-                self.P_ram[0].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let p_ram_1 =
-                self.P_ram[1].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let p_rd_0 =
-                self.P_rd[0].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let p_rd_1 =
-                self.P_rd[1].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let q_ram_0 = self.Q_ram[0]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let q_ram_1 = self.Q_ram[1]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let q_rd_0 = self.Q_rd[0]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let q_rd_1 = self.Q_rd[1]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
-            let q_ram_0 =
-                self.Q_ram[0].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let q_ram_1 =
-                self.Q_ram[1].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let q_rd_0 =
-                self.Q_rd[0].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let q_rd_1 =
-                self.Q_rd[1].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-
-            // P_ram[0]·Q_ram[0] + γ·P_ram[1]·Q_ram[1]
-            //   + γ²·P_rd[0]·Q_rd[0] + γ³·P_rd[1]·Q_rd[1]
-            for k in 0..DEGREE_BOUND {
-                evals[k] += p_ram_0[k] * q_ram_0[k]
-                    + gamma * p_ram_1[k] * q_ram_1[k]
-                    + gamma_sqr * p_rd_0[k] * q_rd_0[k]
-                    + gamma_cub * p_rd_1[k] * q_rd_1[k];
-            }
-
-            // eval_at_1 for the hint
-            eval_at_1 += self.P_ram[0].get_bound_coeff(j * 2 + 1)
-                * self.Q_ram[0].get_bound_coeff(j * 2 + 1)
-                + gamma
-                    * self.P_ram[1].get_bound_coeff(j * 2 + 1)
-                    * self.Q_ram[1].get_bound_coeff(j * 2 + 1)
-                + gamma_sqr
-                    * self.P_rd[0].get_bound_coeff(j * 2 + 1)
-                    * self.Q_rd[0].get_bound_coeff(j * 2 + 1)
-                + gamma_cub
-                    * self.P_rd[1].get_bound_coeff(j * 2 + 1)
-                    * self.Q_rd[1].get_bound_coeff(j * 2 + 1);
-        }
+                    // P_ram[0]·Q_ram[0] + γ·P_ram[1]·Q_ram[1]
+                    //   + γ²·P_rd[0]·Q_rd[0] + γ³·P_rd[1]·Q_rd[1]
+                    for k in 0..DEGREE_BOUND {
+                        acc[k] += p_ram_0[k] * q_ram_0[k]
+                            + gamma * p_ram_1[k] * q_ram_1[k]
+                            + gamma_sqr * p_rd_0[k] * q_rd_0[k]
+                            + gamma_cub * p_rd_1[k] * q_rd_1[k];
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut a, b| {
+                    for k in 0..DEGREE_BOUND {
+                        a[k] += b[k];
+                    }
+                    a
+                },
+            );
 
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
@@ -453,15 +453,15 @@ impl<F: JoltField> IncReductionPhase1Prover<F> {
         assert!(!self.should_transition_to_phase2());
         self.sumcheck_challenges.push(r_j);
 
-        self.P_ram[0].bind(r_j, BindingOrder::LowToHigh);
-        self.P_ram[1].bind(r_j, BindingOrder::LowToHigh);
-        self.P_rd[0].bind(r_j, BindingOrder::LowToHigh);
-        self.P_rd[1].bind(r_j, BindingOrder::LowToHigh);
+        self.P_ram[0].bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.P_ram[1].bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.P_rd[0].bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.P_rd[1].bind_parallel(r_j, BindingOrder::LowToHigh);
 
-        self.Q_ram[0].bind(r_j, BindingOrder::LowToHigh);
-        self.Q_ram[1].bind(r_j, BindingOrder::LowToHigh);
-        self.Q_rd[0].bind(r_j, BindingOrder::LowToHigh);
-        self.Q_rd[1].bind(r_j, BindingOrder::LowToHigh);
+        self.Q_ram[0].bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.Q_ram[1].bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.Q_rd[0].bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.Q_rd[1].bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn should_transition_to_phase2(&self) -> bool {
@@ -597,25 +597,39 @@ impl<F: JoltField> IncReductionPhase2Prover<F> {
         let gamma_sqr = self.params.gamma_powers[1];
         let half_n = self.ram_inc.len() / 2;
 
-        let mut evals = [F::zero(); DEGREE_BOUND];
-        for j in 0..half_n {
-            let ram_evals = self
-                .ram_inc
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let rd_evals = self
-                .rd_inc
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let eq_ram = self
-                .eq_ram
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let eq_rd = self
-                .eq_rd
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+        let evals = (0..half_n)
+            .into_par_iter()
+            .fold(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, j| {
+                    let ram_evals = self
+                        .ram_inc
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let rd_evals = self
+                        .rd_inc
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let eq_ram = self
+                        .eq_ram
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let eq_rd = self
+                        .eq_rd
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
-            for k in 0..DEGREE_BOUND {
-                evals[k] += ram_evals[k] * eq_ram[k] + gamma_sqr * rd_evals[k] * eq_rd[k];
-            }
-        }
+                    for k in 0..DEGREE_BOUND {
+                        acc[k] += ram_evals[k] * eq_ram[k] + gamma_sqr * rd_evals[k] * eq_rd[k];
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut a, b| {
+                    for k in 0..DEGREE_BOUND {
+                        a[k] += b[k];
+                    }
+                    a
+                },
+            );
 
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }

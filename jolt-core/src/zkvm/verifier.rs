@@ -186,8 +186,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_stage6()?;
         self.verify_trusted_advice_opening_proofs()?;
         self.verify_untrusted_advice_opening_proofs()?;
-        let r_address_stage7 = self.verify_stage7()?;
-        self.verify_stage8(r_address_stage7)?;
+        self.verify_stage7()?;
+        self.verify_stage8()?;
 
         Ok(())
     }
@@ -440,7 +440,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     /// Stage 7: HammingWeight claim reduction verification.
-    fn verify_stage7(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
+    fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
@@ -451,7 +451,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Verify sumcheck (only log_k_chunk rounds)
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![&hw_verifier];
-        let r_address_stage7 = BatchedSumcheck::verify(
+        let _r_address_stage7 = BatchedSumcheck::verify(
             &self.proof.stage7_sumcheck_proof,
             instances,
             &mut self.opening_accumulator,
@@ -459,11 +459,20 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 7")?;
 
-        Ok(r_address_stage7)
+        Ok(())
     }
 
     /// Stage 8: Dory batch opening verification.
-    fn verify_stage8(&mut self, r_address_stage7: Vec<F::Challenge>) -> Result<(), anyhow::Error> {
+    fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
+        // Get the unified opening point from HammingWeightClaimReduction
+        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
+        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::HammingWeightClaimReduction,
+        );
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
 
@@ -477,6 +486,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
 
         // Apply Lagrange factor for dense polys
+        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
         let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
 
         polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
@@ -505,28 +515,14 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
         }
 
-        // 2. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
-        let mut r_address_be = r_address_stage7;
-        r_address_be.reverse();
-
-        // Extract r_cycle from Booleanity (same source as HammingWeightClaimReduction uses)
-        let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::Booleanity,
-        );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_cycle_stage6 = &unified_point.r[log_k_chunk..];
-
-        let opening_point = [r_address_be.as_slice(), r_cycle_stage6].concat();
-
-        // 3. Sample gamma and compute powers for RLC
+        // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
         // Build state for computing joint commitment/claim
         let state = DoryOpeningState {
-            opening_point: opening_point.clone(),
+            opening_point: opening_point.r.clone(),
             gamma_powers: gamma_powers.clone(),
             polynomial_claims,
         };
@@ -541,8 +537,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         // Compute joint commitment: Σ γ_i · C_i
-        let joint_commitment =
-            self.compute_joint_commitment::<PCS>(&mut commitments_map, &state);
+        let joint_commitment = self.compute_joint_commitment::<PCS>(&mut commitments_map, &state);
 
         // Test assertion
         #[cfg(test)]
@@ -565,7 +560,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.proof.joint_opening_proof,
             &self.preprocessing.generators,
             &mut self.transcript,
-            &opening_point,
+            &opening_point.r,
             &joint_claim,
             &joint_commitment,
         )
@@ -580,7 +575,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     ) -> PCS2::Commitment {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = HashMap::new();
-        for (gamma, (poly, _claim)) in state.gamma_powers.iter().zip(state.polynomial_claims.iter())
+        for (gamma, (poly, _claim)) in state
+            .gamma_powers
+            .iter()
+            .zip(state.polynomial_claims.iter())
         {
             *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
         }

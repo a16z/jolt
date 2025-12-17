@@ -221,16 +221,6 @@ pub trait OpeningAccumulator<F: JoltField> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
 }
 
-/// Intermediate state between Stage 7 (batch opening reduction sumcheck) and Stage 8 (Dory opening).
-/// Stored in prover/verifier state to bridge the two stages.
-#[derive(Clone, Allocative)]
-pub struct OpeningReductionState<F: JoltField> {
-    pub r_sumcheck: Vec<F::Challenge>,
-    pub gamma_powers: Vec<F>,
-    pub sumcheck_claims: Vec<F>,
-    pub polynomials: Vec<CommittedPolynomial>,
-}
-
 /// State for Dory batch opening (Stage 8).
 /// This is a generic interface for batch opening proofs.
 #[derive(Clone, Allocative)]
@@ -466,120 +456,6 @@ where
             OpeningId::TrustedAdvice(sumcheck_id),
             (opening_point, claim),
         );
-    }
-
-    // ========== Stage 8: Dory Batch Opening Proof ==========
-
-    /// Builds the RLC polynomial and combined hint for the batch opening proof.
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::build_rlc_polynomial")]
-    pub fn build_rlc_polynomial<PCS: CommitmentScheme<Field = F>>(
-        &self,
-        mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        state: &OpeningReductionState<F>,
-        streaming_context: Option<(TraceSource, Arc<RLCStreamingData>, OneHotParams)>,
-    ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
-        let mut rlc_map = BTreeMap::new();
-        for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
-            if let Some(value) = rlc_map.get_mut(poly) {
-                *value += *gamma;
-            } else {
-                rlc_map.insert(*poly, *gamma);
-            }
-        }
-
-        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
-            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
-
-        // Remove polynomials from the map (they're streamed from trace, not used directly)
-        for poly_id in &poly_ids {
-            polynomials.remove(poly_id);
-        }
-
-        let (trace_source, preprocessing, one_hot_params) =
-            streaming_context.expect("Streaming context required for Dory opening");
-        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
-            one_hot_params,
-            preprocessing,
-            trace_source,
-            poly_ids.clone(),
-            &coeffs,
-        ));
-
-        let hints: Vec<PCS::OpeningProofHint> = rlc_map
-            .into_keys()
-            .map(|k| opening_hints.remove(&k).unwrap())
-            .collect();
-        debug_assert!(
-            opening_hints.is_empty(),
-            "Commitments to {:?} are not used",
-            opening_hints.keys()
-        );
-
-        let hint = PCS::combine_hints(hints, &coeffs);
-
-        (joint_poly, hint)
-    }
-
-    /// Computes the joint commitment for testing purposes.
-    /// If streaming_context is provided, uses RLC streaming; otherwise uses homomorphic combination.
-    #[cfg(test)]
-    pub fn compute_joint_commitment_for_test<PCS: CommitmentScheme<Field = F>>(
-        &self,
-        polynomials: &HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
-        state: &OpeningReductionState<F>,
-        pcs_setup: &PCS::ProverSetup,
-        streaming_context: Option<(TraceSource, Arc<RLCStreamingData>, OneHotParams)>,
-    ) -> PCS::Commitment {
-        let mut rlc_map = BTreeMap::new();
-        for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
-            if let Some(value) = rlc_map.get_mut(poly) {
-                *value += *gamma;
-            } else {
-                rlc_map.insert(*poly, *gamma);
-            }
-        }
-
-        if streaming_context.is_some() {
-            use itertools::Itertools;
-            // Use RLC streaming with materialization
-            let (poly_ids, coeffs, polys): (
-                Vec<CommittedPolynomial>,
-                Vec<F>,
-                Vec<MultilinearPolynomial<F>>,
-            ) = rlc_map
-                .iter()
-                .map(|(k, v)| (*k, *v, polynomials.get(k).unwrap().clone()))
-                .multiunzip();
-
-            let poly_arcs: Vec<Arc<MultilinearPolynomial<F>>> =
-                polys.into_iter().map(Arc::new).collect();
-
-            let (trace_source, preprocessing, one_hot_params) = streaming_context.unwrap();
-            let rlc = RLCPolynomial::new_streaming(
-                one_hot_params,
-                preprocessing,
-                trace_source,
-                poly_ids.clone(),
-                &coeffs,
-            );
-            let materialized_rlc = rlc.materialize(&poly_ids, &poly_arcs, &coeffs);
-            let joint_poly = MultilinearPolynomial::RLC(materialized_rlc);
-
-            PCS::commit(&joint_poly, pcs_setup).0
-        } else {
-            // Use homomorphic combination of commitments
-            let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-                .iter()
-                .map(|(k, v)| {
-                    let poly = polynomials.get(k).unwrap();
-                    let (commitment, _) = PCS::commit(poly, pcs_setup);
-                    (*v, commitment)
-                })
-                .unzip();
-
-            PCS::combine_commitments(&commitments, &coeffs)
-        }
     }
 }
 
