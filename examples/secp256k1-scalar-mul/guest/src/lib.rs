@@ -1,32 +1,50 @@
 #![cfg_attr(feature = "guest", no_std)]
+
+extern crate alloc;
+use alloc::vec::Vec;
 use jolt_inlines_secp256k1::{Secp256k1Fq, Secp256k1Point};
 
 // compute n1*P1 + n2*P2 + n3*P3 + n4*P4 for secp256k1 points P1, P2, P3, P4 and scalars n1, n2, n3, n4
 // Note, this function does not check that the points are on the curve
-/*#[jolt::provable(memory_size = 32768, max_trace_length = 4194304)]
-fn secp256k1_4x128bit_scalar_mul(scalars: [u128; 4], points: [[u64; 8]; 4]) -> [u64; 8] {
-    // convert points to Secp256k1Point
-    let p = [
-        Secp256k1Point::from_u64_arr_unchecked(&points[0]),
-        Secp256k1Point::from_u64_arr_unchecked(&points[1]),
-        Secp256k1Point::from_u64_arr_unchecked(&points[2]),
-        Secp256k1Point::from_u64_arr_unchecked(&points[3]),
+#[jolt::provable(memory_size = 200000, max_trace_length = 4194304)]
+fn secp256k1_scalar_mul(scalars: [u128; 4], points: [u64; 32]) -> [u64; 8] {
+    let points = [
+        Secp256k1Point::from_u64_arr_unchecked(&points[0..8].try_into().unwrap()),
+        Secp256k1Point::from_u64_arr_unchecked(&points[8..16].try_into().unwrap()),
+        Secp256k1Point::from_u64_arr_unchecked(&points[16..24].try_into().unwrap()),
+        Secp256k1Point::from_u64_arr_unchecked(&points[24..32].try_into().unwrap()),
     ];
-    // build lookup table for all combinations of the 4 points
-    use core::array;
-    let mut lookup: [Secp256k1Point; 16] = array::from_fn(|_| Secp256k1Point::infinity());
-    lookup[1] = p[0].clone();
-    lookup[2] = p[1].clone();
-    lookup[3] = lookup[1].add(&lookup[2]);
-    lookup[4] = p[2].clone();
-    lookup[5] = lookup[1].add(&lookup[4]);
-    lookup[6] = lookup[2].add(&lookup[4]);
-    lookup[7] = lookup[1].add(&lookup[6]);
-    lookup[8] = p[3].clone();
+    /*let lookup = [
+        Secp256k1Point::infinity(),
+        points[0].clone(),
+        points[1].clone(),
+        points[0].add(&points[1]),
+        points[2].clone(),
+        points[0].add(&points[2]),
+        points[1].add(&points[2]),
+        points[0].add(&points[1].add(&points[2])),
+        points[3].clone(),
+        points[0].add(&points[3]),
+        points[1].add(&points[3]),
+        points[0].add(&points[1].add(&points[3])),
+        points[2].add(&points[3]),
+        points[0].add(&points[2].add(&points[3])),
+        points[1].add(&points[2].add(&points[3])),
+        points[0].add(&points[1].add(&points[2].add(&points[3]))),
+    ];*/
+    let mut lookup = Vec::<Secp256k1Point>::with_capacity(16);
+    lookup.push(Secp256k1Point::infinity());
+    lookup.push(points[0].clone());
+    lookup.push(points[1].clone());
+    lookup.push(lookup[1].add(&lookup[2]));
+    lookup.push(points[2].clone());
+    lookup.push(lookup[1].add(&lookup[4]));
+    lookup.push(lookup[2].add(&lookup[4]));
+    lookup.push(lookup[1].add(&lookup[6]));
+    lookup.push(points[3].clone());
     for i in 1..8 {
-        lookup[8 + i] = lookup[i].add(&lookup[8]);
+        lookup.push(lookup[i].add(&lookup[8]));
     }
-    // compute the result using a double-and-add algorithm with the lookup table
     let mut res = Secp256k1Point::infinity();
     for i in (0..128).rev() {
         let mut idx = 0;
@@ -39,25 +57,6 @@ fn secp256k1_4x128bit_scalar_mul(scalars: [u128; 4], points: [[u64; 8]; 4]) -> [
             res = res.double_and_add(&lookup[idx]);
         } else {
             res = res.double();
-        }
-    }
-    res.to_u64_arr()
-}*/
-
-// Given a 256-bit scalar n and a point P
-// Compute nP
-// Note, this function does not check that P is on the curve
-#[jolt::provable(memory_size = 32768, max_trace_length = 4194304)]
-fn secp256k1_scalar_mul(scalar: [u64; 4], point: [u64; 8]) -> [u64; 8] {
-    let g = Secp256k1Point::from_u64_arr_unchecked(&point);
-    let mut res = Secp256k1Point::infinity();
-    for i in (0..4).rev() {
-        for j in (0..64).rev() {
-            if (scalar[i] >> j) & 1 == 1 {
-                res = res.double_and_add(&g);
-            } else {
-                res = res.double();
-            }
         }
     }
     res.to_u64_arr()
