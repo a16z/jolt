@@ -299,6 +299,10 @@ pub struct AdviceClaimReductionPhase1Prover<F: JoltField> {
     /// Maintains the running internal scaling factor 2^{-dummy_done}.
     scale: F,
     inv_scale: F,
+    /// Constant scaling for trailing dummy rounds *after* the active window in the batched Stage 6
+    /// sumcheck (i.e., dummy cycle variables beyond this instance's `num_rounds()`).
+    after_scale: F,
+    after_inv_scale: F,
     two_inv: F,
 }
 
@@ -326,12 +330,17 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
         };
 
         let two_inv = F::from_u64(2).inverse().unwrap();
+        let dummy_after = params.log_t.saturating_sub(params.num_rounds_internal());
+        let after_scale = F::one().mul_pow_2(dummy_after);
+        let after_inv_scale = after_scale.inverse().unwrap();
         Self {
             params,
             advice_poly,
             eq_poly,
             scale: F::one(),
             inv_scale: F::one(),
+            after_scale,
+            after_inv_scale,
             two_inv,
         }
     }
@@ -378,9 +387,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             // Dummy internal variable: constant univariate with H(0)=H(1)=previous_claim/2.
             UniPoly::from_coeff(vec![previous_claim * self.two_inv])
         } else {
-            let prev_unscaled = previous_claim * self.inv_scale;
+            // Account for (1) internal dummy rounds already traversed (scale/inv_scale) and
+            // (2) trailing dummy rounds after this instance's active window in the batched sumcheck.
+            let prev_unscaled = previous_claim * self.inv_scale * self.after_inv_scale;
             let poly_unscaled = self.compute_message_unscaled(prev_unscaled);
-            poly_unscaled * self.scale
+            poly_unscaled * self.scale * self.after_scale
         }
     }
 
@@ -808,6 +819,10 @@ pub struct AdviceClaimReductionPhase2Prover<F: JoltField> {
     params: AdviceClaimReductionPhase2Params<F>,
     advice_poly: MultilinearPolynomial<F>,
     eq_poly: MultilinearPolynomial<F>,
+    /// Constant scaling for trailing dummy rounds after the active window in Stage 7 batching
+    /// (remaining address bits not consumed by advice).
+    after_scale: F,
+    after_inv_scale: F,
     two_inv: F,
 }
 
@@ -842,10 +857,17 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
         }
 
         let two_inv = F::from_u64(2).inverse().unwrap();
+        let dummy_after = params
+            .log_k_chunk
+            .saturating_sub(params.nu_a_addr);
+        let after_scale = F::one().mul_pow_2(dummy_after);
+        let after_inv_scale = after_scale.inverse().unwrap();
         Self {
             params,
             advice_poly,
             eq_poly,
+            after_scale,
+            after_inv_scale,
             two_inv,
         }
     }
@@ -881,10 +903,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        // Constant scale factor carried from Phase 1 (dummy-gap traversal).
-        let prev_unscaled = previous_claim * self.params.inv_scale;
+        // Account for (1) constant scale from Phase 1's internal dummy-gap traversal and
+        // (2) trailing dummy rounds after this instance's active window in Stage 7 batching.
+        let prev_unscaled = previous_claim * self.params.inv_scale * self.after_inv_scale;
         let poly_unscaled = self.compute_message_unscaled(prev_unscaled);
-        poly_unscaled * self.params.scale
+        poly_unscaled * self.params.scale * self.after_scale
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {

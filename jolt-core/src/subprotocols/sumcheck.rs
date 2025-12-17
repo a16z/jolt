@@ -84,27 +84,7 @@ impl BatchedSumcheck {
                     let offset = sumcheck.round_offset(max_num_rounds);
                     let active = round >= offset && round < offset + num_rounds;
                     if active {
-                        // If this instance is not placed as a suffix, then there can be dummy rounds
-                        // *after* the active window. Those dummy variables are still summed over
-                        // during the active rounds, contributing a constant scaling factor 2^{dummy_after}.
-                        //
-                        // To keep existing instance implementations unchanged (they assume no trailing
-                        // dummy vars), we:
-                        // - divide the current scaled claim by 2^{dummy_after} before calling compute_message
-                        // - scale the resulting univariate polynomial by 2^{dummy_after}
-                        //
-                        // This reduces to a no-op for the default suffix placement (dummy_after = 0).
-                        let dummy_after = max_num_rounds - (offset + num_rounds);
-                        if dummy_after == 0 {
-                            sumcheck.compute_message(round - offset, *previous_claim)
-                        } else {
-                            let scale = F::one().mul_pow_2(dummy_after);
-                            let inv_scale = scale.inverse().unwrap();
-                            let prev_unscaled = *previous_claim * inv_scale;
-                            let poly_unscaled =
-                                sumcheck.compute_message(round - offset, prev_unscaled);
-                            poly_unscaled * scale
-                        }
+                        sumcheck.compute_message(round - offset, *previous_claim)
                     } else {
                         // Variable is "dummy" for this instance: polynomial is independent of it,
                         // so the round univariate is constant with H(0)=H(1)=previous_claim/2.
