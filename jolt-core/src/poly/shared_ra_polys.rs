@@ -208,8 +208,14 @@ pub fn compute_all_G<F: JoltField>(
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
 ) -> Vec<Vec<F>> {
-    // Pass 0 as dummy pointer (not used when COLLECT_RA = false)
-    compute_all_G_impl::<F, false>(trace, bytecode, memory_layout, one_hot_params, r_cycle, 0)
+    compute_all_G_impl::<F>(
+        trace,
+        bytecode,
+        memory_layout,
+        one_hot_params,
+        r_cycle,
+        None,
+    )
 }
 
 /// Compute all G evaluations AND RA indices in a single pass over the trace.
@@ -228,18 +234,16 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
     r_cycle: &[F::Challenge],
 ) -> (Vec<Vec<F>>, Vec<RaIndices>) {
     let T = trace.len();
-    // Pre-allocate ra_indices (we'll write to it via raw pointer)
+    // Pre-allocate ra_indices
     let mut ra_indices: Vec<RaIndices> = unsafe_allocate_zero_vec(T);
-    // Convert pointer to usize for thread safety (usize is Send + Sync)
-    let ra_ptr_usize = ra_indices.as_mut_ptr() as usize;
 
-    let G = compute_all_G_impl::<F, true>(
+    let G = compute_all_G_impl::<F>(
         trace,
         bytecode,
         memory_layout,
         one_hot_params,
         r_cycle,
-        ra_ptr_usize,
+        Some(&mut ra_indices),
     );
 
     (G, ra_indices)
@@ -247,19 +251,19 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
 
 /// Core implementation for computing G evaluations.
 ///
-/// When `COLLECT_RA = true`, also writes RaIndices to `ra_indices_ptr_usize`.
+/// When `ra_indices` is `Some`, also writes RaIndices to the provided slice.
 /// This is safe because each cycle index is visited exactly once (disjoint writes).
-///
-/// The pointer is passed as `usize` for thread safety (usize is Send + Sync).
 #[inline(always)]
-fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
+fn compute_all_G_impl<F: JoltField>(
     trace: &[Cycle],
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
-    ra_indices_ptr_usize: usize,
+    ra_indices: Option<&mut [RaIndices]>,
 ) -> Vec<Vec<F>> {
+    // Convert to usize for thread safety (usize is Send + Sync, raw pointers are not Sync)
+    let ra_ptr_usize: usize = ra_indices.map(|s| s.as_mut_ptr() as usize).unwrap_or(0);
     // Verify bounds once at the start
     assert_ra_bounds(one_hot_params);
 
@@ -340,12 +344,11 @@ fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
                         RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params);
 
                     // Write ra_indices if collecting (disjoint write, each j visited once)
-                    if COLLECT_RA {
+                    if ra_ptr_usize != 0 {
                         // SAFETY: Each j value is unique across all parallel iterations,
                         // so this write is to a disjoint index. No data race possible.
-                        // Convert usize back to pointer.
                         unsafe {
-                            let ra_ptr = ra_indices_ptr_usize as *mut RaIndices;
+                            let ra_ptr = ra_ptr_usize as *mut RaIndices;
                             *ra_ptr.add(j) = ra_idx;
                         }
                     }

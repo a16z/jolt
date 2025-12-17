@@ -115,21 +115,19 @@ impl<F: JoltField> RLCPolynomial<F> {
         debug_assert_eq!(polynomials.len(), coefficients.len());
         debug_assert_eq!(polynomials.len(), poly_ids.len());
 
-        // Collect indices of dense (non-one-hot) polynomials.
-        let dense_indices: Vec<usize> = polynomials
+        // Partition into dense and one-hot polynomials
+        let (dense, one_hot): (Vec<_>, Vec<_>) = polynomials
             .iter()
-            .enumerate()
-            .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
-            .map(|(i, _)| i)
-            .collect();
+            .zip(coefficients.iter())
+            .partition(|(p, _)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)));
 
         // Eagerly materialize the dense linear combination (if any).
-        let dense_rlc = if dense_indices.is_empty() {
+        let dense_rlc = if dense.is_empty() {
             vec![]
         } else {
-            let max_len = dense_indices
+            let max_len = dense
                 .iter()
-                .map(|&i| polynomials[i].as_ref().original_len())
+                .map(|(p, _)| p.as_ref().original_len())
                 .max()
                 .unwrap();
 
@@ -137,12 +135,9 @@ impl<F: JoltField> RLCPolynomial<F> {
                 .into_par_iter()
                 .map(|idx| {
                     let mut acc = F::zero();
-                    for &poly_idx in &dense_indices {
-                        let poly = polynomials[poly_idx].as_ref();
-                        let coeff = coefficients[poly_idx];
-
-                        if idx < poly.original_len() {
-                            acc += poly.get_scaled_coeff(idx, coeff);
+                    for (poly, coeff) in &dense {
+                        if idx < poly.as_ref().original_len() {
+                            acc += poly.as_ref().get_scaled_coeff(idx, **coeff);
                         }
                     }
                     acc
@@ -151,12 +146,10 @@ impl<F: JoltField> RLCPolynomial<F> {
         };
 
         // Store one-hot polynomials lazily.
-        let mut one_hot_rlc = Vec::new();
-        for (i, poly) in polynomials.iter().enumerate() {
-            if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
-                one_hot_rlc.push((coefficients[i], poly.clone()));
-            }
-        }
+        let one_hot_rlc: Vec<_> = one_hot
+            .into_iter()
+            .map(|(poly, coeff)| (*coeff, poly.clone()))
+            .collect();
 
         Self {
             dense_rlc,

@@ -109,12 +109,6 @@ use crate::zkvm::{
 // making the round polynomials quadratic (degree 2).
 const DEGREE_BOUND: usize = 2;
 
-/// Family indices for the three ra polynomial types.
-pub const FAMILY_INSTRUCTION: usize = 0;
-pub const FAMILY_BYTECODE: usize = 1;
-pub const FAMILY_RAM: usize = 2;
-pub const NUM_FAMILIES: usize = 3;
-
 /// Parameters for the fused HammingWeight + Address Reduction sumcheck.
 ///
 /// This sumcheck handles all three ra_i claim types in a single sumcheck:
@@ -145,8 +139,6 @@ pub struct HammingWeightClaimReductionParams<F: JoltField> {
     pub log_k_chunk: usize,
     /// Polynomial labels: InstructionRa(0..d), BytecodeRa(0..d), RamRa(0..d)
     pub polynomial_types: Vec<CommittedPolynomial>,
-    /// Family index for each polynomial (0=instruction, 1=bytecode, 2=ram)
-    pub family: Vec<usize>,
 }
 
 impl<F: JoltField> HammingWeightClaimReductionParams<F> {
@@ -167,20 +159,16 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         let N = instruction_d + bytecode_d + ram_d;
         let log_k_chunk = one_hot_params.log_k_chunk;
 
-        // Build polynomial types list and family mapping
+        // Build polynomial types list
         let mut polynomial_types = Vec::with_capacity(N);
-        let mut family = Vec::with_capacity(N);
         for i in 0..instruction_d {
             polynomial_types.push(CommittedPolynomial::InstructionRa(i));
-            family.push(FAMILY_INSTRUCTION);
         }
         for i in 0..bytecode_d {
             polynomial_types.push(CommittedPolynomial::BytecodeRa(i));
-            family.push(FAMILY_BYTECODE);
         }
         for i in 0..ram_d {
             polynomial_types.push(CommittedPolynomial::RamRa(i));
-            family.push(FAMILY_RAM);
         }
 
         // Sample batching challenge γ and compute powers (3 claims per ra_i)
@@ -222,22 +210,16 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             )
             .1;
 
-        for (idx, poly_type) in polynomial_types.iter().enumerate() {
-            // All families now use Booleanity sumcheck for booleanity claims
-            let virt_sumcheck_id = match poly_type {
-                CommittedPolynomial::InstructionRa(_) => SumcheckId::InstructionRaVirtualization,
-                CommittedPolynomial::BytecodeRa(_) => SumcheckId::BytecodeReadRaf,
-                CommittedPolynomial::RamRa(_) => SumcheckId::RamRaVirtualization,
+        for poly_type in polynomial_types.iter() {
+            // Get virtualization sumcheck ID and HW claim based on polynomial type
+            let (virt_sumcheck_id, hw_claim) = match poly_type {
+                CommittedPolynomial::InstructionRa(_) => {
+                    (SumcheckId::InstructionRaVirtualization, F::one())
+                }
+                CommittedPolynomial::BytecodeRa(_) => (SumcheckId::BytecodeReadRaf, F::one()),
+                // For Ram: H_i = ram_hw_factor (shared across all RAM chunks)
+                CommittedPolynomial::RamRa(_) => (SumcheckId::RamRaVirtualization, ram_hw_factor),
                 _ => unreachable!(),
-            };
-
-            // HammingWeight claim:
-            // - For Instruction/Bytecode: H_i = 1 (one-hot sums to 1)
-            // - For Ram: H_i = ram_hw_factor (shared across all RAM chunks)
-            let hw_claim = if family[idx] == FAMILY_RAM {
-                ram_hw_factor
-            } else {
-                F::one()
             };
             claims_hw.push(hw_claim);
 
@@ -263,7 +245,6 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             claims_virt,
             log_k_chunk,
             polynomial_types,
-            family,
         }
     }
 }
