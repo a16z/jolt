@@ -781,7 +781,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
             registers_read_write_checking_params,
-            &self.trace,
+            self.trace.clone(),
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
         );

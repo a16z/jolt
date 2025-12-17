@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
@@ -190,11 +192,12 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
     sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
+    #[allocative(skip)]
+    trace: Arc<Vec<Cycle>>,
     // The following polynomials are instantiated after
     // the second phase
-    rs1_ra: Option<MultilinearPolynomial<F>>,
-    rs2_ra: Option<MultilinearPolynomial<F>>,
-    rd_wa: Option<MultilinearPolynomial<F>>,
+    ra: Option<MultilinearPolynomial<F>>,
+    wa: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
     merged_eq: Option<MultilinearPolynomial<F>>,
 }
@@ -203,7 +206,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::initialize")]
     pub fn initialize(
         params: RegistersReadWriteCheckingParams<F>,
-        trace: &[Cycle],
+        trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
@@ -225,10 +228,11 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let inc = CommittedPolynomial::RdInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
-            trace,
+            &trace,
             None,
         );
-        let sparse_matrix = ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(trace);
+        let sparse_matrix =
+            ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(&trace, params.gamma);
         let phase1_rounds = phase1_num_rounds(params.T);
         let phase2_rounds = phase2_num_rounds(params.T);
 
@@ -246,11 +250,11 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             gruen_eq,
             merged_eq,
             inc,
-            rs1_ra: None,
-            rs2_ra: None,
-            rd_wa: None,
+            ra: None,
+            wa: None,
             val: None,
             params,
+            trace,
         }
     }
 
@@ -387,16 +391,14 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let Self {
             inc,
             merged_eq,
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
+            ra,
+            wa,
             val,
             params,
             ..
         } = self;
-        let rs1_ra = rs1_ra.as_ref().unwrap();
-        let rs2_ra = rs2_ra.as_ref().unwrap();
-        let rd_wa = rd_wa.as_ref().unwrap();
+        let ra = ra.as_ref().unwrap();
+        let wa = wa.as_ref().unwrap();
         let val = val.as_ref().unwrap();
         let merged_eq = merged_eq.as_ref().unwrap();
 
@@ -405,7 +407,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             const DEGREE: usize = 3;
             let K_prime = K >> phase2_num_rounds(params.T);
             let T_prime = inc.len();
-            debug_assert_eq!(rs1_ra.len(), K_prime * inc.len());
+            debug_assert_eq!(ra.len(), K_prime * inc.len());
 
             let evals = (0..inc.len() / 2)
                 .into_par_iter()
@@ -416,27 +418,17 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                         .into_par_iter()
                         .map(|k| {
                             let idx = k * T_prime / 2 + j;
-                            let rs1_ra_evals =
-                                rs1_ra.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
-                            let rs2_ra_evals =
-                                rs2_ra.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
-                            let rd_wa_evals =
-                                rd_wa.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                            let ra_evals = ra.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                            let wa_evals = wa.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
                             let val_evals =
                                 val.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
                             [
-                                params.gamma
-                                    * (rs1_ra_evals[0] + params.gamma * rs2_ra_evals[0])
-                                    * val_evals[0]
-                                    + rd_wa_evals[0] * (val_evals[0] + inc_evals[0]),
-                                params.gamma
-                                    * (rs1_ra_evals[1] + params.gamma * rs2_ra_evals[1])
-                                    * val_evals[1]
-                                    + rd_wa_evals[1] * (val_evals[1] + inc_evals[1]),
-                                params.gamma
-                                    * (rs1_ra_evals[2] + params.gamma * rs2_ra_evals[2])
-                                    * val_evals[2]
-                                    + rd_wa_evals[2] * (val_evals[2] + inc_evals[2]),
+                                ra_evals[0] * val_evals[0]
+                                    + wa_evals[0] * (val_evals[0] + inc_evals[0]),
+                                ra_evals[1] * val_evals[1]
+                                    + wa_evals[1] * (val_evals[1] + inc_evals[1]),
+                                ra_evals[2] * val_evals[2]
+                                    + wa_evals[2] * (val_evals[2] + inc_evals[2]),
                             ]
                         })
                         .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
@@ -493,26 +485,16 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             // Cycle variables are fully bound
             let inc_eval = inc.final_sumcheck_claim();
             let eq_eval = merged_eq.final_sumcheck_claim();
-            let evals = (0..rs1_ra.len() / 2)
+            let evals = (0..ra.len() / 2)
                 .into_par_iter()
                 .map(|k| {
-                    let rs1_ra_evals =
-                        rs1_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
-                    let rs2_ra_evals =
-                        rs2_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
-                    let rd_wa_evals =
-                        rd_wa.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                    let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                    let wa_evals = wa.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                     let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
 
                     [
-                        params.gamma
-                            * (rs1_ra_evals[0] + params.gamma * rs2_ra_evals[0])
-                            * val_evals[0]
-                            + rd_wa_evals[0] * (val_evals[0] + inc_eval),
-                        params.gamma
-                            * (rs1_ra_evals[1] + params.gamma * rs2_ra_evals[1])
-                            * val_evals[1]
-                            + rd_wa_evals[1] * (val_evals[1] + inc_eval),
+                        ra_evals[0] * val_evals[0] + wa_evals[0] * (val_evals[0] + inc_eval),
+                        ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ]
                 })
                 .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
@@ -558,10 +540,9 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             } else {
                 // Skip to phase 3: all cycle variables bound, no address variables bound yet
                 let T_prime = params.T >> phase1_num_rounds(params.T);
-                let [rs1_ra, rs2_ra, rd_wa, val] = sparse_matrix.materialize(K, T_prime);
-                self.rs1_ra = Some(rs1_ra);
-                self.rs2_ra = Some(rs2_ra);
-                self.rd_wa = Some(rd_wa);
+                let [ra, wa, val] = sparse_matrix.materialize(K, T_prime);
+                self.ra = Some(ra);
+                self.wa = Some(wa);
                 self.val = Some(val);
             }
         }
@@ -580,34 +561,31 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let phase2_num_rounds = phase2_num_rounds(params.T);
         if round == phase1_num_rounds + phase2_num_rounds - 1 {
             let sparse_matrix = std::mem::take(sparse_matrix);
-            let [rs1_ra, rs2_ra, rd_wa, val] =
+            let [ra, wa, val] =
                 sparse_matrix.materialize(K >> phase2_num_rounds, params.T >> phase1_num_rounds);
-            self.rs1_ra = Some(rs1_ra);
-            self.rs2_ra = Some(rs2_ra);
-            self.rd_wa = Some(rd_wa);
+            self.ra = Some(ra);
+            self.wa = Some(wa);
             self.val = Some(val);
         }
     }
 
     fn phase3_bind(&mut self, r_j: F::Challenge) {
         let Self {
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
+            ra,
+            wa,
             val,
             inc,
             merged_eq,
             ..
         } = self;
-        let rs1_ra = rs1_ra.as_mut().unwrap();
-        let rs2_ra = rs2_ra.as_mut().unwrap();
-        let rd_wa = rd_wa.as_mut().unwrap();
+        let ra = ra.as_mut().unwrap();
+        let wa = wa.as_mut().unwrap();
         let val = val.as_mut().unwrap();
         let merged_eq = merged_eq.as_mut().unwrap();
 
         // Note that `eq_r_prime` and `inc` are polynomials over only the cycle
         // variables, so they are not bound here
-        [rs1_ra, rs2_ra, rd_wa, val]
+        [ra, wa, val]
             .into_par_iter()
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
 
@@ -652,19 +630,46 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         }
     }
 
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::cache_openings")]
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        let val_claim = self.val.as_ref().unwrap().final_sumcheck_claim();
-        let rs1_ra_claim = self.rs1_ra.as_ref().unwrap().final_sumcheck_claim();
-        let rs2_ra_claim = self.rs2_ra.as_ref().unwrap().final_sumcheck_claim();
-        let rd_wa_claim = self.rd_wa.as_ref().unwrap().final_sumcheck_claim();
-        let inc_claim = self.inc.final_sumcheck_claim();
-
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        let (r_address, r_cycle) = opening_point.split_at(LOG_K);
+
+        let val_claim = self.val.as_ref().unwrap().final_sumcheck_claim();
+        let rd_wa_claim = self.wa.as_ref().unwrap().final_sumcheck_claim();
+        let inc_claim = self.inc.final_sumcheck_claim();
+        let combined_ra_claim = self.ra.as_ref().unwrap().final_sumcheck_claim();
+        // In order to obtain the individual claims rs1_ra(r) and rs2_ra(r),
+        // we first evaluate rs1_ra(r) directly:
+        let eq_r_address = EqPolynomial::evals(&r_address.r);
+        let (r_cycle_hi, r_cycle_lo) = r_cycle.split_at(r_cycle.len() / 2);
+        let (eq_r_cycle_hi, eq_r_cycle_lo) = rayon::join(
+            || EqPolynomial::evals(&r_cycle_hi.r),
+            || EqPolynomial::evals(&r_cycle_lo.r),
+        );
+        let cycle_lo_mask = (1 << r_cycle_lo.len()) - 1;
+        let rs1_ra_claim: F = self
+            .trace
+            .par_iter()
+            .enumerate()
+            .filter_map(|(j, cycle)| {
+                cycle.rs1_read().map(|(rs1, _)| {
+                    let j_hi = j >> r_cycle_lo.len();
+                    let j_lo = j & cycle_lo_mask;
+                    eq_r_address[rs1 as usize] * eq_r_cycle_hi[j_hi] * eq_r_cycle_lo[j_lo]
+                })
+            })
+            .sum();
+        // Now compute rs2_ra(r) from combined_ra_claim and rs1_ra_claim. Recall that:
+        // combined_ra_claim = gamma * rs1_ra(r) + gamma^2 * rs2_ra(r)
+        let gamma_inverse = self.params.gamma.inverse().unwrap();
+        let rs2_ra_claim = (combined_ra_claim * gamma_inverse - rs1_ra_claim) * gamma_inverse;
+
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RegistersVal,
@@ -694,7 +699,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             rd_wa_claim,
         );
 
-        let (_, r_cycle) = opening_point.split_at(LOG_K);
         accumulator.append_dense(
             transcript,
             CommittedPolynomial::RdInc,

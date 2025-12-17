@@ -56,9 +56,10 @@ pub struct RegistersCycleMajorEntry<F: JoltField> {
     pub(crate) next_val: u64,
     /// The Val coefficient for this matrix entry.
     pub val_coeff: F,
-    pub rs1_ra_coeff: F,
-    pub rs2_ra_coeff: F,
-    pub rd_wa_coeff: F,
+    /// Coefficient for the combined ra polynomial, equal to
+    /// gamma * rs1_ra + gamma^2 * rs2_ra
+    pub ra_coeff: F,
+    pub wa_coeff: F,
 }
 
 impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
@@ -92,7 +93,13 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
 
     /// Fill the per-cycle entries into `out` (length 0–3), sorted by `col`.
     #[inline]
-    fn fill_entries_for_cycle(row: usize, cycle: &Cycle, out: &mut [RegistersCycleMajorEntry<F>]) {
+    fn fill_entries_for_cycle(
+        row: usize,
+        cycle: &Cycle,
+        out: &mut [RegistersCycleMajorEntry<F>],
+        gamma: F,
+        gamma_squared: F,
+    ) {
         debug_assert!(out.len() <= 3);
         let mut len = 0usize;
 
@@ -103,16 +110,15 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
                 prev_val: rs1_val,
                 next_val: rs1_val,
                 val_coeff: F::from_u64(rs1_val),
-                rs1_ra_coeff: F::one(),
-                rs2_ra_coeff: F::zero(),
-                rd_wa_coeff: F::zero(),
+                ra_coeff: gamma,
+                wa_coeff: F::zero(),
             };
             len += 1;
         }
 
         if let Some((rs2, rs2_val)) = cycle.rs2_read() {
             if let Some(e) = out[..len].iter_mut().find(|e| e.col == rs2) {
-                e.rs2_ra_coeff = F::one();
+                e.ra_coeff += gamma_squared;
             } else {
                 out[len] = RegistersCycleMajorEntry {
                     row,
@@ -120,9 +126,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
                     prev_val: rs2_val,
                     next_val: rs2_val,
                     val_coeff: F::from_u64(rs2_val),
-                    rs1_ra_coeff: F::zero(),
-                    rs2_ra_coeff: F::one(),
-                    rd_wa_coeff: F::zero(),
+                    ra_coeff: gamma_squared,
+                    wa_coeff: F::zero(),
                 };
                 len += 1;
             }
@@ -131,7 +136,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
         if let Some((rd, rd_pre_val, rd_post_val)) = cycle.rd_write() {
             if let Some(e) = out[..len].iter_mut().find(|e| e.col == rd) {
                 // Same register is read and then written this cycle.
-                e.rd_wa_coeff = F::one();
+                e.wa_coeff = F::one();
                 e.next_val = rd_post_val;
             } else {
                 out[len] = RegistersCycleMajorEntry {
@@ -141,9 +146,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
                     next_val: rd_post_val,
                     // val_coeff stores the value *before* any access at this cycle.
                     val_coeff: F::from_u64(rd_pre_val),
-                    rs1_ra_coeff: F::zero(),
-                    rs2_ra_coeff: F::zero(),
-                    rd_wa_coeff: F::one(),
+                    ra_coeff: F::zero(),
+                    wa_coeff: F::one(),
                 };
                 len += 1;
             }
@@ -177,7 +181,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
     /// Creates a new `ReadWriteMatrixCycleMajor` to represent the ra, wa and Val polynomials
     /// for the registers read/write checking sumcheck.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
-    pub fn new(trace: &[Cycle]) -> Self {
+    pub fn new(trace: &[Cycle], gamma: F) -> Self {
         // ---- Pass 1: per-cycle entry counts (parallel) ----
         let counts: Vec<u8> = trace
             .par_iter()
@@ -202,6 +206,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
         let entries_ptr = entries.as_mut_ptr() as usize;
 
         // ---- Pass 2: fill entries in parallel, disjoint slices per row ----
+        let gamma_squared = gamma.square();
         trace.par_iter().enumerate().for_each(|(j, cycle)| {
             let count = counts[j] as usize;
             if count == 0 {
@@ -213,7 +218,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
             unsafe {
                 let dst = entries_ptr.offset(start);
                 let slice = std::slice::from_raw_parts_mut(dst, count);
-                Self::fill_entries_for_cycle(j, cycle, slice);
+                Self::fill_entries_for_cycle(j, cycle, slice, gamma, gamma_squared);
             }
         });
 
@@ -242,12 +247,8 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
                 RegistersCycleMajorEntry {
                     row: even.row / 2,
                     col: even.col,
-                    rs1_ra_coeff: even.rs1_ra_coeff
-                        + r.mul_01_optimized(odd.rs1_ra_coeff - even.rs1_ra_coeff),
-                    rs2_ra_coeff: even.rs2_ra_coeff
-                        + r.mul_01_optimized(odd.rs2_ra_coeff - even.rs2_ra_coeff),
-                    rd_wa_coeff: even.rd_wa_coeff
-                        + r.mul_01_optimized(odd.rd_wa_coeff - even.rd_wa_coeff),
+                    ra_coeff: even.ra_coeff + r.mul_01_optimized(odd.ra_coeff - even.ra_coeff),
+                    wa_coeff: even.wa_coeff + r.mul_01_optimized(odd.wa_coeff - even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd.val_coeff - even.val_coeff),
                     prev_val: even.prev_val,
                     next_val: odd.next_val,
@@ -263,9 +264,8 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
                 RegistersCycleMajorEntry {
                     row: even.row / 2,
                     col: even.col,
-                    rs1_ra_coeff: (F::one() - r).mul_01_optimized(even.rs1_ra_coeff),
-                    rs2_ra_coeff: (F::one() - r).mul_01_optimized(even.rs2_ra_coeff),
-                    rd_wa_coeff: (F::one() - r).mul_01_optimized(even.rd_wa_coeff),
+                    ra_coeff: (F::one() - r).mul_01_optimized(even.ra_coeff),
+                    wa_coeff: (F::one() - r).mul_01_optimized(even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd_val_coeff - even.val_coeff),
                     prev_val: even.prev_val,
                     next_val: even.next_val,
@@ -281,9 +281,8 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
                 RegistersCycleMajorEntry {
                     row: odd.row / 2,
                     col: odd.col,
-                    rs1_ra_coeff: r.mul_01_optimized(odd.rs1_ra_coeff),
-                    rs2_ra_coeff: r.mul_01_optimized(odd.rs2_ra_coeff),
-                    rd_wa_coeff: r.mul_01_optimized(odd.rd_wa_coeff),
+                    ra_coeff: r.mul_01_optimized(odd.ra_coeff),
+                    wa_coeff: r.mul_01_optimized(odd.wa_coeff),
                     val_coeff: even_val_coeff + r.mul_0_optimized(odd.val_coeff - even_val_coeff),
                     prev_val: odd.prev_val,
                     next_val: odd.next_val,
@@ -297,52 +296,44 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
         even: Option<&Self>,
         odd: Option<&Self>,
         inc_evals: [F; 2],
-        gamma: F,
+        _gamma: F,
     ) -> [F::Unreduced<8>; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row.is_even());
                 debug_assert!(odd.row.is_odd());
                 debug_assert_eq!(even.col, odd.col);
-                let rs1_ra_evals = [even.rs1_ra_coeff, odd.rs1_ra_coeff - even.rs1_ra_coeff];
-                let rs2_ra_evals = [even.rs2_ra_coeff, odd.rs2_ra_coeff - even.rs2_ra_coeff];
-                let rd_wa_evals = [even.rd_wa_coeff, odd.rd_wa_coeff - even.rd_wa_coeff];
+                let ra_evals = [even.ra_coeff, odd.ra_coeff - even.ra_coeff];
+                let wa_evals = [even.wa_coeff, odd.wa_coeff - even.wa_coeff];
                 let val_evals = [even.val_coeff, odd.val_coeff - even.val_coeff];
                 [
-                    (gamma * (rs1_ra_evals[0] + gamma * rs2_ra_evals[0]))
-                        .mul_unreduced::<8>(val_evals[0])
-                        + rd_wa_evals[0].mul_unreduced::<8>(val_evals[0] + inc_evals[0]),
-                    (gamma * (rs1_ra_evals[1] + gamma * rs2_ra_evals[1]))
-                        .mul_unreduced::<8>(val_evals[1])
-                        + rd_wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
+                    ra_evals[0].mul_unreduced::<8>(val_evals[0])
+                        + wa_evals[0].mul_unreduced::<8>(val_evals[0] + inc_evals[0]),
+                    ra_evals[1].mul_unreduced::<8>(val_evals[1])
+                        + wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
                 ]
             }
             (Some(even), None) => {
                 let odd_val_coeff = F::from_u64(even.next_val);
-                let rs1_ra_evals = [even.rs1_ra_coeff, -even.rs1_ra_coeff];
-                let rs2_ra_evals = [even.rs2_ra_coeff, -even.rs2_ra_coeff];
-                let rd_wa_evals = [even.rd_wa_coeff, -even.rd_wa_coeff];
+                let ra_evals = [even.ra_coeff, -even.ra_coeff];
+                let wa_evals = [even.wa_coeff, -even.wa_coeff];
                 let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
                 [
-                    (gamma * (rs1_ra_evals[0] + gamma * rs2_ra_evals[0]))
-                        .mul_unreduced::<8>(val_evals[0])
-                        + rd_wa_evals[0].mul_unreduced::<8>(val_evals[0] + inc_evals[0]),
-                    (gamma * (rs1_ra_evals[1] + gamma * rs2_ra_evals[1]))
-                        .mul_unreduced::<8>(val_evals[1])
-                        + rd_wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
+                    ra_evals[0].mul_unreduced::<8>(val_evals[0])
+                        + wa_evals[0].mul_unreduced::<8>(val_evals[0] + inc_evals[0]),
+                    ra_evals[1].mul_unreduced::<8>(val_evals[1])
+                        + wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
                 ]
             }
             (None, Some(odd)) => {
                 let even_val_coeff = F::from_u64(odd.prev_val);
-                let rs1_ra_evals = [F::zero(), odd.rs1_ra_coeff];
-                let rs2_ra_evals = [F::zero(), odd.rs2_ra_coeff];
-                let rd_wa_evals = [F::zero(), odd.rd_wa_coeff];
+                let ra_evals = [F::zero(), odd.ra_coeff];
+                let wa_evals = [F::zero(), odd.wa_coeff];
                 let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
                 [
                     F::Unreduced::zero(),
-                    (gamma * (rs1_ra_evals[1] + gamma * rs2_ra_evals[1]))
-                        .mul_unreduced::<8>(val_evals[1])
-                        + rd_wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
+                    ra_evals[1].mul_unreduced::<8>(val_evals[1])
+                        + wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
                 ]
             }
             (None, None) => panic!("Both entries are None"),
@@ -363,21 +354,19 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
     /// When `T_prime == 1` (all cycle variables bound), this is equivalent to the simple case
     /// where each entry has `row == 0` and entries have distinct `col` values.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::materialize")]
-    pub fn materialize(self, K_prime: usize, T_prime: usize) -> [MultilinearPolynomial<F>; 4] {
+    pub fn materialize(self, K_prime: usize, T_prime: usize) -> [MultilinearPolynomial<F>; 3] {
         let len = K_prime * T_prime;
 
         // Initialize polynomials to zero
         // Layout: address-major, index(k, t) = k * T_prime + t
-        let mut rs1_ra: Vec<F> = unsafe_allocate_zero_vec(len);
-        let mut rs2_ra: Vec<F> = unsafe_allocate_zero_vec(len);
-        let mut rd_wa: Vec<F> = unsafe_allocate_zero_vec(len);
+        let mut ra: Vec<F> = unsafe_allocate_zero_vec(len);
+        let mut wa: Vec<F> = unsafe_allocate_zero_vec(len);
         let mut val: Vec<F> = unsafe_allocate_zero_vec(len);
 
         // Update ra, wa and val at positions where we have entries.
         // Index is col * T_prime + row (address-major layout).
-        let rs1_ra_ptr = rs1_ra.as_mut_ptr() as usize;
-        let rs2_ra_ptr = rs2_ra.as_mut_ptr() as usize;
-        let rd_wa_ptr = rd_wa.as_mut_ptr() as usize;
+        let ra_ptr = ra.as_mut_ptr() as usize;
+        let wa_ptr = wa.as_mut_ptr() as usize;
         let val_ptr = val.as_mut_ptr() as usize;
 
         self.entries.into_par_iter().for_each(|entry| {
@@ -390,18 +379,16 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
             // SAFETY: Each entry has a unique (row, col) pair,
             // so writes to ra[idx] and val[idx] are disjoint across parallel iterations.
             unsafe {
-                let rs1_p = rs1_ra_ptr as *mut F;
-                let rs2_p = rs2_ra_ptr as *mut F;
-                let rd_p = rd_wa_ptr as *mut F;
+                let ra_p = ra_ptr as *mut F;
+                let wa_p = wa_ptr as *mut F;
                 let val_p = val_ptr as *mut F;
-                *rs1_p.add(idx) = entry.rs1_ra_coeff;
-                *rs2_p.add(idx) = entry.rs2_ra_coeff;
-                *rd_p.add(idx) = entry.rd_wa_coeff;
+                *ra_p.add(idx) = entry.ra_coeff;
+                *wa_p.add(idx) = entry.wa_coeff;
                 *val_p.add(idx) = entry.val_coeff;
             }
         });
 
-        [rs1_ra.into(), rs2_ra.into(), rd_wa.into(), val.into()]
+        [ra.into(), wa.into(), val.into()]
     }
 }
 
@@ -435,9 +422,8 @@ pub struct RegistersAddressMajorEntry<F: JoltField> {
     pub(crate) next_val: F,
     /// The Val coefficient for this matrix entry.
     pub val_coeff: F,
-    pub rs1_ra_coeff: F,
-    pub rs2_ra_coeff: F,
-    pub rd_wa_coeff: F,
+    pub ra_coeff: F,
+    pub wa_coeff: F,
 }
 
 impl<F: JoltField> From<RegistersCycleMajorEntry<F>> for RegistersAddressMajorEntry<F> {
@@ -448,9 +434,8 @@ impl<F: JoltField> From<RegistersCycleMajorEntry<F>> for RegistersAddressMajorEn
             prev_val: F::from_u64(entry.prev_val),
             next_val: F::from_u64(entry.next_val),
             val_coeff: entry.val_coeff,
-            rs1_ra_coeff: entry.rs1_ra_coeff,
-            rs2_ra_coeff: entry.rs2_ra_coeff,
-            rd_wa_coeff: entry.rd_wa_coeff,
+            ra_coeff: entry.ra_coeff,
+            wa_coeff: entry.wa_coeff,
         }
     }
 }
@@ -487,12 +472,8 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 RegistersAddressMajorEntry {
                     row: even.row,
                     col: even.col / 2,
-                    rs1_ra_coeff: even.rs1_ra_coeff
-                        + r.mul_01_optimized(odd.rs1_ra_coeff - even.rs1_ra_coeff),
-                    rs2_ra_coeff: even.rs2_ra_coeff
-                        + r.mul_01_optimized(odd.rs2_ra_coeff - even.rs2_ra_coeff),
-                    rd_wa_coeff: even.rd_wa_coeff
-                        + r.mul_01_optimized(odd.rd_wa_coeff - even.rd_wa_coeff),
+                    ra_coeff: even.ra_coeff + r.mul_01_optimized(odd.ra_coeff - even.ra_coeff),
+                    wa_coeff: even.wa_coeff + r.mul_01_optimized(odd.wa_coeff - even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd.val_coeff - even.val_coeff),
                     prev_val: even.prev_val + r.mul_0_optimized(odd.prev_val - even.prev_val),
                     next_val: even.next_val + r.mul_0_optimized(odd.next_val - even.next_val),
@@ -507,9 +488,8 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 RegistersAddressMajorEntry {
                     row: even.row,
                     col: even.col / 2,
-                    rs1_ra_coeff: (F::one() - r).mul_01_optimized(even.rs1_ra_coeff),
-                    rs2_ra_coeff: (F::one() - r).mul_01_optimized(even.rs2_ra_coeff),
-                    rd_wa_coeff: (F::one() - r).mul_01_optimized(even.rd_wa_coeff),
+                    ra_coeff: (F::one() - r).mul_01_optimized(even.ra_coeff),
+                    wa_coeff: (F::one() - r).mul_01_optimized(even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd_checkpoint - even.val_coeff),
                     prev_val: even.prev_val + r.mul_0_optimized(odd_checkpoint - even.prev_val),
                     next_val: even.next_val + r.mul_0_optimized(odd_checkpoint - even.next_val),
@@ -524,9 +504,8 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 RegistersAddressMajorEntry {
                     row: odd.row,
                     col: odd.col / 2,
-                    rs1_ra_coeff: r.mul_01_optimized(odd.rs1_ra_coeff),
-                    rs2_ra_coeff: r.mul_01_optimized(odd.rs2_ra_coeff),
-                    rd_wa_coeff: r.mul_01_optimized(odd.rd_wa_coeff),
+                    ra_coeff: r.mul_01_optimized(odd.ra_coeff),
+                    wa_coeff: r.mul_01_optimized(odd.wa_coeff),
                     val_coeff: even_checkpoint + r.mul_0_optimized(odd.val_coeff - even_checkpoint),
                     prev_val: even_checkpoint + r.mul_0_optimized(odd.prev_val - even_checkpoint),
                     next_val: even_checkpoint + r.mul_0_optimized(odd.next_val - even_checkpoint),
@@ -543,37 +522,25 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
         odd_checkpoint: F,
         inc_eval: F,
         eq_eval: F,
-        gamma: F,
+        _gamma: F,
     ) -> [F::Unreduced<8>; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.col.is_even());
                 debug_assert!(odd.col.is_odd());
                 debug_assert_eq!(even.row, odd.row);
-                let rs1_ra_evals = [
-                    even.rs1_ra_coeff,
-                    odd.rs1_ra_coeff + odd.rs1_ra_coeff - even.rs1_ra_coeff,
-                ];
-                let rs2_ra_evals = [
-                    even.rs2_ra_coeff,
-                    odd.rs2_ra_coeff + odd.rs2_ra_coeff - even.rs2_ra_coeff,
-                ];
-                let rd_wa_evals = [
-                    even.rd_wa_coeff,
-                    odd.rd_wa_coeff + odd.rd_wa_coeff - even.rd_wa_coeff,
-                ];
+                let ra_evals = [even.ra_coeff, odd.ra_coeff + odd.ra_coeff - even.ra_coeff];
+                let wa_evals = [even.wa_coeff, odd.wa_coeff + odd.wa_coeff - even.wa_coeff];
                 let val_evals = [
                     even.val_coeff,
                     odd.val_coeff + odd.val_coeff - even.val_coeff,
                 ];
                 [
                     eq_eval.mul_unreduced(
-                        gamma * (rs1_ra_evals[0] + gamma * rs2_ra_evals[0]) * val_evals[0]
-                            + rd_wa_evals[0] * (val_evals[0] + inc_eval),
+                        ra_evals[0] * val_evals[0] + wa_evals[0] * (val_evals[0] + inc_eval),
                     ),
                     eq_eval.mul_unreduced(
-                        gamma * (rs1_ra_evals[1] + gamma * rs2_ra_evals[1]) * val_evals[1]
-                            + rd_wa_evals[1] * (val_evals[1] + inc_eval),
+                        ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ),
                 ]
             }
@@ -583,21 +550,18 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 // The absence of an odd-row entry in the same column as even
                 // means that its implicit Val coeff is odd_checkpoint, and its implicit
                 // ra coeff is 0.
-                let rs1_ra_evals = [even.rs1_ra_coeff, -even.rs1_ra_coeff];
-                let rs2_ra_evals = [even.rs2_ra_coeff, -even.rs2_ra_coeff];
-                let rd_wa_evals = [even.rd_wa_coeff, -even.rd_wa_coeff];
+                let ra_evals = [even.ra_coeff, -even.ra_coeff];
+                let wa_evals = [even.wa_coeff, -even.wa_coeff];
                 let val_evals = [
                     even.val_coeff,
                     odd_checkpoint + odd_checkpoint - even.val_coeff,
                 ];
                 [
                     eq_eval.mul_unreduced(
-                        gamma * (rs1_ra_evals[0] + gamma * rs2_ra_evals[0]) * val_evals[0]
-                            + rd_wa_evals[0] * (val_evals[0] + inc_eval),
+                        ra_evals[0] * val_evals[0] + wa_evals[0] * (val_evals[0] + inc_eval),
                     ),
                     eq_eval.mul_unreduced(
-                        gamma * (rs1_ra_evals[1] + gamma * rs2_ra_evals[1]) * val_evals[1]
-                            + rd_wa_evals[1] * (val_evals[1] + inc_eval),
+                        ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ),
                 ]
             }
@@ -607,9 +571,8 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 // The absence of an even-row entry in the same column as odd
                 // means that its implicit Val coeff is even_checkpoint, and its implicit
                 // ra coeff is 0.
-                let rs1_ra_evals = [F::zero(), odd.rs1_ra_coeff + odd.rs1_ra_coeff];
-                let rs2_ra_evals = [F::zero(), odd.rs2_ra_coeff + odd.rs2_ra_coeff];
-                let rd_wa_evals = [F::zero(), odd.rd_wa_coeff + odd.rd_wa_coeff];
+                let ra_evals = [F::zero(), odd.ra_coeff + odd.ra_coeff];
+                let wa_evals = [F::zero(), odd.wa_coeff + odd.wa_coeff];
                 let val_evals = [
                     even_checkpoint,
                     odd.val_coeff + odd.val_coeff - even_checkpoint,
@@ -617,8 +580,7 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 [
                     F::Unreduced::<8>::zero(), // ra_evals[0] is zero
                     eq_eval.mul_unreduced(
-                        gamma * (rs1_ra_evals[1] + gamma * rs2_ra_evals[1]) * val_evals[1]
-                            + rd_wa_evals[1] * (val_evals[1] + inc_eval),
+                        ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ),
                 ]
             }
@@ -632,17 +594,13 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>
     /// Some number of cycle and address variables have already been bound, so at this point
     /// there are `K_prime` columns and `T_prime` rows left in the matrix.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixAddressMajor::materialize")]
-    pub fn materialize(self, K_prime: usize, T_prime: usize) -> [MultilinearPolynomial<F>; 4] {
+    pub fn materialize(self, K_prime: usize, T_prime: usize) -> [MultilinearPolynomial<F>; 3] {
         // Initialize ra, wa and Val to initial values
-        let rs1_ra: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
+        let ra: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
             .into_par_iter()
             .map(|_| Arc::new(Mutex::new(F::zero())))
             .collect();
-        let rs2_ra: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
-            .into_par_iter()
-            .map(|_| Arc::new(Mutex::new(F::zero())))
-            .collect();
-        let rd_wa: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
+        let wa: Vec<Arc<Mutex<F>>> = (0..K_prime * T_prime)
             .into_par_iter()
             .map(|_| Arc::new(Mutex::new(F::zero())))
             .collect();
@@ -662,9 +620,8 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>
                 for j in 0..T_prime {
                     let idx = k * T_prime + j;
                     if let Some(entry) = column_iter.next_if(|&entry| entry.row() == j) {
-                        *rs1_ra[idx].lock().unwrap() = entry.rs1_ra_coeff;
-                        *rs2_ra[idx].lock().unwrap() = entry.rs2_ra_coeff;
-                        *rd_wa[idx].lock().unwrap() = entry.rd_wa_coeff;
+                        *ra[idx].lock().unwrap() = entry.ra_coeff;
+                        *wa[idx].lock().unwrap() = entry.wa_coeff;
                         *val[idx].lock().unwrap() = entry.val_coeff;
                         current_val_coeff = entry.next_val();
                         continue;
@@ -674,15 +631,11 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>
                 }
             });
         // Unwrap Arc<Mutex<F>> back into F
-        let rs1_ra: Vec<F> = rs1_ra
+        let ra: Vec<F> = ra
             .into_par_iter()
             .map(|arc_mutex| *arc_mutex.lock().unwrap())
             .collect();
-        let rs2_ra: Vec<F> = rs2_ra
-            .into_par_iter()
-            .map(|arc_mutex| *arc_mutex.lock().unwrap())
-            .collect();
-        let rd_wa: Vec<F> = rd_wa
+        let wa: Vec<F> = wa
             .into_par_iter()
             .map(|arc_mutex| *arc_mutex.lock().unwrap())
             .collect();
@@ -691,6 +644,6 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>
             .map(|arc_mutex| *arc_mutex.lock().unwrap())
             .collect();
         // Convert Vec<F> to MultilinearPolynomial<F>
-        [rs1_ra.into(), rs2_ra.into(), rd_wa.into(), val.into()]
+        [ra.into(), wa.into(), val.into()]
     }
 }
