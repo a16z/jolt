@@ -82,8 +82,7 @@ impl OneHotParams {
         // log_k_chunk must be at most 8 so that chunk indices fit in u8
         assert!(
             log_k_chunk <= 8,
-            "log_k_chunk must be <= 8 to fit in u8, got {}",
-            log_k_chunk
+            "log_k_chunk must be <= 8 to fit in u8, got {log_k_chunk}",
         );
         let instruction_d = compute_d(LOG_K, log_k_chunk);
         let bytecode_d = compute_d(bytecode_k.log_2(), log_k_chunk);
