@@ -4,7 +4,7 @@
 pub const INLINE_OPCODE: u32 = 0x0B;
 
 pub const BLAKE3_FUNCT3: u32 = 0x00;
-pub const BLAKE3_KEYED64_FUNCT3: u32 = 0x01;
+pub const BLAKE3_KEYED64_FUNCT3: u32 = 0x01; // Keyed64: hash(left || right) with IV from rd, PARENT flag
 pub const BLAKE3_FUNCT7: u32 = 0x03;
 pub const BLAKE3_NAME: &str = "BLAKE3_INLINE";
 pub const BLAKE3_KEYED64_NAME: &str = "BLAKE3_KEYED64_INLINE";
@@ -55,5 +55,6 @@ pub const WORD_SIZE: usize = 32;
 // BLAKE3 flags
 pub const FLAG_CHUNK_START: u32 = 1;
 pub const FLAG_CHUNK_END: u32 = 2;
+pub const FLAG_PARENT: u32 = 4; // Used for Merkle tree parent nodes
 pub const FLAG_ROOT: u32 = 8;
-pub const FLAG_KEYED_HASH: u32 = 16;
+pub const FLAG_KEYED_HASH: u32 = 16; // Used in tests for generic compress

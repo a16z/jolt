@@ -1,3 +1,4 @@
+use crate::subprotocols::streaming_schedule::LinearOnlySchedule;
 use std::{
     collections::HashMap,
     fs::File,
@@ -41,7 +42,8 @@ use crate::{
             IncReductionSumcheckParams, IncReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
             InstructionLookupsClaimReductionSumcheckProver, RaReductionParams,
-            RamRaReductionSumcheckProver,
+            RamRaReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
+            RegistersClaimReductionSumcheckProver,
         },
         config::{get_log_k_chunk, OneHotParams},
         instruction_lookups::{
@@ -67,7 +69,7 @@ use crate::{
         },
         spartan::{
             instruction_input::InstructionInputParams,
-            outer::{OuterRemainingSumcheckParams, OuterUniSkipParams, OuterUniSkipProver},
+            outer::{OuterUniSkipParams, OuterUniSkipProver},
             product::{
                 ProductVirtualRemainderParams, ProductVirtualUniSkipParams,
                 ProductVirtualUniSkipProver,
@@ -104,8 +106,10 @@ use crate::{
             val_evaluation::ValEvaluationSumcheckProver as RegistersValEvaluationSumcheckProver,
         },
         spartan::{
-            instruction_input::InstructionInputSumcheckProver, outer::OuterRemainingSumcheckProver,
-            product::ProductVirtualRemainderProver, shift::ShiftSumcheckProver,
+            instruction_input::InstructionInputSumcheckProver,
+            outer::{OuterRemainingStreamingSumcheck, OuterSharedState},
+            product::ProductVirtualRemainderProver,
+            shift::ShiftSumcheckProver,
         },
         witness::CommittedPolynomial,
         ProverDebugInfo, Serializable,
@@ -147,7 +151,6 @@ pub struct JoltCpuProver<
     #[cfg(test)]
     joint_commitment_for_test: Option<PCS::Commitment>,
 }
-
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
 {
@@ -181,6 +184,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &memory_config,
             )
         };
+
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -644,16 +648,20 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             &mut self.transcript,
         );
 
-        let spartan_outer_remaining_params = OuterRemainingSumcheckParams::new(
-            self.trace.len(),
-            uni_skip_params,
-            &self.opening_accumulator,
-        );
-        let mut spartan_outer_remaining = OuterRemainingSumcheckProver::initialize(
-            spartan_outer_remaining_params,
+        // Every sum-check with num_rounds > 1 requires a schedule
+        // which dictates the compute_message and bind methods.
+        // Using LinearOnlySchedule to benchmark linear-only mode (no streaming).
+        // Outer remaining sumcheck has degree 3 (multiquadratic)
+        // Number of rounds = tau.len() - 1 (cycle variables only)
+        let schedule = LinearOnlySchedule::new(uni_skip_params.tau.len() - 1);
+        let shared = OuterSharedState::new(
             Arc::clone(&self.trace),
             &self.preprocessing.bytecode,
+            &uni_skip_params,
+            &self.opening_accumulator,
         );
+        let mut spartan_outer_remaining: OuterRemainingStreamingSumcheck<_, _> =
+            OuterRemainingStreamingSumcheck::new(shared, schedule);
 
         let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
             vec![&mut spartan_outer_remaining],
@@ -794,6 +802,11 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         );
         let spartan_instruction_input_params =
             InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript);
+        let spartan_registers_claim_reduction_params = RegistersClaimReductionSumcheckParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         // Initialize
         let spartan_shift = ShiftSumcheckProver::initialize(
@@ -806,6 +819,10 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             &self.trace,
             &self.opening_accumulator,
         );
+        let spartan_registers_claim_reduction = RegistersClaimReductionSumcheckProver::initialize(
+            spartan_registers_claim_reduction_params,
+            Arc::clone(&self.trace),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -814,10 +831,17 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
                 "InstructionInputSumcheckProver",
                 &spartan_instruction_input,
             );
+            print_data_structure_heap_usage(
+                "RegistersClaimReductionSumcheckProver",
+                &spartan_registers_claim_reduction,
+            );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> =
-            vec![Box::new(spartan_shift), Box::new(spartan_instruction_input)];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+            Box::new(spartan_shift),
+            Box::new(spartan_instruction_input),
+            Box::new(spartan_registers_claim_reduction),
+        ];
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
@@ -2134,7 +2158,6 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-
         let prover = RV64IMACProver::gen_from_trace(
             &preprocessing,
             lazy_trace,
