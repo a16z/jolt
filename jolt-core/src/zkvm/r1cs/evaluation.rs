@@ -401,6 +401,9 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
     /// Product Az·Bz at the j-th extended uniskip target for the first group (uses precomputed weights).
     pub fn extended_azbz_product_first_group(&self, j: usize) -> S192 {
+        #[cfg(test)]
+        self.assert_constraints_first_group();
+
         let coeffs_i32: &[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
@@ -495,7 +498,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         debug_assert!((!az.assert_flag) || bz.lookup_output_minus_one.to_i128() == 0);
         debug_assert!((!az.should_jump) || bz.next_unexp_pc_minus_lookup_output.to_i128() == 0);
         debug_assert!((!az.virtual_instruction) || bz.next_pc_minus_pc_plus_one.to_i128() == 0);
-        debug_assert!((!az.must_start_sequence) || bz.one_minus_do_not_update_unexpanded_pc);
+        debug_assert!((!az.must_start_sequence) || !bz.one_minus_do_not_update_unexpanded_pc);
     }
     // ---------- Second group ----------
 
