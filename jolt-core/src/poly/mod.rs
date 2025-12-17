@@ -7,6 +7,7 @@ pub mod identity_poly;
 pub mod lagrange_poly;
 pub mod lt_poly;
 pub mod multilinear_polynomial;
+pub mod multiquadratic_poly;
 pub mod one_hot_polynomial;
 pub mod opening_proof;
 pub mod prefix_suffix;
