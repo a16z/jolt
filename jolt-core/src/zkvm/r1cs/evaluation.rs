@@ -59,6 +59,7 @@ use super::constraints::{
     NUM_PRODUCT_VIRTUAL, OUTER_UNIVARIATE_SKIP_DEGREE, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
     PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
+use super::constraints::{R1CS_CONSTRAINTS_FIRST_GROUP, R1CS_CONSTRAINTS_SECOND_GROUP};
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
 
 pub(crate) const UNISKIP_TARGETS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] =
@@ -376,71 +377,56 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         az_eval_s64.mul_trunc::<2, 3>(&bz_eval_s128.sum)
     }
 
+    fn assert_constraint_first_group(&self, index: usize, guard: bool, satisfied: bool) {
+        if guard && !satisfied {
+            let mut constraint_string = String::new();
+            let _ = R1CS_CONSTRAINTS_FIRST_GROUP[index]
+                .pretty_fmt_with_row(&mut constraint_string, self.row);
+            println!("{constraint_string}");
+            panic!(
+                "First group constraint {} ({:?}) violated",
+                index, R1CS_CONSTRAINTS_FIRST_GROUP[index].label
+            );
+        }
+    }
+
     pub fn assert_constraints_first_group(&self) {
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
-
-        // Debug: print constraint violations
-        if az.not_load_store && bz.ram_addr != 0 {
-            eprintln!("CONSTRAINT FAIL: not_load_store => ram_addr==0");
-            eprintln!("  ram_addr={}, pc=0x{:x}", bz.ram_addr, self.row.pc);
-            panic!("not_load_store constraint failed");
-        }
-        if az.load_a && bz.ram_read_minus_ram_write.to_i128() != 0 {
-            eprintln!("CONSTRAINT FAIL: load_a => ram_read==ram_write");
-            eprintln!("  diff={}, pc=0x{:x}", bz.ram_read_minus_ram_write.to_i128(), self.row.pc);
-            panic!("load_a constraint failed");
-        }
-        if az.load_b && bz.ram_read_minus_rd_write.to_i128() != 0 {
-            eprintln!("CONSTRAINT FAIL: load_b => ram_read==rd_write");
-            eprintln!("  diff={}, pc=0x{:x}", bz.ram_read_minus_rd_write.to_i128(), self.row.pc);
-            panic!("load_b constraint failed");
-        }
-        if az.store && bz.rs2_minus_ram_write.to_i128() != 0 {
-            eprintln!("CONSTRAINT FAIL: store => rs2==ram_write");
-            eprintln!("  diff={}, pc=0x{:x}", bz.rs2_minus_ram_write.to_i128(), self.row.pc);
-            panic!("store constraint failed");
-        }
-        if az.add_sub_mul && bz.left_lookup != 0 {
-            eprintln!("CONSTRAINT FAIL: add_sub_mul => left_lookup==0");
-            eprintln!("  left_lookup={}, pc=0x{:x}", bz.left_lookup, self.row.pc);
-            panic!("add_sub_mul constraint failed");
-        }
-        if az.not_add_sub_mul && bz.left_lookup_minus_left_input.to_i128() != 0 {
-            eprintln!("CONSTRAINT FAIL: not_add_sub_mul => left_lookup==left_input");
-            eprintln!("  diff={}, pc=0x{:x}", bz.left_lookup_minus_left_input.to_i128(), self.row.pc);
-            panic!("not_add_sub_mul constraint failed");
-        }
-        if az.assert_flag && bz.lookup_output_minus_one.to_i128() != 0 {
-            eprintln!("CONSTRAINT FAIL: assert_flag => lookup_output==1");
-            eprintln!("  lookup_output_minus_one={}, pc=0x{:x}", bz.lookup_output_minus_one.to_i128(), self.row.pc);
-            eprintln!("  lookup_output={}", self.row.lookup_output);
-            panic!("assert_flag constraint failed");
-        }
-        if az.should_jump && bz.next_unexp_pc_minus_lookup_output.to_i128() != 0 {
-            eprintln!("CONSTRAINT FAIL: should_jump => next_unexp_pc==lookup_output");
-            eprintln!("  diff={}, pc=0x{:x}", bz.next_unexp_pc_minus_lookup_output.to_i128(), self.row.pc);
-            panic!("should_jump constraint failed");
-        }
-        if az.virtual_instruction && bz.next_pc_minus_pc_plus_one.to_i128() != 0 {
-            eprintln!("CONSTRAINT FAIL: virtual_instruction => next_pc==pc+1");
-            eprintln!("  diff={}, pc=0x{:x}, next_pc=0x{:x}", bz.next_pc_minus_pc_plus_one.to_i128(), self.row.pc, self.row.next_pc);
-            panic!("virtual_instruction constraint failed");
-        }
-        if az.must_start_sequence && bz.one_minus_do_not_update_unexpanded_pc {
-            eprintln!("DEBUG: must_start_sequence constraint failed!");
-            eprintln!("  must_start_sequence = {} (next_is_virtual={}, next_is_first_in_sequence={})",
-                az.must_start_sequence, self.row.next_is_virtual, self.row.next_is_first_in_sequence);
-            eprintln!("  one_minus_do_not_update_unexpanded_pc = {} (DoNotUpdateUnexpandedPC = {})",
-                bz.one_minus_do_not_update_unexpanded_pc,
-                self.row.flags[CircuitFlags::DoNotUpdateUnexpandedPC]);
-            eprintln!("  pc = 0x{:x}, unexpanded_pc = 0x{:x}", self.row.pc, self.row.unexpanded_pc);
-            eprintln!("  next_pc = 0x{:x}, next_unexpanded_pc = 0x{:x}", self.row.next_pc, self.row.next_unexpanded_pc);
-            eprintln!("  VirtualInstruction = {}, IsFirstInSequence = {}",
-                self.row.flags[CircuitFlags::VirtualInstruction],
-                self.row.flags[CircuitFlags::IsFirstInSequence]);
-            panic!("must_start_sequence constraint failed");
-        }
+        self.assert_constraint_first_group(0, az.not_load_store, bz.ram_addr == 0);
+        self.assert_constraint_first_group(
+            1,
+            az.load_a,
+            bz.ram_read_minus_ram_write.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(2, az.load_b, bz.ram_read_minus_rd_write.to_i128() == 0);
+        self.assert_constraint_first_group(3, az.store, bz.rs2_minus_ram_write.to_i128() == 0);
+        self.assert_constraint_first_group(4, az.add_sub_mul, bz.left_lookup == 0);
+        self.assert_constraint_first_group(
+            5,
+            az.not_add_sub_mul,
+            bz.left_lookup_minus_left_input.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            6,
+            az.assert_flag,
+            bz.lookup_output_minus_one.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            7,
+            az.should_jump,
+            bz.next_unexp_pc_minus_lookup_output.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            8,
+            az.virtual_instruction,
+            bz.next_pc_minus_pc_plus_one.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            9,
+            az.must_start_sequence,
+            !bz.one_minus_do_not_update_unexpanded_pc,
+        );
     }
     // ---------- Second group ----------
 
@@ -572,7 +558,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
     /// Product Az·Bz at the j-th extended uniskip target for the second group (uses precomputed weights).
     pub fn extended_azbz_product_second_group(&self, j: usize) -> S192 {
-        #[cfg(test)]
         self.assert_constraints_second_group();
 
         let coeffs_i32: &[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
@@ -649,19 +634,55 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         az_eval_s64.mul_trunc::<3, 3>(&bz_eval_s192.sum)
     }
 
-    #[cfg(test)]
+    fn assert_constraint_second_group(&self, index: usize, guard: bool, satisfied: bool) {
+        if guard && !satisfied {
+            let mut constraint_string = String::new();
+            let _ = R1CS_CONSTRAINTS_SECOND_GROUP[index]
+                .pretty_fmt_with_row(&mut constraint_string, self.row);
+            println!("{constraint_string}");
+            panic!(
+                "Second group constraint {} ({:?}) violated",
+                index, R1CS_CONSTRAINTS_SECOND_GROUP[index].label
+            );
+        }
+    }
+
     pub fn assert_constraints_second_group(&self) {
         let az = self.eval_az_second_group();
         let bz = self.eval_bz_second_group();
-        debug_assert!((!az.load_or_store) || bz.ram_addr_minus_rs1_plus_imm == 0i128);
-        debug_assert!((!az.add) || bz.right_lookup_minus_add_result.is_zero());
-        debug_assert!((!az.sub) || bz.right_lookup_minus_sub_result.is_zero());
-        debug_assert!((!az.mul) || bz.right_lookup_minus_product.is_zero());
-        debug_assert!((!az.not_add_sub_mul_advice) || bz.right_lookup_minus_right_input.is_zero());
-        debug_assert!((!az.write_lookup_to_rd) || bz.rd_write_minus_lookup_output.is_zero());
-        debug_assert!((!az.write_pc_to_rd) || bz.rd_write_minus_pc_plus_const.is_zero());
-        debug_assert!((!az.should_branch) || bz.next_unexp_pc_minus_pc_plus_imm == 0);
-        debug_assert!((!az.not_jump_or_branch) || bz.next_unexp_pc_minus_expected.is_zero());
+        self.assert_constraint_second_group(
+            0,
+            az.load_or_store,
+            bz.ram_addr_minus_rs1_plus_imm == 0i128,
+        );
+        self.assert_constraint_second_group(1, az.add, bz.right_lookup_minus_add_result.is_zero());
+        self.assert_constraint_second_group(2, az.sub, bz.right_lookup_minus_sub_result.is_zero());
+        self.assert_constraint_second_group(3, az.mul, bz.right_lookup_minus_product.is_zero());
+        self.assert_constraint_second_group(
+            4,
+            az.not_add_sub_mul_advice,
+            bz.right_lookup_minus_right_input.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            5,
+            az.write_lookup_to_rd,
+            bz.rd_write_minus_lookup_output.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            6,
+            az.write_pc_to_rd,
+            bz.rd_write_minus_pc_plus_const.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            7,
+            az.should_branch,
+            bz.next_unexp_pc_minus_pc_plus_imm == 0,
+        );
+        self.assert_constraint_second_group(
+            8,
+            az.not_jump_or_branch,
+            bz.next_unexp_pc_minus_expected.is_zero(),
+        );
     }
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without

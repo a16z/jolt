@@ -397,6 +397,35 @@ impl R1CSCycleInputs {
             next_is_first_in_sequence,
         }
     }
+
+    pub fn get_input_value(&self, input: JoltR1CSInputs) -> i128 {
+        match input {
+            JoltR1CSInputs::PC => self.pc as i128,
+            JoltR1CSInputs::UnexpandedPC => self.unexpanded_pc as i128,
+            JoltR1CSInputs::Imm => self.imm.to_i128(),
+            JoltR1CSInputs::RamAddress => self.ram_addr as i128,
+            JoltR1CSInputs::Rs1Value => self.rs1_read_value as i128,
+            JoltR1CSInputs::Rs2Value => self.rs2_read_value as i128,
+            JoltR1CSInputs::RdWriteValue => self.rd_write_value as i128,
+            JoltR1CSInputs::RamReadValue => self.ram_read_value as i128,
+            JoltR1CSInputs::RamWriteValue => self.ram_write_value as i128,
+            JoltR1CSInputs::LeftInstructionInput => self.left_input as i128,
+            JoltR1CSInputs::RightInstructionInput => self.right_input.to_i128(),
+            JoltR1CSInputs::LeftLookupOperand => self.left_lookup as i128,
+            JoltR1CSInputs::RightLookupOperand => self.right_lookup as i128,
+            JoltR1CSInputs::Product => self.product.to_i128().expect("product too large for i128"),
+            JoltR1CSInputs::WriteLookupOutputToRD => self.write_lookup_output_to_rd_addr as i128,
+            JoltR1CSInputs::WritePCtoRD => self.write_pc_to_rd_addr as i128,
+            JoltR1CSInputs::ShouldBranch => self.should_branch as i128,
+            JoltR1CSInputs::NextUnexpandedPC => self.next_unexpanded_pc as i128,
+            JoltR1CSInputs::NextPC => self.next_pc as i128,
+            JoltR1CSInputs::NextIsVirtual => self.next_is_virtual as i128,
+            JoltR1CSInputs::NextIsFirstInSequence => self.next_is_first_in_sequence as i128,
+            JoltR1CSInputs::LookupOutput => self.lookup_output as i128,
+            JoltR1CSInputs::ShouldJump => self.should_jump as i128,
+            JoltR1CSInputs::OpFlags(flag) => self.flags[flag] as i128,
+        }
+    }
 }
 
 /// Canonical, de-duplicated list of product-virtual factor polynomials used by

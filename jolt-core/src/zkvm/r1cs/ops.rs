@@ -20,8 +20,7 @@ impl Term {
         Self { input_index, coeff }
     }
 
-    /// Format term for pretty printing (test only).
-    #[cfg(test)]
+    /// Format term for pretty printing.
     pub fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         use super::inputs::JoltR1CSInputs;
         use std::fmt::Write;
@@ -585,8 +584,7 @@ impl LC {
         }
     }
 
-    /// Format LC for pretty printing (test only).
-    #[cfg(test)]
+    /// Format LC for pretty printing.
     pub fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         use std::fmt::Write;
 
