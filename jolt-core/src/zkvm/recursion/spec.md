@@ -150,19 +150,21 @@ where $g(x)$ is the MLE of the irreducible polynomial $p$ evaluated on the hyper
 
 ## 7. Sum-Check Protocols
 
-### 7.1 Elliptic Curve Scalar Multiplication (Double-and-Add)
+### 7.1 Elliptic Curve Scalar Multiplication
 
-**Applicable to**: $\mathbb{G}_1$ and $\mathbb{G}_2$
+This section covers scalar multiplication protocols for both $\mathbb{G}_1$ and $\mathbb{G}_2$ groups using the double-and-add algorithm.
 
-This protocol proves scalar multiplication $Q = [k]P$ using the double-and-add algorithm. For BN254, the curve equation is $y^2 = x^3 + b$.
+#### 7.1.1 $\mathbb{G}_1$ Scalar Multiplication
+
+This protocol proves scalar multiplication $Q = [k]P$ for $\mathbb{G}_1$ using the double-and-add algorithm. For BN254 $\mathbb{G}_1$, the curve equation is $y^2 = x^3 + b$ over $\mathbb{F}_q$.
 
 #### Inputs / Outputs
 
 |Role|Symbol|Description|
 |---|---|---|
-|**Public Input**|$P \in \mathbb{G}_1$ (or $\mathbb{G}_2$)|Base point $(x_P, y_P)$|
+|**Public Input**|$P \in \mathbb{G}_1$|Base point $(x_P, y_P)$ where $x_P, y_P \in \mathbb{F}_q$|
 |**Public Input**|$k \in \mathbb{F}_r$|Scalar with public bit decomposition $(b_0, \ldots, b_{n-1})$|
-|**Public Output**|$Q \in \mathbb{G}_1$ (or $\mathbb{G}_2$)|Result $Q = [k]P$|
+|**Public Output**|$Q \in \mathbb{G}_1$|Result $Q = [k]P$|
 
 #### Witness Structure
 
@@ -173,10 +175,12 @@ The witness is an execution trace with $n$ rows (one per scalar bit), padded to 
 |Current accumulator|$(x_{A}, y_{A})$|Accumulator point at start of iteration|
 |Doubled point|$(x_{T}, y_{T})$|Result of doubling: $T = [2]A$|
 |Next accumulator|$(x_{A'}, y_{A'})$|Accumulator after conditional addition|
+|Infinity indicator|$\text{ind}$|1 if $T = O$ (point at infinity), 0 otherwise|
 
 Each row $i \in \{0, \ldots, n-1\}$ satisfies:
 - **Doubling**: $T_i = [2]A_i$
 - **Conditional addition**: $A_{i+1} = T_i + b_i \cdot P$ where $b_i \in \{0, 1\}$ is the $i$-th bit of $k$
+- **Infinity handling**: When $T_i = O$, special handling ensures $A_{i+1} \in \{O, P\}$
 
 #### MLE Representation
 
@@ -190,8 +194,10 @@ Each witness column is encoded as a multilinear extension over $\ell$ variables:
 |$\widetilde{y_T}(x)$|$(y_{T_0}, y_{T_1}, \ldots, y_{T_{N-1}})$|
 |$\widetilde{x_{A'}}(x)$|$(x_{A_1}, x_{A_2}, \ldots, x_{A_N})$|
 |$\widetilde{y_{A'}}(x)$|$(y_{A_1}, y_{A_2}, \ldots, y_{A_N})$|
+|$\widetilde{\text{ind}}(x)$|$(\text{ind}_0, \text{ind}_1, \ldots, \text{ind}_{N-1})$|
 
 Note: $\widetilde{x_{A'}}$ and $\widetilde{y_{A'}}$ are the shifted accumulators (offset by one index).
+$\widetilde{\text{ind}}(x)$ is the infinity indicator (1 when $T_i = O$, 0 otherwise).
 
 #### Constraint System
 
@@ -203,15 +209,17 @@ $$C_1 = 4\widetilde{y_A}^2(\widetilde{x_T} + 2\widetilde{x_A}) - 9\widetilde{x_A
 **C2 (Doubling - y-coordinate)**:
 $$C_2 = 3\widetilde{x_A}^2(\widetilde{x_T} - \widetilde{x_A}) + 2\widetilde{y_A}(\widetilde{y_T} + \widetilde{y_A})$$
 
-**C3 (Conditional addition - x-coordinate)**:
-Since the MLEs encode the actual values from the double-and-add algorithm, we can reformulate without explicit bit values. When $b_i = 0$, we have $\widetilde{x_{A'}} = \widetilde{x_T}$, and when $b_i = 1$, the point addition constraint holds. We can multiply both cases:
+**C3 (Unified addition - x-coordinate)**:
+This constraint handles both finite and infinity cases using the indicator $\widetilde{\text{ind}}$:
+- When $T \neq O$ (ind = 0): Standard chord addition formula
+- When $T = O$ (ind = 1): Ensures $\widetilde{x_{A'}} \in \{0, x_P\}$
 
-$$C_3 = (\widetilde{x_{A'}} - \widetilde{x_T}) \cdot \bigl[(\widetilde{x_{A'}} + \widetilde{x_T} + x_P)(x_P - \widetilde{x_T})^2 - (y_P - \widetilde{y_T})^2\bigr]$$
+$$C_3 = \widetilde{\text{ind}} \cdot \widetilde{x_{A'}} \cdot (\widetilde{x_{A'}} - x_P) + (1 - \widetilde{\text{ind}}) \cdot (\widetilde{x_{A'}} - \widetilde{x_T}) \cdot \bigl[(\widetilde{x_{A'}} + \widetilde{x_T} + x_P)(x_P - \widetilde{x_T})^2 - (y_P - \widetilde{y_T})^2\bigr]$$
 
-**C4 (Conditional addition - y-coordinate)**:
+**C4 (Unified addition - y-coordinate)**:
 Similarly for the y-coordinate:
 
-$$C_4 = (\widetilde{y_{A'}} - \widetilde{y_T}) \cdot \bigl[\widetilde{x_T}(y_P + \widetilde{y_{A'}}) - x_P(\widetilde{y_T} + \widetilde{y_{A'}}) + \widetilde{x_{A'}}(\widetilde{y_T} - y_P)\bigr]$$
+$$C_4 = \widetilde{\text{ind}} \cdot \widetilde{y_{A'}} \cdot (\widetilde{y_{A'}} - y_P) + (1 - \widetilde{\text{ind}}) \cdot (\widetilde{y_{A'}} - \widetilde{y_T}) \cdot \bigl[\widetilde{x_T}(y_P + \widetilde{y_{A'}}) - x_P(\widetilde{y_T} + \widetilde{y_{A'}}) + \widetilde{x_{A'}}(\widetilde{y_T} - y_P)\bigr]$$
 
 where $(x_P, y_P)$ are the constant base point coordinates.
 
@@ -221,8 +229,8 @@ where $(x_P, y_P)$ are the constant base point coordinates.
 |---|---|
 |$C_1$|4|
 |$C_2$|3|
-|$C_3$|4| (increased due to multiplication by $(\widetilde{x_{A'}} - \widetilde{x_T})$)
-|$C_4$|3| (increased due to multiplication by $(\widetilde{y_{A'}} - \widetilde{y_T})$)
+|$C_3$|6| (increased due to indicator multiplication and conditional structure)
+|$C_4$|6| (increased due to indicator multiplication and conditional structure)
 
 #### Sum-Check Protocol
 
@@ -241,7 +249,7 @@ where:
 **Protocol**:
 1. Verifier sends $\delta \leftarrow \mathbb{F}$
 2. Verifier sends $r \leftarrow \mathbb{F}^\ell$
-3. Prover and Verifier run sum-check (degree 5 rounds)
+3. Prover and Verifier run sum-check (degree 6 rounds)
 4. At final challenge $r' \in \mathbb{F}^\ell$, prover sends witness MLE evaluations
 5. Verifier checks claims via PCS opening proofs
 
@@ -257,6 +265,7 @@ After sum-check completes at challenge $r'$, the prover provides:
 |$\widetilde{y_T}(r')$|$v_{y_T}$|
 |$\widetilde{x_{A'}}(r')$|$v_{x_{A'}}$|
 |$\widetilde{y_{A'}}(r')$|$v_{y_{A'}}$|
+|$\widetilde{\text{ind}}(r')$|$v_{\text{ind}}$|
 
 The verifier uses these claims along with the public bits to verify the final sum-check evaluation.
 
@@ -277,6 +286,8 @@ GenerateTrace(P, k, n):
         // Double
         Temp ← PointDouble(A)
         T[i].xT, T[i].yT ← Affine(Temp)
+        // Infinity indicator
+        T[i].ind ← IsInfinity(Temp) ? 1 : 0
         // Conditional add
         if bits[i] = 1:
             A ← PointAdd(Temp, P)
@@ -301,7 +312,8 @@ DummyRow(P):
     A ← P
     T ← PointDouble(P)
     A' ← T              // Since b = 0, no addition
-    return (A, T, A')
+    ind ← 0             // T is not infinity for valid P
+    return (A, T, A', ind)
 ```
 
 ##### MLE Construction
@@ -316,6 +328,7 @@ BuildMLEs(T[0..N-1]):
         yT_evals[i] ← T[i].yT
         xA'_evals[i] ← T[i].xA'
         yA'_evals[i] ← T[i].yA'
+        ind_evals[i] ← T[i].ind
 
     return {
         x̃_A  ← MLE(xA_evals),
@@ -324,6 +337,7 @@ BuildMLEs(T[0..N-1]):
         ỹ_T  ← MLE(yT_evals),
         x̃_A' ← MLE(xA'_evals),
         ỹ_A' ← MLE(yA'_evals),
+        ĩnd  ← MLE(ind_evals),
     }
 ```
 
@@ -333,6 +347,262 @@ BuildMLEs(T[0..N-1]):
 |---|---|
 |$A_0 = O$|Standard initialization with point at infinity|
 |$A_n = Q$|Output consistency (accumulator equals final result)|
+
+#### 7.1.2 $\mathbb{G}_2$ Scalar Multiplication with Quotient Trick
+
+This protocol proves scalar multiplication $Q = [k]P$ for $\mathbb{G}_2$ using the double-and-add algorithm with the quotient/ring switching trick. For BN254 $\mathbb{G}_2$, points lie on the twist curve over the quadratic extension field $\mathbb{F}_{q^2} = \mathbb{F}_q[u]/(u^2 + 1)$.
+
+##### Key Innovation: Ring Switching for $\mathbb{G}_2$
+
+The central idea is to use ring switching to transform all elliptic curve constraints from relations over $\mathbb{F}_{q^2}$ to relations over $\mathbb{F}_q$. This allows us to work entirely in the base field $\mathbb{F}_q$ by introducing quotient polynomials.
+
+##### Field Representation
+
+Each $\mathbb{G}_2$ coordinate is an element of $\mathbb{F}_{q^2} = \mathbb{F}_q[u]/(u^2 + 1)$:
+- $x = x_0 + x_1 u$ where $x_0, x_1 \in \mathbb{F}_q$
+- $y = y_0 + y_1 u$ where $y_0, y_1 \in \mathbb{F}_q$
+
+The ring switching principle: For any polynomial equation $f(u) = 0$ over $\mathbb{F}_{q^2}$, we can write:
+$$f(u) = q(u) \cdot (u^2 + 1)$$
+for some quotient polynomial $q(u) = q_0 + q_1 u$. This transforms the constraint into two $\mathbb{F}_q$ equations by matching coefficients.
+
+##### Inputs / Outputs
+
+|Role|Symbol|Description|
+|---|---|---|
+|**Public Input**|$P \in \mathbb{G}_2$|Base point $(x_P, y_P)$ where $x_P, y_P \in \mathbb{F}_{q^2}$|
+|**Public Input**|$k \in \mathbb{F}_r$|Scalar with public bit decomposition $(b_0, \ldots, b_{n-1})$|
+|**Public Output**|$Q \in \mathbb{G}_2$|Result $Q = [k]P$|
+
+##### Witness Structure
+
+The witness includes both coordinate MLEs and quotient MLEs:
+
+|Column|Symbol|Description|
+|---|---|---|
+|Current accumulator|$(x_{A,0}, x_{A,1}, y_{A,0}, y_{A,1})$|Accumulator $\mathbb{F}_{q^2}$ coordinates as $\mathbb{F}_q$ coefficients|
+|Doubled point|$(x_{T,0}, x_{T,1}, y_{T,0}, y_{T,1})$|Result of doubling: $T = [2]A$|
+|Next accumulator|$(x_{A',0}, x_{A',1}, y_{A',0}, y_{A',1})$|Accumulator after conditional addition|
+|Quotient polynomials|$(q_{C1}, q_{C2}, q_{C3}, q_{C4})$|Quotients for each constraint equation|
+|Infinity indicator|$\text{ind}$|1 if $T = O$ (point at infinity), 0 otherwise|
+
+Total witness polynomials: 17 (12 coordinate + 4 quotient + 1 indicator)
+
+##### MLE Representation
+
+Each witness component is encoded as a multilinear extension over $\ell = 8$ variables (for 256-bit scalars):
+
+|MLE|Evaluations on $\{0,1\}^8$|
+|---|---|
+|$\widetilde{x_{A,0}}(s)$|$(x_{A_0,0}, x_{A_1,0}, \ldots, x_{A_{255},0})$|
+|$\widetilde{x_{A,1}}(s)$|$(x_{A_0,1}, x_{A_1,1}, \ldots, x_{A_{255},1})$|
+|$\widetilde{y_{A,0}}(s)$|$(y_{A_0,0}, y_{A_1,0}, \ldots, y_{A_{255},0})$|
+|$\widetilde{y_{A,1}}(s)$|$(y_{A_0,1}, y_{A_1,1}, \ldots, y_{A_{255},1})$|
+|$\widetilde{q_{C1}}(s)$|Quotient evaluations for constraint $C_1$|
+|$\widetilde{q_{C2}}(s)$|Quotient evaluations for constraint $C_2$|
+|$\widetilde{q_{C3}}(s)$|Quotient evaluations for constraint $C_3$|
+|$\widetilde{q_{C4}}(s)$|Quotient evaluations for constraint $C_4$|
+|$\widetilde{\text{ind}}(s)$|$(\text{ind}_0, \text{ind}_1, \ldots, \text{ind}_{255})$|
+
+Similar MLEs exist for $T$ and $A'$ coordinates.
+
+##### Constraint System via Ring Switching
+
+Each elliptic curve constraint over $\mathbb{F}_{q^2}$ is transformed into constraints over $\mathbb{F}_q$ using ring switching. We'll show this transformation explicitly for each constraint.
+
+**C1 (Doubling - x-coordinate)**:
+
+Original constraint over $\mathbb{F}_{q^2}$: $4y_A^2(x_T + 2x_A) - 9x_A^4 = 0$
+
+Substituting $x_A = x_{A,0} + x_{A,1}u$, $y_A = y_{A,0} + y_{A,1}u$, $x_T = x_{T,0} + x_{T,1}u$:
+
+First, compute $y_A^2 = (y_{A,0} + y_{A,1}u)^2 = (y_{A,0}^2 - y_{A,1}^2) + 2y_{A,0}y_{A,1}u$
+
+And $x_A^4 = (x_{A,0} + x_{A,1}u)^4$. Using $u^2 = -1$:
+- $x_A^2 = (x_{A,0}^2 - x_{A,1}^2) + 2x_{A,0}x_{A,1}u$
+- $x_A^4 = (x_{A,0}^4 - 6x_{A,0}^2x_{A,1}^2 + x_{A,1}^4) + 4x_{A,0}x_{A,1}(x_{A,0}^2 - x_{A,1}^2)u$
+
+The full constraint expands to a polynomial $f(u) = f_0 + f_1u + f_2u^2 + f_3u^3 + f_4u^4$.
+
+Using ring switching with quotient $q_{C1}(u) = q_{C1,0} + q_{C1,1}u$:
+$$f(u) = q_{C1}(u) \cdot (u^2 + 1)$$
+
+Expanding and matching coefficients of $u^0$ and $u^1$:
+- **C1a**: $f_0 + q_{C1,0} = 0$
+- **C1b**: $f_1 + q_{C1,1} = 0$
+
+Where explicitly:
+$$f_0 = 4(y_{A,0}^2 - y_{A,1}^2)(x_{T,0} + 2x_{A,0}) + 8y_{A,0}y_{A,1}(x_{T,1} + 2x_{A,1}) - 9(x_{A,0}^4 - 6x_{A,0}^2x_{A,1}^2 + x_{A,1}^4)$$
+$$f_1 = 4(y_{A,0}^2 - y_{A,1}^2)(x_{T,1} + 2x_{A,1}) + 8y_{A,0}y_{A,1}(x_{T,0} + 2x_{A,0}) - 36x_{A,0}x_{A,1}(x_{A,0}^2 - x_{A,1}^2)$$
+
+**C2 (Doubling - y-coordinate)**:
+
+Original: $3x_A^2(x_T - x_A) + 2y_A(y_T + y_A) = 0$
+
+After expansion with quotient $q_{C2}(u) = q_{C2,0} + q_{C2,1}u$:
+- **C2a**: $g_0 + q_{C2,0} = 0$
+- **C2b**: $g_1 + q_{C2,1} = 0$
+
+Where:
+$$g_0 = 3(x_{A,0}^2 - x_{A,1}^2)(x_{T,0} - x_{A,0}) + 6x_{A,0}x_{A,1}(x_{T,1} - x_{A,1}) + 2(y_{A,0}y_{T,0} - y_{A,1}y_{T,1} + y_{A,0}^2 - y_{A,1}^2)$$
+$$g_1 = 3(x_{A,0}^2 - x_{A,1}^2)(x_{T,1} - x_{A,1}) + 6x_{A,0}x_{A,1}(x_{T,0} - x_{A,0}) + 2(y_{A,0}y_{T,1} + y_{A,1}y_{T,0} + 2y_{A,0}y_{A,1})$$
+
+**C3 (Unified addition - x-coordinate)**:
+
+The constraint structure with infinity indicator $\text{ind}$:
+$$C_3 = \text{ind} \cdot (\text{InfinityCase}) + (1 - \text{ind}) \cdot (\text{FiniteCase})$$
+
+InfinityCase: $x_{A'} \cdot (x_{A'} - x_P) = 0$ over $\mathbb{F}_{q^2}$
+
+FiniteCase: $(x_{A'} - x_T)[(x_{A'} + x_T + x_P)(x_P - x_T)^2 - (y_P - y_T)^2] = 0$
+
+After ring switching with quotient $q_{C3}(u) = q_{C3,0} + q_{C3,1}u$:
+- **C3a**: $h_0 + q_{C3,0} = 0$
+- **C3b**: $h_1 + q_{C3,1} = 0$
+
+**C4 (Unified addition - y-coordinate)**:
+
+Similar structure with quotient $q_{C4}(u) = q_{C4,0} + q_{C4,1}u$:
+- **C4a**: $k_0 + q_{C4,0} = 0$
+- **C4b**: $k_1 + q_{C4,1} = 0$
+
+##### Summary of Constraints over $\mathbb{F}_q$
+
+The ring switching transforms our 4 constraints over $\mathbb{F}_{q^2}$ into 8 constraints over $\mathbb{F}_q$:
+1. **C1a, C1b**: Doubling x-coordinate constraints
+2. **C2a, C2b**: Doubling y-coordinate constraints
+3. **C3a, C3b**: Addition x-coordinate constraints
+4. **C4a, C4b**: Addition y-coordinate constraints
+
+Each pair uses a quotient polynomial $(q_{i,0}, q_{i,1})$ to enable the transformation from $\mathbb{F}_{q^2}$ to $\mathbb{F}_q$.
+
+##### Constraint Degrees
+
+Due to the quotient multiplication and $\mathbb{F}_{q^2}$ arithmetic:
+
+|Constraint|Degree without quotient|Degree with quotient|
+|---|---|---|
+|$C_1$|8 (due to $x_A^4$ in $\mathbb{F}_{q^2}$)|10|
+|$C_2$|6|8|
+|$C_3$|8 (with indicator)|10|
+|$C_4$|7 (with indicator)|9|
+
+Maximum degree: 10
+
+##### Sum-Check Protocol
+
+The prover establishes that all constraints vanish:
+$$0 = \sum_{s \in \{0,1\}^{8}} \widetilde{\text{eq}}(r, s) \cdot \sum_{j=1}^{4} \delta^{j-1} \cdot C_{j,\text{G2}}(s)$$
+
+where:
+- $r \in \mathbb{F}^8$ is a random challenge vector
+- $\delta \in \mathbb{F}$ batches the four constraint types
+- Each $C_{j,\text{G2}}$ includes the quotient term
+
+**Protocol**:
+1. Verifier sends $\delta \leftarrow \mathbb{F}$
+2. Verifier sends $r \leftarrow \mathbb{F}^8$
+3. Prover and Verifier run sum-check (degree 10 rounds)
+4. At final challenge $r' \in \mathbb{F}^8$, prover sends all 17 witness MLE evaluations
+5. Verifier checks claims via PCS opening proofs
+
+##### Output Claims
+
+After sum-check completes at challenge $r'$, the prover provides:
+
+|Claim|Value|Description|
+|---|---|---|
+|$\widetilde{x_{A,0}}(r')$|$v_{x_{A,0}}$|$x_0$ coefficient of accumulator|
+|$\widetilde{x_{A,1}}(r')$|$v_{x_{A,1}}$|$x_1$ coefficient of accumulator|
+|$\widetilde{y_{A,0}}(r')$|$v_{y_{A,0}}$|$y_0$ coefficient of accumulator|
+|$\widetilde{y_{A,1}}(r')$|$v_{y_{A,1}}$|$y_1$ coefficient of accumulator|
+|...|...|Similar for $T$ and $A'$ coordinates|
+|$\widetilde{q_{C1}}(r')$|$v_{q_{C1}}$|Quotient for constraint $C_1$|
+|$\widetilde{q_{C2}}(r')$|$v_{q_{C2}}$|Quotient for constraint $C_2$|
+|$\widetilde{q_{C3}}(r')$|$v_{q_{C3}}$|Quotient for constraint $C_3$|
+|$\widetilde{q_{C4}}(r')$|$v_{q_{C4}}$|Quotient for constraint $C_4$|
+|$\widetilde{\text{ind}}(r')$|$v_{\text{ind}}$|Infinity indicator|
+
+Total: 17 claims
+
+##### Witness Generation
+
+###### Trace Generation with Quotients
+
+```
+GenerateG2Trace(P, k, n):
+    Input:  P = (x_P, y_P) ∈ G2, scalar k, bit-length n
+    Output: Trace T[0..255] with coordinate and quotient data
+
+    bits ← BitDecompose(k, 256)  // LSB first
+    A ← O                         // Initialize with point at infinity
+
+    for i in 0..255:
+        // Store current accumulator Fq2 coordinates as Fq coefficients
+        T[i].x_A_0, T[i].x_A_1 ← Fq2ToCoeffs(A.x)
+        T[i].y_A_0, T[i].y_A_1 ← Fq2ToCoeffs(A.y)
+
+        // Double in G2
+        Temp ← PointDoubleG2(A)
+        T[i].x_T_0, T[i].x_T_1 ← Fq2ToCoeffs(Temp.x)
+        T[i].y_T_0, T[i].y_T_1 ← Fq2ToCoeffs(Temp.y)
+
+        // Compute doubling constraint quotients
+        T[i].q_C1 ← ComputeDoublingXQuotient(A, Temp)
+        T[i].q_C2 ← ComputeDoublingYQuotient(A, Temp)
+
+        // Infinity indicator
+        T[i].ind ← IsInfinity(Temp) ? 1 : 0
+
+        // Conditional add
+        if bits[i] = 1:
+            A_next ← PointAddG2(Temp, P)
+        else:
+            A_next ← Temp
+
+        T[i].x_A'_0, T[i].x_A'_1 ← Fq2ToCoeffs(A_next.x)
+        T[i].y_A'_0, T[i].y_A'_1 ← Fq2ToCoeffs(A_next.y)
+
+        // Compute addition constraint quotients
+        T[i].q_C3 ← ComputeAdditionXQuotient(Temp, P, A_next, T[i].ind)
+        T[i].q_C4 ← ComputeAdditionYQuotient(Temp, P, A_next, T[i].ind)
+
+        A ← A_next
+
+    return T
+```
+
+###### Quotient Computation Example
+
+```
+ComputeDoublingXQuotient(A, T):
+    // Compute LHS of constraint as polynomial in u
+    x_A = x_A_0 + x_A_1 * u
+    y_A = y_A_0 + y_A_1 * u
+    x_T = x_T_0 + x_T_1 * u
+
+    // LHS = 4y_A²(x_T + 2x_A) - 9x_A⁴
+    // Expand as polynomial in u (degree up to 4)
+    LHS_poly = ExpandPolynomial(4*y_A*y_A*(x_T + 2*x_A) - 9*x_A^4)
+
+    // LHS_poly = c0 + c1*u + c2*u² + c3*u³ + c4*u⁴
+    // Since u² = -1, reduce modulo (u² + 1):
+    // u² → -1, u³ → -u, u⁴ → 1
+
+    // After reduction: LHS_reduced = d0 + d1*u + q*(u² + 1)
+    // where q is the quotient polynomial
+
+    q_coeffs = ComputeQuotientCoeffs(LHS_poly, u² + 1)
+    return q_coeffs
+```
+
+##### Boundary Constraints
+
+|Constraint|Description|
+|---|---|
+|$A_0 = O$|Standard initialization with point at infinity|
+|$A_{256} = Q$|Output consistency (accumulator equals final result)|
+|Quotient validity|Each quotient polynomial correctly divides the constraint|
 
 ---
 

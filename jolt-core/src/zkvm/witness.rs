@@ -46,8 +46,8 @@ pub enum CommittedPolynomial {
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
     RamRa(usize),
-    /// Dory constraint matrix polynomial for recursion
-    DoryConstraintMatrix,
+    /// Dory dense matrix polynomial for recursion (after jagged transform)
+    DoryDenseMatrix,
 }
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
@@ -239,8 +239,8 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
-            CommittedPolynomial::DoryConstraintMatrix => {
-                panic!("DoryConstraintMatrix is not generated from witness data")
+            CommittedPolynomial::DoryDenseMatrix => {
+                panic!("DoryDenseMatrix is not generated from witness data")
             }
         }
     }
@@ -385,8 +385,8 @@ impl CommittedPolynomial {
                         results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
-                CommittedPolynomial::DoryConstraintMatrix => {
-                    panic!("DoryConstraintMatrix is not generated from witness data")
+                CommittedPolynomial::DoryDenseMatrix => {
+                    panic!("DoryDenseMatrix is not generated from witness data")
                 }
             }
         }
@@ -472,8 +472,8 @@ impl CommittedPolynomial {
                     one_hot_params.k_chunk,
                 ))
             }
-            CommittedPolynomial::DoryConstraintMatrix => {
-                panic!("DoryConstraintMatrix is not generated from witness data")
+            CommittedPolynomial::DoryDenseMatrix => {
+                panic!("DoryDenseMatrix is not generated from witness data")
             }
         }
     }
@@ -548,6 +548,8 @@ pub enum VirtualPolynomial {
     RecursionG1ScalarMulXANext(usize), // x_A' values (shifted) for G1 scalar mul constraint i
     RecursionG1ScalarMulYANext(usize), // y_A' values (shifted) for G1 scalar mul constraint i
     RecursionG1ScalarMulIndicator(usize), // Infinity indicator for G1 scalar mul constraint i
+    // Dory sparse constraint matrix - virtualized in Stage 2, dense version committed in Stage 3
+    DorySparseConstraintMatrix,
 }
 
 pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock::new(|| {

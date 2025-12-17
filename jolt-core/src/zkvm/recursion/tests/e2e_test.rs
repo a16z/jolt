@@ -13,7 +13,10 @@ use crate::{
     },
     transcripts::{Blake2bTranscript, Transcript},
     zkvm::{
-        recursion::{ConstraintType, RecursionProver, RecursionVerifier, RecursionVerifierInput},
+        recursion::{
+            bijection::{JaggedTransform, VarCountJaggedBijection},
+            ConstraintType, RecursionProver, RecursionVerifier, RecursionVerifierInput,
+        },
     },
 };
 use ark_bn254::{Fq, Fr};
@@ -102,7 +105,13 @@ fn test_recursion_snark_e2e_with_dory() {
     let num_vars = prover.constraint_system.num_vars();
     let num_s_vars = prover.constraint_system.num_s_vars();
     let matrix_num_vars = prover.constraint_system.matrix.num_vars;
+    let num_constraint_vars = prover.constraint_system.matrix.num_constraint_vars;
     let num_constraints_padded = prover.constraint_system.matrix.num_constraints_padded;
+
+    // Build dense polynomial and bijection for Stage 3
+    let (dense_poly, jagged_bijection) = prover.constraint_system.build_dense_polynomial();
+    let dense_num_vars = dense_poly.get_num_vars();
+
 
     // Extract constraint types for verification
     let constraint_types: Vec<ConstraintType> = prover
@@ -133,8 +142,9 @@ fn test_recursion_snark_e2e_with_dory() {
     println!("  - GT mul constraints: {}", gt_mul_count);
     println!("  - G1 scalar mul constraints: {}", g1_scalar_mul_count);
 
-    // ============ RUN TWO-STAGE RECURSION PROTOCOL ============
-    println!("\nStarting two-stage recursion protocol...");
+
+    // ============ RUN THREE-STAGE RECURSION PROTOCOL ============
+    println!("\nStarting three-stage recursion protocol...");
 
     // Create transcript for proving
     let mut prover_transcript = Blake2bTranscript::new(b"recursion_snark");
@@ -144,18 +154,16 @@ fn test_recursion_snark_e2e_with_dory() {
     type HyraxPCS = Hyrax<RATIO, GrumpkinProjective>;
 
     println!("\nSetting up Hyrax PCS...");
-    let hyrax_prover_setup = <HyraxPCS as CommitmentScheme>::setup_prover(matrix_num_vars);
+    let hyrax_prover_setup = <HyraxPCS as CommitmentScheme>::setup_prover(dense_num_vars);
 
-    // Commit to the constraint matrix using Hyrax
-    // Need to extract matrix evaluations before moving prover
-    let matrix_evaluations = prover.constraint_system.matrix.evaluations.clone();
-    println!("Matrix evaluations length: {}", matrix_evaluations.len());
-    println!("Matrix num_vars: {}", matrix_num_vars);
-    let matrix_poly = MultilinearPolynomial::from(matrix_evaluations);
-    let (matrix_commitment, _) =
-        <HyraxPCS as CommitmentScheme>::commit(&matrix_poly, &hyrax_prover_setup);
+    // Commit to the dense polynomial using Hyrax (after jagged transform)
+    println!("Dense polynomial evaluations length: {}", dense_poly.Z.len());
+    println!("Dense num_vars: {}", dense_num_vars);
+    let dense_mlpoly = MultilinearPolynomial::from(dense_poly.Z);
+    let (dense_commitment, _) =
+        <HyraxPCS as CommitmentScheme>::commit(&dense_mlpoly, &hyrax_prover_setup);
 
-    println!("Matrix commitment created");
+    println!("Dense polynomial commitment created");
 
     // Run the unified prover
     let recursion_proof = prover
@@ -171,9 +179,11 @@ fn test_recursion_snark_e2e_with_dory() {
     let verifier_input = RecursionVerifierInput {
         constraint_types,
         num_vars,
+        num_constraint_vars,
         num_s_vars,
         num_constraints,
         num_constraints_padded,
+        jagged_bijection,
     };
 
     // Create verifier
@@ -190,7 +200,7 @@ fn test_recursion_snark_e2e_with_dory() {
         .verify::<Blake2bTranscript, HyraxPCS>(
             &recursion_proof,
             &mut verifier_transcript,
-            &matrix_commitment,
+            &dense_commitment,
             &hyrax_verifier_setup,
         )
         .expect("Verification should not fail");

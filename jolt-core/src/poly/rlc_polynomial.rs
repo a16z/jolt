@@ -110,7 +110,7 @@ impl<F: JoltField> RLCPolynomial<F> {
 
                 for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
                     match poly_id {
-                        CommittedPolynomial::RdInc | CommittedPolynomial::RamInc | CommittedPolynomial::DoryConstraintMatrix => {
+                        CommittedPolynomial::RdInc | CommittedPolynomial::RamInc | CommittedPolynomial::DoryDenseMatrix => {
                             dense_polys.push((*poly_id, *coeff));
                         }
                         CommittedPolynomial::InstructionRa(_)
@@ -355,8 +355,8 @@ impl<F: JoltField> RLCPolynomial<F> {
             | CommittedPolynomial::RamRa(_) => {
                 panic!("One-hot polynomials should not be passed to extract_dense_value")
             }
-            CommittedPolynomial::DoryConstraintMatrix => {
-                panic!("DoryConstraintMatrix is not from witness generation")
+            CommittedPolynomial::DoryDenseMatrix => {
+                panic!("DoryDenseMatrix is not from witness generation")
             }
         }
     }
@@ -382,7 +382,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 &preprocessing.memory_layout,
             )
             .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize),
-            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc | CommittedPolynomial::DoryConstraintMatrix => {
+            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc | CommittedPolynomial::DoryDenseMatrix => {
                 panic!("Dense polynomials should not be passed to extract_onehot_k")
             }
         }

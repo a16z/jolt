@@ -183,6 +183,7 @@ pub enum SumcheckId {
     GtMul,                   // GT multiplication constraint verification
     G1ScalarMul,             // G1 scalar multiplication constraint verification
     RecursionVirtualization, // Phase 2: virtualization check
+    RecursionJagged,         // Phase 3: jagged transform check
     OpeningReduction,
 }
 
@@ -534,8 +535,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 r[log_K..].reverse();
                 r[..log_K].reverse();
             }
-            CommittedPolynomial::DoryConstraintMatrix => {
-                // DoryConstraintMatrix doesn't need any special reversing
+            CommittedPolynomial::DoryDenseMatrix => {
+                // Dory dense matrix doesn't need any special reversing
             }
         }
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, &r);

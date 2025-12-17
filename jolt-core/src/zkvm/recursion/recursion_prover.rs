@@ -22,7 +22,7 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        witness::CommittedPolynomial,
+        witness::{CommittedPolynomial, VirtualPolynomial},
         recursion::witness::{DoryRecursionWitness, G1ScalarMulWitness},
     },
 };
@@ -32,6 +32,7 @@ use dory::{backends::arkworks::ArkGT};
 use std::collections::HashMap;
 
 use super::{
+    bijection::VarCountJaggedBijection,
     constraints_sys::ConstraintSystem,
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
@@ -41,6 +42,7 @@ use super::{
     stage2::virtualization::{
         RecursionVirtualizationParams, RecursionVirtualizationProver,
     },
+    stage3::jagged::JaggedSumcheckProver,
 };
 use crate::subprotocols::{
     sumcheck::BatchedSumcheck,
@@ -54,6 +56,8 @@ pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Fie
     pub stage1_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
     /// Stage 2 virtualization sumcheck proof
     pub stage2_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+    /// Stage 3 jagged transform sumcheck proof
+    pub stage3_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
     /// PCS opening proof for the constraint matrix
     pub opening_proof: PCS::Proof,
     /// Gamma value used for batching constraints
@@ -322,20 +326,28 @@ impl<F: JoltField> RecursionProver<F> {
             &r_stage1,
         )?;
 
+        // ============ STAGE 3: Jagged Transform Sumcheck ============
+        let (stage3_proof, r_stage3) = self.prove_stage3(
+            transcript,
+            &mut accumulator,
+            &r_stage1,
+            &r_stage2,
+        )?;
+
         // ============ PCS OPENING PROOF ============
-        // Create polynomial map for prove_single
-        // Convert matrix evaluations from Fq to F (safe because F = Fq for recursion SNARK)
-        let matrix_evaluations_f = unsafe {
-            std::mem::transmute::<Vec<Fq>, Vec<F>>(
-                self.constraint_system.matrix.evaluations.clone()
-            )
+        // Now we commit to the dense polynomial instead of the full matrix
+        let (dense_poly, _bijection) = self.constraint_system.build_dense_polynomial();
+
+        // Convert dense polynomial evaluations to F
+        let dense_evaluations_f = unsafe {
+            std::mem::transmute::<Vec<Fq>, Vec<F>>(dense_poly.Z)
         };
-        let matrix_poly = MultilinearPolynomial::from(matrix_evaluations_f);
+        let dense_matrix_poly = MultilinearPolynomial::from(dense_evaluations_f);
         let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
             HashMap::new();
         polynomials_map.insert(
-            CommittedPolynomial::DoryConstraintMatrix,
-            matrix_poly,
+            CommittedPolynomial::DoryDenseMatrix,  // Using dense matrix now
+            dense_matrix_poly,
         );
 
         // Generate opening proof using PCS
@@ -354,6 +366,7 @@ impl<F: JoltField> RecursionProver<F> {
         let proof = RecursionProof {
             stage1_proof,
             stage2_proof,
+            stage3_proof,
             opening_proof,
             gamma: self.gamma,
             delta: self.delta,
@@ -383,26 +396,35 @@ impl<F: JoltField> RecursionProver<F> {
         let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
 
         // ============ STAGE 2: Virtualization Sumcheck ============
-        let (stage2_proof, _r_stage2) = self.prove_stage2(
+        let (stage2_proof, r_stage2) = self.prove_stage2(
             transcript,
             &mut accumulator,
             &r_stage1,
         )?;
 
+        // ============ STAGE 3: Jagged Transform Sumcheck ============
+        let (stage3_proof, _r_stage3) = self.prove_stage3(
+            transcript,
+            &mut accumulator,
+            &r_stage1,
+            &r_stage2,
+        )?;
+
         // ============ PCS OPENING PROOF ============
-        // Create polynomial map for prove_single
-        // Convert matrix evaluations from Fq to F (safe because F = Fq for recursion SNARK)
-        let matrix_evaluations_f = unsafe {
-            std::mem::transmute::<Vec<Fq>, Vec<F>>(
-                self.constraint_system.matrix.evaluations.clone()
-            )
+        // Now we commit to the dense polynomial instead of the full matrix
+        let (dense_poly, _bijection) = self.constraint_system.build_dense_polynomial();
+
+        // Convert dense polynomial evaluations to F
+        let dense_evaluations_f = unsafe {
+            std::mem::transmute::<Vec<Fq>, Vec<F>>(dense_poly.Z)
         };
-        let matrix_poly = MultilinearPolynomial::from(matrix_evaluations_f);
+        let dense_matrix_poly = MultilinearPolynomial::from(dense_evaluations_f);
+
         let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
             HashMap::new();
         polynomials_map.insert(
-            CommittedPolynomial::DoryConstraintMatrix,
-            matrix_poly,
+            CommittedPolynomial::DoryDenseMatrix,
+            dense_matrix_poly,
         );
 
         // Generate opening proof using PCS
@@ -421,6 +443,7 @@ impl<F: JoltField> RecursionProver<F> {
         let proof = RecursionProof {
             stage1_proof,
             stage2_proof,
+            stage3_proof,
             opening_proof,
             gamma: self.gamma,
             delta: self.delta,
@@ -586,7 +609,7 @@ impl<F: JoltField> RecursionProver<F> {
             num_s_vars,
             num_constraints,
             num_constraints_padded,
-            CommittedPolynomial::DoryConstraintMatrix,
+            VirtualPolynomial::DorySparseConstraintMatrix,
         );
 
         // Create virtualization prover
@@ -607,6 +630,63 @@ impl<F: JoltField> RecursionProver<F> {
         );
 
         Ok((proof, r_stage2))
+    }
+
+    /// Run Stage 3: Jagged Transform Sumcheck
+    fn prove_stage3<T: Transcript>(
+        &self,
+        transcript: &mut T,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        r_stage1: &[<F as JoltField>::Challenge],
+        r_stage2: &[<F as JoltField>::Challenge],
+    ) -> Result<(crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>, Vec<<F as JoltField>::Challenge>), Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for constraint system operations
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK constraint system requires F = Fq");
+        }
+
+        // Get the opening claim from Stage 2 (the last claim in the accumulator)
+        let stage2_opening = accumulator.openings.values().last()
+            .ok_or("No opening claim from Stage 2")?
+            .clone();
+        let sparse_claim_value = stage2_opening.1;
+
+        // Build dense polynomial and bijection
+        let (dense_poly_fq, bijection) = self.constraint_system.build_dense_polynomial();
+
+        // Convert dense polynomial from Fq to F (safe because F = Fq in recursion)
+        let dense_poly_f = DensePolynomial {
+            num_vars: dense_poly_fq.num_vars,
+            len: dense_poly_fq.len,
+            Z: unsafe { std::mem::transmute(dense_poly_fq.Z) },
+        };
+
+        // Convert r_stage2 (s challenges) and r_stage1 (x challenges) to F
+        let r_s_final: Vec<F> = r_stage2.iter().map(|c| (*c).into()).collect();
+        let r_x_prev: Vec<F> = r_stage1.iter().map(|c| (*c).into()).collect();
+
+        // Create Stage 3 prover
+        let mut jagged_prover = JaggedSumcheckProver::new(
+            (r_s_final, r_x_prev),
+            sparse_claim_value,
+            dense_poly_f,
+            bijection,
+            transcript,
+            self.constraint_system.num_s_vars(),
+            self.constraint_system.matrix.num_constraint_vars,
+        );
+
+
+        // Run the jagged sumcheck using BatchedSumcheck
+        let (proof, r_stage3) = BatchedSumcheck::prove(
+            vec![&mut jagged_prover],
+            accumulator,
+            transcript,
+        );
+
+        Ok((proof, r_stage3))
     }
 }
 

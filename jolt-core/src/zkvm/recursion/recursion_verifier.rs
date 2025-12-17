@@ -10,15 +10,16 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::VerifierOpeningAccumulator,
+        opening_proof::{OpeningAccumulator, VerifierOpeningAccumulator, SumcheckId},
     },
     transcripts::Transcript,
-    zkvm::witness::CommittedPolynomial,
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use ark_bn254::Fq;
 
 use super::{
-    constraints_sys::ConstraintType,
+    bijection::VarCountJaggedBijection,
+    constraints_sys::{ConstraintSystem, ConstraintType},
     recursion_prover::RecursionProof,
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier},
@@ -28,6 +29,7 @@ use super::{
     stage2::virtualization::{
         RecursionVirtualizationParams, RecursionVirtualizationVerifier,
     },
+    stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
 };
 use crate::subprotocols::{
     sumcheck::BatchedSumcheck,
@@ -41,12 +43,16 @@ pub struct RecursionVerifierInput {
     pub constraint_types: Vec<ConstraintType>,
     /// Number of variables in the constraint system
     pub num_vars: usize,
+    /// Number of constraint variables (x variables) in the matrix
+    pub num_constraint_vars: usize,
     /// Number of s-variables for virtualization
     pub num_s_vars: usize,
     /// Total number of constraints
     pub num_constraints: usize,
     /// Padded number of constraints
     pub num_constraints_padded: usize,
+    /// Jagged bijection for Stage 3
+    pub jagged_bijection: VarCountJaggedBijection,
 }
 
 /// Unified verifier for the recursion SNARK
@@ -104,6 +110,15 @@ impl<F: JoltField> RecursionVerifier<F> {
             &mut accumulator,
             &r_stage1,
             proof.gamma,
+        )?;
+
+        // ============ STAGE 3: Verify Jagged Transform Sumcheck ============
+        let _r_stage3 = self.verify_stage3(
+            &proof.stage3_proof,
+            transcript,
+            &mut accumulator,
+            &r_stage1,
+            &r_stage2,
         )?;
 
         // ============ PCS OPENING VERIFICATION ============
@@ -241,7 +256,7 @@ impl<F: JoltField> RecursionVerifier<F> {
             self.input.num_s_vars,
             self.input.num_constraints,
             self.input.num_constraints_padded,
-            CommittedPolynomial::DoryConstraintMatrix,
+            VirtualPolynomial::DorySparseConstraintMatrix,
         );
 
         // Create virtualization verifier
@@ -262,6 +277,68 @@ impl<F: JoltField> RecursionVerifier<F> {
         )?;
 
         Ok(r_stage2)
+    }
+
+    /// Verify Stage 3: Jagged transform sumcheck
+    fn verify_stage3<T: Transcript>(
+        &self,
+        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+        transcript: &mut T,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        r_stage1: &[<F as crate::field::JoltField>::Challenge],
+        r_stage2: &[<F as crate::field::JoltField>::Challenge],
+    ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
+        use std::any::TypeId;
+
+        // Runtime check that F = Fq for recursion SNARK
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK requires F = Fq");
+        }
+
+        // Get the Stage 2 opening claim (sparse matrix claim)
+        let (_, sparse_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::DorySparseConstraintMatrix, SumcheckId::RecursionVirtualization);
+
+        // Convert challenges to field elements
+        let r_s_final: Vec<F> = r_stage2
+            .iter()
+            .take(self.input.num_s_vars)
+            .map(|c| (*c).into())
+            .collect();
+        let r_x_prev: Vec<F> = r_stage1.iter().map(|c| (*c).into()).collect();
+
+        // Calculate number of dense variables based on the true dense size
+        // The dense polynomial now only includes unique values (no padding redundancy)
+        let dense_size = <VarCountJaggedBijection as crate::zkvm::recursion::bijection::JaggedTransform<Fq>>::dense_size(&self.input.jagged_bijection);
+        let num_dense_vars = dense_size
+            .next_power_of_two()
+            .trailing_zeros() as usize;
+
+        // Create jagged sumcheck parameters
+
+        let params = JaggedSumcheckParams::new(
+            self.input.num_s_vars,
+            self.input.num_constraint_vars,
+            num_dense_vars,
+        );
+
+        // Create jagged sumcheck verifier
+        let verifier = JaggedSumcheckVerifier::new(
+            (r_s_final, r_x_prev),
+            sparse_claim,
+            self.input.jagged_bijection.clone(),
+            params,
+        );
+
+
+        let r_stage3 = BatchedSumcheck::verify(
+            proof,
+            vec![&verifier],
+            accumulator,
+            transcript,
+        )?;
+
+        Ok(r_stage3)
     }
 }
 

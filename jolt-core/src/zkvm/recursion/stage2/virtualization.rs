@@ -125,8 +125,8 @@ pub struct RecursionVirtualizationParams {
     /// Sumcheck instance identifier
     pub sumcheck_id: SumcheckId,
 
-    /// Committed polynomial for M
-    pub polynomial: CommittedPolynomial,
+    /// Virtual polynomial for M (will be transformed to dense in Stage 3)
+    pub polynomial: VirtualPolynomial,
 }
 
 impl RecursionVirtualizationParams {
@@ -134,7 +134,7 @@ impl RecursionVirtualizationParams {
         num_s_vars: usize,
         num_constraints: usize,
         num_constraints_padded: usize,
-        polynomial: CommittedPolynomial,
+        polynomial: VirtualPolynomial,
     ) -> Self {
         Self {
             num_s_vars,
@@ -445,11 +445,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RecursionVirt
         );
         let m_claim = self.m_poly.get_bound_coeff(0);
 
-        accumulator.append_dense(
+        accumulator.append_virtual(
             transcript,
             self.params.polynomial,
             self.params.sumcheck_id,
-            opening_point.r,
+            opening_point,
             m_claim,
         );
     }
@@ -640,7 +640,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RecursionVi
     ) -> F {
         // Step 4: Output claim M(r_s_final,r_x) = c_m / eq(r_s,r_s_final)
         let (_, m_claim) = accumulator
-            .get_committed_polynomial_opening(self.params.polynomial, self.params.sumcheck_id);
+            .get_virtual_polynomial_opening(self.params.polynomial, self.params.sumcheck_id);
 
         let r_s_final: Vec<F> = sumcheck_challenges
             .iter()
@@ -671,11 +671,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RecursionVi
                 .collect(),
         );
 
-        accumulator.append_dense(
+        accumulator.append_virtual(
             transcript,
             self.params.polynomial,
             self.params.sumcheck_id,
-            opening_point.r,
+            opening_point,
         );
     }
 }

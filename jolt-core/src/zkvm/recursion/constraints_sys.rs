@@ -49,7 +49,7 @@ pub fn compute_constraint_formula(
 }
 
 /// Polynomial types stored in the matrix
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(usize)]
 pub enum PolyType {
     // GT Exponentiation polynomials

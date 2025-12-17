@@ -24,11 +24,13 @@
 //! - `recursion_prover`: Unified prover orchestrating both stages
 //! - `recursion_verifier`: Unified verifier for the complete protocol
 
+pub mod bijection;
 pub mod constraints_sys;
 pub mod recursion_prover;
 pub mod recursion_verifier;
 pub mod stage1;
 pub mod stage2;
+pub mod stage3;
 pub mod utils;
 pub mod witness;
 
@@ -36,6 +38,7 @@ pub mod witness;
 mod tests;
 
 // Re-export main types
+pub use bijection::{ConstraintMapping, JaggedTransform, VarCountJaggedBijection};
 pub use constraints_sys::{ConstraintSystem, ConstraintType, DoryMatrixBuilder, PolyType};
 pub use recursion_prover::{RecursionProof, RecursionProver};
 pub use recursion_verifier::{RecursionVerifier, RecursionVerifierInput};
@@ -47,4 +50,5 @@ pub use stage1::{
 pub use stage2::virtualization::{
     RecursionVirtualizationParams, RecursionVirtualizationProver, RecursionVirtualizationVerifier,
 };
+pub use stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckProver, JaggedSumcheckVerifier};
 pub use witness::{DoryRecursionWitness, G1ScalarMulWitness, GTExpWitness, GTMulWitness, WitnessData};

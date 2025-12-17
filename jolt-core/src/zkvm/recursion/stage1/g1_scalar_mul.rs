@@ -11,9 +11,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
@@ -515,7 +513,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for G1ScalarMulPr
 
                         // C3 and C4 now take indicator
                         let c3_fq = compute_c3(ind_fq, x_a_next_fq, x_t_fq, y_t_fq, x_p, y_p);
-                        let c4_fq = compute_c4(ind_fq, x_a_next_fq, y_a_next_fq, x_t_fq, y_t_fq, x_p, y_p);
+                        let c4_fq =
+                            compute_c4(ind_fq, x_a_next_fq, y_a_next_fq, x_t_fq, y_t_fq, x_p, y_p);
 
                         // Convert results back to F
                         let c1: F = unsafe { std::mem::transmute_copy(&c1_fq) };
@@ -611,95 +610,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for G1ScalarMulPr
     ) {
         let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(sumcheck_challenges.to_vec());
 
-        #[cfg(test)]
-        {
-            // Compute expected output claim on prover side
-            use crate::poly::eq_poly::EqPolynomial;
-
-            let r_x_f: Vec<F> = self.r_x.iter().map(|c| (*c).into()).collect();
-            let r_star_f: Vec<F> = sumcheck_challenges
-                .iter()
-                .rev()
-                .map(|c| (*c).into())
-                .collect();
-            let eq_eval = EqPolynomial::mle(&r_x_f, &r_star_f);
-
-            let mut total = F::zero();
-            let mut gamma_power = self.gamma;
-
-            for i in 0..self.params.num_constraints {
-                let (x_p, y_p) = self.base_points[i];
-
-                // Compute all 4 constraints using final claims
-                // SAFETY: We checked F = Fq in new(), so these transmutes are safe
-                let ind_fq: Fq = unsafe { std::mem::transmute_copy(&self.t_is_infinity_claims[i]) };
-                let x_a_fq: Fq = unsafe { std::mem::transmute_copy(&self.x_a_claims[i]) };
-                let y_a_fq: Fq = unsafe { std::mem::transmute_copy(&self.y_a_claims[i]) };
-                let x_t_fq: Fq = unsafe { std::mem::transmute_copy(&self.x_t_claims[i]) };
-                let y_t_fq: Fq = unsafe { std::mem::transmute_copy(&self.y_t_claims[i]) };
-                let x_a_next_fq: Fq = unsafe { std::mem::transmute_copy(&self.x_a_next_claims[i]) };
-                let y_a_next_fq: Fq = unsafe { std::mem::transmute_copy(&self.y_a_next_claims[i]) };
-
-                let c1_fq = compute_c1(x_a_fq, y_a_fq, x_t_fq);
-                let c2_fq = compute_c2(
-                    x_a_fq,
-                    y_a_fq,
-                    x_t_fq,
-                    y_t_fq,
-                );
-                let c3_fq = compute_c3(
-                    ind_fq,
-                    x_a_next_fq,
-                    x_t_fq,
-                    y_t_fq,
-                    x_p,
-                    y_p,
-                );
-                let c4_fq = compute_c4(
-                    ind_fq,
-                    x_a_next_fq,
-                    y_a_next_fq,
-                    x_t_fq,
-                    y_t_fq,
-                    x_p,
-                    y_p,
-                );
-
-                // Convert results back to F
-                let c1: F = unsafe { std::mem::transmute_copy(&c1_fq) };
-                let c2: F = unsafe { std::mem::transmute_copy(&c2_fq) };
-                let c3: F = unsafe { std::mem::transmute_copy(&c3_fq) };
-                let c4: F = unsafe { std::mem::transmute_copy(&c4_fq) };
-
-                let delta_sq = self.delta * self.delta;
-                let delta_cube = delta_sq * self.delta;
-                let constraint_value = c1 + self.delta * c2 + delta_sq * c3 + delta_cube * c4;
-
-                total += gamma_power * constraint_value;
-                gamma_power *= self.gamma;
-            }
-
-            let prover_expected = eq_eval * total;
-            eprintln!("=== G1 PROVER EXPECTED OUTPUT CLAIM ===");
-            eprintln!("eq_eval: {:?}", eq_eval);
-            eprintln!("total: {:?}", total);
-            eprintln!("Expected claim: {:?}", prover_expected);
-        }
-
         for i in 0..self.params.num_constraints {
-            #[cfg(test)]
-            {
-                eprintln!("=== G1 Prover cache_openings ===");
-                eprintln!("Constraint {}: storing claims", i);
-                eprintln!("  x_a_claim: {:?}", self.x_a_claims[i]);
-                eprintln!("  y_a_claim: {:?}", self.y_a_claims[i]);
-                eprintln!("  x_t_claim: {:?}", self.x_t_claims[i]);
-                eprintln!("  y_t_claim: {:?}", self.y_t_claims[i]);
-                eprintln!("  x_a_next_claim: {:?}", self.x_a_next_claims[i]);
-                eprintln!("  y_a_next_claim: {:?}", self.y_a_next_claims[i]);
-                eprintln!("  t_is_infinity_claim: {:?}", self.t_is_infinity_claims[i]);
-            }
-
             append_g1_scalar_mul_virtual_claims(
                 accumulator,
                 transcript,
@@ -817,7 +728,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for G1ScalarMul
             let y_t_claim_fq: Fq = unsafe { std::mem::transmute_copy(&y_t_claim) };
             let x_a_next_claim_fq: Fq = unsafe { std::mem::transmute_copy(&x_a_next_claim) };
             let y_a_next_claim_fq: Fq = unsafe { std::mem::transmute_copy(&y_a_next_claim) };
-            let t_is_infinity_claim_fq: Fq = unsafe { std::mem::transmute_copy(&t_is_infinity_claim) };
+            let t_is_infinity_claim_fq: Fq =
+                unsafe { std::mem::transmute_copy(&t_is_infinity_claim) };
 
             // Compute all 4 constraints
             let c1_fq = compute_c1(x_a_claim_fq, y_a_claim_fq, x_t_claim_fq);
