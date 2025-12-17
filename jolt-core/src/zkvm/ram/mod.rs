@@ -728,7 +728,7 @@ fn compute_ram_h_indices(
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
-) -> Vec<Vec<Option<u16>>> {
+) -> Vec<Vec<Option<u8>>> {
     let addresses: Vec<Option<u64>> = trace
         .par_iter()
         .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))

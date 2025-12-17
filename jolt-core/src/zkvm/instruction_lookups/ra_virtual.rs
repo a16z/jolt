@@ -125,7 +125,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
 
 #[derive(Allocative)]
 pub struct InstructionRaSumcheckProver<F: JoltField> {
-    ra_i_polys: Vec<RaPolynomial<u16, F>>,
+    ra_i_polys: Vec<RaPolynomial<u8, F>>,
     eq_poly: GruenSplitEqPolynomial<F>,
     #[allocative(skip)]
     params: InstructionRaSumcheckParams<F>,
@@ -139,7 +139,7 @@ impl<F: JoltField> InstructionRaSumcheckProver<F> {
             .one_hot_params
             .compute_r_address_chunks::<F>(&params.r_address.r);
 
-        let H_indices: Vec<Vec<Option<u16>>> = (0..params.one_hot_params.instruction_d)
+        let H_indices: Vec<Vec<Option<u8>>> = (0..params.one_hot_params.instruction_d)
             .map(|i| {
                 trace
                     .par_iter()

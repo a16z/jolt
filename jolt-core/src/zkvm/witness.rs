@@ -52,9 +52,9 @@ struct WitnessData {
     ram_inc: Vec<i128>,
 
     // One-hot polynomial indices
-    instruction_ra: Vec<Vec<Option<u16>>>,
-    bytecode_ra: Vec<Vec<Option<u16>>>,
-    ram_ra: Vec<Vec<Option<u16>>>,
+    instruction_ra: Vec<Vec<Option<u8>>>,
+    bytecode_ra: Vec<Vec<Option<u8>>>,
+    ram_ra: Vec<Vec<Option<u8>>>,
 }
 
 unsafe impl Send for WitnessData {}

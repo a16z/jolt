@@ -15,7 +15,7 @@ use jolt_core::{
 };
 
 fn compute_mles_product_sum_naive<F: JoltField>(
-    mles: &[RaPolynomial<u16, F>],
+    mles: &[RaPolynomial<u8, F>],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {

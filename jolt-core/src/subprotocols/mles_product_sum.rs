@@ -10,7 +10,7 @@ use num_traits::Zero;
 ///
 /// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[RaPolynomial<u16, F>],
+    mles: &[RaPolynomial<u8, F>],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
@@ -37,7 +37,7 @@ pub fn compute_mles_product_sum<F: JoltField>(
 /// arbitrary `d`.
 #[inline]
 fn compute_mles_product_sum_evals_generic<F: JoltField>(
-    mles: &[RaPolynomial<u16, F>],
+    mles: &[RaPolynomial<u8, F>],
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> Vec<F> {
     let d = mles.len();
@@ -110,7 +110,7 @@ macro_rules! impl_mles_product_sum_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
         pub fn $fn_name<F: JoltField>(
-            mles: &[RaPolynomial<u16, F>],
+            mles: &[RaPolynomial<u8, F>],
             eq_poly: &GruenSplitEqPolynomial<F>,
         ) -> Vec<F> {
             debug_assert_eq!(mles.len(), $d);
@@ -168,7 +168,7 @@ macro_rules! impl_mles_sum_of_products_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
         pub fn $fn_name<F: JoltField>(
-            mles: &[RaPolynomial<u16, F>],
+            mles: &[RaPolynomial<u8, F>],
             n_products: usize,
             eq_poly: &GruenSplitEqPolynomial<F>,
         ) -> Vec<F> {
@@ -1330,7 +1330,7 @@ mod tests {
         let n_products = 3;
         let total_mles = n_products * D;
 
-        let mut mles: Vec<RaPolynomial<u16, Fr>> = (0..total_mles)
+        let mut mles: Vec<RaPolynomial<u8, Fr>> = (0..total_mles)
             .map(|_| random_mle(n_vars, rng))
             .map(RaPolynomial::RoundN)
             .collect();

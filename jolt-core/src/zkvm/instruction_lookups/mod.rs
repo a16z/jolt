@@ -121,7 +121,7 @@ pub fn new_ra_one_hot_verifiers<F: JoltField>(
 fn compute_instruction_h_indices(
     trace: &[Cycle],
     one_hot_params: &OneHotParams,
-) -> Vec<Vec<Option<u16>>> {
+) -> Vec<Vec<Option<u8>>> {
     (0..one_hot_params.instruction_d)
         .map(|i| {
             trace

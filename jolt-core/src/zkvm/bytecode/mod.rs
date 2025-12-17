@@ -214,7 +214,7 @@ fn compute_bytecode_h_indices(
     preprocessing: &BytecodePreprocessing,
     trace: &[Cycle],
     one_hot_params: &OneHotParams,
-) -> Vec<Vec<Option<u16>>> {
+) -> Vec<Vec<Option<u8>>> {
     (0..one_hot_params.bytecode_d)
         .into_par_iter()
         .map(|i| {
