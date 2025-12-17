@@ -37,7 +37,8 @@ use crate::{
     zkvm::{
         bytecode::read_raf_checking::ReadRafSumcheckParams as BytecodeReadRafParams,
         claim_reductions::{
-            AdviceClaimReductionParams, AdviceClaimReductionProver,
+            AdviceClaimReductionPhase1Params, AdviceClaimReductionPhase1Prover,
+            AdviceClaimReductionPhase2Params, AdviceClaimReductionPhase2Prover,
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
             IncReductionSumcheckParams, IncReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
@@ -139,6 +140,10 @@ pub struct JoltCpuProver<
     pub lazy_trace: LazyTraceIterator,
     pub trace: Arc<Vec<Cycle>>,
     pub advice: JoltAdvice<F, PCS>,
+    /// Phase-bridge randomness for two-phase advice claim reduction.
+    /// Stored after Stage 6 initialization and reused in Stage 7.
+    advice_reduction_gamma_trusted: Option<F>,
+    advice_reduction_gamma_untrusted: Option<F>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -227,6 +232,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
+        // Dory globals are process-wide (OnceCell). In tests we run many end-to-end proofs with
+        // different trace lengths in a single process, so reset before each prover construction.
+        #[cfg(test)]
+        crate::poly::commitment::dory::DoryGlobals::reset();
+
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
             program_io
@@ -243,36 +253,50 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         } else {
             (trace.len() + 1).next_power_of_two()
         };
-        // We may need extra padding so the main Dory matrix has enough column variables
-        // to embed advice commitments committed in their own 1-row contexts.
+        // We may need extra padding so the main Dory matrix has enough (row, col) variables
+        // to embed advice commitments committed in their own preprocessing-only contexts.
         let mut padded_trace_len = padded_trace_len;
         let has_trusted_advice = !program_io.trusted_advice.is_empty();
         let has_untrusted_advice = !program_io.untrusted_advice.is_empty();
-        let mut max_advice_vars = 0usize;
+        // Canonical advice shape policy (balanced):
+        // - advice_vars = log2(advice_len)
+        // - sigma_a = ceil(advice_vars/2)
+        // - nu_a    = advice_vars - sigma_a
+        let mut max_sigma_a = 0usize;
+        let mut max_nu_a = 0usize;
         if has_trusted_advice {
             let words = (preprocessing.memory_layout.max_trusted_advice_size as usize) / 8;
-            let cols = words.next_power_of_two().max(1);
-            max_advice_vars = max_advice_vars.max(cols.log_2());
+            let advice_len = words.next_power_of_two().max(1);
+            let advice_vars = advice_len.log_2();
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+            max_sigma_a = max_sigma_a.max(sigma_a);
+            max_nu_a = max_nu_a.max(nu_a);
         }
         if has_untrusted_advice {
             let words = (preprocessing.memory_layout.max_untrusted_advice_size as usize) / 8;
-            let cols = words.next_power_of_two().max(1);
-            max_advice_vars = max_advice_vars.max(cols.log_2());
+            let advice_len = words.next_power_of_two().max(1);
+            let advice_vars = advice_len.log_2();
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+            max_sigma_a = max_sigma_a.max(sigma_a);
+            max_nu_a = max_nu_a.max(nu_a);
         }
-        if max_advice_vars > 0 {
-            // Require main sigma (columns exponent) >= max_advice_vars so advice fits in the
-            // leftmost columns of the main matrix.
+
+        if max_sigma_a > 0 || max_nu_a > 0 {
+            // Require main matrix dimensions to be large enough to embed advice as the top-left
+            // block: sigma_main >= sigma_a and nu_main >= nu_a.
             while {
                 let log_t = padded_trace_len.log_2();
                 let log_k_chunk = get_log_k_chunk_from_log_t(log_t);
                 let total_vars = log_k_chunk + log_t;
                 let sigma_main = total_vars.div_ceil(2);
-                sigma_main < max_advice_vars
+                let nu_main = total_vars - sigma_main;
+                sigma_main < max_sigma_a || nu_main < max_nu_a
             } {
-                // Double T (keep power-of-two) until constraint holds.
                 if padded_trace_len >= preprocessing.max_padded_trace_length {
                     panic!(
-                        "Trace too small to embed advice into single Dory opening: need main sigma >= {max_advice_vars}, \
+                        "Trace too small to embed advice into single Dory opening: need (sigma_main, nu_main) >= ({max_sigma_a}, {max_nu_a}), \
 but reached max_padded_trace_length={} (increase max_trace_length in preprocessing or reduce max_*_advice_size)",
                         preprocessing.max_padded_trace_length
                     );
@@ -326,6 +350,8 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
                 untrusted_advice_hint: None,
                 trusted_advice_hint,
             },
+            advice_reduction_gamma_trusted: None,
+            advice_reduction_gamma_untrusted: None,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -575,11 +601,8 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             return None;
         }
 
-        // Commit untrusted advice in its dedicated Dory context, using a fixed 1-row matrix.
-        //
-        // This makes the advice commitment independent of the trace length, while still allowing
-        // Stage 8 to batch it into the single Dory opening proof by interpreting it as a
-        // zero-padded submatrix of the main polynomial matrix.
+        // Commit untrusted advice in its dedicated Dory context, using a preprocessing-only
+        // matrix shape derived deterministically from the advice length (balanced dims).
 
         let mut untrusted_advice_vec =
             vec![0; self.program_io.memory_layout.max_untrusted_advice_size as usize / 8];
@@ -592,8 +615,14 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         );
 
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
-        let advice_cols = poly.len();
-        let _guard = DoryGlobals::initialize_untrusted_advice_1row(advice_cols);
+        let advice_len = poly.len().next_power_of_two().max(1);
+        let advice_vars = advice_len.log_2();
+        let sigma_a = advice_vars.div_ceil(2);
+        let nu_a = advice_vars - sigma_a;
+        let num_rows = 1usize << nu_a;
+        let num_cols = 1usize << sigma_a;
+
+        let _guard = DoryGlobals::initialize_untrusted_advice_matrix(num_rows, num_cols);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript.append_serializable(&commitment);
@@ -1044,8 +1073,14 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             &mut self.transcript,
         );
 
-        // Advice claim reduction - may be None if no advice present
-        let advice_reduction_params = AdviceClaimReductionParams::new(
+        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        let trusted_advice_phase1_params = AdviceClaimReductionPhase1Params::new_trusted(
+            &self.program_io.memory_layout,
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let untrusted_advice_phase1_params = AdviceClaimReductionPhase1Params::new_untrusted(
             &self.program_io.memory_layout,
             self.trace.len(),
             &self.opening_accumulator,
@@ -1080,13 +1115,24 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         let inc_reduction =
             IncReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 
-        // Initialize advice reduction prover if there's advice
-        let advice_reduction = advice_reduction_params.map(|params| {
-            AdviceClaimReductionProver::initialize(
-                params,
-                self.advice.trusted_advice_polynomial.clone(),
-                self.advice.untrusted_advice_polynomial.clone(),
-            )
+        // Initialize Phase 1 provers (Stage 6) if advice is present.
+        let trusted_advice_phase1 = trusted_advice_phase1_params.map(|params| {
+            self.advice_reduction_gamma_trusted = Some(params.gamma);
+            let poly = self
+                .advice
+                .trusted_advice_polynomial
+                .clone()
+                .expect("trusted advice params exist but polynomial is missing");
+            AdviceClaimReductionPhase1Prover::initialize(params, poly)
+        });
+        let untrusted_advice_phase1 = untrusted_advice_phase1_params.map(|params| {
+            self.advice_reduction_gamma_untrusted = Some(params.gamma);
+            let poly = self
+                .advice
+                .untrusted_advice_polynomial
+                .clone()
+                .expect("untrusted advice params exist but polynomial is missing");
+            AdviceClaimReductionPhase1Prover::initialize(params, poly)
         });
 
         #[cfg(feature = "allocative")]
@@ -1100,8 +1146,17 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncReductionSumcheckProver", &inc_reduction);
-            if let Some(ref advice) = advice_reduction {
-                print_data_structure_heap_usage("AdviceClaimReductionProver", advice);
+            if let Some(ref advice) = trusted_advice_phase1 {
+                print_data_structure_heap_usage(
+                    "AdviceClaimReductionPhase1Prover(trusted)",
+                    advice,
+                );
+            }
+            if let Some(ref advice) = untrusted_advice_phase1 {
+                print_data_structure_heap_usage(
+                    "AdviceClaimReductionPhase1Prover(untrusted)",
+                    advice,
+                );
             }
         }
 
@@ -1113,7 +1168,10 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             Box::new(lookups_ra_virtual),
             Box::new(inc_reduction),
         ];
-        if let Some(advice) = advice_reduction {
+        if let Some(advice) = trusted_advice_phase1 {
+            instances.push(Box::new(advice));
+        }
+        if let Some(advice) = untrusted_advice_phase1 {
             instances.push(Box::new(advice));
         }
 
@@ -1149,7 +1207,7 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let mut hw_prover = HammingWeightClaimReductionProver::initialize(
+        let hw_prover = HammingWeightClaimReductionProver::initialize(
             hw_params,
             &self.trace,
             self.preprocessing,
@@ -1159,14 +1217,51 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
 
-        // 3. Run sumcheck (only log_k_chunk rounds!)
-        let instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>> =
-            vec![&mut hw_prover];
+        // 3. Run Stage 7 batched sumcheck (address rounds only).
+        // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![Box::new(hw_prover)];
+
+        if let Some(gamma) = self.advice_reduction_gamma_trusted {
+            if let Some(params) = AdviceClaimReductionPhase2Params::new_trusted(
+                &self.program_io.memory_layout,
+                self.trace.len(),
+                gamma,
+                &self.opening_accumulator,
+            ) {
+                let poly = self
+                    .advice
+                    .trusted_advice_polynomial
+                    .clone()
+                    .expect("trusted advice phase2 params exist but polynomial is missing");
+                instances.push(Box::new(AdviceClaimReductionPhase2Prover::initialize(
+                    params, poly,
+                )));
+            }
+        }
+        if let Some(gamma) = self.advice_reduction_gamma_untrusted {
+            if let Some(params) = AdviceClaimReductionPhase2Params::new_untrusted(
+                &self.program_io.memory_layout,
+                self.trace.len(),
+                gamma,
+                &self.opening_accumulator,
+            ) {
+                let poly = self
+                    .advice
+                    .untrusted_advice_polynomial
+                    .clone()
+                    .expect("untrusted advice phase2 params exist but polynomial is missing");
+                instances.push(Box::new(AdviceClaimReductionPhase2Prover::initialize(
+                    params, poly,
+                )));
+            }
+        }
+
         let (sumcheck_proof, r_address_stage7) = BatchedSumcheck::prove(
-            instances,
+            instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
+        drop_in_background_thread(instances);
 
         // 4. Collect all claims for DoryOpeningState
         let mut claims = Vec::new();
@@ -1265,19 +1360,28 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         {
             let advice_vars = advice_point.len();
             // Dory uses little-endian variable order; the commitment layer reverses the opening point.
-            // Compute the embedding selector for a 1-row advice matrix placed in the first 2^advice_vars columns:
-            //   selector = eq(row_bits, 0) * eq(col_bits[advice_vars..], 0)
+            // Compute the embedding selector for a top-left advice block (balanced dims):
+            // - col selector: fix high column bits to 0  -> ∏_{i=sigma_a..sigma_main-1} (1 - r_cols[i])
+            // - row selector: fix high row bits to 0     -> ∏_{i=nu_a..nu_main-1}   (1 - r_rows[i])
             let mut r_le = opening_point.clone();
             r_le.reverse();
-            let sigma = DoryGlobals::get_num_columns().log_2();
-            let nu = DoryGlobals::get_max_num_rows().log_2();
-            debug_assert_eq!(sigma + nu, r_le.len());
+            // Derive (sigma_main, nu_main) from the unified point length (Dory order).
+            // Avoid relying on process-wide DoryGlobals context here.
+            let total_vars = r_le.len();
+            let sigma = total_vars.div_ceil(2);
             let (r_cols, r_rows) = r_le.split_at(sigma);
 
-            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+
+            let row_factor: F = r_rows
+                .iter()
+                .skip(nu_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
             let col_prefix_factor: F = r_cols
                 .iter()
-                .skip(advice_vars)
+                .skip(sigma_a)
                 .map(|r| F::one() - (*r).into())
                 .product();
 
@@ -1292,15 +1396,21 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             let advice_vars = advice_point.len();
             let mut r_le = opening_point.clone();
             r_le.reverse();
-            let sigma = DoryGlobals::get_num_columns().log_2();
-            let nu = DoryGlobals::get_max_num_rows().log_2();
-            debug_assert_eq!(sigma + nu, r_le.len());
+            let total_vars = r_le.len();
+            let sigma = total_vars.div_ceil(2);
             let (r_cols, r_rows) = r_le.split_at(sigma);
 
-            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+
+            let row_factor: F = r_rows
+                .iter()
+                .skip(nu_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
             let col_prefix_factor: F = r_cols
                 .iter()
-                .skip(advice_vars)
+                .skip(sigma_a)
                 .map(|r| F::one() - (*r).into())
                 .product();
 
@@ -1488,7 +1598,9 @@ mod tests {
             dory::{DoryCommitmentScheme, DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
+        opening_proof::SumcheckId,
     };
+    use crate::utils::math::Math;
     use crate::zkvm::{
         prover::JoltProverPreprocessing,
         ram::populate_memory_states,
@@ -1513,9 +1625,14 @@ mod tests {
         );
 
         let poly = MultilinearPolynomial::<Fr>::from(trusted_advice_words);
-        let advice_cols = poly.len();
+        let advice_len = poly.len().next_power_of_two().max(1);
+        let advice_vars = advice_len.log_2();
+        let sigma_a = advice_vars.div_ceil(2);
+        let nu_a = advice_vars - sigma_a;
+        let num_rows = 1usize << nu_a;
+        let num_cols = 1usize << sigma_a;
 
-        let _guard = DoryGlobals::initialize_trusted_advice_1row(advice_cols);
+        let _guard = DoryGlobals::initialize_trusted_advice_matrix(num_rows, num_cols);
         let (commitment, hint) = {
             let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
             DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
@@ -1851,8 +1968,12 @@ mod tests {
     #[serial]
     fn advice_larger_than_trace_pads_trace_len() {
         // This test forces the edge case "advice dimension > main dimension for the raw trace"
-        // and checks that we pad T upward (within max_trace_length) so the main Dory matrix has
-        // enough *column* variables to embed advice in the leftmost columns.
+        // and checks the behavior of the padding guardrail.
+        //
+        // NOTE: With balanced advice dims (sigma_a = ceil(vars/2), nu_a = floor(vars/2)), the
+        // default max advice sizes (4096 bytes = 512 words = 2^9) typically *do not* exceed the
+        // main matrix dims at the minimum padded trace length (256 cycles -> total_vars=12).
+        // So this test now asserts that we *do not necessarily* need extra padding.
         //
         // We use a small-trace guest (fib with tiny n) but provide *max-sized* advice.
         let mut program = host::Program::new("fibonacci-guest");
@@ -1895,10 +2016,10 @@ mod tests {
             prover.unpadded_trace_len
         );
 
-        // Verify we padded beyond the natural minimum (256) due to advice embedding requirements.
-        assert!(
-            prover.padded_trace_len > 256,
-            "Expected padded_trace_len to grow due to advice; got {}",
+        // With balanced dims, the default advice sizes fit without extra padding in the common case.
+        assert_eq!(
+            prover.padded_trace_len, 256,
+            "Expected padded_trace_len to remain at the minimum; got {}",
             prover.padded_trace_len
         );
 
@@ -1920,10 +2041,10 @@ mod tests {
 
     #[test]
     #[serial]
-    #[should_panic]
     fn advice_larger_than_trace_panics_if_max_trace_too_small() {
-        // Same edge case as above, but set max_trace_length too small to accommodate padding.
-        // We should panic rather than produce an invalid embedding.
+        // Under balanced advice dims, the default advice sizes typically fit without extra padding,
+        // so this configuration no longer necessarily panics. This test is kept as a regression
+        // harness for any future changes that strengthen the embedding constraints.
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let untrusted_advice = vec![9u8; 1]; // non-empty is enough to trigger the guardrail
@@ -1932,7 +2053,7 @@ mod tests {
         let (lazy_trace, trace, final_memory_state, io_device) =
             program.trace(&inputs, &untrusted_advice, &[]);
 
-        // max_trace_length=256 cannot be padded up to satisfy sigma >= advice_vars (defaults to 9 vars).
+        // max_trace_length=256 is the minimum padded trace length; with balanced dims this may be sufficient.
         let preprocessing = JoltProverPreprocessing::gen(
             bytecode.clone(),
             io_device.memory_layout.clone(),
@@ -1940,7 +2061,7 @@ mod tests {
             256,
         );
 
-        let _ = RV64IMACProver::gen_from_trace(
+        let _prover = RV64IMACProver::gen_from_trace(
             &preprocessing,
             lazy_trace,
             trace,
@@ -1981,11 +2102,17 @@ mod tests {
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
 
         let poly = MultilinearPolynomial::<Fr>::from(trusted_advice_words);
-        let advice_cols = poly.len();
-        // Commit trusted advice in its dedicated Dory context, using a fixed 1-row matrix.
-        // This makes the commitment preprocessing-only (independent of trace length) while still
-        // allowing it to be batched into the single Stage 8 Dory opening proof.
-        let _guard = DoryGlobals::initialize_trusted_advice_1row(advice_cols);
+        let advice_len = poly.len().next_power_of_two().max(1);
+        let advice_vars = advice_len.log_2();
+        let sigma_a = advice_vars.div_ceil(2);
+        let nu_a = advice_vars - sigma_a;
+        let num_rows = 1usize << nu_a;
+        let num_cols = 1usize << sigma_a;
+
+        // Commit trusted advice in its dedicated Dory context with balanced (nu_a, sigma_a).
+        // This keeps the commitment preprocessing-only (independent of trace length) while still
+        // allowing it to be batched into the single Stage 8 Dory opening proof via top-left embedding.
+        let _guard = DoryGlobals::initialize_trusted_advice_matrix(num_rows, num_cols);
         let (trusted_advice_commitment, trusted_advice_hint) = {
             let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
             DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
@@ -2033,6 +2160,119 @@ mod tests {
             "Outputs mismatch: expected {:?}, got {:?}",
             expected_output, io_device.outputs
         );
+    }
+
+    #[test]
+    #[serial]
+    fn advice_row_coords_cross_into_stage7_address_bits() {
+        // Construct a small (padded-to-256) trace so that `sigma_main` is close to `log_t`.
+        // With default advice sizes (4096 bytes -> 512 words -> advice_vars=9 -> sigma_a=5, nu_a=4),
+        // `row_coords[0..nu_a]` straddles `cycle6_le` and `addr7_le`, forcing Phase 2 to consume
+        // Stage 7 address challenges.
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&5u32).unwrap();
+        let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
+        let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
+
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (lazy_trace, trace, final_memory_state, io_device) =
+            program.trace(&inputs, &untrusted_advice, &trusted_advice);
+
+        let preprocessing = JoltProverPreprocessing::gen(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+
+        let (trusted_commitment, trusted_hint) =
+            commit_trusted_advice_preprocessing_only(&preprocessing, &trusted_advice);
+
+        let prover = RV64IMACProver::gen_from_trace(
+            &preprocessing,
+            lazy_trace,
+            trace,
+            io_device,
+            Some(trusted_commitment),
+            Some(trusted_hint),
+            final_memory_state,
+        );
+
+        // Ensure we are in the intended regime (log_t = 8).
+        assert_eq!(prover.padded_trace_len, 256);
+        let log_t = prover.padded_trace_len.log_2();
+
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+        let debug_info = debug_info.expect("expected debug_info in tests");
+
+        // Derive point_dory (little-endian Dory order): [cycle6_le || addr7_le]
+        let state = debug_info
+            .opening_accumulator
+            .dory_opening_state
+            .as_ref()
+            .expect("expected dory_opening_state");
+        let mut point_dory_le = state.opening_point.clone();
+        point_dory_le.reverse();
+
+        let total_vars = point_dory_le.len();
+        let sigma_main = total_vars.div_ceil(2);
+
+        // Advice dims from the canonical balanced policy (derived from max advice size).
+        let advice_len =
+            ((preprocessing.memory_layout.max_trusted_advice_size as usize) / 8)
+                .next_power_of_two()
+                .max(1);
+        let advice_vars = advice_len.log_2();
+        let sigma_a = advice_vars.div_ceil(2);
+        let nu_a = advice_vars - sigma_a;
+
+        // This is the actual boundary-crossing condition: row_coords needs address bits.
+        assert!(
+            sigma_main + nu_a > log_t,
+            "expected row_coords[0..nu_a] to cross into addr7_le; got sigma_main={sigma_main}, nu_a={nu_a}, log_t={log_t}"
+        );
+
+        let mut expected_advice_le = Vec::with_capacity(advice_vars);
+        expected_advice_le.extend_from_slice(&point_dory_le[0..sigma_a]);
+        expected_advice_le.extend_from_slice(&point_dory_le[sigma_main..sigma_main + nu_a]);
+        assert_eq!(expected_advice_le.len(), advice_vars);
+
+        // Trusted advice opening point must match Dory-order slice.
+        let (trusted_point_be, _) = debug_info
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+            .expect("expected trusted advice opening after reduction");
+        let mut trusted_point_le = trusted_point_be.r.clone();
+        trusted_point_le.reverse();
+        assert_eq!(
+            trusted_point_le, expected_advice_le,
+            "trusted advice opening point does not match Dory-order slice"
+        );
+
+        // Untrusted advice opening point must match the same Dory-order slice.
+        let (untrusted_point_be, _) = debug_info
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+            .expect("expected untrusted advice opening after reduction");
+        let mut untrusted_point_le = untrusted_point_be.r.clone();
+        untrusted_point_le.reverse();
+        assert_eq!(
+            untrusted_point_le, expected_advice_le,
+            "untrusted advice opening point does not match Dory-order slice"
+        );
+
+        // Full end-to-end verification.
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            Some(trusted_commitment),
+            Some(debug_info),
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
     }
 
     #[test]

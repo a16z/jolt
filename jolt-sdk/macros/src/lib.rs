@@ -597,14 +597,21 @@ impl MacroBuilder {
                     None,
                 );
 
-                // Initialize Dory globals with Main context dimensions from preprocessing.
-                // Commit trusted advice in its dedicated Dory context, using a fixed 1-row matrix.
+                // Commit trusted advice in its dedicated Dory context, using a preprocessing-only
+                // matrix shape derived *deterministically* from the advice length (balanced dims).
                 //
                 // This makes the commitment independent of the trace length (preprocessing-only),
                 // while still allowing the prover to batch the advice opening into the single
                 // Stage 8 Dory opening proof by interpreting it as a zero-padded submatrix of the
                 // main polynomial matrix.
-                let _guard = jolt::DoryGlobals::initialize_trusted_advice_1row(trusted_advice_vec.len().next_power_of_two());
+                let advice_len = trusted_advice_vec.len().next_power_of_two().max(1);
+                let advice_vars = advice_len.ilog2() as usize;
+                let sigma_a = advice_vars.div_ceil(2);
+                let nu_a = advice_vars - sigma_a;
+                let num_rows = 1usize << nu_a;
+                let num_cols = 1usize << sigma_a;
+
+                let _guard = jolt::DoryGlobals::initialize_trusted_advice_matrix(num_rows, num_cols);
                 let _ctx = jolt::DoryGlobals::with_context(jolt::DoryContext::TrustedAdvice);
 
                 let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);

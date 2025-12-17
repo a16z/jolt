@@ -15,9 +15,9 @@ use crate::zkvm::{
         BytecodePreprocessing,
     },
     claim_reductions::{
-        AdviceClaimReductionVerifier, HammingWeightClaimReductionVerifier,
-        IncReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
-        RamRaReductionSumcheckVerifier,
+        AdviceClaimReductionPhase1Verifier, AdviceClaimReductionPhase2Verifier,
+        HammingWeightClaimReductionVerifier, IncReductionSumcheckVerifier,
+        InstructionLookupsClaimReductionSumcheckVerifier, RamRaReductionSumcheckVerifier,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
@@ -77,6 +77,9 @@ pub struct JoltVerifier<
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
+    /// Phase-bridge randomness for two-phase advice claim reduction.
+    advice_reduction_gamma_trusted: Option<F>,
+    advice_reduction_gamma_untrusted: Option<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
 }
@@ -147,6 +150,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             preprocessing,
             transcript,
             opening_accumulator,
+            advice_reduction_gamma_trusted: None,
+            advice_reduction_gamma_untrusted: None,
             spartan_key,
             one_hot_params,
         })
@@ -421,13 +426,25 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        // Advice claim reduction - may be None if no advice present
-        let advice_reduction = AdviceClaimReductionVerifier::new(
+        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        let trusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new_trusted(
             &self.program_io.memory_layout,
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        if let Some(ref v) = trusted_advice_phase1 {
+            self.advice_reduction_gamma_trusted = Some(v.gamma());
+        }
+        let untrusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new_untrusted(
+            &self.program_io.memory_layout,
+            self.proof.trace_length,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        if let Some(ref v) = untrusted_advice_phase1 {
+            self.advice_reduction_gamma_untrusted = Some(v.gamma());
+        }
 
         let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
             &bytecode_read_raf,
@@ -437,7 +454,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &lookups_ra_virtual,
             &inc_reduction,
         ];
-        if let Some(ref advice) = advice_reduction {
+        if let Some(ref advice) = trusted_advice_phase1 {
+            instances.push(advice);
+        }
+        if let Some(ref advice) = untrusted_advice_phase1 {
             instances.push(advice);
         }
 
@@ -463,8 +483,33 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        // 3. Verify sumcheck (only log_k_chunk rounds)
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![&hw_verifier];
+        // 3. Verify Stage 7 batched sumcheck (address rounds only).
+        // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
+        let trusted_advice_phase2 = self.advice_reduction_gamma_trusted.and_then(|gamma| {
+            AdviceClaimReductionPhase2Verifier::new_trusted(
+                &self.program_io.memory_layout,
+                self.proof.trace_length,
+                gamma,
+                &self.opening_accumulator,
+            )
+        });
+        let untrusted_advice_phase2 = self.advice_reduction_gamma_untrusted.and_then(|gamma| {
+            AdviceClaimReductionPhase2Verifier::new_untrusted(
+                &self.program_io.memory_layout,
+                self.proof.trace_length,
+                gamma,
+                &self.opening_accumulator,
+            )
+        });
+
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
+            vec![&hw_verifier];
+        if let Some(ref v) = trusted_advice_phase2 {
+            instances.push(v);
+        }
+        if let Some(ref v) = untrusted_advice_phase2 {
+            instances.push(v);
+        }
         let r_address_stage7 = BatchedSumcheck::verify(
             &self.proof.stage7_sumcheck_proof,
             instances,
@@ -544,15 +589,21 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             let advice_vars = advice_point.len();
             let mut r_le = opening_point.clone();
             r_le.reverse();
-            let sigma = crate::poly::commitment::dory::DoryGlobals::get_num_columns().log_2();
-            let nu = crate::poly::commitment::dory::DoryGlobals::get_max_num_rows().log_2();
-            debug_assert_eq!(sigma + nu, r_le.len());
+            let total_vars = r_le.len();
+            let sigma = total_vars.div_ceil(2);
             let (r_cols, r_rows) = r_le.split_at(sigma);
 
-            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+
+            let row_factor: F = r_rows
+                .iter()
+                .skip(nu_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
             let col_prefix_factor: F = r_cols
                 .iter()
-                .skip(advice_vars)
+                .skip(sigma_a)
                 .map(|r| F::one() - (*r).into())
                 .product();
 
@@ -567,15 +618,21 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             let advice_vars = advice_point.len();
             let mut r_le = opening_point.clone();
             r_le.reverse();
-            let sigma = crate::poly::commitment::dory::DoryGlobals::get_num_columns().log_2();
-            let nu = crate::poly::commitment::dory::DoryGlobals::get_max_num_rows().log_2();
-            debug_assert_eq!(sigma + nu, r_le.len());
+            let total_vars = r_le.len();
+            let sigma = total_vars.div_ceil(2);
             let (r_cols, r_rows) = r_le.split_at(sigma);
 
-            let row_factor: F = r_rows.iter().map(|r| F::one() - (*r).into()).product();
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+
+            let row_factor: F = r_rows
+                .iter()
+                .skip(nu_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
             let col_prefix_factor: F = r_cols
                 .iter()
-                .skip(advice_vars)
+                .skip(sigma_a)
                 .map(|r| F::one() - (*r).into())
                 .product();
 

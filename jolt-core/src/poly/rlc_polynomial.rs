@@ -4,7 +4,7 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::shared_ra_polys::{MAX_BYTECODE_D, MAX_INSTRUCTION_D, MAX_RAM_D};
 use crate::utils::accumulation::Acc6S;
-use crate::utils::math::s64_from_diff_u64s;
+use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
@@ -108,7 +108,6 @@ impl<F: JoltField> RLCPolynomial<F> {
     ///
     /// This is a legacy helper (used by some commitment backends) that eagerly combines dense
     /// polynomials into `dense_rlc` and stores one-hot polynomials lazily in `one_hot_rlc`.
-    #[allow(unused_variables)]
     pub fn linear_combination(
         poly_ids: Vec<CommittedPolynomial>,
         polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
@@ -392,8 +391,12 @@ impl<F: JoltField> RLCPolynomial<F> {
     /// Add the VMV contribution of advice polynomials for the streaming path.
     ///
     /// Advice polynomials are not streamed from the trace; they are stored directly in the
-    /// streaming context and are expected to fit into a **single main-matrix row**:
-    /// they occupy **row index 0** and the **leftmost** `advice_len` columns.
+    /// streaming context and are embedded into the main matrix as the **top-left block**.
+    ///
+    /// Canonical shape policy (balanced):
+    /// - `advice_vars = log2(advice_len)`
+    /// - `sigma_a = ceil(advice_vars/2)`, `nu_a = advice_vars - sigma_a`
+    /// - `advice` occupies rows `[0 .. 2^{nu_a})` and cols `[0 .. 2^{sigma_a})`
     #[inline]
     fn add_streaming_advice_vmv(
         result: &mut [F],
@@ -404,25 +407,40 @@ impl<F: JoltField> RLCPolynomial<F> {
         if ctx.advice_polys.is_empty() {
             return;
         }
-        let left0 = match left_vec.first() {
-            Some(v) => *v,
-            None => return,
-        };
-        if left0.is_zero() {
-            return;
-        }
 
         for (coeff, advice_poly) in ctx.advice_polys.iter() {
             let advice_len = advice_poly.original_len();
+            if advice_len == 0 {
+                continue;
+            }
+
+            let advice_vars = advice_len.next_power_of_two().log_2();
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+            let advice_cols = 1usize << sigma_a;
+            let advice_rows = 1usize << nu_a;
+
             debug_assert!(
-                advice_len <= num_columns,
-                "Advice polynomial length ({advice_len}) must fit in one main row (num_columns={num_columns}); \
-this requires main sigma >= advice_vars (guardrail in gen_from_trace should ensure this)."
+                advice_cols <= num_columns,
+                "Advice columns (2^{sigma_a}={advice_cols}) must fit in main num_columns={num_columns}; \
+guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
             );
-            let cols = advice_len.min(num_columns);
-            for col_idx in 0..cols {
-                let advice_val = advice_poly.get_coeff(col_idx);
-                result[col_idx] += left0 * *coeff * advice_val;
+
+            // Only the top-left block contributes: rows [0..advice_rows), cols [0..advice_cols)
+            for row_idx in 0..advice_rows.min(left_vec.len()) {
+                let left = left_vec[row_idx];
+                if left.is_zero() {
+                    continue;
+                }
+                let row_base = row_idx * advice_cols;
+                for col_idx in 0..advice_cols {
+                    let coeff_idx = row_base + col_idx;
+                    if coeff_idx >= advice_len {
+                        break;
+                    }
+                    let advice_val = advice_poly.get_coeff(coeff_idx);
+                    result[col_idx] += left * *coeff * advice_val;
+                }
             }
         }
     }

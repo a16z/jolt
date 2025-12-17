@@ -160,6 +160,9 @@ pub enum SumcheckId {
     IncReduction,
     HammingWeightClaimReduction,
     Booleanity,
+    /// Stage 6 → Stage 7 bridge for two-phase advice claim reduction.
+    /// Stores the intermediate claim after binding the cycle-derived advice coordinates.
+    AdviceClaimReductionPhase1,
     AdviceClaimReduction,
 }
 
