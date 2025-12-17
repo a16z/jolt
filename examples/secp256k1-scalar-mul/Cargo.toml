@@ -1,0 +1,11 @@
+[package]
+name = "secp256k1-scalar-mul"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+tracing-subscriber = "0.3"
+tracing = "0.1"
+jolt-inlines-secp256k1 = { path = "../../jolt-inlines/secp256k1", features = ["host"] }
+guest = { package = "secp256k1-scalar-mul-guest", path = "./guest" }

@@ -35,12 +35,15 @@ members = [
     "jolt-inlines/blake2",
     "jolt-inlines/blake3",
     "jolt-inlines/bigint",
+    "jolt-inlines/secp256k1",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
     "examples/collatz/guest",
     "examples/fibonacci",
     "examples/fibonacci/guest",
+    "examples/secp256k1-scalar-mul",
+    "examples/secp256k1-scalar-mul/guest",
     "examples/sha2-ex",
     "examples/sha2-ex/guest",
     "examples/sha3-ex",
@@ -245,3 +248,4 @@ jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features =
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
+jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }

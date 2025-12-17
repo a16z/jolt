@@ -1,0 +1,11 @@
+[package]
+name = "secp256k1-scalar-mul-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
+jolt-inlines-secp256k1 = { package = "jolt-inlines-secp256k1", path = "../../../jolt-inlines/secp256k1" }
