@@ -489,4 +489,3 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
     }
 }
-
