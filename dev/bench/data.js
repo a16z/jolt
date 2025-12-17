@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1765919115522,
+  "lastUpdate": 1765932062229,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -40798,6 +40798,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 352236,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@randomwalks.xyz",
+            "name": "Ari",
+            "username": "abiswas3"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "539ea6f500a9c5eb41b6c6ddb9bb7e0782dbd58f",
+          "message": "feat: streaming prover for outer sumcheck (#1114)\n\n* feat: spartan outer streaming merge\n\n- Merging working spartan outer into the new api\n\n* feat: spartan outer streaming merge\n\n- Merging working spartan outer into the new api.\n- things don't compile yet\n\n* feat: spartan outer streaming merge\n\nR1CS eval changes brought in\n\n* feat: spartan outer streaming merge\n\nTests seem to pass. Double check with gitools if things are merged.\n\n* feat: spartan outer streaming merge\n\nTests seem to pass. Double check with gitools if things are merged.\n\n* feat: spartan outer streaming merge\n\nTests seem to pass.\nThink I have everything.\n\n* feat: spartan outer streaming merge\n\nTests pass (at least the ones that were passing)\n\n* feat: spartan outer streaming merge\n\nTypos on expanding table\n\n* feat: spartan outer streaming merge\n\nOptimising stream to linear started\n\n* feat: spartan outer streaming merge\n\nThe linear schedule is fine, but the streaming schedule re-computation\nis highly suboptimal.\n\n* feat: spartan outer streaming merge\n\nA much faster re-computation of Az/Bz with parallel code\n\n* feat: spartan outer streaming merge\n\nStream to linear is pretty much as fast as it needs to be.\n\n* Merge remote-tracking branch 'upstream/main' into tmp\n\n* Merge remote-tracking branch 'upstream/main' into feat/streaming-prover-merged\n\n* chore: allocative fixes after merge\n\n* feat: trace from checkpoints integrated\n\n-- A functional version of this has been implemented, but i'll move the\ndesign around. But this is at least correct.\n\n* chore: clippy bloody clippy issues\n\n* chore: removing unnecessary comments and getting ready to merge in main\n\n* chore: ensuring tests run on CI\n\n* chore: removing trace-checkpointing for now\n\n* compute_grid_from_poly works for window size = 1\n\n* compute_grid_from_poly works for general window size\n\n* ready to import new streaming schedule trait\n\n* ready to import new streaming schedule trait\n\n* the new streaming schedule api passes tests\n\nNEXT:\nProper parallelisation\nFused materialisation (this is currently ok for grids of window size 1);\nbut not generalised.\n\n* better names: starting to parallelise grid build from poly\n\n* first version of parallel compute_grid seems to work\n\n* all functions are correct. Whether they are fast or not -- god only knows.\n\nWell that's next.\n\n* all functions are correct. Whether they are fast or not -- god only knows.\n\nWell that's next.\n\n* testing things\n\n* api-correctl; performance fairly wanting\n\n* minor warnings removed from compiler (not deteced on mac-OX)\n\n* bringing in Quangs split poly debug asserts\n\n* handling Michaels comments and resetting quangs changes\n\n* handling Michaels comments and remving usafe code\n\n* infty comments what they actually mean\n\n* infty comments what they actually mean\n\n* thread under-utilisation sorted\n\n* change the half split schedule to have increasing window sizes\n\n* add correct exponent to streaming schedule\n\n* add small optimization to when window size = 1\n\n* apply small value optimization to materialize polys\n\n* refactor split eq poly to avoid needing if statements\n\n* fmt\n\n* clippy\n\n* optimizing cache locality\n\n* fmt + clippy\n\n* switch back to linear only schedule, add experimental schedule (can be removed later)\n\n* nits in multiquadratic poly file\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* remove serial version, as RAYON_NUM_THREADS can be used\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* remove the dead code from outer\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* streaming sumcheck infro\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* refactor streaming sumcheck\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* switch to linear only schedule\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix the num rounds thing\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* switch over point trait function\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* remove switchover funcitons\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* Remove experimental code from streaming prover PR\n\nMove to feat/trace-checkpoint branch:\n- ExperimentalSchedule (configurable window sizes)\n- Trace checkpoint infrastructure (checkpoints, checkpoint_interval fields)\n\nKeep only HalfSplitSchedule and LinearOnlySchedule for this PR.\n\n* Consolidate streaming_schedule tests\n\nReduce from 12 tests to 4 tests while maintaining coverage:\n- test_window_ratio_and_size: ratio math + optimal window sizes\n- test_schedule_construction: basic schedule behavior\n- test_edge_cases: small/large round counts\n- test_cost_model: validates cost factor stays near 1\n\n* chore: add tracing instrumentation to new streaming prover functions\n\nAdd #[tracing::instrument] attributes to all new functions in outer.rs\nfor observability of the streaming sumcheck implementation.\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Ari <software@randomwalks.xyz>\nCo-authored-by: Quang Dao <quang.dao@layerzerolabs.org>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2025-12-16T18:58:35-05:00",
+          "tree_id": "a52170fe5fd69b16b68fcdbbfba84860f12ca1a3",
+          "url": "https://github.com/a16z/jolt/commit/539ea6f500a9c5eb41b6c6ddb9bb7e0782dbd58f"
+        },
+        "date": 1765932060640,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 350300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 1462796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 335324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 343016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 341292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 334392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 338128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 337712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 352308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 3040172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 346660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 343348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 348404,
             "unit": "KB",
             "extra": ""
           }
