@@ -311,30 +311,13 @@ impl<F: JoltField> PhaseAddressProver<F> {
         let (r_val_hi, r_val_lo) = r_cycle_val.split_at(hi_bits);
 
         // Compute all 6 eq tables in parallel
-        let ((E_raf_hi, E_raf_lo), ((E_rw_hi, E_rw_lo), (E_val_hi, E_val_lo))) = rayon::join(
-            || {
-                rayon::join(
-                    || EqPolynomial::<F>::evals(r_raf_hi),
-                    || EqPolynomial::<F>::evals(r_raf_lo),
-                )
-            },
-            || {
-                rayon::join(
-                    || {
-                        rayon::join(
-                            || EqPolynomial::<F>::evals(r_rw_hi),
-                            || EqPolynomial::<F>::evals(r_rw_lo),
-                        )
-                    },
-                    || {
-                        rayon::join(
-                            || EqPolynomial::<F>::evals(r_val_hi),
-                            || EqPolynomial::<F>::evals(r_val_lo),
-                        )
-                    },
-                )
-            },
-        );
+        let [E_raf_hi, E_raf_lo, E_rw_hi, E_rw_lo, E_val_hi, E_val_lo]: [Vec<F>; 6] =
+            [r_raf_hi, r_raf_lo, r_rw_hi, r_rw_lo, r_val_hi, r_val_lo]
+                .into_par_iter()
+                .map(EqPolynomial::<F>::evals)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
 
         let in_len = E_raf_lo.len(); // 2^lo_bits
         let out_len = E_raf_hi.len(); // 2^hi_bits

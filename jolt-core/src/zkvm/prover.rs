@@ -332,8 +332,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.prove_trusted_advice();
         let (untrusted_advice_val_evaluation_proof, untrusted_advice_val_final_proof) =
             self.prove_untrusted_advice();
-        let stage7_sumcheck_proof = self.prove_stage7();
-        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
+        let (stage7_sumcheck_proof, r_address_stage7) = self.prove_stage7();
+        let (dory_state, joint_opening_proof) =
+            self.prove_stage8(r_address_stage7, opening_proof_hints);
 
         #[cfg(test)]
         assert!(
@@ -354,11 +355,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(test))]
         let debug_info = None;
 
-        let dory_state = self
-            .opening_accumulator
-            .dory_opening_state
-            .as_ref()
-            .expect("Stage 7 must be called before finalizing proof");
+        // Extract claims for proof format compatibility
+        let stage7_sumcheck_claims: Vec<F> =
+            dory_state.polynomial_claims.iter().map(|(_, c)| *c).collect();
         let proof = JoltProof {
             opening_claims: Claims(self.opening_accumulator.openings.clone()),
             commitments,
@@ -377,7 +376,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             untrusted_advice_val_final_proof,
             stage7_sumcheck_proof,
             // Note: verifier no longer uses this field, but kept for proof format compatibility
-            stage7_sumcheck_claims: dory_state.claims.clone(),
+            stage7_sumcheck_claims,
             joint_opening_proof,
             #[cfg(test)]
             joint_commitment_for_test: self.joint_commitment_for_test.clone(),
@@ -1100,9 +1099,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
-    /// Produces `DoryOpeningState` for Stage 8.
     #[tracing::instrument(skip_all)]
-    fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+    fn prove_stage7(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
         tracing::info!("Stage 7 proving (HammingWeight claim reduction)");
 
         // Create params and prover for HammingWeightClaimReduction
@@ -1122,7 +1120,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
 
-        // 3. Run sumcheck (only log_k_chunk rounds!)
+        // Run sumcheck (only log_k_chunk rounds!)
         let instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>> =
             vec![&mut hw_prover];
         let (sumcheck_proof, r_address_stage7) = BatchedSumcheck::prove(
@@ -1131,9 +1129,23 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // 4. Collect all claims for DoryOpeningState
-        let mut claims = Vec::new();
-        let mut polynomials = Vec::new();
+        (sumcheck_proof, r_address_stage7)
+    }
+
+    /// Stage 8: Dory batch opening proof.
+    /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
+    #[tracing::instrument(skip_all)]
+    fn prove_stage8(
+        &mut self,
+        r_address_stage7: Vec<F::Challenge>,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> (DoryOpeningState<F>, PCS::Proof) {
+        tracing::info!("Stage 8 proving (Dory batch opening)");
+
+        let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
+
+        // 1. Collect all (polynomial, claim) pairs
+        let mut polynomial_claims = Vec::new();
 
         // Dense polynomials: RamInc and RdInc (from IncReduction in Stage 6)
         // These are at r_cycle_stage6 only (length log_T)
@@ -1172,10 +1184,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Because dense polys have fewer variables, we need to account for this
         let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
 
-        claims.push(ram_inc_claim * lagrange_factor);
-        claims.push(rd_inc_claim * lagrange_factor);
-        polynomials.push(CommittedPolynomial::RamInc);
-        polynomials.push(CommittedPolynomial::RdInc);
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         // These are at (r_address_stage7, r_cycle_stage6)
@@ -1184,29 +1194,26 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 CommittedPolynomial::InstructionRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            claims.push(claim);
-            polynomials.push(CommittedPolynomial::InstructionRa(i));
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
         }
         for i in 0..self.one_hot_params.bytecode_d {
             let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::BytecodeRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            claims.push(claim);
-            polynomials.push(CommittedPolynomial::BytecodeRa(i));
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
         }
         for i in 0..self.one_hot_params.ram_d {
             let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            claims.push(claim);
-            polynomials.push(CommittedPolynomial::RamRa(i));
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
         }
 
-        // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
+        // 2. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
         // Note: r_address_stage7 is little-endian from sumcheck, convert to big-endian
-        let mut r_address_be = r_address_stage7.clone();
+        let mut r_address_be = r_address_stage7;
         r_address_be.reverse();
 
         // Extract r_cycle from Booleanity (same source as HammingWeightClaimReduction uses)
@@ -1219,37 +1226,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let opening_point = [r_address_be.as_slice(), r_cycle_stage6].concat();
 
-        // 6. Sample gamma and compute powers for RLC
+        // 3. Sample gamma and compute powers for RLC
+        let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
-        // 7. Store DoryOpeningState for Stage 8
-        self.opening_accumulator.dory_opening_state = Some(DoryOpeningState {
-            opening_point,
+        // Build DoryOpeningState
+        let state = DoryOpeningState {
+            opening_point: opening_point.clone(),
             gamma_powers,
-            claims,
-            polynomials,
-        });
-
-        sumcheck_proof
-    }
-
-    /// Stage 8: Dory batch opening proof.
-    /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
-    #[tracing::instrument(skip_all)]
-    fn prove_stage8(
-        &mut self,
-        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) -> PCS::Proof {
-        tracing::info!("Stage 8 proving (Dory batch opening)");
-
-        let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
-
-        let state = self
-            .opening_accumulator
-            .dory_opening_state
-            .as_ref()
-            .expect("Stage 7 must be called before Stage 8");
+            polynomial_claims,
+        };
 
         let streaming_data = Arc::new(RLCStreamingData {
             bytecode: self.preprocessing.bytecode.clone(),
@@ -1266,13 +1253,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // Dory opening proof at the unified point
-        PCS::prove(
+        let proof = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
-            &state.opening_point,
+            &opening_point,
             Some(hint),
             &mut self.transcript,
-        )
+        );
+
+        (state, proof)
     }
 }
 

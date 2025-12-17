@@ -191,7 +191,6 @@ where
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
     pub log_T: usize,
-    pub dory_opening_state: Option<DoryOpeningState<F>>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -206,7 +205,6 @@ where
     #[cfg(test)]
     prover_opening_accumulator: Option<ProverOpeningAccumulator<F>>,
     pub log_T: usize,
-    pub dory_opening_state: Option<DoryOpeningState<F>>,
 }
 
 pub trait OpeningAccumulator<F: JoltField> {
@@ -233,7 +231,7 @@ pub struct OpeningReductionState<F: JoltField> {
     pub polynomials: Vec<CommittedPolynomial>,
 }
 
-/// Minimal state passed from Stage 7 (HammingWeightClaimReduction) to Stage 8 (Dory opening).
+/// State for Dory batch opening (Stage 8).
 /// This is a generic interface for batch opening proofs.
 #[derive(Clone, Allocative)]
 pub struct DoryOpeningState<F: JoltField> {
@@ -241,10 +239,8 @@ pub struct DoryOpeningState<F: JoltField> {
     pub opening_point: Vec<F::Challenge>,
     /// γ^i coefficients for the RLC polynomial
     pub gamma_powers: Vec<F>,
-    /// Claims per polynomial at the opening point (with Lagrange factors already applied for shorter polys)
-    pub claims: Vec<F>,
-    /// Which polynomials are included (in same order as claims)
-    pub polynomials: Vec<CommittedPolynomial>,
+    /// (polynomial, claim) pairs at the opening point (with Lagrange factors already applied for shorter polys)
+    pub polynomial_claims: Vec<(CommittedPolynomial, F)>,
 }
 
 impl<F: JoltField> DoryOpeningState<F> {
@@ -260,7 +256,7 @@ impl<F: JoltField> DoryOpeningState<F> {
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = BTreeMap::new();
-        for (gamma, poly) in self.gamma_powers.iter().zip(self.polynomials.iter()) {
+        for (gamma, (poly, _claim)) in self.gamma_powers.iter().zip(self.polynomial_claims.iter()) {
             *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
         }
 
@@ -341,7 +337,6 @@ where
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
-            dory_opening_state: None,
         }
     }
 
@@ -633,7 +628,6 @@ where
             #[cfg(test)]
             prover_opening_accumulator: None,
             log_T,
-            dory_opening_state: None,
         }
     }
 
