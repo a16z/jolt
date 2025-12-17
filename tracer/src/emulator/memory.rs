@@ -29,6 +29,75 @@ impl MemoryData for Vec<u64> {
     }
 }
 
+#[derive(Clone, Default, Debug)]
+pub struct ReplayableMemory {
+    num_doublewords: usize,
+    memory: HashMap<usize, u64>,
+}
+
+impl MemoryData for ReplayableMemory {
+    fn init_with_capacity(&mut self, capacity: u64) {
+        *self = Self {
+            num_doublewords: capacity.div_ceil(8) as usize,
+            memory: HashMap::new(),
+        };
+    }
+
+    fn get_num_doublewords(&self) -> usize {
+        self.num_doublewords
+    }
+
+    fn get_u64(&mut self, index: usize) -> &mut u64 {
+        if index > self.num_doublewords {
+            panic!("Out of bounds memory access");
+        }
+        // Return the value at the given index if it's been set. If it hasn't been set, we add it,
+        // as if it had been zero initialized.
+        self.memory.entry(index).or_insert(0)
+    }
+}
+
+/// This memory representation uses a standard `Vec<u64>` representation for execution, but saves
+/// the initial value of each memory access, which can then be retrieved as a [`ReplayableMemory`]
+#[derive(Clone, Default, Debug)]
+pub struct CheckpointingMemory {
+    memory: MemoryBackend<Vec<u64>>,
+    checkpoint: HashMap<usize, u64>,
+}
+
+impl MemoryData for CheckpointingMemory {
+    fn init_with_capacity(&mut self, capacity: u64) {
+        self.memory.init(capacity);
+        self.checkpoint = HashMap::new();
+    }
+
+    fn get_num_doublewords(&self) -> usize {
+        self.memory.data.get_num_doublewords()
+    }
+
+    fn get_u64(&mut self, index: usize) -> &mut u64 {
+        let res = &mut self.memory.data[index];
+        // We store only the initial value of each index accessed (read or written) over the course
+        // of a chunk. If the access is a read, the value is the value read. If the access is a
+        // write, the value is the value stored *prior* to the write. If the index has already been
+        // accessed, we do not modify it.
+        self.checkpoint.entry(index).or_insert(*res);
+
+        res
+    }
+}
+
+impl CheckpointingMemory {
+    /// Retrieve a the memory for the previously executed chunk as a [`ReplayableMemory`]. This
+    /// also starts a new chunk by setting `self.checkpoint` to be an empty hashmap.
+    pub fn save_checkpoint(&mut self) -> ReplayableMemory {
+        ReplayableMemory {
+            num_doublewords: self.memory.data.len(),
+            memory: std::mem::take(&mut self.checkpoint),
+        }
+    }
+}
+
 /// Emulates main memory.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryBackend<Data> {
