@@ -70,19 +70,19 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
         let mut len = 0;
 
         if let Some((rs1, _)) = cycle.rs1_read() {
-            if !regs[..len].iter().any(|r| *r == Some(rs1)) {
+            if !regs[..len].contains(&Some(rs1)) {
                 regs[len] = Some(rs1);
                 len += 1;
             }
         }
         if let Some((rs2, _)) = cycle.rs2_read() {
-            if !regs[..len].iter().any(|r| *r == Some(rs2)) {
+            if !regs[..len].contains(&Some(rs2)) {
                 regs[len] = Some(rs2);
                 len += 1;
             }
         }
         if let Some((rd, ..)) = cycle.rd_write() {
-            if !regs[..len].iter().any(|r| *r == Some(rd)) {
+            if !regs[..len].contains(&Some(rd)) {
                 regs[len] = Some(rd);
                 len += 1;
             }
