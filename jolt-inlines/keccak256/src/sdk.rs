@@ -93,13 +93,13 @@ impl Keccak256 {
         // If buffer_len == RATE_IN_BYTES-1 both markers land in the same byte (0x01 | 0x80 = 0x81)
         self.buffer[self.buffer_len] = 0x01;
 
-        // Zero the remaining bytes (except the last byte)
-        if self.buffer_len + 1 < RATE_IN_BYTES - 1 {
+        // Zero the remaining bytes (including the last byte if needed)
+        if self.buffer_len + 1 < RATE_IN_BYTES {
             unsafe {
                 core::ptr::write_bytes(
                     self.buffer.as_mut_ptr().add(self.buffer_len + 1),
                     0,
-                    RATE_IN_BYTES - self.buffer_len - 2,
+                    RATE_IN_BYTES - self.buffer_len - 1,
                 );
             }
         }
@@ -132,12 +132,38 @@ impl Keccak256 {
         hash
     }
 
-    /// Computes Keccak-256 hash of the input data in one call.
+    /// Computes Keccak-256 hash in one call.
+    /// Optimized for virtual cycles by avoiding intermediate buffer for final block.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; HASH_LEN] {
-        let mut hasher = Self::new();
-        hasher.update(input);
-        hasher.finalize()
+        let len = input.len();
+        let mut state = [0u64; 25];
+
+        // Process complete 136-byte blocks
+        let full_blocks = len / RATE_IN_BYTES;
+        let mut offset = 0;
+
+        // Check alignment once, then use branch-free loop
+        let is_aligned = input.as_ptr() as usize % 8 == 0;
+
+        if is_aligned {
+            // Aligned fast path - no per-block branch
+            for _ in 0..full_blocks {
+                absorb_aligned(&mut state, &input[offset..offset + RATE_IN_BYTES]);
+                offset += RATE_IN_BYTES;
+            }
+        } else {
+            // Unaligned path - no per-block branch
+            for _ in 0..full_blocks {
+                absorb_unaligned(&mut state, &input[offset..offset + RATE_IN_BYTES]);
+                offset += RATE_IN_BYTES;
+            }
+        }
+
+        // Final block with Keccak padding - use direct absorb
+        let remaining = len - offset;
+        absorb_final(&mut state, &input[offset..], remaining);
+        to_bytes(state)
     }
 
     /// Absorbs a full block from the internal buffer into the state.
@@ -174,6 +200,113 @@ impl Default for Keccak256 {
     }
 }
 
+/// Convert state to output hash bytes.
+#[inline(always)]
+fn to_bytes(state: [u64; 25]) -> [u8; HASH_LEN] {
+    let mut hash = [0u8; HASH_LEN];
+
+    #[cfg(target_endian = "little")]
+    {
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                state.as_ptr() as *const u8,
+                hash.as_mut_ptr(),
+                HASH_LEN,
+            );
+        }
+    }
+
+    #[cfg(target_endian = "big")]
+    {
+        for i in 0..HASH_LEN / 8 {
+            let bytes = state[i].to_le_bytes();
+            hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
+        }
+    }
+
+    hash
+}
+
+/// Absorb a 136-byte aligned block into state.
+/// Caller must ensure the block pointer is 8-byte aligned.
+#[inline(always)]
+fn absorb_aligned(state: &mut [u64; 25], block: &[u8]) {
+    unsafe {
+        let block_words = block.as_ptr() as *const u64;
+        for (i, s) in state.iter_mut().enumerate().take(RATE_IN_U64) {
+            *s ^= *block_words.add(i);
+        }
+        keccak_f(state.as_mut_ptr());
+    }
+}
+
+/// Absorb a 136-byte unaligned block into state.
+/// Safe for any alignment.
+#[inline(always)]
+fn absorb_unaligned(state: &mut [u64; 25], block: &[u8]) {
+    let ptr = block.as_ptr();
+    for (i, s) in state.iter_mut().enumerate().take(RATE_IN_U64) {
+        let word = unsafe {
+            let mut tmp = core::mem::MaybeUninit::<[u8; 8]>::uninit();
+            core::ptr::copy_nonoverlapping(ptr.add(i * 8), tmp.as_mut_ptr() as *mut u8, 8);
+            u64::from_le_bytes(tmp.assume_init())
+        };
+        *s ^= word;
+    }
+    unsafe {
+        keccak_f(state.as_mut_ptr());
+    }
+}
+
+/// Absorb final block with padding directly into state.
+#[inline(always)]
+fn absorb_final(state: &mut [u64; 25], input: &[u8], len: usize) {
+    // Build padded block and XOR into state
+    let mut block = [0u8; RATE_IN_BYTES];
+
+    if len > 0 {
+        unsafe {
+            core::ptr::copy_nonoverlapping(input.as_ptr(), block.as_mut_ptr(), len);
+        }
+    }
+
+    // Keccak padding: 0x01 at end of data, 0x80 at end of block
+    block[len] = 0x01;
+    block[RATE_IN_BYTES - 1] |= 0x80;
+
+    // XOR padded block into state
+    #[cfg(target_endian = "little")]
+    unsafe {
+        let block_words = block.as_ptr() as *const u64;
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..RATE_IN_U64 {
+            state[i] ^= *block_words.add(i);
+        }
+    }
+
+    #[cfg(target_endian = "big")]
+    {
+        for i in 0..RATE_IN_U64 {
+            let offset = i * 8;
+            let word = u64::from_le_bytes([
+                block[offset],
+                block[offset + 1],
+                block[offset + 2],
+                block[offset + 3],
+                block[offset + 4],
+                block[offset + 5],
+                block[offset + 6],
+                block[offset + 7],
+            ]);
+            state[i] ^= word;
+        }
+    }
+
+    unsafe {
+        keccak_f(state.as_mut_ptr());
+    }
+}
+
 /// Calls the Keccak-f[1600] permutation custom instruction.
 ///
 /// # Arguments
@@ -183,7 +316,7 @@ impl Default for Keccak256 {
 /// - `state` must be a valid pointer to 200 bytes of readable and writable memory.
 /// - The pointer must be properly aligned for u64 access (8-byte alignment).
 #[cfg(not(feature = "host"))]
-pub unsafe fn keccak_f(state: *mut u64) {
+pub(crate) unsafe fn keccak_f(state: *mut u64) {
     use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",
@@ -207,7 +340,7 @@ pub unsafe fn keccak_f(state: *mut u64) {
 ///   ensure this side-effect is acceptable.
 /// * Passing an invalid pointer, misaligned pointer, or insufficiently sized
 ///   memory region results in undefined behaviour.
-pub unsafe fn keccak_f(state: *mut u64) {
+pub(crate) unsafe fn keccak_f(state: *mut u64) {
     // On the host, we call our own reference implementation from the tracer crate.
     let state_slice = core::slice::from_raw_parts_mut(state, 25);
     crate::exec::execute_keccak_f(
@@ -229,5 +362,49 @@ mod tests {
             hash,
             hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
         );
+    }
+
+    #[test]
+    fn test_keccak256_aligned_vs_unaligned() {
+        // Test various sizes including rate boundary (136 bytes)
+        let test_sizes = [
+            0, 1, 7, 8, 31, 32, 63, 64, 135, 136, 137, 200, 272, 512, 1024, 2048,
+        ];
+
+        for &size in &test_sizes {
+            // Create aligned buffer
+            let aligned: Vec<u8> = (0..size).map(|i| (i * 37 + 11) as u8).collect();
+
+            // Create unaligned buffer by adding 1-byte offset
+            let mut unaligned_buf = vec![0u8; size + 1];
+            unaligned_buf[1..].copy_from_slice(&aligned);
+            let unaligned = &unaligned_buf[1..];
+
+            // Verify alignment difference
+            if size > 0 {
+                assert_ne!(
+                    aligned.as_ptr() as usize % 8,
+                    unaligned.as_ptr() as usize % 8,
+                    "Test setup error: pointers should have different alignment"
+                );
+            }
+
+            // Both should produce identical results
+            let aligned_result = Keccak256::digest(&aligned);
+            let unaligned_result = Keccak256::digest(unaligned);
+
+            assert_eq!(
+                aligned_result, unaligned_result,
+                "Keccak256: aligned vs unaligned mismatch at size {size}"
+            );
+
+            // Also verify against reference implementation
+            use sha3::{Digest, Keccak256 as RefKeccak};
+            let expected: [u8; 32] = RefKeccak::digest(&aligned).into();
+            assert_eq!(
+                aligned_result, expected,
+                "Keccak256: result doesn't match reference at size {size}"
+            );
+        }
     }
 }

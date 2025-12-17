@@ -448,7 +448,7 @@ impl InstrAssembler {
     }
 
     pub fn add(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin::<ADD, ADDI>(rs1, rs2, rd, |x, y| ((x).wrapping_add(y)))
+        self.bin::<ADD, ADDI>(rs1, rs2, rd, |x, y| (x).wrapping_add(y))
     }
 
     /// Logical right-shift immediate on a 32-bit word.

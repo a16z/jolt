@@ -1,4 +1,4 @@
-use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, INLINE_OPCODE};
+use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, BLAKE3_KEYED64_FUNCT3, INLINE_OPCODE};
 use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
@@ -10,6 +10,40 @@ pub fn create_blake3_harness() -> InlineTestHarness {
     // and state (32 bytes) at rs1
     let layout = InlineMemoryLayout::single_input(80, 32); // 80 bytes for message+params, 32-byte state
     InlineTestHarness::new(layout, Xlen::Bit64)
+}
+
+/// Create harness for Keyed64 instruction (Merkle tree merge)
+/// ABI: rs1 = left, rs2 = right, rd = iv (in/out)
+pub fn create_blake3_keyed64_harness() -> InlineTestHarness {
+    // Keyed64 needs:
+    // - rs1: left CV (32 bytes) -> input
+    // - rs2: right CV (32 bytes) -> input2
+    // - rd: IV (32 bytes, in/out) -> output
+    let layout = InlineMemoryLayout::two_inputs(32, 32, 32); // left, right, iv
+    InlineTestHarness::new(layout, Xlen::Bit64)
+}
+
+pub fn load_blake3_keyed64_data(
+    harness: &mut InlineTestHarness,
+    left: &ChainingValue,
+    right: &ChainingValue,
+    iv: &ChainingValue,
+) {
+    harness.setup_registers();
+    // Load left to rs1 location (input)
+    harness.load_input32(left);
+    // Load right to rs2 location (input2)
+    harness.load_input2_32(right);
+    // Load IV to rd/rs3 location (output)
+    harness.load_state32(iv);
+}
+
+pub fn keyed64_instruction() -> tracer::instruction::inline::INLINE {
+    InlineTestHarness::create_default_instruction(
+        INLINE_OPCODE,
+        BLAKE3_KEYED64_FUNCT3,
+        BLAKE3_FUNCT7,
+    )
 }
 
 pub fn load_blake3_data(
