@@ -2219,10 +2219,9 @@ mod tests {
         let sigma_main = total_vars.div_ceil(2);
 
         // Advice dims from the canonical balanced policy (derived from max advice size).
-        let advice_len =
-            ((preprocessing.memory_layout.max_trusted_advice_size as usize) / 8)
-                .next_power_of_two()
-                .max(1);
+        let advice_len = ((preprocessing.memory_layout.max_trusted_advice_size as usize) / 8)
+            .next_power_of_two()
+            .max(1);
         let advice_vars = advice_len.log_2();
         let sigma_a = advice_vars.div_ceil(2);
         let nu_a = advice_vars - sigma_a;
