@@ -857,9 +857,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
         }
 
         let two_inv = F::from_u64(2).inverse().unwrap();
-        let dummy_after = params
-            .log_k_chunk
-            .saturating_sub(params.nu_a_addr);
+        let dummy_after = params.log_k_chunk.saturating_sub(params.nu_a_addr);
         let after_scale = F::one().mul_pow_2(dummy_after);
         let after_inv_scale = after_scale.inverse().unwrap();
         Self {
