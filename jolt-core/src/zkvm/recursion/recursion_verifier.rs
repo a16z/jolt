@@ -18,7 +18,7 @@ use crate::{
 use ark_bn254::Fq;
 
 use super::{
-    bijection::VarCountJaggedBijection,
+    bijection::{ConstraintMapping, VarCountJaggedBijection},
     constraints_sys::{ConstraintSystem, ConstraintType},
     recursion_prover::RecursionProof,
     stage1::{
@@ -53,6 +53,10 @@ pub struct RecursionVerifierInput {
     pub num_constraints_padded: usize,
     /// Jagged bijection for Stage 3
     pub jagged_bijection: VarCountJaggedBijection,
+    /// Mapping for decoding polynomial indices to matrix rows
+    pub jagged_mapping: ConstraintMapping,
+    /// Precomputed matrix row indices for each polynomial index
+    pub matrix_rows: Vec<usize>,
 }
 
 /// Unified verifier for the recursion SNARK
@@ -327,6 +331,8 @@ impl<F: JoltField> RecursionVerifier<F> {
             (r_s_final, r_x_prev),
             sparse_claim,
             self.input.jagged_bijection.clone(),
+            self.input.jagged_mapping.clone(),
+            self.input.matrix_rows.clone(),
             params,
         );
 

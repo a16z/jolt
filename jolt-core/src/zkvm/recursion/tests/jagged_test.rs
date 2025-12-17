@@ -1,8 +1,4 @@
 //! Tests for the jagged polynomial bijection relation
-//!
-//! Tests equation (3) from the paper:
-//! p̂(zr, zc) = Σ_{x∈{0,1}^n, y∈{0,1}^k} p(x, y) · eq(x, zr) · eq(y, zc)
-//!          = Σ_{i∈{0,1}^m} q(i) · eq(rowt(i), zr) · eq(colt(i), zc)
 
 use crate::{
     field::JoltField,
@@ -163,22 +159,9 @@ fn test_jagged_relation_small() {
     assert_eq!(sparse_non_zero_values, dense_q,
         "Dense polynomial should contain exactly the non-zero values from sparse");
 
-    // Now check the evaluations
-    assert_eq!(
-        sparse_sum, dense_eval,
-        "Sparse sum {} != Dense sum {}",
-        sparse_sum, dense_eval
-    );
-
-    // Verify that the multilinear polynomial evaluation matches our manual sum
-    assert_eq!(
-        sparse_eval, sparse_sum,
-        "MultilinearPolynomial evaluation should match manual sum"
-    );
-
-    println!("✓ Small jagged relation test passed!");
-    println!("  Sparse eval: {}", sparse_eval);
-    println!("  Dense eval:  {}", dense_eval);
+    // Verify the evaluations match
+    assert_eq!(sparse_sum, dense_eval, "Sparse and dense evaluations should match");
+    assert_eq!(sparse_eval, sparse_sum, "MultilinearPolynomial evaluation should match manual sum");
 }
 
 #[test]
@@ -242,7 +225,9 @@ fn test_jagged_relation_dory_witness() {
 
     // Get the constraint system and build dense polynomial
     let constraint_system = &prover.constraint_system;
-    let (dense_poly, jagged_bijection) = constraint_system.build_dense_polynomial();
+
+    // Build the dense polynomial and get all components
+    let (dense_poly, jagged_bijection, mapping) = constraint_system.build_dense_polynomial();
 
     // Test with random field element evaluation points
     let num_s_vars = constraint_system.num_s_vars();
@@ -252,172 +237,56 @@ fn test_jagged_relation_dory_witness() {
     let zr: Vec<Fq> = (0..num_s_vars).map(|_| Fq::rand(&mut rng)).collect();
     let zc: Vec<Fq> = (0..num_x_vars).map(|_| Fq::rand(&mut rng)).collect();
 
-    // Debug: Print matrix structure
-    println!("Matrix structure:");
-    println!("  - num_s_vars: {}", num_s_vars);
-    println!("  - num_x_vars: {}", num_x_vars);
-    println!(
-        "  - num_constraints: {}",
-        constraint_system.num_constraints()
-    );
-    println!(
-        "  - num_constraints_padded: {}",
-        constraint_system.matrix.num_constraints_padded
-    );
-    println!(
-        "  - matrix evaluations len: {}",
-        constraint_system.matrix.evaluations.len()
-    );
-    println!(
-        "  - dense size: {}",
-        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection)
-    );
-
-    // Compute sparse evaluation using parallel iterators
-    let num_constraints = constraint_system.num_constraints();
-    let num_constraints_padded = constraint_system.matrix.num_constraints_padded;
-    let num_evals_per_constraint = 1 << num_x_vars;
-
-    // Debug: Let's understand the matrix layout
-    println!("\nMatrix layout debug:");
-    println!("  - Total matrix evaluations: {}", constraint_system.matrix.evaluations.len());
-    println!("  - Expected size: {} * {} = {}",
-        constraint_system.matrix.num_constraints_padded,
-        1 << num_x_vars,
-        constraint_system.matrix.num_constraints_padded * (1 << num_x_vars)
-    );
-
-    // The matrix should have num_constraints_padded rows and 2^num_x_vars columns
-    // Total variables = log2(matrix size) = log2(33554432) = 25
-    let matrix_total_vars = constraint_system.matrix.evaluations.len().trailing_zeros() as usize;
-    println!("  - Matrix total vars: {}", matrix_total_vars);
-    println!("  - Matrix has {} s-vars and {} x-vars", num_s_vars, num_x_vars);
-
-    // Create a MultilinearPolynomial from the constraint system's matrix evaluations
-    // With zero padding, the matrix directly follows the paper's semantics
-    let sparse_mlpoly = MultilinearPolynomial::from(constraint_system.matrix.evaluations.clone());
-
-    // Create evaluation point: [zc, zr] (col vars first, then row vars)
-    // Based on the matrix structure, variables should be ordered as [x_vars, s_vars]
-    let mut eval_point = Vec::new();
-    eval_point.extend_from_slice(&zc);
-    eval_point.extend_from_slice(&zr);
-
-    // Convert to challenges for polynomial evaluation
-    // Note: MultilinearPolynomial expects challenges in reverse order (big-endian)
-    let eval_challenges: Vec<<Fq as JoltField>::Challenge> = eval_point
-        .iter()
-        .rev()  // Reverse for correct endianness
-        .map(|&x| x.into())
-        .collect();
-
-    // Evaluate sparse polynomial
-    let sparse_eval = PolynomialEvaluation::evaluate(&sparse_mlpoly, &eval_challenges);
-
-    println!("  - Sparse polynomial evaluation: {}", sparse_eval);
-
-    // Debug: Let's check how padding works in the sparse matrix
-    println!("\nDebug: Checking padding in sparse matrix:");
-
-    // Get the first GT exp polynomial (4-var, should be padded to 8-var)
-    let first_gt_exp_row = 0; // First row in matrix
-    let storage_offset = constraint_system.matrix.storage_offset(first_gt_exp_row);
-
-    // Check the padding pattern: pad_4var_to_8var repeats EACH value 16 times consecutively
-    println!("  First GT exp polynomial values (checking consecutive repetition):");
-
-    // For pad_4var_to_8var: mle_4var[i] is repeated 16 times at positions [i*16..(i+1)*16]
-    let mut has_correct_padding = true;
-    for mle_idx in 0..16 {
-        let start_pos = mle_idx * 16;
-        let base_val = constraint_system.matrix.evaluations[storage_offset + start_pos];
-
-        if mle_idx < 2 {
-            println!("    MLE[{}] value = {} (at positions {}-{})",
-                mle_idx, base_val, start_pos, start_pos + 15);
-        }
-
-        // Check that this value is repeated 16 times
-        for offset in 1..16 {
-            let pos = start_pos + offset;
-            let val = constraint_system.matrix.evaluations[storage_offset + pos];
-            if val != base_val {
-                has_correct_padding = false;
-                println!("    WARNING: Position {} has value {}, expected {}",
-                    pos, val, base_val);
-            }
-        }
-    }
-    println!("  Has correct padding pattern: {}", has_correct_padding);
-
-    // Debug: Let's check the bijection more carefully
-    println!("\nDebug: Understanding the bijection:");
-
-    // Check how many polynomials we have and their sizes
-    println!("  Total polynomials in bijection: {}", jagged_bijection.num_polynomials());
-
-    // Check the first few polynomial sizes
-    for poly_idx in 0..5.min(jagged_bijection.num_polynomials()) {
-        let num_vars = <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(&jagged_bijection, poly_idx);
-        let poly_size = 1 << num_vars;
-        println!("  Polynomial[{}]: {} vars, size {}", poly_idx, num_vars, poly_size);
-    }
-
-    // Now let's see what the dense polynomial looks like
-    let dense_size_check = <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
-    println!("\nDebug: Dense polynomial extraction:");
-    println!("  Dense size: {}", dense_size_check);
-
-    // Check the first polynomial's extraction
-    println!("  First polynomial extraction (should extract 16 unique values for 4-var):");
-    for i in 0..20.min(dense_size_check) {
-        let row = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, i);
-        let col = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, i);
-        let dense_val = dense_poly.Z[i];
-
-        if i < 5 || i == 15 || i == 16 {
-            println!("    Dense[{}] -> poly[{}], eval[{}] = {}",
-                i, row, col, dense_val);
-        }
-    }
-
     // Pre-compute all eq evaluations for efficiency
     let eq_row_evals = EqPolynomial::<Fq>::evals(&zr);
     let eq_col_evals = EqPolynomial::<Fq>::evals(&zc);
 
-    // Compute dense evaluation using the bijection (also in parallel)
+    // Compute sparse evaluation manually (since MultilinearPolynomial evaluation has different semantics)
+    // The sparse matrix M(s, x) is evaluated as: sum_{s,x in {0,1}^n} M[s][x] * eq(s, zr) * eq(x, zc)
+    let row_size = 1 << constraint_system.matrix.num_constraint_vars;
+    let sparse_eval: Fq = (0..constraint_system.matrix.num_rows)
+        .into_par_iter()
+        .map(|s_idx| {
+            let mut row_sum = Fq::zero();
+            for x_idx in 0..row_size {
+                let flat_idx = s_idx * row_size + x_idx;
+                let val = constraint_system.matrix.evaluations[flat_idx];
+                if !val.is_zero() {
+                    let eq_s = eq_row_evals[s_idx];
+                    let eq_x = eq_col_evals[x_idx];
+                    row_sum += val * eq_s * eq_x;
+                }
+            }
+            row_sum
+        })
+        .sum();
+
+    // Compute dense evaluation using the bijection
     let dense_size =
         <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
 
     let dense_eval: Fq = (0..dense_size)
         .into_par_iter()
-        .map(|i| {
-            // Get row and col using bijection
-            let row = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, i);
-            let col = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, i);
+        .map(|dense_idx| {
+            // Get polynomial index and evaluation index from bijection
+            let poly_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, dense_idx);
+            let eval_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, dense_idx);
 
-            // Use pre-computed eq evaluations
-            let eq_row = eq_row_evals[row];
-            let eq_col = eq_col_evals[col];
+            // Decode to get constraint index and polynomial type
+            let (constraint_idx, poly_type) = mapping.decode(poly_idx);
 
-            let q_val = dense_poly.Z[i];
-            q_val * eq_row * eq_col
+            // Get the matrix row index
+            let matrix_row = constraint_system.matrix.row_index(poly_type, constraint_idx);
+
+            // Get eq evaluations using the correct indices
+            let eq_s = eq_row_evals[matrix_row];
+            let eq_x = eq_col_evals[eval_idx];
+            let q_val = dense_poly.Z[dense_idx];
+
+            q_val * eq_s * eq_x
         })
         .sum();
 
-    // The evaluations should be equal
-    assert_eq!(
-        sparse_eval, dense_eval,
-        "Sparse eval {} != Dense eval {}",
-        sparse_eval, dense_eval
-    );
-
-    println!("✓ Dory witness jagged relation test passed!");
-    println!("  Sparse eval: {}", sparse_eval);
-    println!("  Dense eval:  {}", dense_eval);
-    println!(
-        "  Dense size: {} (from {} sparse entries)",
-        dense_size,
-        constraint_system.matrix.evaluations.len()
-    );
+    // Verify that sparse and dense evaluations match
+    assert_eq!(sparse_eval, dense_eval, "Sparse and dense evaluations should match");
 }

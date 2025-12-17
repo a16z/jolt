@@ -489,7 +489,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for SquareAndMu
             // Get 4-var g polynomial and pad to 8 vars
             let g_mle_4var = get_g_mle();
             let g_mle_8var = if r_star_f.len() == 8 {
-                DoryMatrixBuilder::pad_4var_to_8var(&g_mle_4var)
+                DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var)
             } else {
                 g_mle_4var
             };

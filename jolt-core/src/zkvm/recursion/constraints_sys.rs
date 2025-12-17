@@ -65,10 +65,10 @@ pub enum PolyType {
     MulQuotient = 7,
 
     // G1 Scalar Multiplication polynomials
-    G1ScalarMulXA = 8,      // x-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
-    G1ScalarMulYA = 9,      // y-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
-    G1ScalarMulXT = 10,     // x-coord of doubled point T_i
-    G1ScalarMulYT = 11,     // y-coord of doubled point T_i
+    G1ScalarMulXA = 8,  // x-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
+    G1ScalarMulYA = 9,  // y-coord of accumulator A_i (contains A_0, A_1, ..., A_n)
+    G1ScalarMulXT = 10, // x-coord of doubled point T_i
+    G1ScalarMulYT = 11, // y-coord of doubled point T_i
     G1ScalarMulXANext = 12, // x-coord of A_{i+1} (shifted by 1)
     G1ScalarMulYANext = 13, // y-coord of A_{i+1} (shifted by 1)
     G1ScalarMulIndicator = 14, // Indicator for T_i = O (point at infinity)
@@ -245,6 +245,22 @@ impl DoryMatrixBuilder {
         mle_8var
     }
 
+    /// Pad a 4-variable MLE to 8 variables using zero padding for true jaggedness.
+    pub fn pad_4var_to_8var_zero_padding(mle_4var: &[Fq]) -> Vec<Fq> {
+        assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
+        let mut mle_8var = Vec::with_capacity(256);
+
+        // Copy original 16 values at the beginning
+        mle_8var.extend_from_slice(mle_4var);
+
+        // Pad with zeros for the remaining positions
+        // This creates true jaggedness - non-zero values only at the start
+        mle_8var.resize(256, Fq::zero());
+
+        assert_eq!(mle_8var.len(), 256);
+        mle_8var
+    }
+
     /// Add constraints from a GT exponentiation witness.
     /// Each step j creates one constraint using:
     /// - base: the base element a (replicated for each constraint)
@@ -264,12 +280,12 @@ impl DoryMatrixBuilder {
         for step in 0..n {
             // Handle padding from 4-var to 8-var if needed
             let (base_row, rho_prev, rho_curr, quotient) = if self.num_constraint_vars == 8 {
-                // Pad 4-variable MLEs to 8 variables
+                // Pad 4-variable MLEs to 8 variables using zero padding
                 (
-                    Self::pad_4var_to_8var(&base_mle_4var),
-                    Self::pad_4var_to_8var(&witness.rho_mles[step]),
-                    Self::pad_4var_to_8var(&witness.rho_mles[step + 1]),
-                    Self::pad_4var_to_8var(&witness.quotient_mles[step]),
+                    Self::pad_4var_to_8var_zero_padding(&base_mle_4var),
+                    Self::pad_4var_to_8var_zero_padding(&witness.rho_mles[step]),
+                    Self::pad_4var_to_8var_zero_padding(&witness.rho_mles[step + 1]),
+                    Self::pad_4var_to_8var_zero_padding(&witness.quotient_mles[step]),
                 )
             } else if self.num_constraint_vars == 4 {
                 // Use MLEs as-is
@@ -357,12 +373,12 @@ impl DoryMatrixBuilder {
 
         // Handle padding from 4-var to 8-var if needed
         let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 8 {
-            // Pad 4-variable MLEs to 8 variables
+            // Pad 4-variable MLEs to 8 variables using zero padding
             (
-                Self::pad_4var_to_8var(&lhs_mle_4var),
-                Self::pad_4var_to_8var(&rhs_mle_4var),
-                Self::pad_4var_to_8var(&result_mle_4var),
-                Self::pad_4var_to_8var(&quotient_mle_4var),
+                Self::pad_4var_to_8var_zero_padding(&lhs_mle_4var),
+                Self::pad_4var_to_8var_zero_padding(&rhs_mle_4var),
+                Self::pad_4var_to_8var_zero_padding(&result_mle_4var),
+                Self::pad_4var_to_8var_zero_padding(&quotient_mle_4var),
             )
         } else if self.num_constraint_vars == 4 {
             // Use MLEs as-is
@@ -430,8 +446,16 @@ impl DoryMatrixBuilder {
         assert_eq!(witness.y_a_mles.len(), 1, "Expected single MLE for y_a");
         assert_eq!(witness.x_t_mles.len(), 1, "Expected single MLE for x_t");
         assert_eq!(witness.y_t_mles.len(), 1, "Expected single MLE for y_t");
-        assert_eq!(witness.x_a_next_mles.len(), 1, "Expected single MLE for x_a_next");
-        assert_eq!(witness.y_a_next_mles.len(), 1, "Expected single MLE for y_a_next");
+        assert_eq!(
+            witness.x_a_next_mles.len(),
+            1,
+            "Expected single MLE for x_a_next"
+        );
+        assert_eq!(
+            witness.y_a_next_mles.len(),
+            1,
+            "Expected single MLE for y_a_next"
+        );
 
         // Each MLE should have 256 evaluations for 8 variables
         assert_eq!(
@@ -469,8 +493,7 @@ impl DoryMatrixBuilder {
             .push(witness.x_a_next_mles[0].clone());
         self.rows_by_type[PolyType::G1ScalarMulYANext as usize]
             .push(witness.y_a_next_mles[0].clone());
-        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize]
-            .push(t_is_infinity);
+        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(t_is_infinity);
 
         // Add empty rows for GT types to maintain consistent indexing
         let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
@@ -524,11 +547,7 @@ impl DoryMatrixBuilder {
             num_constraints_padded >= num_constraints,
             "Padded constraints must be at least as large as actual constraints"
         );
-        assert_eq!(
-            num_rows,
-            1 << num_s_vars,
-            "num_rows must be a power of 2"
-        );
+        assert_eq!(num_rows, 1 << num_s_vars, "num_rows must be a power of 2");
         assert!(
             num_rows >= PolyType::NUM_TYPES * num_constraints_padded,
             "num_rows must be at least NUM_TYPES * num_constraints_padded"
@@ -753,7 +772,7 @@ impl ConstraintSystem {
 
         // Pad g(x) to 8 variables if needed
         let g_poly = if matrix.num_constraint_vars == 8 {
-            let padded_g = DoryMatrixBuilder::pad_4var_to_8var(&g_mle_4var);
+            let padded_g = DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var);
             DensePolynomial::new(padded_g)
         } else {
             DensePolynomial::new(g_mle_4var)
@@ -787,7 +806,9 @@ impl ConstraintSystem {
                 let quotient = self.extract_row_poly(PolyType::Quotient, idx, row_size);
 
                 polys.push(
-                    crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials::<Fq> {
+                    crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials::<
+                        Fq,
+                    > {
                         base,
                         rho_prev,
                         rho_curr,
@@ -823,7 +844,19 @@ impl ConstraintSystem {
     }
 
     /// Extract G1 scalar mul constraint data for g1_scalar_mul sumcheck
-    pub fn extract_g1_scalar_mul_constraints(&self) -> Vec<(usize, (Fq, Fq), Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>)> {
+    pub fn extract_g1_scalar_mul_constraints(
+        &self,
+    ) -> Vec<(
+        usize,
+        (Fq, Fq),
+        Vec<Fq>,
+        Vec<Fq>,
+        Vec<Fq>,
+        Vec<Fq>,
+        Vec<Fq>,
+        Vec<Fq>,
+        Vec<Fq>,
+    )> {
         let mut constraints = Vec::new();
         let num_constraint_vars = self.matrix.num_constraint_vars;
         let row_size = 1 << num_constraint_vars;
@@ -837,9 +870,20 @@ impl ConstraintSystem {
                 let y_t = self.extract_row_poly(PolyType::G1ScalarMulYT, idx, row_size);
                 let x_a_next = self.extract_row_poly(PolyType::G1ScalarMulXANext, idx, row_size);
                 let y_a_next = self.extract_row_poly(PolyType::G1ScalarMulYANext, idx, row_size);
-                let t_is_infinity = self.extract_row_poly(PolyType::G1ScalarMulIndicator, idx, row_size);
+                let t_is_infinity =
+                    self.extract_row_poly(PolyType::G1ScalarMulIndicator, idx, row_size);
 
-                constraints.push((constraint.constraint_index, base_point, x_a, y_a, x_t, y_t, x_a_next, y_a_next, t_is_infinity));
+                constraints.push((
+                    constraint.constraint_index,
+                    base_point,
+                    x_a,
+                    y_a,
+                    x_t,
+                    y_t,
+                    x_a_next,
+                    y_a_next,
+                    t_is_infinity,
+                ));
             }
         }
 
@@ -1059,7 +1103,8 @@ impl ConstraintSystem {
                 let c4 = {
                     let y_a_diff = y_a_next - y_t;
 
-                    y_a_diff * (x_t * (y_p + y_a_next) - x_p * (y_t + y_a_next) + x_a_next * (y_t - y_p))
+                    y_a_diff
+                        * (x_t * (y_p + y_a_next) - x_p * (y_t + y_a_next) + x_a_next * (y_t - y_p))
                 };
 
                 // Return sum of all constraints (should be 0 when valid)

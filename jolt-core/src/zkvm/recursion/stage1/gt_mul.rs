@@ -18,8 +18,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver,
-        sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
     zkvm::witness::VirtualPolynomial,
@@ -470,9 +469,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
         let g_eval: F = {
             use crate::poly::dense_mlpoly::DensePolynomial;
             use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-            use jolt_optimizations::get_g_mle;
             use crate::zkvm::recursion::constraints_sys::DoryMatrixBuilder;
             use ark_bn254::Fq;
+            use jolt_optimizations::get_g_mle;
             use std::any::TypeId;
 
             // Runtime check that F = Fq
@@ -483,12 +482,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
             // Get 4-var g polynomial and pad to 8 vars
             let g_mle_4var = get_g_mle();
             let g_mle_8var = if r_star_f.len() == 8 {
-                DoryMatrixBuilder::pad_4var_to_8var(&g_mle_4var)
+                DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var)
             } else {
                 g_mle_4var
             };
             // SAFETY: We checked F = Fq above, so this transmute is safe
-            let g_poly_fq = MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_8var));
+            let g_poly_fq =
+                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_8var));
             let r_star_fq: &Vec<Fq> = unsafe { std::mem::transmute(&r_star_f) };
             let g_eval_fq = g_poly_fq.evaluate_dot_product(r_star_fq);
             unsafe { std::mem::transmute_copy(&g_eval_fq) }

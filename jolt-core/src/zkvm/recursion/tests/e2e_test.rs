@@ -108,9 +108,18 @@ fn test_recursion_snark_e2e_with_dory() {
     let num_constraint_vars = prover.constraint_system.matrix.num_constraint_vars;
     let num_constraints_padded = prover.constraint_system.matrix.num_constraints_padded;
 
-    // Build dense polynomial and bijection for Stage 3
-    let (dense_poly, jagged_bijection) = prover.constraint_system.build_dense_polynomial();
+    // Build dense polynomial, bijection, and mapping for Stage 3
+    let (dense_poly, jagged_bijection, jagged_mapping) = prover.constraint_system.build_dense_polynomial();
     let dense_num_vars = dense_poly.get_num_vars();
+
+    // Precompute matrix row indices for all polynomial indices
+    let num_polynomials = jagged_bijection.num_polynomials();
+    let mut matrix_rows = Vec::with_capacity(num_polynomials);
+    for poly_idx in 0..num_polynomials {
+        let (constraint_idx, poly_type) = jagged_mapping.decode(poly_idx);
+        let matrix_row = prover.constraint_system.matrix.row_index(poly_type, constraint_idx);
+        matrix_rows.push(matrix_row);
+    }
 
 
     // Extract constraint types for verification
@@ -184,6 +193,8 @@ fn test_recursion_snark_e2e_with_dory() {
         num_constraints,
         num_constraints_padded,
         jagged_bijection,
+        jagged_mapping,
+        matrix_rows,
     };
 
     // Create verifier

@@ -286,12 +286,13 @@ impl ConstraintSystemJaggedBuilder {
 /// Extension methods for ConstraintSystem to build dense polynomial
 impl ConstraintSystem {
     /// Build dense polynomial using generic jagged transform
-    /// Returns the dense polynomial and the bijection used to create it
+    /// Returns the dense polynomial, the bijection, and the mapping used to create it
     pub fn build_dense_polynomial(
         &self,
     ) -> (
         crate::poly::dense_mlpoly::DensePolynomial<Fq>,
         VarCountJaggedBijection,
+        ConstraintMapping,
     ) {
         let builder = ConstraintSystemJaggedBuilder::from_constraints(&self.constraints);
         let (bijection, mapping) = builder.build();
@@ -314,14 +315,9 @@ impl ConstraintSystem {
             let matrix_row = self.matrix.row_index(poly_type, constraint_idx);
             let offset = self.matrix.storage_offset(matrix_row);
 
-            // For 4-var polynomials, the sparse matrix stores padded values.
-            // Each 4-var evaluation is repeated 16 times consecutively when padded to 8-var.
-            // So evaluation i is stored at positions [i*16..(i+1)*16] in the sparse matrix.
-            let sparse_idx = if num_vars == 4 {
-                eval_idx * 16  // Skip to the start of this evaluation's repeated block
-            } else {
-                eval_idx       // 8-var polynomials: direct indexing
-            };
+            // For 4-var polynomials with zero padding, values are stored directly
+            // at the beginning of the padded array (no repetition).
+            let sparse_idx = eval_idx;  // Direct indexing for both 4-var and 8-var
 
             dense_evals.push(self.matrix.evaluations[offset + sparse_idx]);
         }
@@ -334,6 +330,7 @@ impl ConstraintSystem {
         (
             crate::poly::dense_mlpoly::DensePolynomial::new(dense_evals),
             bijection,
+            mapping,
         )
     }
 }
