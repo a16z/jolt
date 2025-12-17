@@ -42,7 +42,7 @@ use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
@@ -423,15 +423,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
-        let key = match self.params.kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionPhase1),
-            AdviceKind::Untrusted => {
-                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionPhase1)
-            }
-        };
-
-        // Insert without appending to the transcript: Phase 2 will append C_mid as its input claim.
-        accumulator.openings.insert(key, (opening_point, c_mid));
+        // Append C_mid to transcript for explicit Fiat-Shamir binding (defensive).
+        // While C_mid is already implicitly determined by the sumcheck univariates,
+        // explicit transcript binding makes the security argument clearer.
+        match self.params.kind {
+            AdviceKind::Trusted => accumulator.append_trusted_advice(
+                transcript,
+                SumcheckId::AdviceClaimReductionPhase1,
+                opening_point,
+                c_mid,
+            ),
+            AdviceKind::Untrusted => accumulator.append_untrusted_advice(
+                transcript,
+                SumcheckId::AdviceClaimReductionPhase1,
+                opening_point,
+                c_mid,
+            ),
+        }
 
         // If there is no Phase 2 (all advice row bits come from cycle), cache the final advice opening
         // directly here under `SumcheckId::AdviceClaimReduction` so Stage 7 can scale/embed it.
@@ -569,18 +577,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
-        let key = match self.params.kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionPhase1),
-            AdviceKind::Untrusted => {
-                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionPhase1)
-            }
-        };
-
-        if let Some((_, claim)) = accumulator.openings.get(&key) {
-            let claim = *claim;
-            accumulator.openings.insert(key, (opening_point, claim));
-        } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+        // Append C_mid to transcript for explicit Fiat-Shamir binding (defensive).
+        match self.params.kind {
+            AdviceKind::Trusted => accumulator.append_trusted_advice(
+                transcript,
+                SumcheckId::AdviceClaimReductionPhase1,
+                opening_point,
+            ),
+            AdviceKind::Untrusted => accumulator.append_untrusted_advice(
+                transcript,
+                SumcheckId::AdviceClaimReductionPhase1,
+                opening_point,
+            ),
         }
 
         // If Phase 2 is absent (nu_a_addr == 0), Phase 1 cached the final advice opening in Stage 6.
