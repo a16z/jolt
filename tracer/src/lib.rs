@@ -28,7 +28,7 @@ pub mod utils;
 pub use common::jolt_device::JoltDevice;
 pub use instruction::inline::{list_registered_inlines, register_inline};
 
-use crate::{emulator::memory::Memory, instruction::uncompress_instruction};
+use crate::{emulator::{memory::{CheckpointingMemory, Memory, MemoryData, ReplayableMemory}, GeneralizedEmulator}, instruction::uncompress_instruction};
 
 /// Executes a RISC-V program and generates its execution trace along with emulator state checkpoints.
 ///
@@ -183,7 +183,7 @@ pub fn trace_checkpoints(
     (checkpoints, emulator_trace_iter.get_jolt_device())
 }
 
-fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
+fn step_emulator<D: MemoryData>(emulator: &mut GeneralizedEmulator<D>, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself
     // into an infinite loop. It seems to be a good heuristic for now but we
@@ -196,13 +196,13 @@ fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut 
 }
 
 #[tracing::instrument(skip_all)]
-fn setup_emulator(
+fn setup_emulator<D: MemoryData>(
     elf_contents: &[u8],
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> Emulator {
+) -> GeneralizedEmulator<D> {
     setup_emulator_with_backtraces(
         elf_contents,
         None,
@@ -215,16 +215,16 @@ fn setup_emulator(
 
 #[tracing::instrument(skip_all)]
 /// Sets up an emulator instance with access to the elf-path for symbol loading and de-mangling.
-fn setup_emulator_with_backtraces(
+fn setup_emulator_with_backtraces<D: MemoryData>(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> Emulator {
+) -> GeneralizedEmulator<D> {
     let term = DefaultTerminal::default();
-    let mut emulator = Emulator::new(Box::new(term));
+    let mut emulator = GeneralizedEmulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 
     let mut jolt_device = JoltDevice::new(memory_config);
@@ -237,6 +237,196 @@ fn setup_emulator_with_backtraces(
     }
     emulator.setup_program(elf_contents);
     emulator
+}
+
+pub struct Checkpoint {
+    emulator_state: GeneralizedEmulator<ReplayableMemory>,
+    prev_pc: u64,
+    current_traces: Vec<Cycle>,
+    /// The remaining number of cycles that can be replayed for this checkpoint
+    cycles_remaining: usize,
+    /// The total number of cycles executed so far, including the ones prior to this checkpoint
+    cycle_count: usize,
+}
+
+// SAFETY: Checkpoint contains only owned data and can be safely sent between threads
+unsafe impl Send for Checkpoint {}
+
+impl Iterator for Checkpoint {
+    type Item = Cycle;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.current_traces.is_empty() {
+            return self.current_traces.pop();
+        }
+        debug_assert!(self.current_traces.is_empty());
+
+        if self.cycles_remaining == 0 {
+            return None;
+        }
+        self.cycles_remaining -= 1;
+        self.cycle_count += 1;
+
+        step_emulator(
+            &mut self.emulator_state,
+            &mut self.prev_pc,
+            Some(&mut self.current_traces),
+        );
+        if self.current_traces.is_empty() {
+            let cpu = self.emulator_state.get_mut_cpu();
+            if cpu.mmu.jolt_device.as_ref().unwrap().panic {
+                error!(
+                    "Guest program terminated due to panic after {} cycles.",
+                    cpu.trace_len
+                );
+                utils::panic::display_panic_backtrace(&self.emulator_state);
+            }
+            None
+        } else {
+            self.current_traces.reverse();
+            self.current_traces.pop()
+        }
+    }
+}
+
+pub struct CheckpointingEmulator {
+    emulator_state: GeneralizedEmulator<CheckpointingMemory>,
+    prev_pc: u64,
+    current_traces: Vec<Cycle>,
+    cycles_since_last_checkpoint: usize,
+    cycle_count: usize,
+    finished: bool,
+    pub(crate) final_memory_state: Option<Memory>,
+}
+
+impl CheckpointingEmulator {
+    pub fn new(emulator_state: GeneralizedEmulator<CheckpointingMemory>) -> Self {
+        Self {
+            emulator_state,
+            prev_pc: 0,
+            current_traces: vec![],
+            cycles_since_last_checkpoint: 0,
+            cycle_count: 0,
+            finished: false,
+            final_memory_state: None,
+        }
+    }
+
+    pub fn new_for_test() -> Self {
+        let minimal_elf = vec![
+            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        use crate::MemoryConfig;
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+
+        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
+
+        Self {
+            emulator_state,
+            prev_pc: 0,
+            current_traces: vec![],
+            cycles_since_last_checkpoint: 0,
+            cycle_count: 0,
+            finished: true,
+            final_memory_state: Some(emulator::memory::Memory::default()),
+        }
+    }
+
+    pub fn at_tick_boundary(&self) -> bool {
+        self.current_traces.is_empty()
+    }
+
+    pub fn save_checkpoint(&mut self) -> Checkpoint {
+        // XXX: What should we do if we're not at a tick boundary?
+        assert!(self.at_tick_boundary());
+
+        let res = Checkpoint {
+            emulator_state: self.emulator_state.save_checkpoint(),
+            prev_pc: self.prev_pc,
+            current_traces: vec![],
+            cycles_remaining: self.cycles_since_last_checkpoint,
+            cycle_count: self.cycle_count,
+        };
+        self.cycles_since_last_checkpoint = 0;
+
+        res
+    }
+
+    pub fn get_jolt_device(mut self) -> JoltDevice {
+        self.emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .expect("JoltDevice was not initialized")
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.finished
+    }
+}
+
+impl Iterator for CheckpointingEmulator {
+    type Item = Cycle;
+
+    /// Advances the iterator and returns the next trace entry.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Cycle)` - The next instruction trace in the execution sequence
+    /// * `None` - If program execution has completed.
+    ///
+    /// # Details
+    ///
+    /// The function follows this sequence:
+    /// 1. Returns any remaining traces from the previous emulator tick
+    /// 2. If buffer `current_traces` is empty, and the number of ticks
+    ///    is not reached, executes another emulator tick``
+    /// 3. Checks for program termination using the heuristic of PC not changing
+    /// 4. Buffers new traces in FIFO order
+    /// 5. Returns the next trace or None if execution is complete
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.current_traces.is_empty() {
+            return self.current_traces.pop();
+        }
+        debug_assert!(self.current_traces.is_empty());
+
+        self.cycle_count += 1;
+        self.cycles_since_last_checkpoint += 1;
+
+        step_emulator(
+            &mut self.emulator_state,
+            &mut self.prev_pc,
+            Some(&mut self.current_traces),
+        );
+        if self.current_traces.is_empty() {
+            self.finished = true;
+            let emulator = &mut self.emulator_state;
+            let cpu = emulator.get_mut_cpu();
+            let memory = std::mem::take(&mut cpu.mmu.memory.memory);
+            self.final_memory_state = Some(memory.into_vec_memory_backend());
+
+            if cpu.mmu.jolt_device.as_ref().unwrap().panic {
+                error!(
+                    "Guest program terminated due to panic after {} cycles.",
+                    cpu.trace_len
+                );
+                utils::panic::display_panic_backtrace(&self.emulator_state);
+            }
+            None
+        } else {
+            self.current_traces.reverse();
+            self.current_traces.pop()
+        }
+    }
 }
 
 /// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
@@ -986,7 +1176,7 @@ mod test {
         };
 
         let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
-        let mut emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+        let mut emulator: Emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
         let mut prev_trace_len = 0;
