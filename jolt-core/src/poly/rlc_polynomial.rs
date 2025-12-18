@@ -380,6 +380,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         result
     }
 
+
     /// Add the VMV contribution of advice polynomials for the streaming path.
     ///
     /// Advice polynomials are not streamed from the trace; they are stored directly in the
@@ -582,7 +583,6 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                 || VmvSetup::<F>::create_accumulators(num_columns),
                 VmvSetup::<F>::merge_accumulators,
             );
-
         let mut result = VmvSetup::<F>::finalize(dense_accs, onehot_accs, num_columns);
 
         // Advice contribution is small and independent of the trace; add it after the streamed pass.
@@ -754,7 +754,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         onehot_acc: &mut F::Unreduced<9>,
     ) {
         // Dense polynomials: accumulate scaled_coeff * (post - pre)
-        let (_, pre_value, post_value) = cycle.rd_write();
+        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
         let diff = s64_from_diff_u64s(post_value, pre_value);
         dense_acc.fmadd(&scaled_rd_inc, &diff);
 

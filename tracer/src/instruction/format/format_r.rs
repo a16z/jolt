@@ -24,9 +24,13 @@ impl InstructionRegisterState for RegisterStateFormatR {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
-        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+        let rs1_value = if operands.rs1.unwrap() == 0 {
+            0
+        } else {
+            rng.next_u64()
+        };
 
-        let rs2_value = match operands.rs2 {
+        let rs2_value = match operands.rs2.unwrap() {
             0 => 0,
             _ if operands.rs2 == operands.rs1 => rs1_value,
             _ => rng.next_u64(),
@@ -46,16 +50,16 @@ impl InstructionRegisterState for RegisterStateFormatR {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rs2_value(&self) -> u64 {
-        self.rs2
+    fn rs2_value(&self) -> Option<u64> {
+        Some(self.rs2)
     }
 
-    fn rd_values(&self) -> (u64, u64) {
-        self.rd
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        Some(self.rd)
     }
 }
 
@@ -95,9 +99,9 @@ impl InstructionFormat for FormatR {
 impl From<NormalizedOperands> for FormatR {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
-            rs2: operands.rs2,
+            rd: operands.rd.unwrap(),
+            rs1: operands.rs1.unwrap(),
+            rs2: operands.rs2.unwrap(),
         }
     }
 }
@@ -105,9 +109,9 @@ impl From<NormalizedOperands> for FormatR {
 impl From<FormatR> for NormalizedOperands {
     fn from(format: FormatR) -> Self {
         Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: format.rs2,
+            rd: Some(format.rd),
+            rs1: Some(format.rs1),
+            rs2: Some(format.rs2),
             imm: 0,
         }
     }

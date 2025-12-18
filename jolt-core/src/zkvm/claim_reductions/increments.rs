@@ -373,7 +373,7 @@ impl<F: JoltField> IncClaimReductionPhase1Prover<F> {
                         };
 
                         // RdInc = post_value - pre_value for rd writes
-                        let (_, pre_rd, post_rd) = cycle.rd_write();
+                        let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
                         let rd_inc: S64 = s64_from_diff_u64s(post_rd, pre_rd);
 
                         acc_ram_0.fmadd(&eq_r2_hi[x_hi], &ram_inc);
@@ -574,7 +574,7 @@ impl<F: JoltField> IncClaimReductionPhase2Prover<F> {
                             RAMAccess::Write(w) => s64_from_diff_u64s(w.post_value, w.pre_value),
                             _ => S64::from(0i64),
                         };
-                        let (_, pre_rd, post_rd) = cycle.rd_write();
+                        let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
                         let rd_inc_val: S64 = s64_from_diff_u64s(post_rd, pre_rd);
 
                         acc_ram.fmadd(eq_val, &ram_inc_val);

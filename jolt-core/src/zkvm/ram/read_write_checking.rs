@@ -8,7 +8,8 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::read_write_matrix::{
-    ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
+    AddressMajorMatrixEntry, RamAddressMajorEntry, RamCycleMajorEntry, ReadWriteMatrixAddressMajor,
+    ReadWriteMatrixCycleMajor,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -56,7 +57,7 @@ pub struct RamReadWriteCheckingParams<F: JoltField> {
     K: usize,
     T: usize,
     gamma: F,
-    r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
+    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }
 
 impl<F: JoltField> RamReadWriteCheckingParams<F> {
@@ -67,7 +68,7 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
         trace_length: usize,
     ) -> Self {
         let gamma = transcript.challenge_scalar();
-        let (r_cycle_stage_1, _) = opening_accumulator.get_virtual_polynomial_opening(
+        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamReadValue,
             SumcheckId::SpartanOuter,
         );
@@ -75,7 +76,7 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
             K: one_hot_params.ram_k,
             T: trace_length,
             gamma,
-            r_cycle_stage_1,
+            r_cycle,
         }
     }
 }
@@ -141,12 +142,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
 
 #[derive(Allocative)]
 pub struct RamReadWriteCheckingProver<F: JoltField> {
-    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F>,
-    sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F>,
+    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>>,
+    sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RamAddressMajorEntry<F>>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
     // The following polynomials are instantiated after
-    // the first phase
+    // the second phase
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
     merged_eq: Option<MultilinearPolynomial<F>>,
@@ -191,7 +192,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],
     ) -> Self {
-        let r_prime = &params.r_cycle_stage_1;
+        let r_prime = &params.r_cycle;
         let (gruen_eq, merged_eq) = if phase1_num_rounds(params.K, params.T) > 0 {
             (
                 Some(GruenSplitEqPolynomial::new(
@@ -216,7 +217,11 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             .par_iter()
             .map(|x| F::from_u64(*x))
             .collect();
-        let sparse_matrix = ReadWriteMatrixCycleMajor::new(trace, val_init, memory_layout);
+        let sparse_matrix = ReadWriteMatrixCycleMajor::<_, RamCycleMajorEntry<F>>::new(
+            trace,
+            val_init,
+            memory_layout,
+        );
         let phase1_rounds = phase1_num_rounds(params.K, params.T);
         let phase2_rounds = phase2_num_rounds(params.K, params.T);
 
@@ -333,7 +338,43 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             ..
         } = self;
         let merged_eq = merged_eq.as_ref().unwrap();
-        sparse_matrix_phase2.compute_prover_message(inc, merged_eq, params.gamma, previous_claim)
+
+        let evals = sparse_matrix_phase2
+            .entries
+            .par_chunk_by(|x, y| x.column() / 2 == y.column() / 2)
+            .map(|entries| {
+                let odd_col_start_index = entries.partition_point(|entry| entry.column().is_even());
+                let (even_col, odd_col) = entries.split_at(odd_col_start_index);
+                let even_col_idx = 2 * (entries[0].column() / 2);
+                let odd_col_idx = even_col_idx + 1;
+                ReadWriteMatrixAddressMajor::prover_message_contribution(
+                    even_col,
+                    odd_col,
+                    sparse_matrix_phase2.val_init.get_bound_coeff(even_col_idx),
+                    sparse_matrix_phase2.val_init.get_bound_coeff(odd_col_idx),
+                    inc,
+                    merged_eq,
+                    params.gamma,
+                )
+            })
+            .fold_with([F::Unreduced::<5>::zero(); 2], |running, new| {
+                [
+                    running[0] + new[0].as_unreduced_ref(),
+                    running[1] + new[1].as_unreduced_ref(),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::<5>::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            );
+
+        UniPoly::from_evals_and_hint(
+            previous_claim,
+            &[
+                F::from_barrett_reduce(evals[0]),
+                F::from_barrett_reduce(evals[1]),
+            ],
+        )
     }
 
     fn phase3_compute_message(&self, previous_claim: F) -> UniPoly<F> {
@@ -645,7 +686,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(self.params.K.log_2());
 
-        let eq_eval_cycle = EqPolynomial::mle_endian(&self.params.r_cycle_stage_1, &r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle_endian(&self.params.r_cycle, &r_cycle);
 
         let (_, ra_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,

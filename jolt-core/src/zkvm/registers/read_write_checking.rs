@@ -1,7 +1,14 @@
+use std::sync::Arc;
+
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+use crate::subprotocols::read_write_matrix::{
+    AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
+    RegistersAddressMajorEntry, RegistersCycleMajorEntry,
+};
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
-    field::{JoltField, OptimizedMul},
+    field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -17,7 +24,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec},
+    utils::math::Math,
     zkvm::witness::CommittedPolynomial,
 };
 use allocative::Allocative;
@@ -25,10 +32,9 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use common::jolt_device::MemoryLayout;
-use fixedbitset::FixedBitSet;
+use num::Integer;
 use num_traits::Zero;
 use rayon::prelude::*;
-use std::array;
 use tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
@@ -55,1069 +61,539 @@ const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
 /// Degree bound of the sumcheck round polynomials in [`RegistersReadWriteCheckingVerifier`].
 const DEGREE_BOUND: usize = 3;
 
-/// A collection of vectors that are used in each of the first log(T / num_chunks)
-/// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
-/// across all log(T / num_chunks) rounds.
-#[derive(Allocative)]
-struct DataBuffers<F: JoltField> {
-    /// Contains
-    ///     Val(k, j', 0, ..., 0)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_0: [u64; K],
-    /// `val_j_r[0]` contains
-    ///     Val(k, j'', 0, r_i, ..., r_1)
-    /// `val_j_r[1]` contains
-    ///     Val(k, j'', 1, r_i, ..., r_1)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_r: [[F; K]; 2],
-    /// `ra[0]` contains
-    ///     ra(k, j'', 0, r_i, ..., r_1)
-    /// `ra[1]` contains
-    ///     ra(k, j'', 1, r_i, ..., r_1)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-    rs1_ra: [[F; K]; 2],
-    rs2_ra: [[F; K]; 2],
-    /// `wa[0]` contains
-    ///     wa(k, j'', 0, r_i, ..., r_1)
-    /// `wa[1]` contains
-    ///     wa(k, j'', 1, r_i, ..., r_1)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-    /// where j'' are the higher (log(T) - i - 1) bits of j'
-    rd_wa: [[F; K]; 2],
-    #[allocative(skip)]
-    dirty_indices: FixedBitSet,
+pub struct RegistersReadWriteCheckingParams<F: JoltField> {
+    pub gamma: F,
+    pub T: usize,
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
+    pub fn new(
+        trace_length: usize,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let gamma = transcript.challenge_scalar::<F>();
+        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::RegistersClaimReduction,
+        );
+        Self {
+            gamma,
+            T: trace_length,
+            r_cycle,
+        }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        LOG_K + self.T.log_2()
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, rd_wv_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let (_, rs1_rv_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let (_, rs1_rv_claim_instruction_input) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        // TODO: Make error and move to more appropriate place.
+        assert_eq!(rs1_rv_claim, rs1_rv_claim_instruction_input);
+        let (_, rs2_rv_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let (_, rs2_rv_claim_instruction_input) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        // TODO: Make error and move to more appropriate place.
+        assert_eq!(rs2_rv_claim, rs2_rv_claim_instruction_input);
+
+        rd_wv_claim + self.gamma * (rs1_rv_claim + self.gamma * rs2_rv_claim)
+    }
+
+    // Invariant: we want big-endian, with address variables being "higher" than cycle variables
+    fn normalize_opening_point(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let phase1_num_rounds = phase1_num_rounds(self.T);
+        let phase2_num_rounds = phase2_num_rounds(self.T);
+
+        // Cycle variables are bound low-to-high in phase 1
+        let (phase1_challenges, sumcheck_challenges) =
+            sumcheck_challenges.split_at(phase1_num_rounds);
+        // Address variables are bound low-to-high in phase 2
+        let (phase2_challenges, sumcheck_challenges) =
+            sumcheck_challenges.split_at(phase2_num_rounds);
+        // Remaining cycle variables, then address variables are
+        // bound low-to-high in phase 3
+        let (phase3_cycle_challenges, phase3_address_challenges) =
+            sumcheck_challenges.split_at(self.T.log_2() - phase1_num_rounds);
+
+        // Both Phase 1/2 (GruenSplitEqPolynomial LowToHigh) and Phase 3 (dense LowToHigh)
+        // bind variables from the "bottom" (last w component) to "top" (first w component).
+        // So all challenges need to be reversed to get big-endian [w[0], w[1], ...] order.
+        let r_cycle: Vec<_> = phase3_cycle_challenges
+            .iter()
+            .rev()
+            .copied()
+            .chain(phase1_challenges.iter().rev().copied())
+            .collect();
+        let r_address: Vec<_> = phase3_address_challenges
+            .iter()
+            .rev()
+            .copied()
+            .chain(phase2_challenges.iter().rev().copied())
+            .collect();
+
+        [r_address, r_cycle].concat().into()
+    }
+}
+
+/// Number of cycle variables to bind in Phase 1 (using CycleMajor sparse matrix).
+///
+/// # Supported configurations
+/// The following (phase1, phase2) configurations are supported:
+/// - `(T.log_2(), any)` - All cycle vars bound in phase 1
+/// - `(0, any)` - Skip phase 1 entirely, start binding address vars
+///
+/// Other configurations (e.g., leaving 2+ cycle vars for phase 3 while binding
+/// all address vars in phase 2) may cause verification failures.
+///
+/// TODO: make the implementation works for all configurations.
+fn phase1_num_rounds(T: usize) -> usize {
+    T.log_2()
+}
+
+/// Number of address variables to bind in Phase 2 (using AddressMajor sparse matrix).
+fn phase2_num_rounds(_T: usize) -> usize {
+    K.log_2()
 }
 
 /// Sumcheck prover for [`RegistersReadWriteCheckingVerifier`].
 #[derive(Allocative)]
 pub struct RegistersReadWriteCheckingProver<F: JoltField> {
-    addresses: Vec<(u8, u8, u8)>,
-    chunk_size: usize,
-    val_checkpoints: Vec<u64>,
-    data_buffers: Vec<DataBuffers<F>>,
-    I: Vec<Vec<(usize, u8, F, i128)>>,
-    A: Vec<F>,
-    gruen_eq_r_cycle: GruenSplitEqPolynomial<F>,
-    inc_cycle: MultilinearPolynomial<F>,
-    // The following polynomials are instantiated after
-    // the first phase
-    eq_r_cycle: Option<MultilinearPolynomial<F>>,
-    rs1_ra: Option<MultilinearPolynomial<F>>,
-    rs2_ra: Option<MultilinearPolynomial<F>>,
-    rd_wa: Option<MultilinearPolynomial<F>>,
-    val: Option<MultilinearPolynomial<F>>,
     #[allocative(skip)]
     params: RegistersReadWriteCheckingParams<F>,
+    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>>,
+    sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>,
+    gruen_eq: Option<GruenSplitEqPolynomial<F>>,
+    inc: MultilinearPolynomial<F>,
+    #[allocative(skip)]
+    trace: Arc<Vec<Cycle>>,
+    // The following polynomials are instantiated after
+    // the second phase
+    ra: Option<MultilinearPolynomial<F>>,
+    wa: Option<MultilinearPolynomial<F>>,
+    val: Option<MultilinearPolynomial<F>>,
+    merged_eq: Option<MultilinearPolynomial<F>>,
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::initialize")]
     pub fn initialize(
         params: RegistersReadWriteCheckingParams<F>,
-        trace: &[Cycle],
+        trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
-        let T = trace.len();
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = T / num_chunks;
-
-        let span = tracing::span!(tracing::Level::INFO, "compute deltas");
-        let _guard = span.enter();
-
-        let deltas: Vec<[i128; K]> = trace[..T - chunk_size]
-            .par_chunks_exact(chunk_size)
-            .map(|trace_chunk| {
-                let mut delta = [0; K];
-                for cycle in trace_chunk.iter() {
-                    let (k, pre_value, post_value) = cycle.rd_write();
-                    delta[k as usize] += post_value as i128 - pre_value as i128;
-                }
-                delta
-            })
-            .collect();
-
-        drop(_guard);
-        drop(span);
-
-        let span = tracing::span!(tracing::Level::INFO, "compute checkpoints");
-        let _guard = span.enter();
-
-        // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
-        let mut checkpoints: Vec<[i128; K]> = Vec::with_capacity(num_chunks);
-        checkpoints.push([0; K]);
-
-        for (chunk_index, delta) in deltas.into_iter().enumerate() {
-            let next_checkpoint: [i128; K] =
-                std::array::from_fn(|k| checkpoints[chunk_index][k] + delta[k]);
-            // In RISC-V, the first register is the zero register.
-            debug_assert_eq!(next_checkpoint[0], 0);
-            checkpoints.push(next_checkpoint);
-        }
-
-        // TODO(moodlezoup): could potentially generate these checkpoints in the tracer
-        // Generate checkpoints as a flat vector because it will be turned into the
-        // materialized Val polynomial after the first half of sumcheck.
-        let mut val_checkpoints: Vec<u64> = vec![0; K * num_chunks];
-        val_checkpoints
-            .par_chunks_mut(K)
-            .zip(checkpoints.into_par_iter())
-            .for_each(|(val_checkpoint, checkpoint)| {
-                val_checkpoint
-                    .iter_mut()
-                    .zip(checkpoint.iter())
-                    .for_each(|(dest, src)| *dest = *src as u64)
-            });
-
-        drop(_guard);
-        drop(span);
-
-        // A table that, in round i of sumcheck, stores all evaluations
-        //     EQ(x, r_i, ..., r_1)
-        // as x ranges over {0, 1}^i.
-        // (As described in "Computing other necessary arrays and worst-case
-        // accounting", Section 8.2.2)
-        let mut A: Vec<F> = unsafe_allocate_zero_vec(chunk_size);
-        A[0] = F::one();
-
-        let span = tracing::span!(
-            tracing::Level::INFO,
-            "compute I (increments data structure)"
-        );
-        let _guard = span.enter();
-
-        // Data structure described in Equation (72)
-        let I: Vec<Vec<(usize, u8, F, i128)>> = trace
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
-                // Row index of the I matrix
-                let mut j = chunk_index * chunk_size;
-                let I_chunk = trace_chunk
-                    .iter()
-                    .map(|cycle| {
-                        let (k, pre_value, post_value) = cycle.rd_write();
-                        let increment = post_value as i128 - pre_value as i128;
-                        let inc = (j, k, F::zero(), increment);
-                        j += 1;
-                        inc
-                    })
-                    .collect();
-                I_chunk
-            })
-            .collect();
-
-        drop(_guard);
-        drop(span);
-
-        let gruen_eq_r_cycle =
-            GruenSplitEqPolynomial::<F>::new(&params.r_cycle.r, BindingOrder::LowToHigh);
-        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(
+        let r_prime = &params.r_cycle;
+        let (gruen_eq, merged_eq) = if phase1_num_rounds(params.T) > 0 {
+            (
+                Some(GruenSplitEqPolynomial::new(
+                    &r_prime.r,
+                    BindingOrder::LowToHigh,
+                )),
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r))),
+            )
+        };
+        let inc = CommittedPolynomial::RdInc.generate_witness(
             bytecode_preprocessing,
             memory_layout,
-            trace,
+            &trace,
             None,
         );
+        let sparse_matrix =
+            ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(&trace, params.gamma);
+        let phase1_rounds = phase1_num_rounds(params.T);
+        let phase2_rounds = phase2_num_rounds(params.T);
 
-        let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
-            .into_par_iter()
-            .map(|_| DataBuffers {
-                val_j_0: [0; K],
-                val_j_r: [[F::zero(); K], [F::zero(); K]],
-                rs1_ra: [[F::zero(); K], [F::zero(); K]],
-                rs2_ra: [[F::zero(); K], [F::zero(); K]],
-                rd_wa: [[F::zero(); K], [F::zero(); K]],
-                dirty_indices: FixedBitSet::with_capacity(K),
-            })
-            .collect();
-
-        let addresses = trace
-            .par_iter()
-            .map(|cycle| (cycle.rs1_read().0, cycle.rs2_read().0, cycle.rd_write().0))
-            .collect::<Vec<_>>();
+        let (sparse_matrix_phase1, sparse_matrix_phase2) = if phase1_rounds > 0 {
+            (sparse_matrix, Default::default())
+        } else if phase2_rounds > 0 {
+            (Default::default(), sparse_matrix.into())
+        } else {
+            unimplemented!("Unsupported configuration: both phase 1 and phase 2 are 0 rounds")
+        };
 
         Self {
-            addresses,
-            chunk_size,
-            val_checkpoints,
-            data_buffers,
-            I,
-            A,
-            gruen_eq_r_cycle,
-            inc_cycle,
-            eq_r_cycle: None,
-            rs1_ra: None,
-            rs2_ra: None,
-            rd_wa: None,
+            sparse_matrix_phase1,
+            sparse_matrix_phase2,
+            gruen_eq,
+            merged_eq,
+            inc,
+            ra: None,
+            wa: None,
             val: None,
             params,
+            trace,
         }
     }
 
-    fn phase1_compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        // Precompute mask for j % (1 << round) -> j & round_mask
-        let round_mask = (1 << round) - 1;
-
+    fn phase1_compute_message(&mut self, previous_claim: F) -> UniPoly<F> {
         let Self {
-            addresses,
-            I,
-            data_buffers,
-            A,
-            val_checkpoints,
-            inc_cycle,
-            gruen_eq_r_cycle,
+            inc,
+            gruen_eq,
             params,
+            sparse_matrix_phase1: sparse_matrix,
             ..
         } = self;
+        let gruen_eq = gruen_eq.as_ref().unwrap();
 
-        // Compute quadratic coefficients for Gruen's interpolation
-        let quadratic_coeffs = if gruen_eq_r_cycle.E_in_current_len() == 1 {
-            // E_in is fully bound, use E_out
-            I.par_iter()
-                .zip(data_buffers.par_iter_mut())
-                .zip(val_checkpoints.par_chunks(K))
-                .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut eval_at_0 = F::Unreduced::<9>::zero();
-                    let mut eval_at_inf = F::Unreduced::<9>::zero();
+        // Compute quadratic coefficients using Gruen's optimization.
+        // When E_in is fully bound (len <= 1), we use E_in_eval = 1 and num_x_in_bits = 0,
+        // which makes the outer chunking degenerate to row pairs and skips the inner sum.
+        let e_in = gruen_eq.E_in_current();
+        let e_in_len = e_in.len();
+        let num_x_in_bits = e_in_len.max(1).log_2(); // max(1) so log_2 of 0 or 1 gives 0
+        let x_bitmask = (1 << num_x_in_bits) - 1;
 
-                    let DataBuffers {
-                        val_j_0,
-                        val_j_r,
-                        rs1_ra,
-                        rs2_ra,
-                        rd_wa,
-                        dirty_indices,
-                    } = buffers;
+        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = sparse_matrix
+            .entries
+            // Chunk by x_out (when E_in is bound, this is just row pairs)
+            .par_chunk_by(|a, b| ((a.row / 2) >> num_x_in_bits) == ((b.row / 2) >> num_x_in_bits))
+            .map(|entries| {
+                let x_out = (entries[0].row / 2) >> num_x_in_bits;
+                let E_out_eval = gruen_eq.E_out_current()[x_out];
 
-                    val_j_0.as_mut_slice().copy_from_slice(checkpoint);
+                let outer_sum_evals = entries
+                    .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
+                    .map(|entries| {
+                        let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
+                        let (even_row, odd_row) = entries.split_at(odd_row_start_index);
+                        let j_prime = 2 * (entries[0].row / 2);
 
-                    // Iterate over I_chunk, two rows at a time.
-                    I_chunk
-                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
-                            let j_prime = inc_chunk[0].0; // row index
-
-                            for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j & round_mask;
-
-                                let k = addresses[j].0;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs1_ra[0][k as usize] += A[j_bound];
-
-                                let k = addresses[j].1;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs2_ra[0][k as usize] += A[j_bound];
-
-                                let k = addresses[j].2;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rd_wa[0][k as usize] += A[j_bound];
-                            }
-
-                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j & round_mask;
-
-                                let k = addresses[j].0;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs1_ra[1][k as usize] += A[j_bound];
-
-                                let k = addresses[j].1;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs2_ra[1][k as usize] += A[j_bound];
-
-                                let k = addresses[j].2;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rd_wa[1][k as usize] += A[j_bound];
-                            }
-
-                            for k in dirty_indices.ones() {
-                                val_j_r[0][k] = F::from_u64(val_j_0[k]);
-                            }
-                            let mut inc_iter = inc_chunk.iter().peekable();
-
-                            // First of the two rows
-                            loop {
-                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                                let col = *col as usize;
-                                debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][col] += *inc_lt;
-                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
-                                if inc_iter.peek().unwrap().0 != j_prime {
-                                    break;
-                                }
-                            }
-                            for k in dirty_indices.ones() {
-                                val_j_r[1][k] = F::from_u64(val_j_0[k]);
-                            }
-
-                            // Second of the two rows
-                            for inc in inc_iter {
-                                let (row, col, inc_lt, inc) = *inc;
-                                let col = col as usize;
-                                debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col] += inc_lt;
-                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
-                            }
-
-                            let eq_r_cycle_eval = gruen_eq_r_cycle.E_out_current()[j_prime / 2];
-                            let inc_cycle_evals = {
-                                let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
-                                let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
-                                let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
-                                [inc_cycle_0, inc_cycle_infty]
-                            };
-
-                            let mut rd_inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
-                            let mut rs1_inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
-                            let mut rs2_inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
-
-                            for k in dirty_indices.ones() {
-                                let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-
-                                // Check rd_wa and compute its contribution if non-zero
-                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
-
-                                    rd_inner_sum_evals[0] += wa_evals[0]
-                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
-                                    rd_inner_sum_evals[1] +=
-                                        wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
-
-                                    rd_wa[0][k] = F::zero();
-                                    rd_wa[1][k] = F::zero();
-                                }
-
-                                // Check rs1_ra and compute its contribution if non-zero
-                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
-
-                                    rs1_inner_sum_evals[0] +=
-                                        ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
-                                    rs1_inner_sum_evals[1] += ra_evals_rs1[1] * val_evals[1];
-
-                                    rs1_ra[0][k] = F::zero();
-                                    rs1_ra[1][k] = F::zero();
-                                }
-
-                                // Check rs2_ra and compute its contribution if non-zero
-                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
-
-                                    rs2_inner_sum_evals[0] +=
-                                        ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-                                    rs2_inner_sum_evals[1] += ra_evals_rs2[1] * val_evals[1];
-
-                                    rs2_ra[0][k] = F::zero();
-                                    rs2_ra[1][k] = F::zero();
-                                }
-
-                                val_j_r[0][k] = F::zero();
-                                val_j_r[1][k] = F::zero();
-                            }
-                            dirty_indices.clear();
-
-                            // ReadVals = Rs1Value + gamma * Rs2Value
-                            // TODO: Compute more efficiently to save a mul:
-                            // Rs1Value + gamma * Rs2Value = Rs1Ra * Val + gamma * Rs2Ra * Val = (Rs1Ra + gamma * Rs2Ra) * Val
-                            let read_vals_evals = [
-                                rs1_inner_sum_evals[0] + params.gamma * rs2_inner_sum_evals[0],
-                                rs1_inner_sum_evals[1] + params.gamma * rs2_inner_sum_evals[1],
-                            ];
-
-                            eval_at_0 += eq_r_cycle_eval.mul_unreduced::<9>(
-                                rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0],
-                            );
-                            eval_at_inf += eq_r_cycle_eval.mul_unreduced::<9>(
-                                rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1],
-                            );
-                        });
-
-                    [eval_at_0, eval_at_inf]
-                })
-                .reduce(
-                    || [F::Unreduced::zero(); DEGREE_BOUND - 1],
-                    |a, b| array::from_fn(|i| a[i] + b[i]),
-                )
-                .into_iter()
-                .map(F::from_montgomery_reduce)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap()
-        } else {
-            // E_in is not fully bound, handle E_in and E_out
-            let num_x_in_bits = gruen_eq_r_cycle.E_in_current_len().log_2();
-            let x_bitmask = (1 << num_x_in_bits) - 1;
-
-            I.par_iter()
-                .zip(data_buffers.par_iter_mut())
-                .zip(val_checkpoints.par_chunks(K))
-                .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut eval_at_0 = F::Unreduced::<9>::zero();
-                    let mut eval_at_inf = F::Unreduced::<9>::zero();
-
-                    let mut eval_at_0_for_current = F::Unreduced::<9>::zero();
-                    let mut eval_at_inf_for_current = F::Unreduced::<9>::zero();
-
-                    let mut x_out_prev: Option<usize> = None;
-
-                    let DataBuffers {
-                        val_j_0,
-                        val_j_r,
-                        rs1_ra,
-                        rs2_ra,
-                        rd_wa,
-                        dirty_indices,
-                    } = buffers;
-                    val_j_0.as_mut_slice().copy_from_slice(checkpoint);
-
-                    // Iterate over I_chunk, two rows at a time.
-                    I_chunk
-                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
-                            let j_prime = inc_chunk[0].0; // row index
-
-                            for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j & round_mask;
-
-                                let k = addresses[j].0;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs1_ra[0][k as usize] += A[j_bound];
-
-                                let k = addresses[j].1;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs2_ra[0][k as usize] += A[j_bound];
-
-                                let k = addresses[j].2;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rd_wa[0][k as usize] += A[j_bound];
-                            }
-
-                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j & round_mask;
-
-                                let k = addresses[j].0;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs1_ra[1][k as usize] += A[j_bound];
-
-                                let k = addresses[j].1;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rs2_ra[1][k as usize] += A[j_bound];
-
-                                let k = addresses[j].2;
-                                unsafe {
-                                    dirty_indices.insert_unchecked(k as usize);
-                                }
-                                rd_wa[1][k as usize] += A[j_bound];
-                            }
-
-                            for k in dirty_indices.ones() {
-                                val_j_r[0][k] = F::from_u64(val_j_0[k]);
-                            }
-                            let mut inc_iter = inc_chunk.iter().peekable();
-
-                            // First of the two rows
-                            loop {
-                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                                let col = *col as usize;
-                                debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][col] += *inc_lt;
-                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
-                                if inc_iter.peek().unwrap().0 != j_prime {
-                                    break;
-                                }
-                            }
-                            for k in dirty_indices.ones() {
-                                val_j_r[1][k] = F::from_u64(val_j_0[k]);
-                            }
-
-                            // Second of the two rows
-                            for inc in inc_iter {
-                                let (row, col, inc_lt, inc) = *inc;
-                                let col = col as usize;
-                                debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col] += inc_lt;
-                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
-                            }
-
+                        // When E_in is fully bound, x_in = 0 and E_in_eval = 1
+                        let E_in_eval = if e_in_len <= 1 {
+                            F::one()
+                        } else {
                             let x_in = (j_prime / 2) & x_bitmask;
-                            let x_out = (j_prime / 2) >> num_x_in_bits;
-                            let E_in_eval = gruen_eq_r_cycle.E_in_current()[x_in];
+                            e_in[x_in]
+                        };
 
-                            let inc_cycle_evals = {
-                                let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
-                                let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
-                                let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
-                                [inc_cycle_0, inc_cycle_infty]
-                            };
+                        let inc_evals = {
+                            let inc_0 = inc.get_bound_coeff(j_prime);
+                            let inc_1 = inc.get_bound_coeff(j_prime + 1);
+                            let inc_infty = inc_1 - inc_0;
+                            [inc_0, inc_infty]
+                        };
 
-                            // Multiply the running sum by the previous value of E_out_eval when
-                            // its value changes and add the result to the total.
-                            match x_out_prev {
-                                None => {
-                                    x_out_prev = Some(x_out);
-                                }
-                                Some(x) if x_out != x => {
-                                    x_out_prev = Some(x_out);
+                        let inner_sum_evals = ReadWriteMatrixCycleMajor::prover_message_contribution(
+                            even_row,
+                            odd_row,
+                            inc_evals,
+                            params.gamma,
+                        );
 
-                                    let E_out_eval = gruen_eq_r_cycle.E_out_current()[x];
+                        [
+                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]),
+                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[1]),
+                        ]
+                    })
+                    .reduce(
+                        || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                    )
+                    .map(F::from_montgomery_reduce);
 
-                                    let red0 =
-                                        F::from_montgomery_reduce::<9>(eval_at_0_for_current);
-                                    let redi =
-                                        F::from_montgomery_reduce::<9>(eval_at_inf_for_current);
-                                    eval_at_0 += E_out_eval.mul_unreduced::<9>(red0);
-                                    eval_at_inf += E_out_eval.mul_unreduced::<9>(redi);
+                [
+                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[0]),
+                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[1]),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            )
+            .map(F::from_montgomery_reduce);
 
-                                    eval_at_0_for_current = F::Unreduced::<9>::zero();
-                                    eval_at_inf_for_current = F::Unreduced::<9>::zero();
-                                }
-                                _ => (),
-                            }
-
-                            let mut rd_inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
-                            let mut rs1_inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
-                            let mut rs2_inner_sum_evals = [F::zero(); DEGREE_BOUND - 1];
-
-                            for k in dirty_indices.ones() {
-                                let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-
-                                // Check rd_wa and compute its contribution if non-zero
-                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
-
-                                    rd_inner_sum_evals[0] += wa_evals[0]
-                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
-                                    rd_inner_sum_evals[1] +=
-                                        wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
-
-                                    rd_wa[0][k] = F::zero();
-                                    rd_wa[1][k] = F::zero();
-                                }
-
-                                // Check rs1_ra and compute its contribution if non-zero
-                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
-
-                                    rs1_inner_sum_evals[0] +=
-                                        ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
-                                    rs1_inner_sum_evals[1] += ra_evals_rs1[1] * val_evals[1];
-
-                                    rs1_ra[0][k] = F::zero();
-                                    rs1_ra[1][k] = F::zero();
-                                }
-
-                                // Check rs2_ra and compute its contribution if non-zero
-                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
-
-                                    rs2_inner_sum_evals[0] +=
-                                        ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-                                    rs2_inner_sum_evals[1] += ra_evals_rs2[1] * val_evals[1];
-
-                                    rs2_ra[0][k] = F::zero();
-                                    rs2_ra[1][k] = F::zero();
-                                }
-
-                                val_j_r[0][k] = F::zero();
-                                val_j_r[1][k] = F::zero();
-                            }
-                            dirty_indices.clear();
-
-                            // ReadVals = Rs1Value + gamma * Rs2Value
-                            // TODO: Compute more efficiently to save a mul:
-                            // Rs1Value + gamma * Rs2Value = Rs1Ra * Val + gamma * Rs2Ra * Val = (Rs1Ra + gamma * Rs2Ra) * Val
-                            let read_vals_evals = [
-                                rs1_inner_sum_evals[0] + params.gamma * rs2_inner_sum_evals[0],
-                                rs1_inner_sum_evals[1] + params.gamma * rs2_inner_sum_evals[1],
-                            ];
-
-                            eval_at_0_for_current += E_in_eval.mul_unreduced::<9>(
-                                rd_inner_sum_evals[0] + params.gamma * read_vals_evals[0],
-                            );
-                            eval_at_inf_for_current += E_in_eval.mul_unreduced::<9>(
-                                rd_inner_sum_evals[1] + params.gamma * read_vals_evals[1],
-                            );
-                        });
-
-                    // Multiply the final running sum by the final value of E_out_eval and add the
-                    // result to the total.
-                    if let Some(x) = x_out_prev {
-                        let E_out_eval = gruen_eq_r_cycle.E_out_current()[x];
-                        let red0 = F::from_montgomery_reduce::<9>(eval_at_0_for_current);
-                        let redi = F::from_montgomery_reduce::<9>(eval_at_inf_for_current);
-                        eval_at_0 += E_out_eval.mul_unreduced::<9>(red0);
-                        eval_at_inf += E_out_eval.mul_unreduced::<9>(redi);
-                    }
-                    [eval_at_0, eval_at_inf]
-                })
-                .reduce(
-                    || [F::Unreduced::zero(); DEGREE_BOUND - 1],
-                    |a, b| array::from_fn(|i| a[i] + b[i]),
-                )
-                .into_iter()
-                .map(F::from_montgomery_reduce)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap()
-        };
-        let [eval_at_0, eval_at_inf] = quadratic_coeffs;
-
-        gruen_eq_r_cycle.gruen_poly_deg_3(eval_at_0, eval_at_inf, previous_claim)
+        // Convert quadratic coefficients to cubic evaluations
+        gruen_eq.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
     }
 
     fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let Self {
-            inc_cycle,
-            eq_r_cycle,
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
+            inc,
+            merged_eq,
+            sparse_matrix_phase2,
             params,
             ..
         } = self;
+        let merged_eq = merged_eq.as_ref().unwrap();
 
-        let rs1_ra = rs1_ra.as_ref().unwrap();
-        let rs2_ra = rs2_ra.as_ref().unwrap();
-        let rd_wa = rd_wa.as_ref().unwrap();
-        let val = val.as_ref().unwrap();
-        let eq_r_cycle = eq_r_cycle.as_ref().unwrap();
-
-        // Phase 2 uses LowToHigh binding: cycle bits are in low positions, address bits in high positions
-        let n_cycle_pairs = eq_r_cycle.len() / 2;
-        let [eval_at_0, eval_at_2, eval_at_3] = (0..K)
-            .into_par_iter()
-            .map(|k| {
-                let base_index = k * n_cycle_pairs;
-
-                (0..n_cycle_pairs)
-                    .map(|j| {
-                        // index = k * n_cycle_pairs + j: address bits (k) high, cycle bits (j) low
-                        // With k fixed and j varying, this accesses contiguous memory
-                        let index = base_index + j;
-
-                        let eq_r_cycle_evals = eq_r_cycle
-                            .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                        let inc_evals = inc_cycle
-                            .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-
-                        let rs1_ra_evals = rs1_ra
-                            .sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-                        let rs2_ra_evals = rs2_ra
-                            .sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-                        let wa_evals = rd_wa
-                            .sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-                        let val_evals = val
-                            .sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-
-                        // Eval RdWriteValue(x) at (r', {0, 2, 3}, j, k).
-                        let rd_write_value_at_0_j_k =
-                            wa_evals[0].mul_0_optimized(inc_evals[0] + val_evals[0]);
-                        let rd_write_value_at_2_j_k =
-                            wa_evals[1].mul_0_optimized(inc_evals[1] + val_evals[1]);
-                        let rd_write_value_at_3_j_k =
-                            wa_evals[2].mul_0_optimized(inc_evals[2] + val_evals[2]);
-
-                        // Eval Rs1Value(x) at (r', {0, 2, 3}, j, k).
-                        let rs1_value_at_0_j_k = rs1_ra_evals[0].mul_0_optimized(val_evals[0]);
-                        let rs1_value_at_2_j_k = rs1_ra_evals[1].mul_0_optimized(val_evals[1]);
-                        let rs1_value_at_3_j_k = rs1_ra_evals[2].mul_0_optimized(val_evals[2]);
-
-                        // Eval Rs2Value(x) at (r', {0, 2, 3}, j, k).
-                        let rs2_value_at_0_j_k = rs2_ra_evals[0].mul_0_optimized(val_evals[0]);
-                        let rs2_value_at_2_j_k = rs2_ra_evals[1].mul_0_optimized(val_evals[1]);
-                        let rs2_value_at_3_j_k = rs2_ra_evals[2].mul_0_optimized(val_evals[2]);
-
-                        // Eval ReadVals(x) = Rs1Value(x) + gamma * Rs2Value(x) at (r', {0, 2, 3}, j, k).
-                        let read_vals_at_0_j_k =
-                            rs1_value_at_0_j_k + params.gamma * rs2_value_at_0_j_k;
-                        let read_vals_at_2_j_k =
-                            rs1_value_at_2_j_k + params.gamma * rs2_value_at_2_j_k;
-                        let read_vals_at_3_j_k =
-                            rs1_value_at_3_j_k + params.gamma * rs2_value_at_3_j_k;
-
-                        let eval_at_0_j_k =
-                            rd_write_value_at_0_j_k + params.gamma * read_vals_at_0_j_k;
-                        let eval_at_2_j_k =
-                            rd_write_value_at_2_j_k + params.gamma * read_vals_at_2_j_k;
-                        let eval_at_3_j_k =
-                            rd_write_value_at_3_j_k + params.gamma * read_vals_at_3_j_k;
-
-                        let eq_at_0 = eq_r_cycle_evals[0];
-                        let eq_at_2 = eq_r_cycle_evals[1];
-                        let eq_at_3 = eq_r_cycle_evals[2];
-
-                        // Multiply by eq here (per j, k) to enable cache-friendly access pattern
-                        [
-                            eq_at_0.mul_unreduced::<9>(eval_at_0_j_k),
-                            eq_at_2.mul_unreduced::<9>(eval_at_2_j_k),
-                            eq_at_3.mul_unreduced::<9>(eval_at_3_j_k),
-                        ]
-                    })
-                    .fold([F::Unreduced::<9>::zero(); DEGREE_BOUND], |a, b| {
-                        array::from_fn(|i| a[i] + b[i])
-                    })
+        let evals = sparse_matrix_phase2
+            .entries
+            .par_chunk_by(|x, y| x.column() / 2 == y.column() / 2)
+            .map(|entries| {
+                let odd_col_start_index = entries.partition_point(|entry| entry.column().is_even());
+                let (even_col, odd_col) = entries.split_at(odd_col_start_index);
+                let even_col_idx = 2 * (entries[0].column() / 2);
+                let odd_col_idx = even_col_idx + 1;
+                ReadWriteMatrixAddressMajor::prover_message_contribution(
+                    even_col,
+                    odd_col,
+                    sparse_matrix_phase2.val_init.get_bound_coeff(even_col_idx),
+                    sparse_matrix_phase2.val_init.get_bound_coeff(odd_col_idx),
+                    inc,
+                    merged_eq,
+                    params.gamma,
+                )
+            })
+            .fold_with([F::Unreduced::<5>::zero(); 2], |running, new| {
+                [
+                    running[0] + new[0].as_unreduced_ref(),
+                    running[1] + new[1].as_unreduced_ref(),
+                ]
             })
             .reduce(
-                || [F::Unreduced::<9>::zero(); DEGREE_BOUND],
-                |a, b| array::from_fn(|i| a[i] + b[i]),
-            )
-            .map(F::from_montgomery_reduce);
+                || [F::Unreduced::<5>::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            );
 
-        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0, eval_at_2, eval_at_3])
+        UniPoly::from_evals_and_hint(
+            previous_claim,
+            &[
+                F::from_barrett_reduce(evals[0]),
+                F::from_barrett_reduce(evals[1]),
+            ],
+        )
     }
 
     fn phase3_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let Self {
-            inc_cycle,
-            eq_r_cycle,
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
+            inc,
+            merged_eq,
+            ra,
+            wa,
             val,
             params,
             ..
         } = self;
-        let rs1_ra = rs1_ra.as_ref().unwrap();
-        let rs2_ra = rs2_ra.as_ref().unwrap();
-        let rd_wa = rd_wa.as_ref().unwrap();
+        let ra = ra.as_ref().unwrap();
+        let wa = wa.as_ref().unwrap();
         let val = val.as_ref().unwrap();
+        let merged_eq = merged_eq.as_ref().unwrap();
 
-        // Cycle variables are fully bound, so:
-        // eq(r', r_cycle_stage_i) is a constant
-        let eq_r_cycle_eval = eq_r_cycle.as_ref().unwrap().final_sumcheck_claim();
-        // ...and Inc(r_cycle) is a constant
-        let inc_eval = inc_cycle.final_sumcheck_claim();
+        if inc.len() > 1 {
+            // Cycle variables remaining
+            const DEGREE: usize = 3;
+            let K_prime = K >> phase2_num_rounds(params.T);
+            let T_prime = inc.len();
+            debug_assert_eq!(ra.len(), K_prime * inc.len());
 
-        let evals = (0..rs1_ra.len() / 2)
-            .into_par_iter()
-            .map(|k| {
-                let rs1_ra_evals =
-                    rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
-                let rs2_ra_evals =
-                    rs2_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
-                let wa_evals =
-                    rd_wa.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
-                let val_evals =
-                    val.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
+            let evals = (0..inc.len() / 2)
+                .into_par_iter()
+                .map(|j| {
+                    let inc_evals = inc.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let eq_evals = merged_eq.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let inner = (0..K_prime)
+                        .into_par_iter()
+                        .map(|k| {
+                            let idx = k * T_prime / 2 + j;
+                            let ra_evals = ra.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                            let wa_evals = wa.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                            let val_evals =
+                                val.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                            [
+                                ra_evals[0] * val_evals[0]
+                                    + wa_evals[0] * (val_evals[0] + inc_evals[0]),
+                                ra_evals[1] * val_evals[1]
+                                    + wa_evals[1] * (val_evals[1] + inc_evals[1]),
+                                ra_evals[2] * val_evals[2]
+                                    + wa_evals[2] * (val_evals[2] + inc_evals[2]),
+                            ]
+                        })
+                        .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                            [
+                                running[0] + new[0].as_unreduced_ref(),
+                                running[1] + new[1].as_unreduced_ref(),
+                                running[2] + new[2].as_unreduced_ref(),
+                            ]
+                        })
+                        .reduce(
+                            || [F::Unreduced::<5>::zero(); DEGREE],
+                            |running, new| {
+                                [
+                                    running[0] + new[0],
+                                    running[1] + new[1],
+                                    running[2] + new[2],
+                                ]
+                            },
+                        );
+                    [
+                        eq_evals[0] * F::from_barrett_reduce(inner[0]),
+                        eq_evals[1] * F::from_barrett_reduce(inner[1]),
+                        eq_evals[2] * F::from_barrett_reduce(inner[2]),
+                    ]
+                })
+                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                    [
+                        running[0] + new[0].as_unreduced_ref(),
+                        running[1] + new[1].as_unreduced_ref(),
+                        running[2] + new[2].as_unreduced_ref(),
+                    ]
+                })
+                .reduce(
+                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
 
-                // Eval RdWriteValue(x) at (r', {0, 2, 3}, k).
-                let rd_write_value_at_0_k = wa_evals[0] * (inc_eval + val_evals[0]);
-                let rd_write_value_at_2_k = wa_evals[1] * (inc_eval + val_evals[1]);
-                let rd_write_value_at_3_k = wa_evals[2] * (inc_eval + val_evals[2]);
-
-                // Eval Rs1Value(x) at (r', {0, 2, 3}, k).
-                let rs1_value_at_0_k = rs1_ra_evals[0] * val_evals[0];
-                let rs1_value_at_2_k = rs1_ra_evals[1] * val_evals[1];
-                let rs1_value_at_3_k = rs1_ra_evals[2] * val_evals[2];
-
-                // Eval Rs2Value(x) at (r', {0, 2, 3}, k).
-                let rs2_value_at_0_k = rs2_ra_evals[0] * val_evals[0];
-                let rs2_value_at_2_k = rs2_ra_evals[1] * val_evals[1];
-                let rs2_value_at_3_k = rs2_ra_evals[2] * val_evals[2];
-
-                // Eval ReadVals(x) = Rs1Value(x) + gamma * Rs2Value(x) at (r', {0, 2, 3}, k).
-                let read_vals_at_0_k = rs1_value_at_0_k + params.gamma * rs2_value_at_0_k;
-                let read_vals_at_2_k = rs1_value_at_2_k + params.gamma * rs2_value_at_2_k;
-                let read_vals_at_3_k = rs1_value_at_3_k + params.gamma * rs2_value_at_3_k;
-
-                let eval_at_0_k = rd_write_value_at_0_k + params.gamma * read_vals_at_0_k;
-                let eval_at_2_k = rd_write_value_at_2_k + params.gamma * read_vals_at_2_k;
-                let eval_at_3_k = rd_write_value_at_3_k + params.gamma * read_vals_at_3_k;
-
-                [eval_at_0_k, eval_at_2_k, eval_at_3_k]
-            })
-            .fold_with([F::Unreduced::<5>::zero(); DEGREE_BOUND], |a, b| {
-                array::from_fn(|i| a[i] + b[i].as_unreduced_ref())
-            })
-            .reduce(
-                || [F::Unreduced::<5>::zero(); DEGREE_BOUND],
-                |a, b| array::from_fn(|i| a[i] + b[i]),
+            UniPoly::from_evals_and_hint(
+                previous_claim,
+                &[
+                    F::from_barrett_reduce(evals[0]),
+                    F::from_barrett_reduce(evals[1]),
+                    F::from_barrett_reduce(evals[2]),
+                ],
             )
-            .map(F::from_barrett_reduce);
-        let [eval_at_0_for_stage_1, eval_at_2_for_stage_1, eval_at_3_for_stage_1] = evals;
+        } else {
+            const DEGREE: usize = 2;
+            // Cycle variables are fully bound
+            let inc_eval = inc.final_sumcheck_claim();
+            let eq_eval = merged_eq.final_sumcheck_claim();
+            let evals = (0..ra.len() / 2)
+                .into_par_iter()
+                .map(|k| {
+                    let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                    let wa_evals = wa.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                    let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
 
-        let eval_at_0 = eq_r_cycle_eval * eval_at_0_for_stage_1;
-        let eval_at_2 = eq_r_cycle_eval * eval_at_2_for_stage_1;
-        let eval_at_3 = eq_r_cycle_eval * eval_at_3_for_stage_1;
+                    [
+                        ra_evals[0] * val_evals[0] + wa_evals[0] * (val_evals[0] + inc_eval),
+                        ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
+                    ]
+                })
+                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                    [
+                        running[0] + new[0].as_unreduced_ref(),
+                        running[1] + new[1].as_unreduced_ref(),
+                    ]
+                })
+                .reduce(
+                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
 
-        UniPoly::from_evals_and_hint(previous_claim, &[eval_at_0, eval_at_2, eval_at_3])
+            UniPoly::from_evals_and_hint(
+                previous_claim,
+                &[
+                    eq_eval * F::from_barrett_reduce(evals[0]),
+                    eq_eval * F::from_barrett_reduce(evals[1]),
+                ],
+            )
+        }
     }
 
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
         let Self {
-            addresses,
-            I,
-            A,
-            inc_cycle,
-            gruen_eq_r_cycle,
-            eq_r_cycle,
-            chunk_size,
-            val_checkpoints,
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
-            data_buffers: _,
-            params: _,
+            sparse_matrix_phase1: sparse_matrix,
+            inc,
+            gruen_eq,
+            params,
+            ..
         } = self;
+        let gruen_eq = gruen_eq.as_mut().unwrap();
 
-        let inner_span = tracing::span!(tracing::Level::INFO, "Bind I");
-        let _inner_guard = inner_span.enter();
+        sparse_matrix.bind(r_j);
+        gruen_eq.bind(r_j);
+        inc.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-        I.par_iter_mut().for_each(|I_chunk| {
-            // Note: A given row in an I_chunk may not be ordered by k after binding
-            let mut next_bound_index = 0;
-            let mut bound_indices: Vec<Option<usize>> = vec![None; K];
-
-            for i in 0..I_chunk.len() {
-                let (j_prime, k, inc_lt, inc) = I_chunk[i];
-                if let Some(bound_index) = bound_indices[k as usize] {
-                    if I_chunk[bound_index].0 == j_prime / 2 {
-                        // Neighbor was already processed
-                        debug_assert!(j_prime % 2 == 1);
-                        I_chunk[bound_index].2 += r_j * inc_lt;
-                        I_chunk[bound_index].3 += inc;
-                        continue;
-                    }
-                }
-                // First time this k has been encountered
-                let bound_value = if j_prime.is_multiple_of(2) {
-                    // (1 - r_j) * inc_lt + r_j * inc
-                    inc_lt + r_j * (F::from_i128(inc) - inc_lt)
-                } else {
-                    r_j * inc_lt
-                };
-
-                I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc);
-                bound_indices[k as usize] = Some(next_bound_index);
-                next_bound_index += 1;
+        if round == phase1_num_rounds(params.T) - 1 {
+            self.merged_eq = Some(MultilinearPolynomial::LargeScalars(gruen_eq.merge()));
+            let sparse_matrix = std::mem::take(sparse_matrix);
+            if phase2_num_rounds(params.T) > 0 {
+                self.sparse_matrix_phase2 = sparse_matrix.into();
+            } else {
+                // Skip to phase 3: all cycle variables bound, no address variables bound yet
+                let T_prime = params.T >> phase1_num_rounds(params.T);
+                let [ra, wa, val] = sparse_matrix.materialize(K, T_prime);
+                self.ra = Some(ra);
+                self.wa = Some(wa);
+                self.val = Some(val);
             }
-            I_chunk.truncate(next_bound_index);
-        });
-
-        drop(_inner_guard);
-        drop(inner_span);
-
-        gruen_eq_r_cycle.bind(r_j);
-        inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
-
-        let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
-        let _inner_guard = inner_span.enter();
-
-        // Update A for this round (see Equation 55)
-        let (A_left, A_right) = A.split_at_mut(1 << round);
-        A_left
-            .par_iter_mut()
-            .zip(A_right.par_iter_mut())
-            .for_each(|(x, y)| {
-                *y = *x * r_j;
-                *x -= *y;
-            });
-
-        if round == chunk_size.log_2() - 1 {
-            // At this point I has been bound to a point where each chunk contains a single row,
-            // so we might as well materialize the full `ra`, `wa`, and `Val` polynomials and perform
-            // standard sumcheck directly using those polynomials.
-
-            let span = tracing::span!(tracing::Level::INFO, "Materialize rs1_ra polynomial");
-            let _guard = span.enter();
-
-            // Polynomial indexing: index = k * num_chunks + chunk_index
-            //   - Address bits (k) in high-order positions
-            //   - Cycle bits (chunk_index) in low-order positions
-            // This layout enables LowToHigh binding to bind cycle variables first in Phase 2,
-            // which is required for compatibility with downstream sumchecks.
-            let num_chunks = addresses.len() / *chunk_size;
-            let rs1_ra_evals: Vec<F> = addresses
-                .par_chunks(*chunk_size)
-                .enumerate()
-                .fold(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut acc, (chunk_idx, chunk)| {
-                        for (j_bound, (k, _, _)) in chunk.iter().enumerate() {
-                            acc[(*k as usize) * num_chunks + chunk_idx] += A[j_bound];
-                        }
-                        acc
-                    },
-                )
-                .reduce(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut a, b| {
-                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
-                        a
-                    },
-                );
-            *rs1_ra = Some(MultilinearPolynomial::from(rs1_ra_evals));
-
-            drop(_guard);
-            drop(span);
-
-            let span = tracing::span!(tracing::Level::INFO, "Materialize rs2_ra polynomial");
-            let _guard = span.enter();
-
-            let num_chunks = addresses.len() / *chunk_size;
-            let rs2_ra_evals: Vec<F> = addresses
-                .par_chunks(*chunk_size)
-                .enumerate()
-                .fold(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut acc, (chunk_idx, chunk)| {
-                        for (j_bound, (_, k, _)) in chunk.iter().enumerate() {
-                            acc[(*k as usize) * num_chunks + chunk_idx] += A[j_bound];
-                        }
-                        acc
-                    },
-                )
-                .reduce(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut a, b| {
-                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
-                        a
-                    },
-                );
-            *rs2_ra = Some(MultilinearPolynomial::from(rs2_ra_evals));
-
-            drop(_guard);
-            drop(span);
-
-            let span = tracing::span!(tracing::Level::INFO, "Materialize rd_wa polynomial");
-            let _guard = span.enter();
-
-            let num_chunks = addresses.len() / *chunk_size;
-            let rd_wa_evals: Vec<F> = addresses
-                .par_chunks(*chunk_size)
-                .enumerate()
-                .fold(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut acc, (chunk_idx, chunk)| {
-                        for (j_bound, (_, _, k)) in chunk.iter().enumerate() {
-                            acc[(*k as usize) * num_chunks + chunk_idx] += A[j_bound];
-                        }
-                        acc
-                    },
-                )
-                .reduce(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut a, b| {
-                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
-                        a
-                    },
-                );
-            *rd_wa = Some(MultilinearPolynomial::from(rd_wa_evals));
-
-            drop(_guard);
-            drop(span);
-
-            let span = tracing::span!(tracing::Level::INFO, "Materialize Val polynomial");
-            let _guard = span.enter();
-
-            // val_checkpoints is stored row-major (cycle-major), convert to column-major (address-major)
-            let val_evals: Vec<F> = val_checkpoints
-                .par_chunks(K)
-                .zip(I.into_par_iter())
-                .enumerate()
-                .fold(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut acc, (chunk_idx, (checkpoint_chunk, I_chunk))| {
-                        for (k, &v) in checkpoint_chunk.iter().enumerate() {
-                            acc[k * num_chunks + chunk_idx] = F::from_u64(v);
-                        }
-                        for (j, k, inc_lt, _inc) in I_chunk.iter() {
-                            debug_assert_eq!(*j, chunk_idx);
-                            acc[(*k as usize) * num_chunks + chunk_idx] += *inc_lt;
-                        }
-                        acc
-                    },
-                )
-                .reduce(
-                    || unsafe_allocate_zero_vec(K * num_chunks),
-                    |mut a, b| {
-                        a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a += *b);
-                        a
-                    },
-                );
-            *val = Some(MultilinearPolynomial::from(val_evals));
-
-            drop(_guard);
-            drop(span);
-
-            let span = tracing::span!(tracing::Level::INFO, "Materialize eq polynomial");
-            let _guard = span.enter();
-
-            let eq_evals_stage_1: Vec<F> =
-                EqPolynomial::<F>::evals(&gruen_eq_r_cycle.w[..gruen_eq_r_cycle.current_index])
-                    .par_iter()
-                    .map(|x| *x * gruen_eq_r_cycle.current_scalar)
-                    .collect();
-            *eq_r_cycle = Some(eq_evals_stage_1.into());
         }
     }
 
-    fn phase2_bind(&mut self, r_j: F::Challenge) {
+    fn phase2_bind(&mut self, r_j: F::Challenge, round: usize) {
         let Self {
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
-            inc_cycle,
-            eq_r_cycle,
+            params,
+            sparse_matrix_phase2: sparse_matrix,
             ..
         } = self;
-        let rs1_ra = rs1_ra.as_mut().unwrap();
-        let rs2_ra = rs2_ra.as_mut().unwrap();
-        let rd_wa = rd_wa.as_mut().unwrap();
-        let val = val.as_mut().unwrap();
-        let eq_r_cycle = eq_r_cycle.as_mut().unwrap();
 
-        // Phase 2 uses LowToHigh: binds cycle variables (low positions) first
-        rs1_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
-        rs2_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
-        rd_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
-        val.bind_parallel(r_j, BindingOrder::LowToHigh);
-        inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
-        eq_r_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
+        sparse_matrix.bind(r_j);
+
+        let phase1_num_rounds = phase1_num_rounds(params.T);
+        let phase2_num_rounds = phase2_num_rounds(params.T);
+        if round == phase1_num_rounds + phase2_num_rounds - 1 {
+            let sparse_matrix = std::mem::take(sparse_matrix);
+            let [ra, wa, val] =
+                sparse_matrix.materialize(K >> phase2_num_rounds, params.T >> phase1_num_rounds);
+            self.ra = Some(ra);
+            self.wa = Some(wa);
+            self.val = Some(val);
+        }
     }
 
     fn phase3_bind(&mut self, r_j: F::Challenge) {
         let Self {
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
+            ra,
+            wa,
             val,
+            inc,
+            merged_eq,
             ..
         } = self;
-        let rs1_ra = rs1_ra.as_mut().unwrap();
-        let rs2_ra = rs2_ra.as_mut().unwrap();
-        let rd_wa = rd_wa.as_mut().unwrap();
+        let ra = ra.as_mut().unwrap();
+        let wa = wa.as_mut().unwrap();
         let val = val.as_mut().unwrap();
+        let merged_eq = merged_eq.as_mut().unwrap();
 
         // Note that `eq_r_prime` and `inc` are polynomials over only the cycle
         // variables, so they are not bound here
-        [rs1_ra, rs2_ra, rd_wa, val]
+        [ra, wa, val]
             .into_par_iter()
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+
+        if inc.len() > 1 {
+            // Cycle variables remaining
+            inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+            merged_eq.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
     }
 }
 
@@ -1130,9 +606,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        if round < self.chunk_size.log_2() {
-            self.phase1_compute_message(round, previous_claim)
-        } else if round < self.params.n_cycle_vars {
+        let phase1_num_rounds = phase1_num_rounds(self.params.T);
+        let phase2_num_rounds = phase2_num_rounds(self.params.T);
+        if round < phase1_num_rounds {
+            self.phase1_compute_message(previous_claim)
+        } else if round < phase1_num_rounds + phase2_num_rounds {
             self.phase2_compute_message(previous_claim)
         } else {
             self.phase3_compute_message(previous_claim)
@@ -1141,28 +619,57 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        if round < self.chunk_size.log_2() {
+        let phase1_num_rounds = phase1_num_rounds(self.params.T);
+        let phase2_num_rounds = phase2_num_rounds(self.params.T);
+        if round < phase1_num_rounds {
             self.phase1_bind(r_j, round);
-        } else if round < self.params.n_cycle_vars {
-            self.phase2_bind(r_j);
+        } else if round < phase1_num_rounds + phase2_num_rounds {
+            self.phase2_bind(r_j, round);
         } else {
             self.phase3_bind(r_j);
         }
     }
 
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::cache_openings")]
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        let val_claim = self.val.as_ref().unwrap().final_sumcheck_claim();
-        let rs1_ra_claim = self.rs1_ra.as_ref().unwrap().final_sumcheck_claim();
-        let rs2_ra_claim = self.rs2_ra.as_ref().unwrap().final_sumcheck_claim();
-        let rd_wa_claim = self.rd_wa.as_ref().unwrap().final_sumcheck_claim();
-        let inc_claim = self.inc_cycle.final_sumcheck_claim();
-
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        let (r_address, r_cycle) = opening_point.split_at(LOG_K);
+
+        let val_claim = self.val.as_ref().unwrap().final_sumcheck_claim();
+        let rd_wa_claim = self.wa.as_ref().unwrap().final_sumcheck_claim();
+        let inc_claim = self.inc.final_sumcheck_claim();
+        let combined_ra_claim = self.ra.as_ref().unwrap().final_sumcheck_claim();
+        // In order to obtain the individual claims rs1_ra(r) and rs2_ra(r),
+        // we first evaluate rs1_ra(r) directly:
+        let eq_r_address = EqPolynomial::evals(&r_address.r);
+        let (r_cycle_hi, r_cycle_lo) = r_cycle.split_at(r_cycle.len() / 2);
+        let (eq_r_cycle_hi, eq_r_cycle_lo) = rayon::join(
+            || EqPolynomial::evals(&r_cycle_hi.r),
+            || EqPolynomial::evals(&r_cycle_lo.r),
+        );
+        let cycle_lo_mask = (1 << r_cycle_lo.len()) - 1;
+        let rs1_ra_claim: F = self
+            .trace
+            .par_iter()
+            .enumerate()
+            .filter_map(|(j, cycle)| {
+                cycle.rs1_read().map(|(rs1, _)| {
+                    let j_hi = j >> r_cycle_lo.len();
+                    let j_lo = j & cycle_lo_mask;
+                    eq_r_address[rs1 as usize] * eq_r_cycle_hi[j_hi] * eq_r_cycle_lo[j_lo]
+                })
+            })
+            .sum();
+        // Now compute rs2_ra(r) from combined_ra_claim and rs1_ra_claim. Recall that:
+        // combined_ra_claim = gamma * rs1_ra(r) + gamma^2 * rs2_ra(r)
+        let gamma_inverse = self.params.gamma.inverse().unwrap();
+        let rs2_ra_claim = (combined_ra_claim * gamma_inverse - rs1_ra_claim) * gamma_inverse;
+
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RegistersVal,
@@ -1192,7 +699,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             rd_wa_claim,
         );
 
-        let (_, r_cycle) = opening_point.split_at(LOG_K);
         accumulator.append_dense(
             transcript,
             CommittedPolynomial::RdInc,
@@ -1227,12 +733,12 @@ pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
 
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     pub fn new(
-        n_cycle_vars: usize,
+        trace_len: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params =
-            RegistersReadWriteCheckingParams::new(n_cycle_vars, opening_accumulator, transcript);
+            RegistersReadWriteCheckingParams::new(trace_len, opening_accumulator, transcript);
         Self { params }
     }
 }
@@ -1321,90 +827,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );
-    }
-}
-
-pub struct RegistersReadWriteCheckingParams<F: JoltField> {
-    pub gamma: F,
-    pub n_cycle_vars: usize, // = log(T)
-    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
-}
-
-impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
-    pub fn new(
-        n_cycle_vars: usize,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-    ) -> Self {
-        let gamma = transcript.challenge_scalar::<F>();
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWriteValue,
-            SumcheckId::RegistersClaimReduction,
-        );
-        Self {
-            gamma,
-            n_cycle_vars,
-            r_cycle,
-        }
-    }
-}
-
-impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParams<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        LOG_K + self.n_cycle_vars
-    }
-
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, rd_wv_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWriteValue,
-            SumcheckId::RegistersClaimReduction,
-        );
-        let (_, rs1_rv_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Value,
-            SumcheckId::RegistersClaimReduction,
-        );
-        let (_, rs1_rv_claim_instruction_input) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        // TODO: Make error and move to more appropriate place.
-        assert_eq!(rs1_rv_claim, rs1_rv_claim_instruction_input);
-        let (_, rs2_rv_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Value,
-            SumcheckId::RegistersClaimReduction,
-        );
-        let (_, rs2_rv_claim_instruction_input) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        // TODO: Make error and move to more appropriate place.
-        assert_eq!(rs2_rv_claim, rs2_rv_claim_instruction_input);
-
-        rd_wv_claim + self.gamma * (rs1_rv_claim + self.gamma * rs2_rv_claim)
-    }
-
-    // Invariant: we want big-endian, with address variables being "higher" than cycle variables
-    fn normalize_opening_point(
-        &self,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        // All phases use LowToHigh binding, so sumcheck challenges arrive in LITTLE_ENDIAN order.
-        // Reverse each part to convert to BIG_ENDIAN for the opening point.
-        let n_cycle_vars = self.n_cycle_vars;
-        let r_cycle: Vec<_> = sumcheck_challenges[..n_cycle_vars]
-            .iter()
-            .rev()
-            .cloned()
-            .collect();
-        let r_address: Vec<_> = sumcheck_challenges[n_cycle_vars..]
-            .iter()
-            .rev()
-            .cloned()
-            .collect();
-        [r_address, r_cycle].concat().into()
     }
 }
