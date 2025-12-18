@@ -2000,7 +2000,11 @@ mod tests {
                     .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction),
             ),
         ] {
-            let (point_be, _) = get_fn.expect(&format!("{name} advice opening missing"));
+            assert!(
+                get_fn.is_some(),
+                "{name} advice opening missing for AdviceClaimReduction"
+            );
+            let (point_be, _) = get_fn.unwrap();
             let mut point_le = point_be.r.clone();
             point_le.reverse();
             assert_eq!(point_le, expected_advice_le, "{name} advice point mismatch");
