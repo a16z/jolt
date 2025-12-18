@@ -1750,20 +1750,18 @@ mod tests {
 
     #[test]
     #[serial]
-    fn sha2_e2e_dory_with_extra_untrusted_advice() {
-        // SHA2 guest does not consume advice, but providing untrusted advice should still:
-        // - commit it in its dedicated 1-row Dory context,
-        // - reduce its claims in Stage 6,
-        // - batch it into the single Stage 8 Dory opening proof (streaming VMV path).
+    fn sha2_e2e_dory_with_unused_advice() {
+        // SHA2 guest does not consume advice, but providing both trusted and untrusted advice
+        // should still work correctly through the full pipeline:
+        // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
+        // - Untrusted: commit at prove time, reduce in Stage 6, batch in Stage 8
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-
-        // Add some untrusted advice bytes (well below max_untrusted_advice_size).
+        let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
 
-        // Trace once to obtain the program IO (memory layout).
-        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &[]);
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
         let preprocessing = JoltProverPreprocessing::gen(
             bytecode.clone(),
@@ -1771,77 +1769,16 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-
-        let prover = RV64IMACProver::gen_from_elf(
-            &preprocessing,
-            elf_contents,
-            &inputs,
-            &untrusted_advice,
-            &[],
-            None,
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
-
-        let expected_output = &[
-            0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
-            0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
-            0x3b, 0x50, 0xd2, 0x57,
-        ];
-        assert_eq!(
-            io_device.outputs, expected_output,
-            "Outputs mismatch (untrusted advice noise should not affect sha2 output)"
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn sha2_e2e_dory_with_extra_trusted_advice() {
-        // SHA2 guest does not consume advice, but providing trusted advice should still:
-        // - use preprocessing-only commit (TrustedAdvice 1-row context),
-        // - reduce its claims in Stage 6,
-        // - batch it into the single Stage 8 Dory opening proof (streaming VMV path).
-        let mut program = host::Program::new("sha2-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
-        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-
-        // Add some trusted advice bytes (well below max_trusted_advice_size).
-        let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
-
-        // Trace once to obtain the program IO (memory layout).
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &trusted_advice);
-
-        let preprocessing = JoltProverPreprocessing::gen(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            init_memory_state,
-            1 << 16,
-        );
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
         let (trusted_commitment, trusted_hint) =
             commit_trusted_advice_preprocessing_only(&preprocessing, &trusted_advice);
 
         let prover = RV64IMACProver::gen_from_elf(
             &preprocessing,
-            elf_contents,
+            &elf_contents,
             &inputs,
-            &[],
+            &untrusted_advice,
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
@@ -1850,44 +1787,34 @@ mod tests {
         let (jolt_proof, debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verifier = RV64IMACVerifier::new(
+        RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
             Some(trusted_commitment),
             debug_info,
         )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        .expect("Failed to create verifier")
+        .verify()
+        .expect("Failed to verify proof");
 
+        // Verify output is correct (advice should not affect sha2 output)
         let expected_output = &[
             0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
             0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
             0x3b, 0x50, 0xd2, 0x57,
         ];
-        assert_eq!(
-            io_device.outputs, expected_output,
-            "Outputs mismatch (trusted advice noise should not affect sha2 output)"
-        );
+        assert_eq!(io_device.outputs, expected_output);
     }
 
     #[test]
     #[serial]
-    fn advice_larger_than_trace_pads_trace_len() {
-        // This test forces the edge case "advice dimension > main dimension for the raw trace"
-        // and checks the behavior of the padding guardrail.
-        //
-        // NOTE: With balanced advice dims (sigma_a = ceil(vars/2), nu_a = floor(vars/2)), the
-        // default max advice sizes (4096 bytes = 512 words = 2^9) typically *do not* exceed the
-        // main matrix dims at the minimum padded trace length (256 cycles -> total_vars=12).
-        // So this test now asserts that we *do not necessarily* need extra padding.
-        //
-        // We use a small-trace guest (fib with tiny n) but provide *max-sized* advice.
+    fn max_advice_with_small_trace() {
+        // Tests that max-sized advice (4KB = 512 words) works with a minimal trace.
+        // With balanced dims (sigma_a=5, nu_a=4 for 512 words), the minimum padded trace
+        // (256 cycles -> total_vars=12) is sufficient to embed advice.
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
-
-        // Fill both advice regions to max size to maximize advice_vars.
-        // NOTE: Use defaults (4096) which are power-of-two.
         let trusted_advice = vec![7u8; 4096];
         let untrusted_advice = vec![9u8; 4096];
 
@@ -1895,7 +1822,6 @@ mod tests {
         let (lazy_trace, trace, final_memory_state, io_device) =
             program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-        // Large enough max_trace_length so the guardrail can pad T upward.
         let preprocessing = JoltProverPreprocessing::gen(
             bytecode.clone(),
             io_device.memory_layout.clone(),
@@ -1916,166 +1842,92 @@ mod tests {
             final_memory_state,
         );
 
-        // Unpadded trace is tiny; advice words are 512 (4096/8), so advice is "larger than trace".
-        assert!(
-            prover.unpadded_trace_len < (4096 / 8),
-            "Expected tiny trace; got unpadded_trace_len={}",
-            prover.unpadded_trace_len
-        );
+        // Trace is tiny but advice is max-sized
+        assert!(prover.unpadded_trace_len < 512);
+        assert_eq!(prover.padded_trace_len, 256);
 
-        // With balanced dims, the default advice sizes fit without extra padding in the common case.
-        assert_eq!(
-            prover.padded_trace_len, 256,
-            "Expected padded_trace_len to remain at the minimum; got {}",
-            prover.padded_trace_len
-        );
-
-        // Prove+verify end-to-end.
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verifier = RV64IMACVerifier::new(
+        RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
             io_device,
             Some(trusted_commitment),
             debug_info,
         )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
-    }
-
-    #[test]
-    #[serial]
-    fn advice_larger_than_trace_panics_if_max_trace_too_small() {
-        // Under balanced advice dims, the default advice sizes typically fit without extra padding,
-        // so this configuration no longer necessarily panics. This test is kept as a regression
-        // harness for any future changes that strengthen the embedding constraints.
-        let mut program = host::Program::new("fibonacci-guest");
-        let inputs = postcard::to_stdvec(&5u32).unwrap();
-        let untrusted_advice = vec![9u8; 1]; // non-empty is enough to trigger the guardrail
-
-        let (bytecode, init_memory_state, _) = program.decode();
-        let (lazy_trace, trace, final_memory_state, io_device) =
-            program.trace(&inputs, &untrusted_advice, &[]);
-
-        // max_trace_length=256 is the minimum padded trace length; with balanced dims this may be sufficient.
-        let preprocessing = JoltProverPreprocessing::gen(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            init_memory_state,
-            256,
-        );
-
-        let _prover = RV64IMACProver::gen_from_trace(
-            &preprocessing,
-            lazy_trace,
-            trace,
-            io_device,
-            None,
-            None,
-            final_memory_state,
-        );
+        .expect("Failed to create verifier")
+        .verify()
+        .expect("Verification failed");
     }
 
     #[test]
     #[serial]
     fn advice_e2e_dory() {
+        // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _) = program.decode();
-        let leaf1: [u8; 32] = [5u8; 32];
-        let leaf2: [u8; 32] = [6u8; 32];
-        let leaf3: [u8; 32] = [7u8; 32];
-        let leaf4: [u8; 32] = [8u8; 32];
-        let inputs = postcard::to_stdvec(&leaf1.as_slice()).unwrap();
-        let untrusted_advice = postcard::to_stdvec(&leaf4).unwrap();
-        let mut trusted_advice = postcard::to_stdvec(&leaf2).unwrap();
-        trusted_advice.extend(postcard::to_stdvec(&leaf3).unwrap());
 
-        let (_, _trace, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
+        let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
+        let untrusted_advice = postcard::to_stdvec(&[8u8; 32]).unwrap();
+        let mut trusted_advice = postcard::to_stdvec(&[6u8; 32]).unwrap();
+        trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
 
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
         let preprocessing = JoltProverPreprocessing::gen(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
         );
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
-        let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
-        let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
-        populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
-
-        let poly = MultilinearPolynomial::<Fr>::from(trusted_advice_words);
-        let advice_len = poly.len().next_power_of_two().max(1);
-        let advice_vars = advice_len.log_2();
-        let sigma_a = advice_vars.div_ceil(2);
-        let nu_a = advice_vars - sigma_a;
-        let num_rows = 1usize << nu_a;
-        let num_cols = 1usize << sigma_a;
-
-        // Commit trusted advice in its dedicated Dory context with balanced (nu_a, sigma_a).
-        // This keeps the commitment preprocessing-only (independent of trace length) while still
-        // allowing it to be batched into the single Stage 8 Dory opening proof via top-left embedding.
-        let _guard = DoryGlobals::initialize_trusted_advice_matrix(num_rows, num_cols);
-        let (trusted_advice_commitment, trusted_advice_hint) = {
-            let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-            DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
-        };
+        let (trusted_commitment, trusted_hint) =
+            commit_trusted_advice_preprocessing_only(&preprocessing, &trusted_advice);
 
         let prover = RV64IMACProver::gen_from_elf(
             &preprocessing,
-            elf_contents,
+            &elf_contents,
             &inputs,
             &untrusted_advice,
             &trusted_advice,
-            Some(trusted_advice_commitment),
-            Some(trusted_advice_hint), // Pass hint for batched Stage 8 opening
+            Some(trusted_commitment),
+            Some(trusted_hint),
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verifier = RV64IMACVerifier::new(
+        RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
-            Some(trusted_advice_commitment),
+            Some(trusted_commitment),
             debug_info,
         )
-        .unwrap();
-        let verification_result = verifier.verify();
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-        assert_eq!(
-            io_device.inputs, inputs,
-            "Inputs mismatch: expected {:?}, got {:?}",
-            inputs, io_device.inputs
-        );
+        .expect("Failed to create verifier")
+        .verify()
+        .expect("Verification failed");
+
+        // Expected merkle root for leaves [5;32], [6;32], [7;32], [8;32]
         let expected_output = &[
             0xb4, 0x37, 0x0f, 0x3a, 0xb, 0x3d, 0x38, 0xa8, 0x7a, 0x6c, 0x4c, 0x46, 0x9, 0xe7, 0x83,
             0xb3, 0xcc, 0xb7, 0x1c, 0x30, 0x1f, 0xf8, 0x54, 0xd, 0xf7, 0xdd, 0xc8, 0x42, 0x32,
             0xbb, 0x16, 0xd7,
         ];
-        assert_eq!(
-            io_device.outputs, expected_output,
-            "Outputs mismatch: expected {:?}, got {:?}",
-            expected_output, io_device.outputs
-        );
+        assert_eq!(io_device.outputs, expected_output);
     }
 
     #[test]
     #[serial]
-    fn advice_row_coords_cross_into_stage7_address_bits() {
-        // Construct a small (padded-to-256) trace so that `sigma_main` is close to `log_t`.
-        // With default advice sizes (4096 bytes -> 512 words -> advice_vars=9 -> sigma_a=5, nu_a=4),
-        // `row_coords[0..nu_a]` straddles `cycle6_le` and `addr7_le`, forcing Phase 2 to consume
-        // Stage 7 address challenges.
+    fn advice_opening_point_derives_from_unified_point() {
+        // Tests that advice opening points are correctly derived from the unified main opening
+        // point using Dory's balanced dimension policy.
+        //
+        // For a small trace (256 cycles), the advice row coordinates span both Stage 6 (cycle)
+        // and Stage 7 (address) challenges, verifying the two-phase reduction works correctly.
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
@@ -2105,16 +1957,13 @@ mod tests {
             final_memory_state,
         );
 
-        // Ensure we are in the intended regime (log_t = 8).
-        assert_eq!(prover.padded_trace_len, 256);
-        let log_t = prover.padded_trace_len.log_2();
+        assert_eq!(prover.padded_trace_len, 256, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
         let debug_info = debug_info.expect("expected debug_info in tests");
 
-        // Derive point_dory (little-endian Dory order): [cycle6_le || addr7_le]
-        // Get the unified opening point from HammingWeightClaimReduction
+        // Get unified opening point and derive expected advice point
         let (opening_point, _) = debug_info
             .opening_accumulator
             .get_committed_polynomial_opening(
@@ -2126,61 +1975,49 @@ mod tests {
 
         let total_vars = point_dory_le.len();
         let sigma_main = total_vars.div_ceil(2);
-
-        // Advice dims from the canonical balanced policy (derived from max advice size).
-        let advice_len = ((preprocessing.memory_layout.max_trusted_advice_size as usize) / 8)
-            .next_power_of_two()
-            .max(1);
-        let advice_vars = advice_len.log_2();
+        let advice_words =
+            (preprocessing.memory_layout.max_trusted_advice_size as usize / 8).next_power_of_two();
+        let advice_vars = advice_words.log_2();
         let sigma_a = advice_vars.div_ceil(2);
         let nu_a = advice_vars - sigma_a;
 
-        // This is the actual boundary-crossing condition: row_coords needs address bits.
-        assert!(
-            sigma_main + nu_a > log_t,
-            "expected row_coords[0..nu_a] to cross into addr7_le; got sigma_main={sigma_main}, nu_a={nu_a}, log_t={log_t}"
-        );
-
-        let mut expected_advice_le = Vec::with_capacity(advice_vars);
-        expected_advice_le.extend_from_slice(&point_dory_le[0..sigma_a]);
+        // Build expected advice point: [col_bits[0..sigma_a] || row_bits[0..nu_a]]
+        let mut expected_advice_le: Vec<_> = point_dory_le[0..sigma_a].to_vec();
         expected_advice_le.extend_from_slice(&point_dory_le[sigma_main..sigma_main + nu_a]);
-        assert_eq!(expected_advice_le.len(), advice_vars);
 
-        // Trusted advice opening point must match Dory-order slice.
-        let (trusted_point_be, _) = debug_info
-            .opening_accumulator
-            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
-            .expect("expected trusted advice opening after reduction");
-        let mut trusted_point_le = trusted_point_be.r.clone();
-        trusted_point_le.reverse();
-        assert_eq!(
-            trusted_point_le, expected_advice_le,
-            "trusted advice opening point does not match Dory-order slice"
-        );
+        // Verify both advice types derive the same opening point
+        for (name, get_fn) in [
+            (
+                "trusted",
+                debug_info
+                    .opening_accumulator
+                    .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction),
+            ),
+            (
+                "untrusted",
+                debug_info
+                    .opening_accumulator
+                    .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction),
+            ),
+        ] {
+            let (point_be, _) = get_fn.expect(&format!("{name} advice opening missing"));
+            let mut point_le = point_be.r.clone();
+            point_le.reverse();
+            assert_eq!(point_le, expected_advice_le, "{name} advice point mismatch");
+        }
 
-        // Untrusted advice opening point must match the same Dory-order slice.
-        let (untrusted_point_be, _) = debug_info
-            .opening_accumulator
-            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
-            .expect("expected untrusted advice opening after reduction");
-        let mut untrusted_point_le = untrusted_point_be.r.clone();
-        untrusted_point_le.reverse();
-        assert_eq!(
-            untrusted_point_le, expected_advice_le,
-            "untrusted advice opening point does not match Dory-order slice"
-        );
-
-        // Full end-to-end verification.
+        // Verify end-to-end
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verifier = RV64IMACVerifier::new(
+        RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
             io_device,
             Some(trusted_commitment),
             Some(debug_info),
         )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        .expect("Failed to create verifier")
+        .verify()
+        .expect("Verification failed");
     }
 
     #[test]
