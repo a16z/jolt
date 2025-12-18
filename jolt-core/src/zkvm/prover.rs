@@ -839,7 +839,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 5 baseline");
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
-        // Note: RamHammingBooleanity moved to Stage 6 so it shares r_cycle_stage6
         let ram_ra_reduction_params = RaReductionParams::new(
             self.trace.len(),
             &self.one_hot_params,
@@ -912,12 +911,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // RamHammingBooleanity - uses r_cycle from Stage 5's RamRaClaimReduction
         let ram_hamming_booleanity_params =
             HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
 
-        // Booleanity: combines instruction, bytecode, and ram booleanity into one
-        // (extracts r_address and r_cycle from Stage 5 internally)
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
@@ -949,7 +945,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
-        // Booleanity prover - handles all three families
         let booleanity = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
@@ -1095,8 +1090,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
     #[tracing::instrument(skip_all)]
     fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
-        tracing::info!("Stage 7 proving (HammingWeight claim reduction)");
-
         // Create params and prover for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_params = HammingWeightClaimReductionParams::new(
@@ -1104,7 +1097,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let mut hw_prover = HammingWeightClaimReductionProver::initialize(
+        let hw_prover = HammingWeightClaimReductionProver::initialize(
             hw_params,
             &self.trace,
             self.preprocessing,
@@ -1115,13 +1108,20 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
 
         // Run sumcheck (only log_k_chunk rounds!)
-        let instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>> =
-            vec![&mut hw_prover];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
+            vec![Box::new(hw_prover)];
+
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
+        tracing::info!("Stage 7 proving");
         let (sumcheck_proof, _) = BatchedSumcheck::prove(
-            instances,
+            instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
+        drop_in_background_thread(instances);
 
         sumcheck_proof
     }
