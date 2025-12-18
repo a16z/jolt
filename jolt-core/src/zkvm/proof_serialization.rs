@@ -38,8 +38,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
-    #[cfg(test)]
-    pub joint_commitment_for_test: Option<PCS::Commitment>,
     // Note: Advice proofs are now batched into joint_opening_proof via Stage 6
     // AdviceClaimReduction sumcheck. The old separate proof fields have been removed.
     pub untrusted_advice_commitment: Option<PCS::Commitment>,

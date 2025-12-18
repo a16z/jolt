@@ -152,9 +152,6 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
-    /// Joint commitment for testing (computed in Stage 7, used in proof for verification)
-    #[cfg(test)]
-    joint_commitment_for_test: Option<PCS::Commitment>,
 }
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
@@ -364,8 +361,6 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
                 preprocessing.bytecode.code_size,
                 ram_K,
             ),
-            #[cfg(test)]
-            joint_commitment_for_test: None,
         }
     }
 
@@ -446,8 +441,6 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             stage6_sumcheck_proof,
             stage7_sumcheck_proof,
             joint_opening_proof,
-            #[cfg(test)]
-            joint_commitment_for_test: self.joint_commitment_for_test.clone(),
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
