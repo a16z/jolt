@@ -158,20 +158,24 @@ impl<F: JoltField> InstructionRaSumcheckProver<F> {
             .into_par_iter()
             .enumerate()
             .map(|(i, lookup_indices)| {
-                let mut eq_evals = EqPolynomial::evals(&r_address_chunks[i]);
-
                 // Pre-scale the first committed polynomial in each virtual batch by γ^batch.
                 //
                 // This pushes the γ weight *inside* the product term so we can form
                 // (Σ γ^i · ∏ ra_{i,*}) before multiplying by split-eq's inner weights e_in,
                 // allowing a single split-eq fold for the whole sumcheck message.
-                if i % n_committed_per_virtual == 0 {
+                let scaling_factor = if i % n_committed_per_virtual == 0 {
                     let batch = i / n_committed_per_virtual;
                     let gamma = gamma_powers[batch];
                     if gamma != F::one() {
-                        eq_evals.par_iter_mut().for_each(|v| *v *= gamma);
+                        Some(gamma)
+                    } else {
+                        None
                     }
-                }
+                } else {
+                    None
+                };
+                let eq_evals =
+                    EqPolynomial::evals_with_scaling(&r_address_chunks[i], scaling_factor);
                 RaPolynomial::new(Arc::new(lookup_indices), eq_evals)
             })
             .collect();
