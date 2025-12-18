@@ -25,6 +25,7 @@
 
 use allocative::Allocative;
 use ark_std::Zero;
+use fixedbitset::FixedBitSet;
 
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
@@ -294,7 +295,7 @@ fn compute_all_G_impl<F: JoltField>(
     let out_len = E_hi.len(); // 2^hi_bits
     let chunk_size = out_len.div_ceil(num_threads);
 
-    // Parallel map over thread chunks
+    // Parallel map over thread chunks using deferred reduction
     E_hi.par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
@@ -308,18 +309,55 @@ fn compute_all_G_impl<F: JoltField>(
             let mut partial_ram: Vec<Vec<F>> =
                 (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
 
+            // Reusable local unreduced accumulators (5-limb) and touched flags
+            let mut local_instruction: Vec<Vec<F::Unreduced<5>>> = (0..instruction_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut local_bytecode: Vec<Vec<F::Unreduced<5>>> = (0..bytecode_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut local_ram: Vec<Vec<F::Unreduced<5>>> =
+                (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
+            let mut touched_instruction: Vec<FixedBitSet> =
+                vec![FixedBitSet::with_capacity(K); instruction_d];
+            let mut touched_bytecode: Vec<FixedBitSet> =
+                vec![FixedBitSet::with_capacity(K); bytecode_d];
+            let mut touched_ram: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); ram_d];
+
             let chunk_start = chunk_idx * chunk_size;
             for (local_idx, &e_hi) in chunk.iter().enumerate() {
                 let c_hi = chunk_start + local_idx;
                 let c_hi_base = c_hi * in_len;
 
+                // Clear touched flags and local accumulators for this c_hi
+                for i in 0..instruction_d {
+                    for k in touched_instruction[i].ones() {
+                        local_instruction[i][k] = Default::default();
+                    }
+                    touched_instruction[i].clear();
+                }
+                for i in 0..bytecode_d {
+                    for k in touched_bytecode[i].ones() {
+                        local_bytecode[i][k] = Default::default();
+                    }
+                    touched_bytecode[i].clear();
+                }
+                for i in 0..ram_d {
+                    for k in touched_ram[i].ones() {
+                        local_ram[i][k] = Default::default();
+                    }
+                    touched_ram[i].clear();
+                }
+
+                // Sequential over c_lo (contiguous cycles for this c_hi)
                 for c_lo in 0..in_len {
                     let j = c_hi_base + c_lo;
                     if j >= T {
                         break;
                     }
 
-                    let eq_val = e_hi * E_lo[c_lo];
+                    // Get 4-limb unreduced representation
+                    let add = *E_lo[c_lo].as_unreduced_ref();
 
                     let ra_idx =
                         RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params);
@@ -334,23 +372,53 @@ fn compute_all_G_impl<F: JoltField>(
                         }
                     }
 
-                    // InstructionRa contributions
+                    // InstructionRa contributions (unreduced accumulation)
                     for i in 0..instruction_d {
                         let k = ra_idx.instruction[i] as usize;
-                        partial_instruction[i][k] += eq_val;
+                        if !touched_instruction[i].contains(k) {
+                            touched_instruction[i].insert(k);
+                        }
+                        local_instruction[i][k] += add;
                     }
 
-                    // BytecodeRa contributions
+                    // BytecodeRa contributions (unreduced accumulation)
                     for i in 0..bytecode_d {
                         let k = ra_idx.bytecode[i] as usize;
-                        partial_bytecode[i][k] += eq_val;
+                        if !touched_bytecode[i].contains(k) {
+                            touched_bytecode[i].insert(k);
+                        }
+                        local_bytecode[i][k] += add;
                     }
 
-                    // RamRa contributions (may be None)
+                    // RamRa contributions (may be None, unreduced accumulation)
                     for i in 0..ram_d {
                         if let Some(k) = ra_idx.ram[i] {
-                            partial_ram[i][k as usize] += eq_val;
+                            let k = k as usize;
+                            if !touched_ram[i].contains(k) {
+                                touched_ram[i].insert(k);
+                            }
+                            local_ram[i][k] += add;
                         }
+                    }
+                }
+
+                // Barrett reduce and scale by E_hi[c_hi], only for touched indices
+                for i in 0..instruction_d {
+                    for k in touched_instruction[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_instruction[i][k]);
+                        partial_instruction[i][k] += e_hi * reduced;
+                    }
+                }
+                for i in 0..bytecode_d {
+                    for k in touched_bytecode[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_bytecode[i][k]);
+                        partial_bytecode[i][k] += e_hi * reduced;
+                    }
+                }
+                for i in 0..ram_d {
+                    for k in touched_ram[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_ram[i][k]);
+                        partial_ram[i][k] += e_hi * reduced;
                     }
                 }
             }
