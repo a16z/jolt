@@ -47,7 +47,7 @@ impl<F: JoltField> InstructionInputParams<F> {
         );
         let (r_cycle_stage_2, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let gamma = transcript.challenge_scalar();
         Self {
@@ -78,11 +78,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
         );
         let (_, left_claim_stage_2) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, right_claim_stage_2) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
 
         let claim_stage_1 = right_claim_stage_1 + self.gamma * left_claim_stage_1;
@@ -190,11 +190,11 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
         );
         let (_, left_claim_stage_2) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, right_claim_stage_2) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let claim_stage_1 = right_claim_stage_1 + params.gamma * left_claim_stage_1;
         let claim_stage_2 = right_claim_stage_2 + params.gamma * left_claim_stage_2;

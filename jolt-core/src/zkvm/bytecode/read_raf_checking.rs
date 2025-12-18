@@ -701,7 +701,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
         let (r_cycle_2, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (r_cycle_3, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
@@ -895,20 +895,20 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ) -> F {
         let (_, jump_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, branch_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, rd_wa_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, write_lookup_output_to_rd_flag_claim) = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             );
 
         [
@@ -1206,7 +1206,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
 enum ReadCheckingValType {
     /// Spartan outer sumcheck
     Stage1,
-    /// Jump flag from ProductVirtualization
+    /// Jump flag from SpartanProductVirtualization
     Stage2,
     /// ShiftSumcheck
     Stage3,

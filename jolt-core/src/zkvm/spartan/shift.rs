@@ -64,7 +64,7 @@ impl<F: JoltField> ShiftSumcheckParams<F> {
         let (r_outer, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
         let (product_sumcheck_r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsNoop,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (r_product, _) = product_sumcheck_r.split_at(n_cycle_vars);
 
@@ -104,7 +104,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
             );
         let (_, input_claim_next_is_noop) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsNoop,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
 
         input_claim_next_unexpanded_pc
