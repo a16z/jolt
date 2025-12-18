@@ -376,12 +376,14 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
                 - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
                 - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
-    // if Inline {
+    // if Inline && !NextIsNoop {
     //     assert!(NextPC == PC + 1)
     // }
+    // Uses VirtualInstructionActive = VirtualInstruction * (1 - NextIsNoop)
+    // This avoids enforcing PC + 1 when the inline sequence is followed by NoOp padding
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::NextPCEqPCPlusOneIfInline,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } }
+        if { { JoltR1CSInputs::VirtualInstructionActive } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
     ),
     // if NextIsVirtual && !NextIsFirstInSequence {
@@ -515,7 +517,7 @@ pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1
     filter_r1cs_constraints(&R1CS_CONSTRAINTS_SECOND_GROUP_LABELS);
 
 /// Domain sizing for product-virtualization univariate-skip (size-5 window)
-pub const NUM_PRODUCT_VIRTUAL: usize = 5;
+pub const NUM_PRODUCT_VIRTUAL: usize = 6;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
@@ -530,6 +532,7 @@ pub enum ProductConstraintLabel {
     WritePCtoRD,
     ShouldBranch,
     ShouldJump,
+    VirtualInstructionActive,
 }
 
 /// Number of product virtualization constraints
@@ -598,6 +601,14 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
         output: VirtualPolynomial::ShouldJump,
+    },
+    // 5: VirtualInstructionActive = OpFlags(VirtualInstruction) · (1 − NextIsNoop)
+    // Used to guard NextPCEqPCPlusOneIfInline: only enforce PC + 1 when not followed by NoOp
+    ProductConstraint {
+        label: ProductConstraintLabel::VirtualInstructionActive,
+        left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction)),
+        right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
+        output: VirtualPolynomial::VirtualInstructionActive,
     },
 ];
 

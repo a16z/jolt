@@ -64,14 +64,15 @@ use tracer::instruction::Cycle;
 /// whereas here we do it for all of them)
 /// Fixed list of product virtual polynomials, in canonical order
 pub const PRODUCT_VIRTUAL_TERMS: [VirtualPolynomial; NUM_PRODUCT_VIRTUAL] = [
-    VirtualPolynomial::Product,               // Instruction
-    VirtualPolynomial::WriteLookupOutputToRD, // WriteLookupOutputToRD
-    VirtualPolynomial::WritePCtoRD,           // WritePCtoRD
-    VirtualPolynomial::ShouldBranch,          // ShouldBranch
-    VirtualPolynomial::ShouldJump,            // ShouldJump
+    VirtualPolynomial::Product,                  // Instruction
+    VirtualPolynomial::WriteLookupOutputToRD,    // WriteLookupOutputToRD
+    VirtualPolynomial::WritePCtoRD,              // WritePCtoRD
+    VirtualPolynomial::ShouldBranch,             // ShouldBranch
+    VirtualPolynomial::ShouldJump,               // ShouldJump
+    VirtualPolynomial::VirtualInstructionActive, // VirtualInstructionActive
 ];
 
-pub const NUM_PRODUCT_VIRTUAL: usize = 5;
+pub const NUM_PRODUCT_VIRTUAL: usize = 6;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
@@ -248,6 +249,13 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
                             left_w[4] =
                                 (c[4] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
                             right_w[4] = (c[4] as i128)
+                                * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
+
+                            // VirtualInstructionActive: VirtualInstruction_flag × (1 − NextIsNoop)
+                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
+                            left_w[5] = (c[5] as i128)
+                                * (if row.virtual_instruction_flag { 1i32 } else { 0i32 } as i128);
+                            right_w[5] = (c[5] as i128)
                                 * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
 
                             // Fuse by summing over i in i128 and multiply in bigints first
@@ -699,7 +707,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             lr[1],
         );
 
-        // Append the 8 unique factor openings in canonical order
+        // Append the 9 unique factor openings in canonical order
         for (i, vp) in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter().enumerate() {
             accumulator.append_virtual(
                 transcript,
@@ -994,18 +1002,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 SumcheckId::ProductVirtualization,
             )
             .1;
+        let virtual_instr_flag = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+                SumcheckId::ProductVirtualization,
+            )
+            .1;
 
         // TODO: make this logic less brittle
         let left_sum = w[0] * l_inst
             + w[1] * is_rd_not_zero
             + w[2] * is_rd_not_zero
             + w[3] * lookup_out
-            + w[4] * j_flag;
+            + w[4] * j_flag
+            + w[5] * virtual_instr_flag;
         let right_sum = w[0] * r_inst
             + w[1] * wl_flag
             + w[2] * j_flag
             + w[3] * branch_flag
-            + w[4] * (F::one() - next_is_noop);
+            + w[4] * (F::one() - next_is_noop)
+            + w[5] * (F::one() - next_is_noop);
 
         left_sum + self.params.gamma * right_sum
     }

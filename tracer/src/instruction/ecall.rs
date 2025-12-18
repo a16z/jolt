@@ -11,7 +11,9 @@ use crate::{
 
 use super::{
     addi::ADDI,
+    auipc::AUIPC,
     format::format_i::FormatI,
+    jalr::JALR,
     virtual_advice::VirtualAdvice,
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
@@ -68,25 +70,43 @@ impl RISCVTrace for ECALL {
         }
     }
 
-    /// ECALL inline sequence: use VirtualAdvice to write syscall return value to a0.
+    /// ECALL inline sequence: use VirtualAdvice to write syscall return value to a0,
+    /// then JALR to the next instruction.
     ///
     /// Syscalls return their result in a0 (register 10), but ECALL's encoding has rd=0.
     /// We use VirtualAdvice to provide the syscall result as untrusted advice,
     /// which gets written to a0.
+    ///
+    /// The sequence ends with JALR to avoid the NextUnexpPCUpdateOtherwise constraint
+    /// failing when the inline sequence is followed by NoOp padding. JALR has Jump=true,
+    /// which makes the constraint guard `!(ShouldBranch || Jump)` false.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = allocator.allocate(); // temporary for syscall result
+        let syscall_result = allocator.allocate(); // temporary for syscall result
+        let next_pc = allocator.allocate(); // temporary for next PC calculation
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // Get syscall result as advice and write to temp register
-        asm.emit_j::<VirtualAdvice>(*a0, 0);
+        asm.emit_j::<VirtualAdvice>(*syscall_result, 0);
 
         // Move result to a0 (register 10)
-        asm.emit_i::<ADDI>(10, *a0, 0);
+        asm.emit_i::<ADDI>(10, *syscall_result, 0);
+
+        // Calculate address of instruction after ECALL:
+        // AUIPC gives us the ECALL address (all inline instructions share this address)
+        asm.emit_u::<AUIPC>(*next_pc, 0);
+
+        // Add 4 bytes (ECALL is always 4 bytes, never compressed)
+        asm.emit_i::<ADDI>(*next_pc, *next_pc, 4);
+
+        // Jump to next instruction. JALR has Jump=true, so the NextUnexpPCUpdateOtherwise
+        // constraint won't fire (guard is !(ShouldBranch || Jump) which is false).
+        // Using rd=0 means we don't save the return address.
+        asm.emit_i::<JALR>(0, *next_pc, 0);
 
         asm.finalize()
     }

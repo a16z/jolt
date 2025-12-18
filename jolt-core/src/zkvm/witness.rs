@@ -589,6 +589,8 @@ pub enum VirtualPolynomial {
     ShouldBranch,
     WritePCtoRD,
     WriteLookupOutputToRD,
+    /// VirtualInstruction * (1 - NextIsNoop): active virtual instruction not followed by NoOp
+    VirtualInstructionActive,
     Rd,
     Imm,
     Rs1Value,
@@ -637,6 +639,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::ShouldBranch,
         VirtualPolynomial::WritePCtoRD,
         VirtualPolynomial::WriteLookupOutputToRD,
+        VirtualPolynomial::VirtualInstructionActive,
         VirtualPolynomial::Rd,
         VirtualPolynomial::Imm,
         VirtualPolynomial::Rs1Value,
