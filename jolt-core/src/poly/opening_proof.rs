@@ -229,7 +229,8 @@ pub struct DoryOpeningState<F: JoltField> {
     pub opening_point: Vec<F::Challenge>,
     /// γ^i coefficients for the RLC polynomial
     pub gamma_powers: Vec<F>,
-    /// (polynomial, claim) pairs at the opening point (with Lagrange factors already applied for shorter polys)
+    /// (polynomial, claim) pairs at the opening point
+    /// (with Lagrange factors already applied for shorter polys)
     pub polynomial_claims: Vec<(CommittedPolynomial, F)>,
 }
 

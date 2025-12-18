@@ -1117,7 +1117,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Run sumcheck (only log_k_chunk rounds!)
         let instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>> =
             vec![&mut hw_prover];
-        let (sumcheck_proof, _r_address_stage7) = BatchedSumcheck::prove(
+        let (sumcheck_proof, _) = BatchedSumcheck::prove(
             instances,
             &mut self.opening_accumulator,
             &mut self.transcript,

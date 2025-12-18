@@ -537,7 +537,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         // Compute joint commitment: Σ γ_i · C_i
-        let joint_commitment = self.compute_joint_commitment::<PCS>(&mut commitments_map, &state);
+        let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state);
 
         // Test assertion
         #[cfg(test)]
@@ -568,11 +568,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     /// Compute joint commitment for the batch opening.
-    fn compute_joint_commitment<PCS2: CommitmentScheme<Field = F>>(
+    fn compute_joint_commitment(
         &self,
-        commitment_map: &mut HashMap<CommittedPolynomial, PCS2::Commitment>,
+        commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
         state: &DoryOpeningState<F>,
-    ) -> PCS2::Commitment {
+    ) -> PCS::Commitment {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = HashMap::new();
         for (gamma, (poly, _claim)) in state
@@ -583,12 +583,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
         }
 
-        let (coeffs, commitments): (Vec<F>, Vec<PCS2::Commitment>) = rlc_map
+        let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
             .into_iter()
             .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
             .unzip();
 
-        PCS2::combine_commitments(&commitments, &coeffs)
+        PCS::combine_commitments(&commitments, &coeffs)
     }
 
     fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
