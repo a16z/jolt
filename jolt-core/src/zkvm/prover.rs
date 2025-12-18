@@ -1336,10 +1336,10 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             polynomials.push(CommittedPolynomial::RamRa(i));
         }
 
-        // 5. Build unified opening point: (r_address_stage7 || r_cycle_stage6)
-        // Note: r_address_stage7 is little-endian from sumcheck, convert to big-endian
-        let mut r_address_be = r_address_stage7.clone();
-        r_address_be.reverse();
+        // 5. Build unified opening point: (r_address_stage7_be || r_cycle_stage6_be)
+        // Note: r_address_stage7 is little-endian from the sumcheck challenge stream, convert to big-endian
+        let mut r_address_stage7_be = r_address_stage7.clone();
+        r_address_stage7_be.reverse();
 
         // Extract r_cycle from Booleanity (same source as HammingWeightClaimReduction uses)
         let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1347,9 +1347,9 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             SumcheckId::Booleanity,
         );
         let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_cycle_stage6 = &unified_point.r[log_k_chunk..];
+        let r_cycle_stage6_be = &unified_point.r[log_k_chunk..];
 
-        let opening_point = [r_address_be.as_slice(), r_cycle_stage6].concat();
+        let opening_point = [r_address_stage7_be.as_slice(), r_cycle_stage6_be].concat();
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
         // These are committed with Main context dimensions so they can be batched.
