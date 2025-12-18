@@ -37,8 +37,6 @@ use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
-use fixedbitset::FixedBitSet;
-
 use crate::{
     field::JoltField,
     poly::{
@@ -335,20 +333,13 @@ impl<F: JoltField> PhaseAddressProver<F> {
 
         // Each thread computes partial G_A and G_B directly
         // G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
-        // Since E_val_hi is pre-scaled by gamma, we can combine on the fly
+        // E_val_hi is pre-scaled by gamma, so we compute eq products inline
         let (G_A, G_B): (Vec<F>, Vec<F>) = E_raf_hi
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_idx, chunk)| {
-                // Each thread allocates partial G_A and G_B directly (2 instead of 3)
                 let mut partial_G_A: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut partial_G_B: Vec<F> = unsafe_allocate_zero_vec(K);
-
-                // Reusable local unreduced accumulators (5-limb) and touched flags
-                let mut local_raf: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
-                let mut local_rw: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
-                let mut local_val: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
-                let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
 
                 let chunk_start = chunk_idx * chunk_size;
                 for (local_idx, &e_hi_raf) in chunk.iter().enumerate() {
@@ -357,15 +348,6 @@ impl<F: JoltField> PhaseAddressProver<F> {
                     let e_hi_val_scaled = E_val_hi_scaled[c_hi]; // Already scaled by gamma
                     let c_hi_base = c_hi * in_len;
 
-                    // Clear touched flags and local accumulators for this c_hi
-                    for k in touched.ones() {
-                        local_raf[k] = Default::default();
-                        local_rw[k] = Default::default();
-                        local_val[k] = Default::default();
-                    }
-                    touched.clear();
-
-                    // Process all c_lo for this c_hi (contiguous cycles)
                     for c_lo in 0..in_len {
                         let j = c_hi_base + c_lo;
                         if j >= T {
@@ -373,26 +355,13 @@ impl<F: JoltField> PhaseAddressProver<F> {
                         }
 
                         if let Some(k) = addresses[j] {
-                            if !touched.contains(k) {
-                                touched.insert(k);
-                            }
-                            // Accumulate E_lo[c_lo] in unreduced form
-                            local_raf[k] += *E_raf_lo[c_lo].as_unreduced_ref();
-                            local_rw[k] += *E_rw_lo[c_lo].as_unreduced_ref();
-                            local_val[k] += *E_val_lo[c_lo].as_unreduced_ref();
-                        }
-                    }
+                            let eq_raf = e_hi_raf * E_raf_lo[c_lo];
+                            let eq_rw = e_hi_rw * E_rw_lo[c_lo];
+                            let eq_val = e_hi_val_scaled * E_val_lo[c_lo];
 
-                    // Barrett reduce and combine into G_A and G_B directly
-                    // G_A[k] += e_hi_raf * reduced_raf + gamma * e_hi_val * reduced_val
-                    // G_B[k] += e_hi_rw * reduced_rw + gamma * e_hi_val * reduced_val
-                    for k in touched.ones() {
-                        let reduced_raf = F::from_barrett_reduce::<5>(local_raf[k]);
-                        let reduced_rw = F::from_barrett_reduce::<5>(local_rw[k]);
-                        let reduced_val = F::from_barrett_reduce::<5>(local_val[k]);
-                        // e_hi_val_scaled already contains gamma * e_hi_val
-                        partial_G_A[k] += e_hi_raf * reduced_raf + e_hi_val_scaled * reduced_val;
-                        partial_G_B[k] += e_hi_rw * reduced_rw + e_hi_val_scaled * reduced_val;
+                            partial_G_A[k] += eq_raf + eq_val;
+                            partial_G_B[k] += eq_rw + eq_val;
+                        }
                     }
                 }
 

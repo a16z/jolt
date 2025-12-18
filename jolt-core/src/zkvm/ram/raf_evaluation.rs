@@ -1,5 +1,4 @@
 use common::jolt_device::MemoryLayout;
-use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 
 use allocative::Allocative;
@@ -144,46 +143,22 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
             .map(|(chunk_idx, chunk)| {
                 let mut partial: Vec<F> = unsafe_allocate_zero_vec(K);
 
-                // Reusable local unreduced accumulator (5-limb) and touched flags
-                let mut local_unreduced: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
-                let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
-
                 let chunk_start = chunk_idx * chunk_size;
                 for (local_idx, &e_hi) in chunk.iter().enumerate() {
                     let c_hi = chunk_start + local_idx;
                     let c_hi_base = c_hi * in_len;
 
-                    // Clear touched flags and local accumulators for this c_hi
-                    for k in touched.ones() {
-                        local_unreduced[k] = Default::default();
-                    }
-                    touched.clear();
-
-                    // Process all c_lo for this c_hi (contiguous cycles)
                     for c_lo in 0..in_len {
                         let j = c_hi_base + c_lo;
                         if j >= T {
                             break;
                         }
 
-                        // Get 4-limb unreduced representation
-                        let add = *E_lo[c_lo].as_unreduced_ref();
-
                         if let Some(k) =
                             remap_address(trace[j].ram_access().address() as u64, memory_layout)
                         {
-                            let k = k as usize;
-                            if !touched.contains(k) {
-                                touched.insert(k);
-                            }
-                            local_unreduced[k] += add;
+                            partial[k as usize] += e_hi * E_lo[c_lo];
                         }
-                    }
-
-                    // Barrett reduce and scale by E_hi[c_hi], only for touched indices
-                    for k in touched.ones() {
-                        let reduced = F::from_barrett_reduce::<5>(local_unreduced[k]);
-                        partial[k] += e_hi * reduced;
                     }
                 }
 
