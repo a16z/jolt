@@ -1222,7 +1222,9 @@ impl<D: MemoryData> MemoryWrapper<D> {
 impl MemoryWrapper<CheckpointingMemory> {
     pub fn save_checkpoint(&mut self) -> MemoryWrapper<ReplayableMemory> {
         MemoryWrapper::<ReplayableMemory> {
-            memory: MemoryBackend { data: self.memory.data.save_checkpoint() },
+            memory: MemoryBackend {
+                data: self.memory.data.save_checkpoint(),
+            },
         }
     }
 }

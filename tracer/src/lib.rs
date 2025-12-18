@@ -15,7 +15,7 @@ use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
-    get_mut_emulator, Emulator, EmulatorState,
+    get_mut_emulator, EmulatorState,
 };
 
 use instruction::{Cycle, Instruction};
@@ -28,7 +28,13 @@ pub mod utils;
 pub use common::jolt_device::JoltDevice;
 pub use instruction::inline::{list_registered_inlines, register_inline};
 
-use crate::{emulator::{memory::{CheckpointingMemory, Memory, MemoryData, ReplayableMemory}, GeneralizedEmulator}, instruction::uncompress_instruction};
+use crate::{
+    emulator::{
+        memory::{CheckpointingMemory, Memory, MemoryData, ReplayableMemory},
+        GeneralizedEmulator,
+    },
+    instruction::uncompress_instruction,
+};
 
 /// Executes a RISC-V program and generates its execution trace along with emulator state checkpoints.
 ///
@@ -183,7 +189,11 @@ pub fn trace_checkpoints(
     (checkpoints, emulator_trace_iter.get_jolt_device())
 }
 
-fn step_emulator<D: MemoryData>(emulator: &mut GeneralizedEmulator<D>, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
+fn step_emulator<D: MemoryData>(
+    emulator: &mut GeneralizedEmulator<D>,
+    prev_pc: &mut u64,
+    trace: Option<&mut Vec<Cycle>>,
+) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself
     // into an infinite loop. It seems to be a good heuristic for now but we
