@@ -39,10 +39,10 @@ use crate::{
         bytecode::read_raf_checking::ReadRafSumcheckParams as BytecodeReadRafParams,
         claim_reductions::{
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
-            IncReductionSumcheckParams, IncReductionSumcheckProver,
+            IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
             InstructionLookupsClaimReductionSumcheckProver, RaReductionParams,
-            RamRaReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
+            RamRaClaimReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
             RegistersClaimReductionSumcheckProver,
         },
         config::{get_log_k_chunk, OneHotParams},
@@ -859,7 +859,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
         );
-        let ram_ra_reduction = RamRaReductionSumcheckProver::initialize(
+        let ram_ra_reduction = RamRaClaimReductionSumcheckProver::initialize(
             ram_ra_reduction_params,
             &self.trace,
             &self.program_io.memory_layout,
@@ -874,7 +874,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "RegistersValEvaluationSumcheckProver",
                 &registers_val_evaluation,
             );
-            print_data_structure_heap_usage("RamRaReductionSumcheckProver", &ram_ra_reduction);
+            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
             print_data_structure_heap_usage("LookupsReadRafSumcheckProver", &lookups_read_raf);
         }
 
@@ -912,7 +912,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // RamHammingBooleanity - uses r_cycle from Stage 5's RamRaReduction
+        // RamHammingBooleanity - uses r_cycle from Stage 5's RamRaClaimReduction
         let ram_hamming_booleanity_params =
             HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
 
@@ -935,7 +935,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let inc_reduction_params = IncReductionSumcheckParams::new(
+        let inc_reduction_params = IncClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
@@ -967,7 +967,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
         let inc_reduction =
-            IncReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
+            IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 
         #[cfg(feature = "allocative")]
         {
@@ -979,7 +979,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
-            print_data_structure_heap_usage("IncReductionSumcheckProver", &inc_reduction);
+            print_data_structure_heap_usage("IncClaimReductionSumcheckProver", &inc_reduction);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
@@ -1149,16 +1149,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
 
-        // Dense polynomials: RamInc and RdInc (from IncReduction in Stage 6)
+        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
         // These are at r_cycle_stage6 only (length log_T)
         let (_ram_inc_point, ram_inc_claim) =
             self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamInc,
-                SumcheckId::IncReduction,
+                SumcheckId::IncClaimReduction,
             );
-        let (_rd_inc_point, rd_inc_claim) = self
-            .opening_accumulator
-            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
+        let (_rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
 
         #[cfg(test)]
         {

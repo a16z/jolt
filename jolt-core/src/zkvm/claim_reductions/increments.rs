@@ -77,7 +77,7 @@ const DEGREE_BOUND: usize = 2;
 // ============================================================================
 
 #[derive(Allocative, Clone)]
-pub struct IncReductionSumcheckParams<F: JoltField> {
+pub struct IncClaimReductionSumcheckParams<F: JoltField> {
     /// γ, γ², γ³ for batching
     pub gamma_powers: [F; 3],
     pub n_cycle_vars: usize,
@@ -87,7 +87,7 @@ pub struct IncReductionSumcheckParams<F: JoltField> {
     pub s_cycle_stage5: OpeningPoint<BIG_ENDIAN, F>, // RdInc from RegistersValEvaluation
 }
 
-impl<F: JoltField> IncReductionSumcheckParams<F> {
+impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
     pub fn new(
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
@@ -140,7 +140,7 @@ impl<F: JoltField> IncReductionSumcheckParams<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for IncReductionSumcheckParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
         let [gamma, gamma_sqr, gamma_cub] = self.gamma_powers;
 
@@ -188,19 +188,21 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncReductionSumcheckParams<F> {
 
 #[derive(Allocative)]
 #[allow(clippy::large_enum_variant, private_interfaces)]
-pub enum IncReductionSumcheckProver<F: JoltField> {
-    Phase1(IncReductionPhase1Prover<F>),
-    Phase2(IncReductionPhase2Prover<F>),
+pub enum IncClaimReductionSumcheckProver<F: JoltField> {
+    Phase1(IncClaimReductionPhase1Prover<F>),
+    Phase2(IncClaimReductionPhase2Prover<F>),
 }
 
-impl<F: JoltField> IncReductionSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "IncReductionSumcheckProver::initialize")]
-    pub fn initialize(params: IncReductionSumcheckParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
-        Self::Phase1(IncReductionPhase1Prover::initialize(trace, params))
+impl<F: JoltField> IncClaimReductionSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "IncClaimReductionSumcheckProver::initialize")]
+    pub fn initialize(params: IncClaimReductionSumcheckParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
+        Self::Phase1(IncClaimReductionPhase1Prover::initialize(trace, params))
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for IncReductionSumcheckProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for IncClaimReductionSumcheckProver<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         match self {
             Self::Phase1(prover) => &prover.params,
@@ -208,7 +210,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for IncReductionS
         }
     }
 
-    #[tracing::instrument(skip_all, name = "IncReductionSumcheckProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "IncClaimReductionSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         match self {
             Self::Phase1(prover) => prover.compute_message(previous_claim),
@@ -216,7 +218,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for IncReductionS
         }
     }
 
-    #[tracing::instrument(skip_all, name = "IncReductionSumcheckProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "IncClaimReductionSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         match self {
             Self::Phase1(prover) => {
@@ -224,7 +226,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for IncReductionS
                     let params = prover.params.clone();
                     let mut sumcheck_challenges = prover.sumcheck_challenges.clone();
                     sumcheck_challenges.push(r_j);
-                    *self = Self::Phase2(IncReductionPhase2Prover::gen(
+                    *self = Self::Phase2(IncClaimReductionPhase2Prover::gen(
                         &prover.trace,
                         &sumcheck_challenges,
                         params,
@@ -256,14 +258,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for IncReductionS
         accumulator.append_dense(
             transcript,
             CommittedPolynomial::RamInc,
-            SumcheckId::IncReduction,
+            SumcheckId::IncClaimReduction,
             opening_point.r.clone(),
             ram_inc_claim,
         );
         accumulator.append_dense(
             transcript,
             CommittedPolynomial::RdInc,
-            SumcheckId::IncReduction,
+            SumcheckId::IncClaimReduction,
             opening_point.r,
             rd_inc_claim,
         );
@@ -283,7 +285,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for IncReductionS
 // ============================================================================
 
 #[derive(Allocative)]
-struct IncReductionPhase1Prover<F: JoltField> {
+struct IncClaimReductionPhase1Prover<F: JoltField> {
     // P buffers: prefix eq evaluations (one per opening point)
     // P_ram[0] = eq(r_cycle_stage2_lo, ·)
     // P_ram[1] = eq(r_cycle_stage4_lo, ·)
@@ -301,12 +303,12 @@ struct IncReductionPhase1Prover<F: JoltField> {
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     sumcheck_challenges: Vec<F::Challenge>,
-    params: IncReductionSumcheckParams<F>,
+    params: IncClaimReductionSumcheckParams<F>,
 }
 
-impl<F: JoltField> IncReductionPhase1Prover<F> {
-    #[tracing::instrument(skip_all, name = "IncReductionPhase1Prover::initialize")]
-    fn initialize(trace: Arc<Vec<Cycle>>, params: IncReductionSumcheckParams<F>) -> Self {
+impl<F: JoltField> IncClaimReductionPhase1Prover<F> {
+    #[tracing::instrument(skip_all, name = "IncClaimReductionPhase1Prover::initialize")]
+    fn initialize(trace: Arc<Vec<Cycle>>, params: IncClaimReductionSumcheckParams<F>) -> Self {
         let n_vars = params.n_cycle_vars;
         let prefix_n_vars = n_vars / 2;
         let suffix_n_vars = n_vars - prefix_n_vars;
@@ -474,21 +476,21 @@ impl<F: JoltField> IncReductionPhase1Prover<F> {
 // ============================================================================
 
 #[derive(Allocative)]
-struct IncReductionPhase2Prover<F: JoltField> {
+struct IncClaimReductionPhase2Prover<F: JoltField> {
     ram_inc: MultilinearPolynomial<F>,
     rd_inc: MultilinearPolynomial<F>,
     // Combined eq polynomials
     eq_ram: MultilinearPolynomial<F>, // eq(r_stage2, ·) + γ·eq(r_stage4, ·)
     eq_rd: MultilinearPolynomial<F>,  // eq(s_stage4, ·) + γ·eq(s_stage5, ·)
-    params: IncReductionSumcheckParams<F>,
+    params: IncClaimReductionSumcheckParams<F>,
 }
 
-impl<F: JoltField> IncReductionPhase2Prover<F> {
-    #[tracing::instrument(skip_all, name = "IncReductionPhase2Prover::gen")]
+impl<F: JoltField> IncClaimReductionPhase2Prover<F> {
+    #[tracing::instrument(skip_all, name = "IncClaimReductionPhase2Prover::gen")]
     fn gen(
         trace: &[Cycle],
         sumcheck_challenges: &[F::Challenge],
-        params: IncReductionSumcheckParams<F>,
+        params: IncClaimReductionSumcheckParams<F>,
     ) -> Self {
         let n_vars = params.n_cycle_vars;
         let prefix_n_vars = n_vars / 2;
@@ -646,23 +648,23 @@ impl<F: JoltField> IncReductionPhase2Prover<F> {
 // VERIFIER
 // ============================================================================
 
-pub struct IncReductionSumcheckVerifier<F: JoltField> {
-    params: IncReductionSumcheckParams<F>,
+pub struct IncClaimReductionSumcheckVerifier<F: JoltField> {
+    params: IncClaimReductionSumcheckParams<F>,
 }
 
-impl<F: JoltField> IncReductionSumcheckVerifier<F> {
+impl<F: JoltField> IncClaimReductionSumcheckVerifier<F> {
     pub fn new(
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = IncReductionSumcheckParams::new(trace_len, accumulator, transcript);
+        let params = IncClaimReductionSumcheckParams::new(trace_len, accumulator, transcript);
         Self { params }
     }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for IncReductionSumcheckVerifier<F>
+    for IncClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -690,10 +692,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // Fetch final claims from accumulator
         let (_, ram_inc_claim) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
-            SumcheckId::IncReduction,
+            SumcheckId::IncClaimReduction,
         );
-        let (_, rd_inc_claim) = accumulator
-            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
+        let (_, rd_inc_claim) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::IncClaimReduction,
+        );
 
         ram_inc_claim * eq_ram_combined + gamma_sqr * rd_inc_claim * eq_rd_combined
     }
@@ -710,13 +714,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator.append_dense(
             transcript,
             CommittedPolynomial::RamInc,
-            SumcheckId::IncReduction,
+            SumcheckId::IncClaimReduction,
             opening_point.r.clone(),
         );
         accumulator.append_dense(
             transcript,
             CommittedPolynomial::RdInc,
-            SumcheckId::IncReduction,
+            SumcheckId::IncClaimReduction,
             opening_point.r,
         );
     }

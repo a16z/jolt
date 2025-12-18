@@ -9,13 +9,16 @@ pub use hamming_weight::{
     HammingWeightClaimReductionVerifier,
 };
 pub use increments::{
-    IncReductionSumcheckParams, IncReductionSumcheckProver, IncReductionSumcheckVerifier,
+    IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
+    IncClaimReductionSumcheckVerifier,
 };
 pub use instruction_lookups::{
     InstructionLookupsClaimReductionSumcheckParams, InstructionLookupsClaimReductionSumcheckProver,
     InstructionLookupsClaimReductionSumcheckVerifier,
 };
-pub use ram_ra::{RaReductionParams, RamRaReductionSumcheckProver, RamRaReductionSumcheckVerifier};
+pub use ram_ra::{
+    RaReductionParams, RamRaClaimReductionSumcheckProver, RamRaClaimReductionSumcheckVerifier,
+};
 pub use registers::{
     RegistersClaimReductionSumcheckParams, RegistersClaimReductionSumcheckProver,
     RegistersClaimReductionSumcheckVerifier,

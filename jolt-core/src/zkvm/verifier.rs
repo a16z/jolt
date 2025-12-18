@@ -15,8 +15,8 @@ use crate::zkvm::{
         BytecodePreprocessing,
     },
     claim_reductions::{
-        HammingWeightClaimReductionVerifier, IncReductionSumcheckVerifier,
-        InstructionLookupsClaimReductionSumcheckVerifier, RamRaReductionSumcheckVerifier,
+        HammingWeightClaimReductionVerifier, IncClaimReductionSumcheckVerifier,
+        InstructionLookupsClaimReductionSumcheckVerifier, RamRaClaimReductionSumcheckVerifier,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
@@ -352,7 +352,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
         // Note: RamHammingBooleanity moved to Stage 6 so it shares r_cycle_stage6
-        let ram_ra_reduction = RamRaReductionSumcheckVerifier::new(
+        let ram_ra_reduction = RamRaClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -415,7 +415,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let inc_reduction = IncReductionSumcheckVerifier::new(
+        let inc_reduction = IncClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
@@ -476,14 +476,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
 
-        // Dense polynomials: RamInc and RdInc (from IncReduction in Stage 6)
+        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
         let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
-            SumcheckId::IncReduction,
+            SumcheckId::IncClaimReduction,
         );
-        let (_, rd_inc_claim) = self
-            .opening_accumulator
-            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
+        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::IncClaimReduction,
+        );
 
         // Apply Lagrange factor for dense polys
         // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)

@@ -77,15 +77,15 @@ const DEGREE_BOUND: usize = 2;
 /// - PhaseCycle2: Dense suffix cycle rounds (log_T/2 rounds)
 #[derive(Allocative)]
 #[allow(clippy::large_enum_variant)]
-pub enum RamRaReductionSumcheckProver<F: JoltField> {
+pub enum RamRaClaimReductionSumcheckProver<F: JoltField> {
     PhaseAddress(PhaseAddressProver<F>),
     PhaseCycle1(PhaseCycle1Prover<F>),
     PhaseCycle2(PhaseCycle2Prover<F>),
 }
 
-impl<F: JoltField> RamRaReductionSumcheckProver<F> {
+impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
     /// Create a new RAM RA reduction sumcheck prover.
-    #[tracing::instrument(skip_all, name = "RamRaReductionSumcheckProver::initialize")]
+    #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::initialize")]
     pub fn initialize(
         params: RaReductionParams<F>,
         trace: &[Cycle],
@@ -101,7 +101,9 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductionSumcheckProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for RamRaClaimReductionSumcheckProver<F>
+{
     fn degree(&self) -> usize {
         DEGREE_BOUND
     }
@@ -122,7 +124,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaReductionSumcheckProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         match self {
             Self::PhaseAddress(p) => p.compute_message(round, previous_claim),
@@ -131,7 +133,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaReductionSumcheckProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         match self {
             Self::PhaseAddress(prover) => {
@@ -186,7 +188,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
-            SumcheckId::RamRaReduction,
+            SumcheckId::RamRaClaimReduction,
             opening_point,
             ra_claim_reduced,
         );
@@ -1067,11 +1069,11 @@ impl<F: JoltField> RaReductionParams<F> {
 // ============================================================================
 
 /// RAM RA reduction sumcheck verifier.
-pub struct RamRaReductionSumcheckVerifier<F: JoltField> {
+pub struct RamRaClaimReductionSumcheckVerifier<F: JoltField> {
     params: RaReductionParams<F>,
 }
 
-impl<F: JoltField> RamRaReductionSumcheckVerifier<F> {
+impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     /// Create a new RAM RA reduction sumcheck verifier.
     pub fn new(
         trace_len: usize,
@@ -1086,7 +1088,7 @@ impl<F: JoltField> RamRaReductionSumcheckVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for RamRaReductionSumcheckVerifier<F>
+    for RamRaClaimReductionSumcheckVerifier<F>
 {
     fn degree(&self) -> usize {
         DEGREE_BOUND
@@ -1131,8 +1133,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             eq_addr_1 * eq_cycle_A + self.params.gamma_squared * eq_addr_2 * eq_cycle_B;
 
         // Get the reduced ra claim that was cached by the prover
-        let (_, ra_claim_reduced) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
+        let (_, ra_claim_reduced) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamRaClaimReduction,
+        );
 
         eq_combined * ra_claim_reduced
     }
@@ -1158,7 +1162,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
-            SumcheckId::RamRaReduction,
+            SumcheckId::RamRaClaimReduction,
             opening_point,
         );
     }
