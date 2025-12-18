@@ -60,6 +60,8 @@ use super::constraints::{
     NUM_PRODUCT_VIRTUAL, OUTER_UNIVARIATE_SKIP_DEGREE, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
     PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
+#[cfg(test)]
+use super::constraints::{R1CS_CONSTRAINTS_FIRST_GROUP, R1CS_CONSTRAINTS_SECOND_GROUP};
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
 
 pub(crate) const UNISKIP_TARGETS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] =
@@ -401,6 +403,9 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
     /// Product Az·Bz at the j-th extended uniskip target for the first group (uses precomputed weights).
     pub fn extended_azbz_product_first_group(&self, j: usize) -> S192 {
+        #[cfg(test)]
+        self.assert_constraints_first_group();
+
         let coeffs_i32: &[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
@@ -483,19 +488,57 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[cfg(test)]
+    fn assert_constraint_first_group(&self, index: usize, guard: bool, satisfied: bool) {
+        if guard && !satisfied {
+            let mut constraint_string = String::new();
+            let _ = R1CS_CONSTRAINTS_FIRST_GROUP[index]
+                .pretty_fmt_with_row(&mut constraint_string, self.row);
+            println!("{constraint_string}");
+            panic!(
+                "First group constraint {} ({:?}) violated",
+                index, R1CS_CONSTRAINTS_FIRST_GROUP[index].label
+            );
+        }
+    }
+
+    #[cfg(test)]
     pub fn assert_constraints_first_group(&self) {
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
-        debug_assert!((!az.not_load_store) || bz.ram_addr == 0);
-        debug_assert!((!az.load_a) || bz.ram_read_minus_ram_write.to_i128() == 0);
-        debug_assert!((!az.load_b) || bz.ram_read_minus_rd_write.to_i128() == 0);
-        debug_assert!((!az.store) || bz.rs2_minus_ram_write.to_i128() == 0);
-        debug_assert!((!az.add_sub_mul) || bz.left_lookup == 0);
-        debug_assert!((!az.not_add_sub_mul) || bz.left_lookup_minus_left_input.to_i128() == 0);
-        debug_assert!((!az.assert_flag) || bz.lookup_output_minus_one.to_i128() == 0);
-        debug_assert!((!az.should_jump) || bz.next_unexp_pc_minus_lookup_output.to_i128() == 0);
-        debug_assert!((!az.virtual_instruction) || bz.next_pc_minus_pc_plus_one.to_i128() == 0);
-        debug_assert!((!az.must_start_sequence) || bz.one_minus_do_not_update_unexpanded_pc);
+        self.assert_constraint_first_group(0, az.not_load_store, bz.ram_addr == 0);
+        self.assert_constraint_first_group(
+            1,
+            az.load_a,
+            bz.ram_read_minus_ram_write.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(2, az.load_b, bz.ram_read_minus_rd_write.to_i128() == 0);
+        self.assert_constraint_first_group(3, az.store, bz.rs2_minus_ram_write.to_i128() == 0);
+        self.assert_constraint_first_group(4, az.add_sub_mul, bz.left_lookup == 0);
+        self.assert_constraint_first_group(
+            5,
+            az.not_add_sub_mul,
+            bz.left_lookup_minus_left_input.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            6,
+            az.assert_flag,
+            bz.lookup_output_minus_one.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            7,
+            az.should_jump,
+            bz.next_unexp_pc_minus_lookup_output.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            8,
+            az.virtual_instruction,
+            bz.next_pc_minus_pc_plus_one.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            9,
+            az.must_start_sequence,
+            !bz.one_minus_do_not_update_unexpanded_pc,
+        );
     }
     // ---------- Second group ----------
 
@@ -721,18 +764,56 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[cfg(test)]
+    fn assert_constraint_second_group(&self, index: usize, guard: bool, satisfied: bool) {
+        if guard && !satisfied {
+            let mut constraint_string = String::new();
+            let _ = R1CS_CONSTRAINTS_SECOND_GROUP[index]
+                .pretty_fmt_with_row(&mut constraint_string, self.row);
+            println!("{constraint_string}");
+            panic!(
+                "Second group constraint {} ({:?}) violated",
+                index, R1CS_CONSTRAINTS_SECOND_GROUP[index].label
+            );
+        }
+    }
+
+    #[cfg(test)]
     pub fn assert_constraints_second_group(&self) {
         let az = self.eval_az_second_group();
         let bz = self.eval_bz_second_group();
-        debug_assert!((!az.load_or_store) || bz.ram_addr_minus_rs1_plus_imm == 0i128);
-        debug_assert!((!az.add) || bz.right_lookup_minus_add_result.is_zero());
-        debug_assert!((!az.sub) || bz.right_lookup_minus_sub_result.is_zero());
-        debug_assert!((!az.mul) || bz.right_lookup_minus_product.is_zero());
-        debug_assert!((!az.not_add_sub_mul_advice) || bz.right_lookup_minus_right_input.is_zero());
-        debug_assert!((!az.write_lookup_to_rd) || bz.rd_write_minus_lookup_output.is_zero());
-        debug_assert!((!az.write_pc_to_rd) || bz.rd_write_minus_pc_plus_const.is_zero());
-        debug_assert!((!az.should_branch) || bz.next_unexp_pc_minus_pc_plus_imm == 0);
-        debug_assert!((!az.not_jump_or_branch) || bz.next_unexp_pc_minus_expected.is_zero());
+        self.assert_constraint_second_group(
+            0,
+            az.load_or_store,
+            bz.ram_addr_minus_rs1_plus_imm == 0i128,
+        );
+        self.assert_constraint_second_group(1, az.add, bz.right_lookup_minus_add_result.is_zero());
+        self.assert_constraint_second_group(2, az.sub, bz.right_lookup_minus_sub_result.is_zero());
+        self.assert_constraint_second_group(3, az.mul, bz.right_lookup_minus_product.is_zero());
+        self.assert_constraint_second_group(
+            4,
+            az.not_add_sub_mul_advice,
+            bz.right_lookup_minus_right_input.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            5,
+            az.write_lookup_to_rd,
+            bz.rd_write_minus_lookup_output.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            6,
+            az.write_pc_to_rd,
+            bz.rd_write_minus_pc_plus_const.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            7,
+            az.should_branch,
+            bz.next_unexp_pc_minus_pc_plus_imm == 0,
+        );
+        self.assert_constraint_second_group(
+            8,
+            az.not_jump_or_branch,
+            bz.next_unexp_pc_minus_expected.is_zero(),
+        );
     }
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
