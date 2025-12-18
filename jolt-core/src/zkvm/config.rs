@@ -6,7 +6,7 @@ use crate::zkvm::instruction_lookups::LOG_K;
 #[inline]
 pub const fn get_log_k_chunk(log_T: usize) -> usize {
     // TODO: Determine best point to switch based on empirical data.
-    if log_T < 23 {
+    if log_T < 25 {
         4
     } else {
         8
@@ -15,7 +15,7 @@ pub const fn get_log_k_chunk(log_T: usize) -> usize {
 
 pub const fn get_lookups_ra_virtual_log_k_chunk(log_T: usize) -> usize {
     // TODO: Determine best point to switch based on empirical data.
-    if log_T < 23 {
+    if log_T < 25 {
         LOG_K / 8
     } else {
         LOG_K / 4
