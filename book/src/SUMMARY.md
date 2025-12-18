@@ -20,6 +20,7 @@
         - [Instruction execution](./how/architecture/instruction_execution.md)
         - [Bytecode](./how/architecture/bytecode.md)
         - [Batched opening proof](./how/architecture/opening-proof.md)
+        - [Verifier Logic](./how/architecture/verifier-logic.md)
     - [Twist and Shout](./how/twist-shout.md)
     - [Dory](./how/dory.md)
     - [Optimizations](./how/optimizations/optimizations.md)
