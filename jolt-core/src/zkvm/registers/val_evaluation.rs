@@ -121,7 +121,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
             .par_iter()
             .map(|cycle| {
                 let instr = cycle.instruction().normalize();
-                Some(instr.operands.rd)
+                instr.operands.rd
             })
             .collect();
         let wa = RaPolynomial::new(Arc::new(wa), eq_r_address);

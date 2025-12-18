@@ -94,6 +94,22 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    /// Returns `coeff * self[idx]` for dense polynomial variants.
+    pub fn get_scaled_coeff(&self, idx: usize, coeff: F) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(p) => p.Z[idx] * coeff,
+            MultilinearPolynomial::U8Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            MultilinearPolynomial::U16Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            MultilinearPolynomial::U32Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            MultilinearPolynomial::U64Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            MultilinearPolynomial::I64Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            MultilinearPolynomial::U128Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            MultilinearPolynomial::I128Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            MultilinearPolynomial::S128Scalars(p) => p.coeffs[idx].field_mul(coeff),
+            _ => panic!("get_scaled_coeff not supported for OneHot/RLC/Bool variants"),
+        }
+    }
+
     /// The current length of the polynomial
     pub fn len(&self) -> usize {
         match self {

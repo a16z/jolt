@@ -17,6 +17,10 @@
 
 mod address_major;
 mod cycle_major;
+mod ram;
+mod registers;
 
-pub use address_major::ReadWriteMatrixAddressMajor;
-pub use cycle_major::{ReadWriteEntry, ReadWriteMatrixCycleMajor};
+pub use address_major::{AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor};
+pub use cycle_major::{CycleMajorMatrixEntry, ReadWriteMatrixCycleMajor};
+pub use ram::{RamAddressMajorEntry, RamCycleMajorEntry};
+pub use registers::{RegistersAddressMajorEntry, RegistersCycleMajorEntry};

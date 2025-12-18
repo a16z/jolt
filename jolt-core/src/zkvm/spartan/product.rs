@@ -281,7 +281,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtua
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::UnivariateSkip,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
             opening_point,
             claim,
         );
@@ -333,7 +333,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::UnivariateSkip,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
             opening_point,
         );
     }
@@ -356,7 +356,7 @@ impl<F: JoltField> ProductVirtualRemainderParams<F> {
     ) -> Self {
         let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnivariateSkip,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         debug_assert_eq!(r_uni_skip.len(), 1);
         let r0 = r_uni_skip[0];
@@ -381,7 +381,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
         let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnivariateSkip,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         uni_skip_claim
     }
@@ -627,7 +627,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             accumulator.append_virtual(
                 transcript,
                 poly,
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
                 r_cycle.clone(),
                 claim,
             );
@@ -678,49 +678,49 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let l_inst = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
         let r_inst = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RightInstructionInput,
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
         let is_rd_not_zero = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
         let wl_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
         let j_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
         let lookup_out = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
         let branch_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
         let next_is_noop = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::NextIsNoop,
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             )
             .1;
 
@@ -760,7 +760,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             accumulator.append_virtual(
                 transcript,
                 *vp,
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
                 opening_point.clone(),
             );
         }
