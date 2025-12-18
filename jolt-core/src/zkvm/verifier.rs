@@ -535,15 +535,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // Compute joint commitment: Σ γ_i · C_i
         let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state);
 
-        // Test assertion
-        #[cfg(test)]
-        if let Some(ref prover_joint_commitment) = self.proof.joint_commitment_for_test {
-            assert_eq!(
-                joint_commitment, *prover_joint_commitment,
-                "joint commitment mismatch"
-            );
-        }
-
         // Compute joint claim: Σ γ_i · claim_i
         let joint_claim: F = gamma_powers
             .iter()

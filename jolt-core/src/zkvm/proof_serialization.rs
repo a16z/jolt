@@ -38,8 +38,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
-    #[cfg(test)]
-    pub joint_commitment_for_test: Option<PCS::Commitment>,
     /// Trusted advice opening proof at point from RamValEvaluation
     pub trusted_advice_val_evaluation_proof: Option<PCS::Proof>,
     /// Trusted advice opening proof at point from RamValFinalEvaluation
