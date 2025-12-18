@@ -38,9 +38,9 @@ impl InstructionRegisterState for RegisterStateFormatRAMO {
         let offset = (rng.next_u64() % (max_offset / alignment)) * alignment;
         let address = DRAM_BASE + offset;
 
-        debug_assert_ne!(operands.rs1, 0);
+        debug_assert_ne!(operands.rs1.unwrap(), 0);
 
-        let rs2_value = match operands.rs2 {
+        let rs2_value = match operands.rs2.unwrap() {
             0 => 0,
             _ if operands.rs2 == operands.rs1 => address,
             _ => rng.next_u64(),
@@ -60,16 +60,16 @@ impl InstructionRegisterState for RegisterStateFormatRAMO {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rs2_value(&self) -> u64 {
-        self.rs2
+    fn rs2_value(&self) -> Option<u64> {
+        Some(self.rs2)
     }
 
-    fn rd_values(&self) -> (u64, u64) {
-        self.rd
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        Some(self.rd)
     }
 }
 
@@ -110,9 +110,9 @@ impl InstructionFormat for FormatAMO {
 impl From<NormalizedOperands> for FormatAMO {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
-            rs2: operands.rs2,
+            rd: operands.rd.unwrap(),
+            rs1: operands.rs1.unwrap(),
+            rs2: operands.rs2.unwrap(),
         }
     }
 }
@@ -120,9 +120,9 @@ impl From<NormalizedOperands> for FormatAMO {
 impl From<FormatAMO> for NormalizedOperands {
     fn from(format: FormatAMO) -> Self {
         Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: format.rs2,
+            rd: Some(format.rd),
+            rs1: Some(format.rs1),
+            rs2: Some(format.rs2),
             imm: 0,
         }
     }

@@ -3,7 +3,7 @@ use std::ops::{Index, IndexMut};
 use allocative::Allocative;
 use common::constants::XLEN;
 use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
 use tracer::instruction::{Cycle, Instruction};
 
 use crate::utils::interleave_bits;
@@ -42,8 +42,20 @@ pub trait LookupQuery<const XLEN: usize> {
 /// Note that the flags below deviate somewhat from those described in Appendix A.1
 /// of the Jolt paper.
 #[derive(
-    Clone, Copy, Debug, Hash, PartialEq, Eq, EnumCountMacro, EnumIter, PartialOrd, Ord, Allocative,
+    Clone,
+    Copy,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    EnumCountMacro,
+    EnumIter,
+    PartialOrd,
+    Ord,
+    Allocative,
+    FromRepr,
 )]
+#[repr(u8)]
 pub enum CircuitFlags {
     /// 1 if the first lookup operand is the sum of the two instruction operands.
     AddOperands,
@@ -75,8 +87,20 @@ pub enum CircuitFlags {
 
 /// Boolean flags that are not part of Jolt's R1CS constraints
 #[derive(
-    Clone, Copy, Debug, Hash, PartialEq, Eq, EnumCountMacro, EnumIter, PartialOrd, Ord, Allocative,
+    Clone,
+    Copy,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    EnumCountMacro,
+    EnumIter,
+    PartialOrd,
+    Ord,
+    Allocative,
+    FromRepr,
 )]
+#[repr(u8)]
 pub enum InstructionFlags {
     /// 1 if the first instruction operand is the program counter; 0 otherwise.
     LeftOperandIsPC,

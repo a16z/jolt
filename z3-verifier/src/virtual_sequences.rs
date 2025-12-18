@@ -518,8 +518,8 @@ fn test_consistency(instr: &Instruction) {
                 let val1 = eval(&cpu1.x[i]);
                 let val2 = eval(&cpu2.x[i]);
                 if val1 != val2 {
-                    let reg = if i == operands.rd as usize {
-                        format!("rd (x{})", operands.rd)
+                    let reg = if Some(i as u8) == operands.rd {
+                        format!("rd (x{})", operands.rd.unwrap())
                     } else {
                         format!("x{i}")
                     };
@@ -527,18 +527,22 @@ fn test_consistency(instr: &Instruction) {
                 }
             }
             let _ = writeln!(msg, "Using inputs:");
-            let _ = writeln!(
-                msg,
-                "  rs1 (x{}): {:#x}",
-                operands.rs1,
-                eval(&cpu1_initial.x[operands.rs1 as usize])
-            );
-            let _ = writeln!(
-                msg,
-                "  rs2 (x{}): {:#x}",
-                operands.rs2,
-                eval(&cpu1_initial.x[operands.rs2 as usize])
-            );
+            if let Some(rs1) = operands.rs1 {
+                let _ = writeln!(
+                    msg,
+                    "  rs1 (x{}): {:#x}",
+                    rs1,
+                    eval(&cpu1_initial.x[rs1 as usize])
+                );
+            }
+            if let Some(rs2) = operands.rs2 {
+                let _ = writeln!(
+                    msg,
+                    "  rs2 (x{}): {:#x}",
+                    rs2,
+                    eval(&cpu1_initial.x[rs2 as usize])
+                );
+            }
             let _ = writeln!(msg, "  imm: {:#x}\n", operands.imm);
 
             if !cpu1.advice_vars.is_empty() {

@@ -29,7 +29,11 @@ impl InstructionRegisterState for RegisterStateFormatVirtualI {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
-        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+        let rs1_value = if operands.rs1.unwrap() == 0 {
+            0
+        } else {
+            rng.next_u64()
+        };
 
         Self {
             rd: (
@@ -44,12 +48,12 @@ impl InstructionRegisterState for RegisterStateFormatVirtualI {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rd_values(&self) -> (u64, u64) {
-        self.rd
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        Some(self.rd)
     }
 }
 
@@ -95,8 +99,8 @@ impl InstructionFormat for FormatVirtualRightShiftI {
 impl From<NormalizedOperands> for FormatVirtualRightShiftI {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
+            rd: operands.rd.unwrap(),
+            rs1: operands.rs1.unwrap(),
             imm: operands.imm as u64,
         }
     }
@@ -105,9 +109,9 @@ impl From<NormalizedOperands> for FormatVirtualRightShiftI {
 impl From<FormatVirtualRightShiftI> for NormalizedOperands {
     fn from(format: FormatVirtualRightShiftI) -> Self {
         Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: 0,
+            rd: Some(format.rd),
+            rs1: Some(format.rs1),
+            rs2: None,
             imm: format.imm as i128,
         }
     }

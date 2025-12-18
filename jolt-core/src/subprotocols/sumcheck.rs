@@ -32,6 +32,12 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -48,7 +54,6 @@ impl BatchedSumcheck {
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
@@ -182,6 +187,12 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -199,7 +210,6 @@ impl BatchedSumcheck {
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
@@ -297,61 +307,5 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         }
 
         Ok((e, r))
-    }
-}
-
-/// The sumcheck proof for a univariate skip round
-/// Consists of the (single) univariate polynomial sent in that round, no omission of any coefficient
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct UniSkipFirstRoundProof<F: JoltField, ProofTranscript: Transcript> {
-    pub uni_poly: UniPoly<F>,
-    _marker: PhantomData<ProofTranscript>,
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofTranscript> {
-    pub fn new(uni_poly: UniPoly<F>) -> Self {
-        Self {
-            uni_poly,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Verify only the univariate-skip first round.
-    ///
-    /// Params
-    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
-    /// - `const FIRST_ROUND_POLY_NUM_COEFFS`: number of coefficients in the first-round polynomial
-    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
-    /// - `transcript`: Fiat-Shamir transcript
-    ///
-    /// Returns `(r0, next_claim)` where `r0` is the verifier challenge for the first round
-    /// and `next_claim` is the claimed evaluation at `r0` to be used by remaining rounds.
-    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
-        &self,
-        degree_bound_first: usize,
-        claim: F,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(F::Challenge, F), ProofVerifyError> {
-        // Degree check for the high-degree first polynomial
-        if self.uni_poly.degree() > degree_bound_first {
-            return Err(ProofVerifyError::InvalidInputLength(
-                degree_bound_first,
-                self.uni_poly.degree(),
-            ));
-        }
-
-        // Append full polynomial and derive r0
-        self.uni_poly.append_to_transcript(transcript);
-        let r0 = transcript.challenge_scalar_optimized::<F>();
-
-        // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
-        let (ok, next_claim) = self
-            .uni_poly
-            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&claim, &r0);
-        if !ok {
-            return Err(ProofVerifyError::UniSkipVerificationError);
-        }
-
-        Ok((r0, next_claim))
     }
 }

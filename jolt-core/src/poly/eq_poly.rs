@@ -9,8 +9,16 @@ use std::{
 
 const PARALLEL_THRESHOLD: usize = 16;
 
+/// Utilities for the equality polynomial `eq(x, y) = ∏ᵢ (xᵢ yᵢ + (1 - xᵢ)(1 - yᵢ))`.
+///
+/// The equality polynomial evaluates to 1 when `x = y` (over the boolean hypercube) and 0
+/// otherwise. Its multilinear extension (MLE) is used throughout sumcheck protocols.
 pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
+
 impl<F: JoltField> EqPolynomial<F> {
+    /// Computes the MLE of the equality polynomial: `eq(x, y) = ∏ᵢ (xᵢ yᵢ + (1 - xᵢ)(1 - yᵢ))`.
+    ///
+    /// Pairs elements positionally: `x[i]` is matched with `y[i]`.
     pub fn mle<X, Y>(x: &[X], y: &[Y]) -> F
     where
         X: Copy + Send + Sync,
@@ -25,7 +33,10 @@ impl<F: JoltField> EqPolynomial<F> {
             .product()
     }
 
-    /// Computes the MLE evaluation EQ(x, y)
+    /// Computes `eq(x, y)` for [`OpeningPoint`]s, handling endianness automatically.
+    ///
+    /// If `x` and `y` have the **same** endianness, pairs elements positionally.
+    /// If they differ, one is reversed so that MSB aligns with MSB.
     pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
         x: &OpeningPoint<E1, F>,
         y: &OpeningPoint<E2, F>,
@@ -45,8 +56,20 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
-    /// Computes the table of coefficients: `{eq(r, x) for all x in {0, 1}^n}`
-    /// If `scaling_factor` is provided, computes `scaling_factor * eq(r, x)` instead.
+    /// Computes the table of evaluations: `{ eq(r, x) : x ∈ {0, 1}^n }`.
+    ///
+    /// ### Index / bit order: Big-endian
+    ///
+    /// The returned vector is ordered by interpreting `x` as an `n`-bit binary number.
+    /// `r[0]` corresponds to the **most-significant bit** and `r[n - 1]` to the
+    /// **least-significant bit**.
+    ///
+    /// Concretely, if `i ∈ [0, 2^n)` has bit-decomposition `i = Σ_{j=0}^{n-1} b_j · 2^{n-1-j}`
+    /// (so `b_0` is the MSB), then:
+    ///
+    /// `evals(r)[i] = Π_{j=0}^{n-1} ( b_j ? r[j] : (1 - r[j]) ) = eq(r, b_0…b_{n-1})`.
+    ///
+    /// For a scaled table, use [`EqPolynomial::evals_with_scaling`].
     pub fn evals<C>(r: &[C]) -> Vec<F>
     where
         C: Copy + Send + Sync + Into<F>,
@@ -55,8 +78,12 @@ impl<F: JoltField> EqPolynomial<F> {
         Self::evals_with_scaling(r, None)
     }
 
-    /// Computes the table of coefficients: `scaling_factor * eq(r, x) for all x in {0, 1}^n`
-    /// If `scaling_factor` is None, defaults to 1 (no scaling).
+    /// Computes the table of evaluations: `scaling_factor · eq(r, x)` for all `x ∈ {0,1}^n`.
+    ///
+    /// Uses the same **big-endian** index order as [`EqPolynomial::evals`]. (See `evals` for the
+    /// precise definition and bit/index mapping.)
+    ///
+    /// If `scaling_factor` is `None`, defaults to 1 (no scaling).
     #[inline]
     pub fn evals_with_scaling<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
@@ -70,10 +97,19 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached")]
-    /// Computes the table of coefficients like `evals`, but also caches the intermediate results
+    /// Computes eq evaluations like [`Self::evals`], but also caches intermediate tables.
     ///
-    /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in
-    /// 0..r.len()`.
+    /// Returns `result` where `result[j]` contains evaluations for the **prefix** `r[..j]`:
+    ///
+    /// ```text
+    /// result[j][x] = eq(r[..j], x)   for x ∈ {0,1}^j
+    /// ```
+    ///
+    /// So `result[0] = [1]`, `result[1]` has 2 entries, …, and `result[n]` equals [`Self::evals(r)`].
+    ///
+    /// ### Index order
+    /// Same **big-endian** convention as [`Self::evals`]: within each `result[j]`, index bit 0
+    /// corresponds to `r[0]}` (MSB) and bit `j-1` to `r[j-1]` (LSB).
     pub fn evals_cached<C>(r: &[C]) -> Vec<Vec<F>>
     where
         C: Copy + Send + Sync + Into<F>,
@@ -83,14 +119,24 @@ impl<F: JoltField> EqPolynomial<F> {
         Self::evals_serial_cached(r, None)
     }
 
-    /// Same as evals_cached but for high-to-low (reverse) binding order
+    /// Like [`Self::evals_cached`], but for **high-to-low (little-endian)** binding order.
+    ///
+    /// Returns `result` where `result[j]` contains evaluations for the **suffix** `r[(n-j)..]`:
+    ///
+    /// ```text
+    /// result[j][x] = eq(r[(n-j)..], x)   for x ∈ {0,1}^j
+    /// ```
+    ///
+    /// Here, index bit 0 of `x` corresponds to `r[n-1]` (the last challenge, i.e. MSB of the
+    /// suffix), and bit `j-1` to `r[n-j]` (LSB of the suffix).
     pub fn evals_cached_rev(r: &[F::Challenge]) -> Vec<Vec<F>> {
         Self::evals_serial_cached_rev(r, None)
     }
 
-    /// Computes the table of coefficients:
-    ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
-    /// serially. More efficient for short `r`.
+    /// Serial (single-threaded) version of [`Self::evals_with_scaling`].
+    ///
+    /// More efficient than the parallel version for short `r` (≤16 elements).
+    /// Uses the same **big-endian** index order as [`Self::evals`].
     #[inline]
     pub fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
@@ -112,12 +158,10 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
-    /// Computes the table of coefficients like `evals_serial`, but also caches the intermediate results.
+    /// Serial version of [`Self::evals_cached`] with optional scaling.
     ///
-    /// Returns a vector of vectors, where the `j`th vector contains the coefficients for the polynomial
-    /// `eq(r[..j], x)` for all `x in {0, 1}^{j}`.
-    ///
-    /// Performance seems at most 10% worse than `evals_serial`
+    /// Returns `result` where `result[j][x] = scaling_factor * eq(r[..j], x)` for `x ∈ {0,1}^j`.
+    /// Uses the same **big-endian** index order as [`Self::evals`].
     #[inline]
     pub fn evals_serial_cached<C>(r: &[C], scaling_factor: Option<F>) -> Vec<Vec<F>>
     where
@@ -138,7 +182,10 @@ impl<F: JoltField> EqPolynomial<F> {
         }
         evals
     }
-    /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
+    /// Serial version of [`Self::evals_cached_rev`] with optional scaling.
+    ///
+    /// Returns `result` where `result[j][x] = scaling_factor * eq(r[(n-j)..], x)` for `x ∈ {0,1}^j`.
+    /// Uses **little-endian** (high-to-low) index order; see [`Self::evals_cached_rev`] for details.
     pub fn evals_serial_cached_rev(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
@@ -157,11 +204,10 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
-    /// Computes the table of coefficients:
+    /// Parallel version of [`Self::evals_with_scaling`].
     ///
-    /// scaling_factor * eq(r, x) for all x in {0, 1}^n
-    ///
-    /// computing biggest layers of the dynamic programming tree in parallel.
+    /// Uses rayon to compute the largest layers of the DP tree in parallel.
+    /// Uses the same **big-endian** index order as [`Self::evals`].
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
     #[inline]
     pub fn evals_parallel<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>

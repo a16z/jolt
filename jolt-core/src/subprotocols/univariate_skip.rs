@@ -1,20 +1,15 @@
+use std::marker::PhantomData;
+
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
 use crate::field::JoltField;
 use crate::poly::lagrange_poly::LagrangePolynomial;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck::UniSkipFirstRoundProof;
-use crate::subprotocols::sumcheck_prover::UniSkipFirstRoundInstanceProver;
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::{AppendToTranscript, Transcript};
-
-/// Shared handoff state from a univariate-skip first round.
-///
-/// This bundles the claim after s1, the uni-skip challenge r0, and the tau vector
-/// used to parameterize the Lagrange kernel and cycle eq polynomial.
-#[derive(Clone, Debug)]
-pub struct UniSkipState<F: JoltField> {
-    pub claim_after_first: F,
-    pub r0: F::Challenge,
-    pub tau: Vec<F::Challenge>,
-}
+use crate::utils::errors::ProofVerifyError;
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
 ///
@@ -131,19 +126,73 @@ pub fn build_uniskip_first_round_poly<
 
 /// Prove-only helper for a uni-skip first round instance.
 /// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
-pub fn prove_uniskip_round<
-    F: JoltField,
-    ProofTranscript: Transcript,
-    I: UniSkipFirstRoundInstanceProver<F, ProofTranscript>,
->(
+pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProver<F, T>>(
     instance: &mut I,
-    transcript: &mut ProofTranscript,
-) -> (UniSkipFirstRoundProof<F, ProofTranscript>, F::Challenge, F) {
-    let uni_poly = instance.compute_poly();
+    opening_accumulator: &mut ProverOpeningAccumulator<F>,
+    transcript: &mut T,
+) -> UniSkipFirstRoundProof<F, T> {
+    let input_claim = instance.input_claim(opening_accumulator);
+    let uni_poly = instance.compute_message(0, input_claim);
     // Append full polynomial and derive r0
     uni_poly.append_to_transcript(transcript);
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-    // Evaluate next claim at r0
-    let next_claim = uni_poly.evaluate::<F::Challenge>(&r0);
-    (UniSkipFirstRoundProof::new(uni_poly), r0, next_claim)
+    instance.cache_openings(opening_accumulator, transcript, &[r0]);
+    UniSkipFirstRoundProof::new(uni_poly)
+}
+
+/// The sumcheck proof for a univariate skip round
+/// Consists of the (single) univariate polynomial sent in that round, no omission of any coefficient
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+pub struct UniSkipFirstRoundProof<F: JoltField, T: Transcript> {
+    pub uni_poly: UniPoly<F>,
+    _marker: PhantomData<T>,
+}
+
+impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
+    pub fn new(uni_poly: UniPoly<F>) -> Self {
+        Self {
+            uni_poly,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Verify only the univariate-skip first round.
+    ///
+    /// Params
+    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
+    /// - `const FIRST_ROUND_POLY_NUM_COEFFS`: number of coefficients in the first-round polynomial
+    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
+    /// - `transcript`: Fiat-Shamir transcript
+    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
+        proof: &Self,
+        sumcheck_instance: &dyn SumcheckInstanceVerifier<F, T>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
+    ) -> Result<(), ProofVerifyError> {
+        let degree_bound = sumcheck_instance.degree();
+        // Degree check for the high-degree first polynomial
+        if proof.uni_poly.degree() > degree_bound {
+            return Err(ProofVerifyError::InvalidInputLength(
+                degree_bound,
+                proof.uni_poly.degree(),
+            ));
+        }
+
+        // Append full polynomial and derive r0
+        proof.uni_poly.append_to_transcript(transcript);
+        let r0 = transcript.challenge_scalar_optimized::<F>();
+
+        // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
+        let input_claim = sumcheck_instance.input_claim(opening_accumulator);
+        let ok = proof
+            .uni_poly
+            .check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
+        sumcheck_instance.cache_openings(opening_accumulator, transcript, &[r0]);
+
+        if !ok {
+            Err(ProofVerifyError::UniSkipVerificationError)
+        } else {
+            Ok(())
+        }
+    }
 }
