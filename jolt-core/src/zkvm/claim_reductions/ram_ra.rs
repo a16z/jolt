@@ -310,14 +310,19 @@ impl<F: JoltField> PhaseAddressProver<F> {
         let (r_rw_hi, r_rw_lo) = r_cycle_rw.split_at(hi_bits);
         let (r_val_hi, r_val_lo) = r_cycle_val.split_at(hi_bits);
 
-        // Compute all 6 eq tables in parallel
-        let [E_raf_hi, E_raf_lo, E_rw_hi, E_rw_lo, E_val_hi, E_val_lo]: [Vec<F>; 6] =
-            [r_raf_hi, r_raf_lo, r_rw_hi, r_rw_lo, r_val_hi, r_val_lo]
-                .into_par_iter()
-                .map(EqPolynomial::<F>::evals)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
+        // Compute 5 eq tables in parallel (unscaled), plus E_val_hi_scaled separately
+        let ([E_raf_hi, E_raf_lo, E_rw_hi, E_rw_lo, E_val_lo], E_val_hi_scaled) = rayon::join(
+            || {
+                [r_raf_hi, r_raf_lo, r_rw_hi, r_rw_lo, r_val_lo]
+                    .into_par_iter()
+                    .map(EqPolynomial::<F>::evals)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
+            },
+            // Scale E_val_hi by gamma upfront to compute G_A and G_B directly
+            || EqPolynomial::<F>::evals_with_scaling(r_val_hi, Some(gamma)),
+        );
 
         let in_len = E_raf_lo.len(); // 2^lo_bits
         let out_len = E_raf_hi.len(); // 2^hi_bits
@@ -335,15 +340,15 @@ impl<F: JoltField> PhaseAddressProver<F> {
             .filter(|(start, end)| start < end)
             .collect();
 
-        // Each thread computes partial sums for sum_raf, sum_rw, sum_val
-        // Then combine: G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
-        let (sum_raf, sum_rw, sum_val): (Vec<F>, Vec<F>, Vec<F>) = chunk_ranges
+        // Each thread computes partial G_A and G_B directly
+        // G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
+        // Since E_val_hi is pre-scaled by gamma, we can combine on the fly
+        let (G_A, G_B): (Vec<F>, Vec<F>) = chunk_ranges
             .into_par_iter()
             .map(|(chunk_start, chunk_end)| {
-                // Each thread allocates one set of partial accumulators
-                let mut partial_raf: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut partial_rw: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut partial_val: Vec<F> = unsafe_allocate_zero_vec(K);
+                // Each thread allocates partial G_A and G_B directly (2 instead of 3)
+                let mut partial_G_A: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut partial_G_B: Vec<F> = unsafe_allocate_zero_vec(K);
 
                 // Reusable local unreduced accumulators (5-limb) and touched flags
                 let mut local_raf: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
@@ -354,7 +359,7 @@ impl<F: JoltField> PhaseAddressProver<F> {
                 for c_hi in chunk_start..chunk_end {
                     let e_hi_raf = E_raf_hi[c_hi];
                     let e_hi_rw = E_rw_hi[c_hi];
-                    let e_hi_val = E_val_hi[c_hi];
+                    let e_hi_val_scaled = E_val_hi_scaled[c_hi]; // Already scaled by gamma
                     let c_hi_base = c_hi * in_len;
 
                     // Clear touched flags and local accumulators for this c_hi
@@ -383,61 +388,35 @@ impl<F: JoltField> PhaseAddressProver<F> {
                         }
                     }
 
-                    // Barrett reduce and scale by E_hi, only for touched indices
+                    // Barrett reduce and combine into G_A and G_B directly
+                    // G_A[k] += e_hi_raf * reduced_raf + gamma * e_hi_val * reduced_val
+                    // G_B[k] += e_hi_rw * reduced_rw + gamma * e_hi_val * reduced_val
                     for k in touched.ones() {
                         let reduced_raf = F::from_barrett_reduce::<5>(local_raf[k]);
                         let reduced_rw = F::from_barrett_reduce::<5>(local_rw[k]);
                         let reduced_val = F::from_barrett_reduce::<5>(local_val[k]);
-                        partial_raf[k] += e_hi_raf * reduced_raf;
-                        partial_rw[k] += e_hi_rw * reduced_rw;
-                        partial_val[k] += e_hi_val * reduced_val;
+                        // e_hi_val_scaled already contains gamma * e_hi_val
+                        partial_G_A[k] += e_hi_raf * reduced_raf + e_hi_val_scaled * reduced_val;
+                        partial_G_B[k] += e_hi_rw * reduced_rw + e_hi_val_scaled * reduced_val;
                     }
                 }
 
-                (partial_raf, partial_rw, partial_val)
+                (partial_G_A, partial_G_B)
             })
             .reduce(
-                || {
-                    (
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                    )
-                },
-                |(mut acc_raf, mut acc_rw, mut acc_val), (p_raf, p_rw, p_val)| {
-                    acc_raf
+                || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
+                |(mut acc_A, mut acc_B), (p_A, p_B)| {
+                    acc_A
                         .par_iter_mut()
-                        .zip(p_raf.par_iter())
+                        .zip(p_A.par_iter())
                         .for_each(|(a, p)| *a += *p);
-                    acc_rw
+                    acc_B
                         .par_iter_mut()
-                        .zip(p_rw.par_iter())
+                        .zip(p_B.par_iter())
                         .for_each(|(a, p)| *a += *p);
-                    acc_val
-                        .par_iter_mut()
-                        .zip(p_val.par_iter())
-                        .for_each(|(a, p)| *a += *p);
-                    (acc_raf, acc_rw, acc_val)
+                    (acc_A, acc_B)
                 },
             );
-
-        // Combine: G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
-        let (G_A, G_B): (Vec<F>, Vec<F>) = rayon::join(
-            || {
-                sum_raf
-                    .into_par_iter()
-                    .zip(sum_val.par_iter())
-                    .map(|(r, &v)| r + gamma * v)
-                    .collect()
-            },
-            || {
-                sum_rw
-                    .into_par_iter()
-                    .zip(sum_val.par_iter())
-                    .map(|(r, &v)| r + gamma * v)
-                    .collect()
-            },
-        );
 
         (G_A, G_B)
     }

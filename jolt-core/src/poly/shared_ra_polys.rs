@@ -306,16 +306,34 @@ fn compute_all_G_impl<F: JoltField>(
         .collect();
 
     // Parallel map over thread chunks - each thread allocates exactly once
-    let flat_G: Vec<F> = chunk_ranges
+    // Use separate Vec<Vec<F>> for each polynomial type instead of flattened storage
+    chunk_ranges
         .into_par_iter()
         .map(|(chunk_start, chunk_end)| {
-            // Each thread allocates ONE partial_G for its entire chunk
-            let mut partial_G: Vec<F> = unsafe_allocate_zero_vec(N * K);
+            // Allocate separate arrays per polynomial type (cleaner than flat N*K)
+            let mut partial_instruction: Vec<Vec<F>> = (0..instruction_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut partial_bytecode: Vec<Vec<F>> = (0..bytecode_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut partial_ram: Vec<Vec<F>> =
+                (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
 
-            // Reusable local_unreduced (5-limb) and touched_flags across c_hi iterations
-            // Using 5-limb accumulator since we're adding 4-limb field elements
-            let mut local_unreduced: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(N * K);
-            let mut touched_flags: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); N];
+            // Reusable local unreduced accumulators (5-limb) and touched flags
+            let mut local_instruction: Vec<Vec<F::Unreduced<5>>> = (0..instruction_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut local_bytecode: Vec<Vec<F::Unreduced<5>>> = (0..bytecode_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut local_ram: Vec<Vec<F::Unreduced<5>>> =
+                (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
+            let mut touched_instruction: Vec<FixedBitSet> =
+                vec![FixedBitSet::with_capacity(K); instruction_d];
+            let mut touched_bytecode: Vec<FixedBitSet> =
+                vec![FixedBitSet::with_capacity(K); bytecode_d];
+            let mut touched_ram: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); ram_d];
 
             // Process all c_hi in this thread's chunk
             for c_hi in chunk_start..chunk_end {
@@ -323,11 +341,23 @@ fn compute_all_G_impl<F: JoltField>(
                 let c_hi_base = c_hi * in_len;
 
                 // Clear touched flags and local accumulators for this c_hi
-                for poly_idx in 0..N {
-                    for k in touched_flags[poly_idx].ones() {
-                        local_unreduced[poly_idx * K + k] = Default::default();
+                for i in 0..instruction_d {
+                    for k in touched_instruction[i].ones() {
+                        local_instruction[i][k] = Default::default();
                     }
-                    touched_flags[poly_idx].clear();
+                    touched_instruction[i].clear();
+                }
+                for i in 0..bytecode_d {
+                    for k in touched_bytecode[i].ones() {
+                        local_bytecode[i][k] = Default::default();
+                    }
+                    touched_bytecode[i].clear();
+                }
+                for i in 0..ram_d {
+                    for k in touched_ram[i].ones() {
+                        local_ram[i][k] = Default::default();
+                    }
+                    touched_ram[i].clear();
                 }
 
                 // Sequential over c_lo (contiguous cycles for this c_hi)
@@ -356,59 +386,73 @@ fn compute_all_G_impl<F: JoltField>(
                     // InstructionRa contributions
                     for i in 0..instruction_d {
                         let k = ra_idx.instruction[i] as usize;
-                        if !touched_flags[i].contains(k) {
-                            touched_flags[i].insert(k);
+                        if !touched_instruction[i].contains(k) {
+                            touched_instruction[i].insert(k);
                         }
-                        local_unreduced[i * K + k] += add;
+                        local_instruction[i][k] += add;
                     }
 
                     // BytecodeRa contributions
                     for i in 0..bytecode_d {
-                        let poly_idx = instruction_d + i;
                         let k = ra_idx.bytecode[i] as usize;
-                        if !touched_flags[poly_idx].contains(k) {
-                            touched_flags[poly_idx].insert(k);
+                        if !touched_bytecode[i].contains(k) {
+                            touched_bytecode[i].insert(k);
                         }
-                        local_unreduced[poly_idx * K + k] += add;
+                        local_bytecode[i][k] += add;
                     }
 
                     // RamRa contributions (may be None)
                     for i in 0..ram_d {
-                        let poly_idx = instruction_d + bytecode_d + i;
                         if let Some(k) = ra_idx.ram[i] {
                             let k = k as usize;
-                            if !touched_flags[poly_idx].contains(k) {
-                                touched_flags[poly_idx].insert(k);
+                            if !touched_ram[i].contains(k) {
+                                touched_ram[i].insert(k);
                             }
-                            local_unreduced[poly_idx * K + k] += add;
+                            local_ram[i][k] += add;
                         }
                     }
                 }
 
                 // Barrett reduce and scale by E_hi[c_hi], only for touched indices
-                for poly_idx in 0..N {
-                    for k in touched_flags[poly_idx].ones() {
-                        let reduced =
-                            F::from_barrett_reduce::<5>(local_unreduced[poly_idx * K + k]);
-                        partial_G[poly_idx * K + k] += e_hi * reduced;
+                for i in 0..instruction_d {
+                    for k in touched_instruction[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_instruction[i][k]);
+                        partial_instruction[i][k] += e_hi * reduced;
+                    }
+                }
+                for i in 0..bytecode_d {
+                    for k in touched_bytecode[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_bytecode[i][k]);
+                        partial_bytecode[i][k] += e_hi * reduced;
+                    }
+                }
+                for i in 0..ram_d {
+                    for k in touched_ram[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_ram[i][k]);
+                        partial_ram[i][k] += e_hi * reduced;
                     }
                 }
             }
 
-            partial_G
+            // Combine into single Vec<Vec<F>> in order: instruction, bytecode, ram
+            let mut result: Vec<Vec<F>> = Vec::with_capacity(N);
+            result.extend(partial_instruction);
+            result.extend(partial_bytecode);
+            result.extend(partial_ram);
+            result
         })
         .reduce(
-            || unsafe_allocate_zero_vec::<F>(N * K),
+            || (0..N).map(|_| unsafe_allocate_zero_vec::<F>(K)).collect(),
             |mut a, b| {
-                a.par_iter_mut()
-                    .zip(b.par_iter())
-                    .for_each(|(a_val, b_val)| *a_val += *b_val);
+                for (a_poly, b_poly) in a.iter_mut().zip(b.iter()) {
+                    a_poly
+                        .par_iter_mut()
+                        .zip(b_poly.par_iter())
+                        .for_each(|(a_val, b_val)| *a_val += *b_val);
+                }
                 a
             },
-        );
-
-    // Chop flat vector into N vectors of length K
-    flat_G.chunks_exact(K).map(|chunk| chunk.to_vec()).collect()
+        )
 }
 
 // ============================================================================
