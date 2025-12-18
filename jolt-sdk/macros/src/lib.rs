@@ -776,19 +776,32 @@ impl MacroBuilder {
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
-        quote! {
-            #[cfg(feature = "guest")]
-            use core::arch::global_asm;
+        // Only provide custom _start in no_std mode
+        // In std mode, rely on bolt's boot code (_start -> kernel_main -> __libc_start_main -> main)
+        let custom_start = if !self.std {
+            quote! {
+                #[cfg(feature = "guest")]
+                use core::arch::global_asm;
 
-            #[cfg(feature = "guest")]
-            global_asm!("\
-                .global _start\n\
-                .extern _STACK_PTR\n\
-                .section .text.boot\n\
-                _start:	la sp, _STACK_PTR\n\
-                    call main\n\
-                    j .\n\
-            ");
+                #[cfg(feature = "guest")]
+                global_asm!("\
+                    .global _start\n\
+                    .extern _STACK_PTR\n\
+                    .section .text.boot\n\
+                    _start:	la sp, _STACK_PTR\n\
+                        call main\n\
+                        j .\n\
+                ");
+            }
+        } else {
+            // In std mode, boot code (_start, kernel_main, etc.) is provided by jolt-sdk's guest_std_boot module
+            // No additional setup needed here - the boot symbols are automatically included when
+            // jolt-sdk is compiled with the guest-std feature for the riscv64 target
+            quote! {}
+        };
+
+        quote! {
+            #custom_start
 
             #declare_alloc
 

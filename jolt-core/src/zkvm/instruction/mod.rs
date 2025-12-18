@@ -251,6 +251,8 @@ define_rv32im_trait_impls! {
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
+        // Note: LRW, LRD, SCW, SCD use inline_sequence expansion in tracer
+        // They don't need to be in this macro - the expanded instructions are already here
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,

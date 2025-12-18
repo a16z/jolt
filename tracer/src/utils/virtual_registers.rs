@@ -9,12 +9,20 @@ const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize =
     VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT as usize;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 
+/// Register 32 (index 0 in virtual registers) is used for LR/SC reservation address.
+/// Note: This register can still be allocated by allocate() - LR/SC instructions
+/// are responsible for managing this register appropriately.
+const RESERVATION_REGISTER: u8 = RISCV_REGISTER_BASE; // register 32
+
 #[derive(Debug, Clone)]
 pub struct VirtualRegisterAllocator {
     allocated: Arc<Mutex<[bool; NUM_VIRTUAL_REGISTERS]>>,
     /// At the end of the inline execution all registers have to be reset to 0
     /// This variable tracks which registers were allocated during inline execution
     pending_clearing_inline: Arc<Mutex<Vec<u8>>>,
+    /// Tracks whether the last ECALL took a trap (for EXIT syscalls).
+    /// Set by ECALL.trace(), read by ECALL.inline_sequence() to return correct length.
+    last_ecall_trap_taken: Arc<Mutex<bool>>,
 }
 
 impl VirtualRegisterAllocator {
@@ -22,7 +30,33 @@ impl VirtualRegisterAllocator {
         Self {
             allocated: Arc::new(Mutex::new([false; NUM_VIRTUAL_REGISTERS])),
             pending_clearing_inline: Arc::new(Mutex::new(Vec::new())),
+            last_ecall_trap_taken: Arc::new(Mutex::new(false)),
         }
+    }
+
+    /// Set whether the last ECALL took a trap (for EXIT syscalls).
+    /// Called by ECALL.trace() to communicate with inline_sequence().
+    pub fn set_last_ecall_trap_taken(&self, value: bool) {
+        *self
+            .last_ecall_trap_taken
+            .lock()
+            .expect("Failed to lock last_ecall_trap_taken") = value;
+    }
+
+    /// Get whether the last ECALL took a trap.
+    /// Called by ECALL.inline_sequence() to determine return length.
+    pub fn last_ecall_trap_taken(&self) -> bool {
+        *self
+            .last_ecall_trap_taken
+            .lock()
+            .expect("Failed to lock last_ecall_trap_taken")
+    }
+
+    /// Get the reservation register (register 32) used for LR/SC operations.
+    /// This register holds the memory address reserved by LR instructions
+    /// and is checked by SC instructions.
+    pub fn reservation_register(&self) -> u8 {
+        RESERVATION_REGISTER
     }
 
     /// Allocate virtual register that can be used in the inline sequence of

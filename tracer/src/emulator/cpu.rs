@@ -26,8 +26,7 @@ use jolt_platform::{
 };
 
 const JOLT_CSR_ECALL_NUM: u32 = 0x435352; // "CSR" in hex (ASCII)
-const JOLT_EXIT_ECALL_NUM: u32 = 0x455849; // "EXI" in hex (ASCII)
-const JOLT_RET_ECALL_NUM: u32 = 0x524554; // "RET" in hex (ASCII)
+const JOLT_RET_ECALL_NUM: u32 = 0x524554; // "RET" in hex (ASCII) - return from trap
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
 
@@ -119,6 +118,8 @@ pub struct Cpu {
     call_stack: VecDeque<CallFrame>,
     /// Exit code set by EXIT ECALL, None means program hasn't exited yet
     pub exit_code: Option<u32>,
+    /// Pending syscall result to be written to a0 via VirtualAdvice in ECALL trace
+    pub pending_syscall_result: Option<i64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -284,6 +285,7 @@ impl Cpu {
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
             exit_code: None,
+            pending_syscall_result: None,
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -405,6 +407,11 @@ impl Cpu {
             instr.execute(self);
             self.trace_len += 1;
         } else {
+            // Debug: print LRW/SCW instructions being traced
+            let instr_name: &'static str = (&instr).into();
+            if instr_name == "LRW" || instr_name == "SCW" {
+                println!("DEBUG cpu.run: {} at 0x{:x}", instr_name, instruction_address);
+            }
             instr.trace(self, trace);
             self.trace_len += instr.inline_sequence(&self.vr_allocator, self.xlen).len();
         }
@@ -602,29 +609,17 @@ impl Cpu {
                 // PC is already advanced by tick_operate after fetch, so we don't need to advance it again
 
                 return false; // we don't take the trap
-            } else if call_id == JOLT_EXIT_ECALL_NUM {
-                // EXIT ECALL - program is requesting to exit
-                let exit_code = self.x[11] as u32; // a1: exit code
-
-                tracing::info!("EXIT ECALL: exit_code={}", exit_code);
-
-                self.exit_code = Some(exit_code);
-
-                return false; // we don't take the trap
             } else if call_id == JOLT_RET_ECALL_NUM {
-                // RET ECALL - return from trap handler (equivalent to mret)
-                // Restore PC from mepc and continue execution
+                // Return from trap - read mepc and jump to it
                 let mepc = self.read_csr_raw(CSR_MEPC_ADDRESS);
                 self.pc = mepc;
-
-                tracing::debug!("RET ECALL: returning to PC={:#x}", mepc);
-
                 return false; // we don't take the trap
-                } else {
+            } else {
                     // Check if this is a Linux syscall (syscall number in a7)
                     let syscall_nr = self.x[17] as i64; // a7
+
                     if syscall_nr != 0 {
-                        // This is a Linux syscall
+                        // This is a Linux syscall - handle it in the emulator
                         tracing::warn!("ECALL detected: a0={:#x} a7={} (syscall_nr)", self.x[10], syscall_nr);
 
                         let result = self.handle_syscall(
@@ -641,12 +636,14 @@ impl Cpu {
                             syscall_nr, self.x[10], self.x[11], self.x[12]);
                         tracing::info!("SYSCALL nr={} returned: {}", syscall_nr, result);
 
-                        // Put return value in a0
-                        self.x[10] = result;
+                        // Store syscall result for later - ECALL trace will handle writing to a0
+                        // via VirtualAdvice instruction to properly capture in the trace
+                        self.pending_syscall_result = Some(result);
 
                         // PC is already advanced by tick_operate after fetch
                         return false; // we don't take the trap
                     }
+                    // For non-syscall ECALLs (CSR operations), continue to take the trap
             }
         }
 

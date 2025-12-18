@@ -31,6 +31,8 @@ guest-std = [
     "jolt-platform/std",
     "jolt-sdk-macros/guest-std",
     "serde/std",
+    "dep:bolt",
+    "dep:linked_list_allocator",
 ]
 guest-verifier = [
     "guest-std",
@@ -54,6 +56,10 @@ common = { workspace = true, optional = true }
 jolt-core = { workspace = true, default-features = false, optional = true }
 tracer = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
+
+# Guest std boot code dependencies (from ZeroKernel)
+bolt = { path = "/Users/sdhawan/Work/ZeroKernel/crates/bolt", features = ["std"], optional = true }
+linked_list_allocator = { version = "0.10", default-features = false, features = ["use_spin_nightly"], optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true

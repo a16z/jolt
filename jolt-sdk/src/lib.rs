@@ -7,6 +7,11 @@ pub mod host_utils;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
 
+// Guest std boot code - provides _start, kernel_main for std-mode guests
+// Only compile this for the RISC-V target (not for host builds)
+#[cfg(all(feature = "guest-std", target_arch = "riscv64"))]
+mod guest_std_boot;
+
 pub use jolt_platform::*;
 pub use jolt_sdk_macros::provable;
 pub use postcard;

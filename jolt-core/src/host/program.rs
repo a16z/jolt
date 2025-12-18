@@ -84,142 +84,83 @@ impl Program {
     }
 
     #[tracing::instrument(skip_all, name = "Program::build")]
-    pub fn build_with_channel(&mut self, target_dir: &str, channel: &str) {
+    pub fn build_with_channel(&mut self, target_dir: &str, _channel: &str) {
         if self.elf.is_none() {
-            #[cfg(not(target_arch = "wasm32"))]
-            install_toolchain().unwrap();
-            #[cfg(not(target_arch = "wasm32"))]
-            install_no_std_toolchain().unwrap();
+            // Use cargo-jolt to build the guest program
+            // CARGO_JOLT_PATH can be set to override (for development/testing)
+            let cargo_jolt_path = std::env::var("CARGO_JOLT_PATH")
+                .unwrap_or_else(|_| "cargo-jolt".to_string());
 
-            self.save_linker();
-
-            let mut rust_flags = vec![
-                "-C".to_string(),
-                format!("link-arg=-T{}", self.linker_path()),
-                "-C".to_string(),
-                "passes=lower-atomic".to_string(),
-                "-C".to_string(),
-                "panic=abort".to_string(),
+            // Build base arguments for cargo-jolt
+            // cargo-jolt is invoked as: cargo-jolt jolt build -p <package> --release [--std] -- --target-dir <dir> --features guest
+            let mut args = vec![
+                "jolt".to_string(),
+                "build".to_string(),
+                "-p".to_string(),
+                self.guest.clone(),
+                "--release".to_string(),
             ];
 
-            // Check environment variable for debug symbols
-            let debug_symbols = std::env::var("JOLT_BACKTRACE")
-                .map(|v| v == "1" || v.to_lowercase() == "full" || v.to_lowercase() == "true")
-                .unwrap_or(false);
-
-            // Build with debug info when debug symbols enabled
-            if debug_symbols {
-                rust_flags.push("-C".to_string());
-                rust_flags.push("debuginfo=2".to_string());
-                rust_flags.push("-C".to_string());
-                rust_flags.push("strip=none".to_string());
-            } else {
-                rust_flags.push("-C".to_string());
-                rust_flags.push("debuginfo=0".to_string());
-                rust_flags.push("-C".to_string());
-                rust_flags.push("strip=symbols".to_string());
-            }
-
-            rust_flags.extend_from_slice(&[
-                "-C".to_string(),
-                "opt-level=z".to_string(),
-                "--cfg".to_string(),
-                "getrandom_backend=\"custom\"".to_string(),
-            ]);
-
-            let target_triple = if self.std {
-                "riscv64imac-jolt-zkvm-elf"
-            } else {
-                "riscv64imac-unknown-none-elf"
-            };
-
-            let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
-
+            // Add --std flag if std mode is enabled
             if self.std {
-                envs.push((
-                    "RUSTUP_TOOLCHAIN",
-                    format!("{channel}-jolt-{TOOLCHAIN_VERSION}"),
-                ));
+                args.push("--std".to_string());
             }
 
-            if let Some(func) = &self.func {
-                envs.push(("JOLT_FUNC_NAME", func.to_string()));
-            }
+            // Add separator for cargo passthrough args
+            args.push("--".to_string());
 
-            let target = format!(
-                "{}/{}-{}",
-                target_dir,
-                self.guest,
-                self.func.as_ref().unwrap_or(&"".to_string())
-            );
+            // Pass --target-dir to cargo (not cargo-jolt)
+            args.push("--target-dir".to_string());
+            args.push(target_dir.to_string());
 
-            let cc_env_var = format!("CC_{target_triple}");
-            let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
-                #[cfg(target_os = "linux")]
-                {
-                    "riscv64-unknown-elf-gcc".to_string()
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    // Default fallback for other platforms
-                    "".to_string()
-                }
-            });
-            envs.push((&cc_env_var, cc_value));
+            // Always pass --features guest to enable the guest feature on the example package
+            // (this is separate from the jolt-sdk features specified in the example's Cargo.toml)
+            args.push("--features".to_string());
+            args.push("guest".to_string());
 
-            let cc_env_var = format!("CFLAGS_{target_triple}");
-            let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
-                #[cfg(target_os = "linux")]
-                {
-                    "-mcmodel=medany".to_string()
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    // Default fallback for other platforms
-                    "".to_string()
-                }
-            });
-            envs.push((&cc_env_var, cc_value));
-
-            let args = [
-                "build",
-                "--release",
-                "--features",
-                "guest",
-                "-p",
-                &self.guest,
-                "--target-dir",
-                &target,
-                "--target",
-                target_triple,
-            ];
-
-            let cmd_line = compose_command_line("cargo", &envs, &args);
+            let cmd_line = compose_command_line(&cargo_jolt_path, &[], &args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
             info!("\n{cmd_line}");
 
-            let output = Command::new("cargo")
-                .envs(envs.clone())
-                .args(args)
-                .output()
-                .expect("failed to build guest");
+            let mut cmd = Command::new(&cargo_jolt_path);
+            cmd.args(&args);
+
+            // Pass JOLT_FUNC_NAME if a specific function is set (for guest packages with multiple provable functions)
+            if let Some(func) = &self.func {
+                cmd.env("JOLT_FUNC_NAME", func);
+            }
+
+            let output = cmd.output()
+                .expect("failed to run cargo-jolt - make sure it's installed (cargo install --path crates/bolt)");
 
             if !output.status.success() {
                 io::stderr().write_all(&output.stderr).unwrap();
                 let output_msg = format!("::build command: \n{cmd_line}\n");
                 io::stderr().write_all(output_msg.as_bytes()).unwrap();
-                panic!("failed to compile guest");
+                panic!("failed to compile guest with cargo-jolt");
             }
 
-            let elf_path = format!("{}/{}/release/{}", target, target_triple, self.guest);
+            // Determine the ELF path based on std mode
+            let target_triple = if self.std {
+                "riscv64imac-lz-linux-musl"
+            } else {
+                "riscv64imac-unknown-none-elf"
+            };
+
+            // ELF is built to target_dir with standard cargo layout
+            let elf_path = PathBuf::from(target_dir)
+                .join(target_triple)
+                .join("release")
+                .join(&self.guest);
+
+            // Verify the ELF exists
+            if !elf_path.exists() {
+                panic!("Built ELF not found at expected location: {}", elf_path.display());
+            }
 
             // Store the main ELF path
-            self.elf = Some(PathBuf::from_str(&elf_path).unwrap());
+            self.elf = Some(elf_path.clone());
 
-            if debug_symbols {
-                info!("Built guest binary with debug symbols: {elf_path}");
-            } else {
-                info!("Built guest binary: {elf_path}");
-            }
+            info!("Built guest binary with cargo-jolt: {}", elf_path.display());
         }
     }
 
@@ -336,25 +277,16 @@ impl Program {
         }
     }
 
+    // save_linker and linker_path are no longer needed when using cargo-jolt
+    // cargo-jolt handles linker script generation
+    // Keeping these methods for backward compatibility but they're unused
     fn save_linker(&self) {
-        let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
-        if let Some(parent) = linker_path.parent() {
-            fs::create_dir_all(parent).expect("could not create linker file");
-        }
-
-        let emulator_memory_size = self.memory_size + STACK_CANARY_SIZE + self.stack_size;
-        let linker_script = LINKER_SCRIPT_TEMPLATE
-            .replace("{EMULATOR_MEMORY}", &emulator_memory_size.to_string())
-            .replace("{STACK_CANARY}", &STACK_CANARY_SIZE.to_string())
-            .replace("{STACK_SIZE}", &self.stack_size.to_string());
-
-        let mut file = File::create(linker_path).expect("could not create linker file");
-        file.write_all(linker_script.as_bytes())
-            .expect("could not save linker");
+        // No-op: cargo-jolt handles linker scripts
     }
 
     fn linker_path(&self) -> String {
-        format!("/tmp/jolt-guest-linkers/{}.ld", self.guest)
+        // No-op: cargo-jolt handles linker scripts
+        String::new()
     }
 }
 
