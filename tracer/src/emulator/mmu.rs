@@ -2,7 +2,7 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
-use crate::emulator::memory::{MemoryBackend, MemoryData};
+use crate::emulator::memory::{CheckpointingMemory, MemoryBackend, MemoryData, ReplayableMemory};
 use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
@@ -1103,6 +1103,21 @@ impl<D: MemoryData> Mmu<D> {
     }
 }
 
+impl Mmu<CheckpointingMemory> {
+    pub fn save_checkpoint(&mut self) -> Mmu<ReplayableMemory> {
+        Mmu::<ReplayableMemory> {
+            clock: self.clock,
+            xlen: self.xlen,
+            ppn: self.ppn,
+            addressing_mode: self.addressing_mode.clone(),
+            privilege_mode: self.privilege_mode.clone(),
+            memory: self.memory.save_checkpoint(),
+            jolt_device: self.jolt_device.clone(),
+            mstatus: self.mstatus,
+        }
+    }
+}
+
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
 #[derive(Clone, Debug)]
@@ -1200,6 +1215,14 @@ impl<D: MemoryData> MemoryWrapper<D> {
     pub fn into_vec_memory_wrapper(self) -> MemoryWrapper<Vec<u64>> {
         MemoryWrapper {
             memory: self.memory.into_vec_memory_backend(),
+        }
+    }
+}
+
+impl MemoryWrapper<CheckpointingMemory> {
+    pub fn save_checkpoint(&mut self) -> MemoryWrapper<ReplayableMemory> {
+        MemoryWrapper::<ReplayableMemory> {
+            memory: MemoryBackend { data: self.memory.data.save_checkpoint() },
         }
     }
 }

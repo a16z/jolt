@@ -8,7 +8,7 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
 use tracing::{info, warn};
 
-use crate::emulator::memory::MemoryData;
+use crate::emulator::memory::{CheckpointingMemory, MemoryData, ReplayableMemory};
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
@@ -1101,6 +1101,31 @@ impl<D: MemoryData> GeneralizedCpu<D> {
             trace_len: self.trace_len,
             executed_instrs: self.executed_instrs,
             // XXX Clones required due to Drop impl
+            active_markers: self.active_markers.clone(),
+            vr_allocator: self.vr_allocator.clone(),
+            call_stack: self.call_stack.clone(),
+        }
+    }
+}
+
+impl GeneralizedCpu<CheckpointingMemory> {
+    pub fn save_checkpoint(&mut self) -> GeneralizedCpu<ReplayableMemory> {
+        GeneralizedCpu::<ReplayableMemory> {
+            clock: self.clock,
+            xlen: self.xlen,
+            privilege_mode: self.privilege_mode.clone(),
+            wfi: self.wfi,
+            x: self.x.clone(),
+            f: self.f.clone(),
+            pc: self.pc,
+            csr: self.csr.clone(),
+            mmu: self.mmu.save_checkpoint(),
+            reservation: self.reservation,
+            is_reservation_set: self.is_reservation_set,
+            _dump_flag: self._dump_flag,
+            unsigned_data_mask: self.unsigned_data_mask,
+            trace_len: self.trace_len,
+            executed_instrs: self.executed_instrs,
             active_markers: self.active_markers.clone(),
             vr_allocator: self.vr_allocator.clone(),
             call_stack: self.call_stack.clone(),

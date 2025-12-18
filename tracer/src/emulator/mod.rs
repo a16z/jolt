@@ -4,7 +4,7 @@ const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_MEMORY_SIZE; // big enough to run L
 
 extern crate fnv;
 
-use crate::emulator::memory::MemoryData;
+use crate::emulator::memory::{CheckpointingMemory, MemoryData, ReplayableMemory};
 use crate::instruction::Cycle;
 
 #[cfg(feature = "std")]
@@ -107,10 +107,6 @@ impl<D: MemoryData> GeneralizedEmulator<D> {
             begin_signature_addr: 0,
             end_signature_addr: 0,
         }
-    }
-
-    pub fn save_state(&self) -> EmulatorState {
-        self.clone().into_vec_memory_emulator()
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
@@ -328,6 +324,20 @@ impl<D: MemoryData> GeneralizedEmulator<D> {
             elf_path: self.elf_path,
             cpu: self.cpu.into_vec_memory_cpu(),
             symbol_map: self.symbol_map,
+            is_test: self.is_test,
+            tohost_addr: self.tohost_addr,
+            begin_signature_addr: self.begin_signature_addr,
+            end_signature_addr: self.end_signature_addr,
+        }
+    }
+}
+
+impl GeneralizedEmulator<CheckpointingMemory> {
+    pub fn save_checkpoint(&mut self) -> GeneralizedEmulator<ReplayableMemory> {
+        GeneralizedEmulator::<ReplayableMemory> {
+            elf_path: self.elf_path.clone(),
+            cpu: self.cpu.save_checkpoint(),
+            symbol_map: self.symbol_map.clone(),
             is_test: self.is_test,
             tohost_addr: self.tohost_addr,
             begin_signature_addr: self.begin_signature_addr,
