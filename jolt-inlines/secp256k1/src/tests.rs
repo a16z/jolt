@@ -37,6 +37,7 @@ mod sequence_tests {
         result.copy_from_slice(&result_vec);
         assert_eq!(result, expected, "secp256k1_divq_adv result mismatch");
     }
+
     #[test]
     fn test_secp256k1_divq_direct_execution() {
         // arbitrary test vectors for direct execution
@@ -116,7 +117,7 @@ mod sequence_tests {
         }
     }
 
-    fn scalar_mul_native(scalar: u128, point: Secp256k1Point) -> Secp256k1Point {
+    fn scalar_mul_native(scalar: u128, point: &Secp256k1Point) -> Secp256k1Point {
         let mut res = Secp256k1Point::infinity();
         for i in (0..128).rev() {
             if (scalar >> i) & 1 == 1 {
@@ -213,12 +214,34 @@ mod sequence_tests {
         }
         res
     }
+    /*#[test]
+    fn print_lambda() {
+        // print lambda in montgomery form
+        let lambda = Fr::from_bigint(BigInt {
+            0: [
+                0xdf02967c1b23bd72,
+                0x122e22ea20816678,
+                0xa5261c028812645a,
+                0x5363ad4cc05c30e0,
+            ],
+        })
+        .unwrap();
+        println!("Lambda: {:?}", lambda.0 .0);
+    }*/
 
     #[test]
     fn test_endomorphism_consistency() {
         let mut point = Secp256k1Point::generator();
-        let mut endo_point = point.endomorphism();
-        let k = Fr::NEG_ONE;
+        let mut endo_point = Secp256k1Point::generator_w_endomorphism();
+        let k = Fr::NEG_ONE
+            * Fr::new(BigInt {
+                0: [
+                    0x1234567890ABCDEF,
+                    0x0FEDCBA987654321,
+                    0x1111111111111111,
+                    0x2222222222222222,
+                ],
+            });
         let decomp = Secp256k1Point::decompose_scalar(&k);
         if decomp[0].0 {
             point = point.neg();
@@ -228,8 +251,8 @@ mod sequence_tests {
         }
         let k1 = decomp[0].1;
         let k2 = decomp[1].1;
-        let p1 = scalar_mul_native(k1, point);
-        let p2 = scalar_mul_native(k2, endo_point);
+        let p1 = scalar_mul_native(k1, &point);
+        let p2 = scalar_mul_native(k2, &endo_point);
         let combined = p1.add(&p2);
         let expected = scalar_mul_fr(&k, &Secp256k1Point::generator());
         assert_eq!(combined.x().fq(), expected.x().fq());
@@ -260,6 +283,64 @@ mod sequence_tests {
         }
         let recombined = sk1 + sk2 * lambda;
         assert_eq!(recombined, k);
+    }
+
+    #[test]
+    fn test_signature_verify_w_glv() {
+        // check that u G + v Q = u1 G1 + u2 lambdaG + v1 Q + v2 lambdaQ
+        // test vectors
+        let g = Secp256k1Point::generator();
+        let lg = Secp256k1Point::generator_w_endomorphism();
+        let q = Secp256k1Point::from_u64_arr_unchecked(&[
+            0x84c60f988985bb6d,
+            0x3771987a8626ed1b,
+            0x7d2d842df22e3972,
+            0x68c3e1d401738d23,
+            0x7ba86c982b250320,
+            0x845453face9978fb,
+            0xd480f970fa1501a4,
+            0xd9ccbc62a5f896f9,
+        ]);
+        let u = Fr::from_bigint(BigInt {
+            0: [
+                0x1234567890ABCDEF,
+                0x0FEDCBA987654321,
+                0x1111111111111111,
+                0x2222222222222222,
+            ],
+        })
+        .unwrap();
+        let v = Fr::from_bigint(BigInt {
+            0: [
+                0x0FEDCBA987654321,
+                0x1234567890ABCDEF,
+                0x3333333333333333,
+                0x4444444444444444,
+            ],
+        })
+        .unwrap();
+        // scalar mul without decomposition
+        let u_g = scalar_mul_fr(&u, &g);
+        let v_q = scalar_mul_fr(&v, &q);
+        let combined = u_g.add(&v_q);
+        // scalar mul with decomposition
+        let decomp_u = Secp256k1Point::decompose_scalar(&u);
+        let decomp_v = Secp256k1Point::decompose_scalar(&v);
+        let gs = if decomp_u[0].0 { g.neg() } else { g };
+        let gls = if decomp_u[1].0 { lg.neg() } else { lg };
+        let qs = if decomp_v[0].0 { q.neg() } else { q.clone() };
+        let qls = if decomp_v[1].0 {
+            q.endomorphism().neg()
+        } else {
+            q.endomorphism()
+        };
+        let u1_g1 = scalar_mul_native(decomp_u[0].1, &gs);
+        let u2_lg = scalar_mul_native(decomp_u[1].1, &gls);
+        let v1_q1 = scalar_mul_native(decomp_v[0].1, &qs);
+        let v2_lq = scalar_mul_native(decomp_v[1].1, &qls);
+        let decombined = u1_g1.add(&u2_lg).add(&v1_q1).add(&v2_lq);
+        assert_eq!(combined.x().fq(), decombined.x().fq());
+        assert_eq!(combined.y().fq(), decombined.y().fq());
     }
 
     /*#[test]

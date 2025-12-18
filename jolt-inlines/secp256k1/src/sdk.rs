@@ -1,7 +1,37 @@
 //! secp256k1 operations optimized for Jolt zkVM.
 
-use ark_ff::{AdditiveGroup, BigInt, Field, Zero};
+use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
 use ark_secp256k1::{Fq, Fr};
+use num_bigint::BigInt as NBigInt;
+use num_bigint::Sign;
+use num_integer::Integer;
+
+/// panic instruction
+/// spoils the proof
+/// used for inline checks
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+#[inline(always)]
+pub fn hcf() {
+    unsafe {
+        let u = 0u64;
+        let v = 1u64;
+        core::arch::asm!(
+            ".insn b {opcode}, {funct3}, {rs1}, {rs2}, 0",
+            opcode = const 0x5B, // virtual instruction opcode
+            funct3 = const 0b001, // VirtualAssertEQ funct3
+            rs1 = in(reg) u,
+            rs2 = in(reg) v,
+            options(nostack)
+        );
+    }
+}
+
+/// secp256k1 scalar field element
+/// in montgomery form
+/// exposed to the host to avoid the need for conversion
 
 /// secp256k1 base field element
 /// in montgomery form
@@ -133,7 +163,7 @@ impl Secp256k1Fq {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
-            unsafe {
+            /*unsafe {
                 let u = 0u64;
                 let v = 1u64;
                 core::arch::asm!(
@@ -144,7 +174,8 @@ impl Secp256k1Fq {
                     rs2 = in(reg) v,
                     options(nostack)
                 );
-            }
+            }*/
+            hcf();
         }
         c
     }
@@ -213,6 +244,20 @@ impl Secp256k1Point {
             x: Secp256k1Fq::new(ark_secp256k1::G_GENERATOR_X),
             y: Secp256k1Fq::new(ark_secp256k1::G_GENERATOR_Y),
         }
+    }
+    /// generator with endomorphism applied
+    #[inline(always)]
+    pub fn generator_w_endomorphism() -> Self {
+        Secp256k1Point::from_u64_arr_unchecked(&[
+            16173582788404280516,
+            5747022314874861025,
+            3849308819804808767,
+            12496950317914431610,
+            12780836216951778274,
+            10231155108014310989,
+            8121878653926228278,
+            14933801261141951190,
+        ])
     }
     /// returns the point at infinity (0, 0)
     #[inline(always)]
@@ -327,14 +372,70 @@ impl Secp256k1Point {
     // k = k1 + k2 * lambda
     // and |k1|, |k2| < 2^128
     // based on the implementation found in ec/src/scalar_mul/glv.rs in arkworks
-    // This is a lazy and slow implementation for now
-    // it will be folded into an inline later
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
     #[inline(always)]
     pub fn decompose_scalar(k: &Fr) -> [(bool, u128); 2] {
-        use ark_ff::PrimeField;
-        use num_bigint::BigInt as NBigInt;
-        use num_bigint::Sign;
-        use num_integer::Integer;
+        // get non-deterministic decomposition
+        let mut out = [0u64; 6];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_GLVR_ADV_FUNCT3};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_GLVR_ADV_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rs1 = in(reg) k.0.0.as_ptr(),
+                rs2 = in(reg) out.as_mut_ptr(),
+                options(nostack)
+            );
+        }
+        // check that decomposition is correct
+        // this is check that k1 + k2 * lambda == k (mod r)
+        let lambda = Fr::new_unchecked(BigInt {
+            0: [
+                17329265591798885534,
+                3212165691671483468,
+                8334304762764295569,
+                5992109773982062137,
+            ],
+        });
+        let mut k1 = Fr::from_bigint(BigInt {
+            0: [out[1], out[2], 0u64, 0u64],
+        })
+        .unwrap();
+        if out[0] == 1u64 {
+            k1 = -k1;
+        }
+        let mut k2 = Fr::from_bigint(BigInt {
+            0: [out[4], out[5], 0u64, 0u64],
+        })
+        .unwrap();
+        if out[3] == 1u64 {
+            k2 = -k2;
+        }
+        let recomposed_k = k1 + k2 * lambda;
+        if recomposed_k != *k {
+            hcf(); // panic and spoil proof if decomposition is incorrect
+        }
+        // return as (sign, abs_value) pairs
+        [
+            (out[0] == 1u64, (out[1] as u128) | ((out[2] as u128) << 64)),
+            (out[3] == 1u64, (out[4] as u128) | ((out[5] as u128) << 64)),
+        ]
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn decompose_scalar(_k: &Fr) -> [(bool, u128); 2] {
+        panic!("Secp256k1Point::decompose_scalar called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn decompose_scalar(k: &Fr) -> [(bool, u128); 2] {
         let k: NBigInt = k.into_bigint().into();
         let r = NBigInt::from_bytes_le(
             Sign::Plus,
@@ -389,5 +490,9 @@ impl Secp256k1Point {
             (sign == Sign::Minus, abs_value)
         };
         [to_sign_abs(k1), to_sign_abs(k2)]
+    }
+    // unchecked conversion from u64 to scalar
+    pub fn scalar_from_u64_arr(arr: &[u64; 4]) -> Fr {
+        Fr::new_unchecked(BigInt { 0: *arr })
     }
 }

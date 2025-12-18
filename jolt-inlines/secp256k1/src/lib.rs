@@ -6,9 +6,17 @@ pub const INLINE_OPCODE: u32 = 0x0B;
 pub const VIRTUAL_INSTRUCTION_TYPE_I_OPCODE: u32 = 0x5B;
 pub const SECP256K1_FUNCT7: u32 = 0x05;
 
-// base field division (pure non-deterministic advice, no checks)
+// base field (q) division (pure non-deterministic advice, no checks)
+// that is, given a and b in Fq, compute c = a / b
 pub const SECP256K1_DIVQ_ADV_FUNCT3: u32 = 0x00;
 pub const SECP256K1_DIVQ_ADV_NAME: &str = "SECP256K1_DIVQ_ADV";
+
+// scalar field (r) glv decomposition (pure non-deterministic advice, no checks)
+// this is, given k in Fr, compute k1, k2 such that k = k1 + k2 * lambda (mod r)
+// and |k1|, |k2| <= 2^128
+// returns (s1, |k1|, s2, |k2|) where s1, s2 are the signs of k1, k2 respectively as 64-bit integers (0 for positive, 1 for negative)
+pub const SECP256K1_GLVR_ADV_FUNCT3: u32 = 0x01;
+pub const SECP256K1_GLVR_ADV_NAME: &str = "SECP256K1_GLVR_ADV";
 
 pub mod sdk;
 pub use sdk::*;
