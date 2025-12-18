@@ -115,38 +115,66 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     ) -> Self {
         let T = trace.len();
         let K = 1 << params.log_K;
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = (T / num_chunks).max(1);
 
-        // TODO(moodlezoup): reuse
-        let eq_r_cycle: Vec<F> = EqPolynomial::evals(&params.r_cycle.r);
+        // Two-table split-eq:
+        // EqPolynomial::evals uses big-endian bit order: r_cycle[0] is MSB, r_cycle[last] is LSB.
+        // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
+        let r_cycle = &params.r_cycle.r;
+        let log_T = r_cycle.len();
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+        let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
 
-        let ra_evals: Vec<F> = trace
+        let (E_hi, E_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
+        );
+
+        let in_len = E_lo.len(); // 2^lo_bits
+
+        // Split E_hi into chunks for parallel processing
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = E_hi.len().div_ceil(num_threads);
+
+        // Each thread computes partial ra_evals using split-eq optimization
+        let ra_evals: Vec<F> = E_hi
             .par_chunks(chunk_size)
             .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
-                let mut result = unsafe_allocate_zero_vec(K);
-                let mut j = chunk_index * chunk_size;
-                for cycle in trace_chunk {
-                    if let Some(k) =
-                        remap_address(cycle.ram_access().address() as u64, memory_layout)
-                    {
-                        result[k as usize] += eq_r_cycle[j];
+            .map(|(chunk_idx, chunk)| {
+                let mut partial: Vec<F> = unsafe_allocate_zero_vec(K);
+
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, &e_hi) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
+                    let c_hi_base = c_hi * in_len;
+
+                    for c_lo in 0..in_len {
+                        let j = c_hi_base + c_lo;
+                        if j >= T {
+                            break;
+                        }
+
+                        if let Some(k) =
+                            remap_address(trace[j].ram_access().address() as u64, memory_layout)
+                        {
+                            partial[k as usize] += e_hi * E_lo[c_lo];
+                        }
                     }
-                    j += 1;
                 }
-                result
+
+                partial
             })
             .reduce(
                 || unsafe_allocate_zero_vec(K),
                 |mut running, new| {
                     running
                         .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
+                        .zip(new.par_iter())
+                        .for_each(|(x, y)| *x += *y);
                     running
                 },
             );
+
         let ra = MultilinearPolynomial::from(ra_evals);
         let lowest_memory_address = memory_layout.get_lowest_address();
         let unmap = UnmapRamAddressPolynomial::new(K.log_2(), lowest_memory_address);

@@ -75,15 +75,15 @@ const DEGREE_BOUND: usize = 2;
 /// - PhaseCycle2: Dense suffix cycle rounds (log_T/2 rounds)
 #[derive(Allocative)]
 #[allow(clippy::large_enum_variant)]
-pub enum RamRaReductionSumcheckProver<F: JoltField> {
+pub enum RamRaClaimReductionSumcheckProver<F: JoltField> {
     PhaseAddress(PhaseAddressProver<F>),
     PhaseCycle1(PhaseCycle1Prover<F>),
     PhaseCycle2(PhaseCycle2Prover<F>),
 }
 
-impl<F: JoltField> RamRaReductionSumcheckProver<F> {
+impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
     /// Create a new RAM RA reduction sumcheck prover.
-    #[tracing::instrument(skip_all, name = "RamRaReductionSumcheckProver::initialize")]
+    #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::initialize")]
     pub fn initialize(
         params: RaReductionParams<F>,
         trace: &[Cycle],
@@ -99,7 +99,9 @@ impl<F: JoltField> RamRaReductionSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductionSumcheckProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for RamRaClaimReductionSumcheckProver<F>
+{
     fn degree(&self) -> usize {
         DEGREE_BOUND
     }
@@ -120,7 +122,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaReductionSumcheckProver::compute_message")]
+    #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         match self {
             Self::PhaseAddress(p) => p.compute_message(round, previous_claim),
@@ -129,7 +131,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RamRaReductionSumcheckProver::ingest_challenge")]
+    #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         match self {
             Self::PhaseAddress(prover) => {
@@ -184,7 +186,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaReductio
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
-            SumcheckId::RamRaReduction,
+            SumcheckId::RamRaClaimReduction,
             opening_point,
             ra_claim_reduced,
         );
@@ -283,6 +285,9 @@ impl<F: JoltField> PhaseAddressProver<F> {
     }
 
     /// Compute G_A[k] = Σ_{c: address[c]=k} eq_cycle_A(c) and G_B similarly.
+    ///
+    /// Uses two-table split-eq: split r_cycle into MSB/LSB halves, compute E_hi and E_lo,
+    /// then eq(r_cycle, c) = E_hi[c_hi] * E_lo[c_lo] where c = (c_hi << lo_bits) | c_lo.
     #[tracing::instrument(skip_all, name = "PhaseAddressProver::compute_G_arrays")]
     fn compute_G_arrays(
         addresses: &[Option<usize>],
@@ -292,37 +297,87 @@ impl<F: JoltField> PhaseAddressProver<F> {
         r_cycle_val: &[F::Challenge],
         gamma: F,
     ) -> (Vec<F>, Vec<F>) {
-        let eq_raf = EqPolynomial::<F>::evals(r_cycle_raf);
-        let eq_rw = EqPolynomial::<F>::evals(r_cycle_rw);
-        let eq_val = EqPolynomial::<F>::evals(r_cycle_val);
+        let T = addresses.len();
 
-        let chunk_size = 1 << 14;
-        let (G_A, G_B) = addresses
+        // Two-table split-eq:
+        // EqPolynomial::evals uses big-endian bit order: r[0] is MSB, r[last] is LSB.
+        // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
+        let log_T = r_cycle_raf.len();
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+
+        let (r_raf_hi, r_raf_lo) = r_cycle_raf.split_at(hi_bits);
+        let (r_rw_hi, r_rw_lo) = r_cycle_rw.split_at(hi_bits);
+        let (r_val_hi, r_val_lo) = r_cycle_val.split_at(hi_bits);
+
+        // Compute 5 eq tables in parallel (unscaled), plus E_val_hi_scaled separately
+        let ([E_raf_hi, E_raf_lo, E_rw_hi, E_rw_lo, E_val_lo], E_val_hi_scaled) = rayon::join(
+            || {
+                [r_raf_hi, r_raf_lo, r_rw_hi, r_rw_lo, r_val_lo]
+                    .into_par_iter()
+                    .map(EqPolynomial::<F>::evals)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
+            },
+            // Scale E_val_hi by gamma upfront to compute G_A and G_B directly
+            || EqPolynomial::<F>::evals_with_scaling(r_val_hi, Some(gamma)),
+        );
+
+        let in_len = E_raf_lo.len(); // 2^lo_bits
+        let out_len = E_raf_hi.len(); // 2^hi_bits
+
+        // Divide work evenly among threads (by c_hi index)
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = out_len.div_ceil(num_threads);
+
+        // Each thread computes partial G_A and G_B directly
+        // G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
+        // E_val_hi is pre-scaled by gamma, so we compute eq products inline
+        let (G_A, G_B): (Vec<F>, Vec<F>) = E_raf_hi
             .par_chunks(chunk_size)
             .enumerate()
-            .fold(
-                || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
-                |(mut partial_A, mut partial_B), (chunk_idx, chunk)| {
-                    let base_c = chunk_idx * chunk_size;
-                    for (i, addr) in chunk.iter().enumerate() {
-                        if let Some(k) = addr {
-                            let c = base_c + i;
-                            partial_A[*k] += eq_raf[c] + gamma * eq_val[c];
-                            partial_B[*k] += eq_rw[c] + gamma * eq_val[c];
+            .map(|(chunk_idx, chunk)| {
+                let mut partial_G_A: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut partial_G_B: Vec<F> = unsafe_allocate_zero_vec(K);
+
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, &e_hi_raf) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
+                    let e_hi_rw = E_rw_hi[c_hi];
+                    let e_hi_val_scaled = E_val_hi_scaled[c_hi]; // Already scaled by gamma
+                    let c_hi_base = c_hi * in_len;
+
+                    for c_lo in 0..in_len {
+                        let j = c_hi_base + c_lo;
+                        if j >= T {
+                            break;
+                        }
+
+                        if let Some(k) = addresses[j] {
+                            let eq_raf = e_hi_raf * E_raf_lo[c_lo];
+                            let eq_rw = e_hi_rw * E_rw_lo[c_lo];
+                            let eq_val = e_hi_val_scaled * E_val_lo[c_lo];
+
+                            partial_G_A[k] += eq_raf + eq_val;
+                            partial_G_B[k] += eq_rw + eq_val;
                         }
                     }
-                    (partial_A, partial_B)
-                },
-            )
+                }
+
+                (partial_G_A, partial_G_B)
+            })
             .reduce(
                 || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
-                |(mut acc_A, mut acc_B), (partial_A, partial_B)| {
-                    for (a, p) in acc_A.iter_mut().zip(partial_A) {
-                        *a += p;
-                    }
-                    for (b, p) in acc_B.iter_mut().zip(partial_B) {
-                        *b += p;
-                    }
+                |(mut acc_A, mut acc_B), (p_A, p_B)| {
+                    acc_A
+                        .par_iter_mut()
+                        .zip(p_A.par_iter())
+                        .for_each(|(a, p)| *a += *p);
+                    acc_B
+                        .par_iter_mut()
+                        .zip(p_B.par_iter())
+                        .for_each(|(a, p)| *a += *p);
                     (acc_A, acc_B)
                 },
             );
@@ -334,6 +389,8 @@ impl<F: JoltField> PhaseAddressProver<F> {
         let m = round + 1;
         let half_len = self.B_1.len() / 2;
         let inner_len = 1 << m;
+        // Precompute mask for k % (1 << (m - 1)) -> k & f_index_mask
+        let f_index_mask = (1 << (m - 1)) - 1;
 
         let [eval_0, eval_c2] = (0..half_len)
             .into_par_iter()
@@ -363,7 +420,7 @@ impl<F: JoltField> PhaseAddressProver<F> {
                                 },
                                 |mut acc, k| {
                                     let k_m = (k >> (m - 1)) & 1;
-                                    let F_k = self.F[k % (1 << (m - 1))];
+                                    let F_k = self.F[k & f_index_mask];
                                     let G_A_k = self.G_A[k];
                                     let G_B_k = self.G_B[k];
 
@@ -399,7 +456,7 @@ impl<F: JoltField> PhaseAddressProver<F> {
 
                         for k in k_start..k_end {
                             let k_m = (k >> (m - 1)) & 1;
-                            let F_k = self.F[k % (1 << (m - 1))];
+                            let F_k = self.F[k & f_index_mask];
                             let G_A_k = self.G_A[k];
                             let G_B_k = self.G_B[k];
 
@@ -981,11 +1038,11 @@ impl<F: JoltField> RaReductionParams<F> {
 // ============================================================================
 
 /// RAM RA reduction sumcheck verifier.
-pub struct RamRaReductionSumcheckVerifier<F: JoltField> {
+pub struct RamRaClaimReductionSumcheckVerifier<F: JoltField> {
     params: RaReductionParams<F>,
 }
 
-impl<F: JoltField> RamRaReductionSumcheckVerifier<F> {
+impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     /// Create a new RAM RA reduction sumcheck verifier.
     pub fn new(
         trace_len: usize,
@@ -1000,7 +1057,7 @@ impl<F: JoltField> RamRaReductionSumcheckVerifier<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for RamRaReductionSumcheckVerifier<F>
+    for RamRaClaimReductionSumcheckVerifier<F>
 {
     fn degree(&self) -> usize {
         DEGREE_BOUND
@@ -1045,8 +1102,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             eq_addr_1 * eq_cycle_A + self.params.gamma_squared * eq_addr_2 * eq_cycle_B;
 
         // Get the reduced ra claim that was cached by the prover
-        let (_, ra_claim_reduced) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRaReduction);
+        let (_, ra_claim_reduced) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamRaClaimReduction,
+        );
 
         eq_combined * ra_claim_reduced
     }
@@ -1072,7 +1131,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
-            SumcheckId::RamRaReduction,
+            SumcheckId::RamRaClaimReduction,
             opening_point,
         );
     }

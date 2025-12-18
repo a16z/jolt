@@ -4,12 +4,8 @@ use allocative::Allocative;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use std::cell::UnsafeCell;
-use std::collections::HashMap;
-use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
@@ -22,9 +18,6 @@ use crate::{
 };
 
 use super::instruction::{CircuitFlags, LookupQuery};
-
-struct SharedWitnessData(UnsafeCell<WitnessData>);
-unsafe impl Sync for SharedWitnessData {}
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
@@ -42,43 +35,6 @@ pub enum CommittedPolynomial {
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
     RamRa(usize),
-}
-
-struct WitnessData {
-    // Simple polynomial coefficients
-    left_instruction_input: Vec<u64>,
-    right_instruction_input: Vec<i128>,
-    rd_inc: Vec<i128>,
-    ram_inc: Vec<i128>,
-
-    // One-hot polynomial indices
-    instruction_ra: Vec<Vec<Option<u16>>>,
-    bytecode_ra: Vec<Vec<Option<u16>>>,
-    ram_ra: Vec<Vec<Option<u16>>>,
-}
-
-unsafe impl Send for WitnessData {}
-unsafe impl Sync for WitnessData {}
-
-impl WitnessData {
-    fn new(trace_len: usize, one_hot_params: &OneHotParams) -> Self {
-        Self {
-            left_instruction_input: vec![0; trace_len],
-            right_instruction_input: vec![0; trace_len],
-            rd_inc: vec![0; trace_len],
-            ram_inc: vec![0; trace_len],
-
-            instruction_ra: (0..one_hot_params.instruction_d)
-                .map(|_| vec![None; trace_len])
-                .collect(),
-            bytecode_ra: (0..one_hot_params.bytecode_d)
-                .map(|_| vec![None; trace_len])
-                .collect(),
-            ram_ra: (0..one_hot_params.ram_d)
-                .map(|_| vec![None; trace_len])
-                .collect(),
-        }
-    }
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -166,120 +122,6 @@ impl CommittedPolynomial {
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
         }
-    }
-
-    #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness_batch")]
-    pub fn generate_witness_batch<F, PCS>(
-        polynomials: &[CommittedPolynomial],
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[Cycle],
-        one_hot_params: &OneHotParams,
-    ) -> HashMap<CommittedPolynomial, MultilinearPolynomial<F>>
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<Field = F>,
-    {
-        // let one_hot_num_bits = if ram_d > 0 { Some(log_chunk) } else { None };
-        let batch = WitnessData::new(trace.len(), one_hot_params);
-        let batch_cell = Arc::new(SharedWitnessData(UnsafeCell::new(batch)));
-
-        // #SAFETY: Each thread writes to a unique index of a pre-allocated vector
-        (0..trace.len()).into_par_iter().for_each({
-            let batch_cell = batch_cell.clone();
-            move |i| {
-                let cycle = &trace[i];
-                let batch_ref = unsafe { &mut *batch_cell.0.get() };
-                let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                let (_, pre_rd, post_rd) = cycle.rd_write();
-
-                batch_ref.left_instruction_input[i] = left;
-                batch_ref.right_instruction_input[i] = right;
-
-                batch_ref.rd_inc[i] = post_rd as i128 - pre_rd as i128;
-
-                // RAM inc
-                let ram_inc = match cycle.ram_access() {
-                    tracer::instruction::RAMAccess::Write(write) => {
-                        write.post_value as i128 - write.pre_value as i128
-                    }
-                    _ => 0,
-                };
-                batch_ref.ram_inc[i] = ram_inc;
-
-                // InstructionRa indices
-                let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                for j in 0..one_hot_params.instruction_d {
-                    let k = one_hot_params.lookup_index_chunk(lookup_index, j);
-                    batch_ref.instruction_ra[j][i] = Some(k);
-                }
-
-                // BytecodeRa indices
-                let pc = preprocessing.bytecode.get_pc(cycle);
-
-                for j in 0..one_hot_params.bytecode_d {
-                    let pc = one_hot_params.bytecode_pc_chunk(pc, j);
-                    batch_ref.bytecode_ra[j][i] = Some(pc);
-                }
-
-                // RamRa indices
-                let address = remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.memory_layout,
-                );
-
-                for j in 0..one_hot_params.ram_d {
-                    let index = address.map(|address| one_hot_params.ram_address_chunk(address, j));
-                    batch_ref.ram_ra[j][i] = index;
-                }
-            }
-        });
-
-        let mut batch = Arc::try_unwrap(batch_cell)
-            .ok()
-            .expect("Arc should have single owner")
-            .0
-            .into_inner();
-
-        // We zero-cost move the data back
-        let mut results = HashMap::with_capacity(polynomials.len());
-
-        for poly in polynomials {
-            match poly {
-                CommittedPolynomial::RdInc => {
-                    let coeffs = std::mem::take(&mut batch.rd_inc);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::RamInc => {
-                    let coeffs = std::mem::take(&mut batch.ram_inc);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::InstructionRa(i) => {
-                    if *i < batch.instruction_ra.len() {
-                        let indices = std::mem::take(&mut batch.instruction_ra[*i]);
-                        let one_hot =
-                            OneHotPolynomial::from_indices(indices, one_hot_params.k_chunk);
-                        results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
-                    }
-                }
-                CommittedPolynomial::BytecodeRa(i) => {
-                    if *i < batch.bytecode_ra.len() {
-                        let indices = std::mem::take(&mut batch.bytecode_ra[*i]);
-                        let one_hot =
-                            OneHotPolynomial::from_indices(indices, one_hot_params.k_chunk);
-                        results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
-                    }
-                }
-                CommittedPolynomial::RamRa(i) => {
-                    if *i < batch.ram_ra.len() {
-                        let indices = std::mem::take(&mut batch.ram_ra[*i]);
-                        let one_hot =
-                            OneHotPolynomial::from_indices(indices, one_hot_params.k_chunk);
-                        results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
-                    }
-                }
-            }
-        }
-        results
     }
 
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
