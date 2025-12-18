@@ -4,34 +4,14 @@ extern crate alloc;
 use alloc::vec::Vec;
 use jolt_inlines_secp256k1::{Secp256k1Fq, Secp256k1Point};
 
-// compute n1*P1 + n2*P2 + n3*P3 + n4*P4 for secp256k1 points P1, P2, P3, P4 and scalars n1, n2, n3, n4
-// Note, this function does not check that the points are on the curve
-#[jolt::provable(memory_size = 200000, max_trace_length = 4194304)]
-fn secp256k1_scalar_mul(scalars: [u128; 4], points: [u64; 32]) -> [u64; 8] {
+// basic version
+fn secp256k1_scalar_mul_simple(scalars: [u128; 4], points: [u64; 32]) -> [u64; 8] {
     let points = [
         Secp256k1Point::from_u64_arr_unchecked(&points[0..8].try_into().unwrap()),
         Secp256k1Point::from_u64_arr_unchecked(&points[8..16].try_into().unwrap()),
         Secp256k1Point::from_u64_arr_unchecked(&points[16..24].try_into().unwrap()),
         Secp256k1Point::from_u64_arr_unchecked(&points[24..32].try_into().unwrap()),
     ];
-    /*let lookup = [
-        Secp256k1Point::infinity(),
-        points[0].clone(),
-        points[1].clone(),
-        points[0].add(&points[1]),
-        points[2].clone(),
-        points[0].add(&points[2]),
-        points[1].add(&points[2]),
-        points[0].add(&points[1].add(&points[2])),
-        points[3].clone(),
-        points[0].add(&points[3]),
-        points[1].add(&points[3]),
-        points[0].add(&points[1].add(&points[3])),
-        points[2].add(&points[3]),
-        points[0].add(&points[2].add(&points[3])),
-        points[1].add(&points[2].add(&points[3])),
-        points[0].add(&points[1].add(&points[2].add(&points[3]))),
-    ];*/
     let mut lookup = Vec::<Secp256k1Point>::with_capacity(16);
     lookup.push(Secp256k1Point::infinity());
     lookup.push(points[0].clone());
@@ -60,6 +40,13 @@ fn secp256k1_scalar_mul(scalars: [u128; 4], points: [u64; 32]) -> [u64; 8] {
         }
     }
     res.to_u64_arr()
+}
+
+// compute n1*P1 + n2*P2 + n3*P3 + n4*P4 for secp256k1 points P1, P2, P3, P4 and scalars n1, n2, n3, n4
+// Note, this function does not check that the points are on the curve
+#[jolt::provable(memory_size = 200000, max_trace_length = 4194304)]
+fn secp256k1_scalar_mul(scalars: [u128; 4], points: [u64; 32]) -> [u64; 8] {
+    secp256k1_scalar_mul_simple(scalars, points)
     // Code below is for getting cycle counts of various operations
     // compute 1000 point additions to stress test
     /*let mut res = Secp256k1Point::infinity();

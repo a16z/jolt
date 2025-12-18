@@ -1,7 +1,7 @@
 //! secp256k1 operations optimized for Jolt zkVM.
 
 use ark_ff::{AdditiveGroup, BigInt, Field, Zero};
-use ark_secp256k1::Fq;
+use ark_secp256k1::{Fq, Fr};
 
 /// secp256k1 base field element
 /// in montgomery form
@@ -17,6 +17,13 @@ impl Secp256k1Fq {
     #[inline(always)]
     pub fn new(e: Fq) -> Self {
         Secp256k1Fq { e }
+    }
+    /// creates a new Secp256k1Fq element from a [u64; 4] array
+    #[inline(always)]
+    pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
+        Secp256k1Fq {
+            e: Fq::new_unchecked(BigInt { 0: *arr }),
+        }
     }
     /// get inner Fq type
     #[inline(always)]
@@ -44,14 +51,19 @@ impl Secp256k1Fq {
     pub fn is_zero(&self) -> bool {
         self.e.is_zero()
     }
-    /// returns self + other mod p
+    /// returns -self
+    #[inline(always)]
+    pub fn neg(&self) -> Self {
+        Secp256k1Fq { e: -self.e }
+    }
+    /// returns self + other
     #[inline(always)]
     pub fn add(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
             e: self.e + other.e,
         }
     }
-    /// returns self - other mod p
+    /// returns self - other
     #[inline(always)]
     pub fn sub(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
@@ -70,19 +82,19 @@ impl Secp256k1Fq {
             e: self.e.double() + self.e,
         }
     }
-    /// returns self * other mod p
+    /// returns self * other
     #[inline(always)]
     pub fn mul(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
             e: self.e * other.e,
         }
     }
-    /// returns self^2 mod p
+    /// returns self^2
     #[inline(always)]
     pub fn square(&self) -> Self {
         Secp256k1Fq { e: self.e.square() }
     }
-    /// returns self / other mod p
+    /// returns self / other
     /// uses custom inline for performance
     /// costs nearly the same as multiplication
     #[cfg(all(
@@ -180,12 +192,8 @@ impl Secp256k1Point {
     /// performs no checks to ensure that the point is on the curve
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 8]) -> Self {
-        let x = Secp256k1Fq::new(ark_secp256k1::Fq::new_unchecked(ark_ff::BigInt {
-            0: [arr[0], arr[1], arr[2], arr[3]],
-        }));
-        let y = Secp256k1Fq::new(ark_secp256k1::Fq::new_unchecked(ark_ff::BigInt {
-            0: [arr[4], arr[5], arr[6], arr[7]],
-        }));
+        let x = Secp256k1Fq::from_u64_arr(&[arr[0], arr[1], arr[2], arr[3]]);
+        let y = Secp256k1Fq::from_u64_arr(&[arr[4], arr[5], arr[6], arr[7]]);
         Secp256k1Point { x, y }
     }
     /// get x coordinate
@@ -219,6 +227,19 @@ impl Secp256k1Point {
     pub fn is_infinity(&self) -> bool {
         self.x.e.is_zero() && self.y.e.is_zero()
     }
+    /// negates a point on the secp256k1 curve
+    #[inline(always)]
+    pub fn neg(&self) -> Self {
+        if self.is_infinity() {
+            Secp256k1Point::infinity()
+        } else {
+            Secp256k1Point {
+                x: self.x.clone(),
+                y: self.y.neg(),
+            }
+        }
+    }
+    /// doubles a point on the secp256k1 curve
     #[inline(always)]
     pub fn double(&self) -> Self {
         if self.y.is_zero() {
@@ -281,5 +302,92 @@ impl Secp256k1Point {
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             Secp256k1Point { x: x3, y: y3 }
         }
+    }
+    // returns lambda * self
+    // where lambda is 0x5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72
+    #[inline(always)]
+    pub fn endomorphism(&self) -> Self {
+        if self.is_infinity() {
+            Secp256k1Point::infinity()
+        } else {
+            // beta = 0x7AE96A2B657C07106E64479EAC3434E99CF0497512F58995C1396C28719501EE
+            let beta = Secp256k1Fq::from_u64_arr(&[
+                6387289667796044110u64,
+                287633767014301871u64,
+                17936018142961481989u64,
+                8811915745022393683u64,
+            ]);
+            Secp256k1Point {
+                x: self.x.mul(&beta),
+                y: self.y.clone(),
+            }
+        }
+    }
+    // given k, return k1 and k2 such that
+    // k = k1 + k2 * lambda
+    // and |k1|, |k2| < 2^128
+    // based on the implementation found in ec/src/scalar_mul/glv.rs in arkworks
+    // This is a lazy and slow implementation for now
+    // it will be folded into an inline later
+    #[inline(always)]
+    pub fn decompose_scalar(k: &Fr) -> [(bool, u128); 2] {
+        use ark_ff::PrimeField;
+        use num_bigint::BigInt as NBigInt;
+        use num_bigint::Sign;
+        use num_integer::Integer;
+        let k: NBigInt = k.into_bigint().into();
+        let r = NBigInt::from_bytes_le(
+            Sign::Plus,
+            &[
+                65, 65, 54, 208, 140, 94, 210, 191, 59, 160, 72, 175, 230, 220, 174, 186, 254, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ],
+        );
+        let a1 = NBigInt::from_bytes_le(
+            Sign::Plus,
+            &[
+                21, 235, 132, 146, 228, 144, 108, 232, 205, 107, 212, 167, 33, 210, 134, 48,
+            ],
+        );
+        let b1 = NBigInt::from_bytes_le(
+            Sign::Plus,
+            &[
+                195, 228, 191, 10, 169, 127, 84, 111, 40, 136, 14, 1, 214, 126, 67, 228,
+            ],
+        );
+        let a2 = NBigInt::from_bytes_le(
+            Sign::Plus,
+            &[
+                216, 207, 68, 157, 141, 16, 193, 87, 246, 243, 226, 168, 247, 80, 202, 20, 1,
+            ],
+        );
+        let beta_1 = {
+            let (mut div, rem) = (&k * &a1).div_rem(&r);
+            if (&rem + &rem) > r {
+                div += NBigInt::from_bytes_le(Sign::Plus, &[1u8]);
+            }
+            div
+        };
+        let beta_2 = {
+            let (mut div, rem) = (&k * &b1).div_rem(&r);
+            if (&rem + &rem) > r {
+                div += NBigInt::from_bytes_le(Sign::Plus, &[1u8]);
+            }
+            div
+        };
+        let k1 = &k - &beta_1 * &a1 - &beta_2 * &a2;
+        let k2 = &beta_1 * &b1 - &beta_2 * &a1;
+        // return as (sign, abs_value) pairs
+        let to_sign_abs = |n: NBigInt| -> (bool, u128) {
+            let (sign, bytes) = n.to_bytes_le();
+            // pad bytes to 16 bytes
+            let mut bytes_padded = bytes.clone();
+            while bytes_padded.len() < 16 {
+                bytes_padded.push(0u8);
+            }
+            let abs_value = u128::from_le_bytes(bytes_padded[..16].try_into().unwrap());
+            (sign == Sign::Minus, abs_value)
+        };
+        [to_sign_abs(k1), to_sign_abs(k2)]
     }
 }

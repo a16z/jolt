@@ -2,9 +2,9 @@ mod sequence_tests {
     use crate::sdk::Secp256k1Point;
     use crate::{INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_FUNCT7};
     use ark_ec::{AffineRepr, CurveGroup};
-    use ark_ff::{BigInt, Field};
+    use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::Affine;
-    use ark_secp256k1::Fq;
+    use ark_secp256k1::{Fq, Fr};
     use tracer::emulator::cpu::Xlen;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
@@ -127,7 +127,7 @@ mod sequence_tests {
         }
         res
     }
-    #[test]
+    /*#[test]
     fn get_test_vectors() {
         println!("Test Vectors:");
         let point = Secp256k1Point::generator();
@@ -144,7 +144,155 @@ mod sequence_tests {
             println!("Result: [{:#018x}, {:#018x}, {:#018x}, {:#018x}, {:#018x}, {:#018x}, {:#018x}, {:#018x}]",
                 arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7]);
         }
+    }*/
+    // check that lambda * Q = (beta*x mod p, y)
+    /*#[test]
+    fn test_endomorphism() {
+        let lambda = [
+            0x122e22ea20816678df02967c1b23bd72u128,
+            0x5363ad4cc05c30e0a5261c028812645au128,
+        ];
+        let mut res = Secp256k1Point::infinity();
+        for j in (0..2).rev() {
+            let scalar = lambda[j];
+            for i in (0..128).rev() {
+                if (scalar >> i) & 1 == 1 {
+                    res = res.double_and_add(&Secp256k1Point::generator());
+                } else {
+                    res = res.double();
+                }
+            }
+        }
+        println!("Generator  : {:?}", Secp256k1Point::generator().y());
+        println!("endomorphism: {:?}", res.y());
+        // 0x7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee
+        let beta = Fq::new(BigInt {
+            0: [
+                0xc1396c28719501ee,
+                0x9cf0497512f58995,
+                0x6e64479eac3434e9,
+                0x7ae96a2b657c0710,
+            ],
+        });
+        println!("{:?}", beta.0 .0);
+        println!(
+            "Beta * x     : {:?}",
+            Secp256k1Point::generator().x().fq() * beta
+        );
+        println!("endomorphism x: {:?}", res.x().fq());
+        let comp = Secp256k1Point::generator().endomorphism();
+        assert_eq!(res.x().fq(), comp.x().fq());
+        assert_eq!(res.y().fq(), comp.y().fq());
+    }*/
+    #[test]
+    fn test_decompose_scalar() {
+        let scalar = Fr::from_bigint(BigInt {
+            0: [
+                15694125933356685049,
+                15312512996687020452,
+                9535338647723276539,
+                8910491263567201056,
+            ],
+        })
+        .unwrap();
+        // print scalar
+        println!("Scalar: {:?}", scalar.into_bigint().0);
+        let decomp = Secp256k1Point::decompose_scalar(&scalar);
+        println!("{:?}", decomp);
     }
+
+    fn scalar_mul_fr(scalar: &Fr, point: &Secp256k1Point) -> Secp256k1Point {
+        let mut res = Secp256k1Point::infinity();
+        let k = scalar.into_bigint().0;
+        for i in (0..256).rev() {
+            if (k[i / 64] >> (i % 64)) & 1 == 1 {
+                res = res.double_and_add(point);
+            } else {
+                res = res.double();
+            }
+        }
+        res
+    }
+
+    #[test]
+    fn test_endomorphism_consistency() {
+        let mut point = Secp256k1Point::generator();
+        let mut endo_point = point.endomorphism();
+        let k = Fr::NEG_ONE;
+        let decomp = Secp256k1Point::decompose_scalar(&k);
+        if decomp[0].0 {
+            point = point.neg();
+        }
+        if decomp[1].0 {
+            endo_point = endo_point.neg();
+        }
+        let k1 = decomp[0].1;
+        let k2 = decomp[1].1;
+        let p1 = scalar_mul_native(k1, point);
+        let p2 = scalar_mul_native(k2, endo_point);
+        let combined = p1.add(&p2);
+        let expected = scalar_mul_fr(&k, &Secp256k1Point::generator());
+        assert_eq!(combined.x().fq(), expected.x().fq());
+        assert_eq!(combined.y().fq(), expected.y().fq());
+        // also check that sign1 * k1 + sign2 * k2 * lambda mod r = k
+        let lambda = Fr::from_bigint(BigInt {
+            0: [
+                0xdf02967c1b23bd72,
+                0x122e22ea20816678,
+                0xa5261c028812645a,
+                0x5363ad4cc05c30e0,
+            ],
+        })
+        .unwrap();
+        let mut sk1 = Fr::from_bigint(BigInt {
+            0: [k1 as u64, (k1 >> 64) as u64, 0, 0],
+        })
+        .unwrap();
+        if decomp[0].0 {
+            sk1 = -sk1;
+        }
+        let mut sk2 = Fr::from_bigint(BigInt {
+            0: [k2 as u64, (k2 >> 64) as u64, 0, 0],
+        })
+        .unwrap();
+        if decomp[1].0 {
+            sk2 = -sk2;
+        }
+        let recombined = sk1 + sk2 * lambda;
+        assert_eq!(recombined, k);
+    }
+
+    /*#[test]
+    fn test_mont() {
+        // check internal representation in montgomery form
+        let one = Fr::ONE;
+        println!("Fq::ONE: {:?}", one.0 .0);
+        let one_alt = Fr::new(BigInt {
+            0: [
+                0x0000000000000001,
+                0x0000000000000000,
+                0x0000000000000000,
+                0x0000000000000000,
+            ],
+        });
+        println!("big::ONE: {:?}", one_alt.0 .0);
+    }*/
+    /*#[test]
+    fn convert() {
+        use ark_ff::PrimeField;
+        use num_bigint::BigInt as NBigInt;
+        use num_bigint::Sign;
+        use num_integer::Integer;
+        use std::str::FromStr;
+        let r = NBigInt::from_str(Fr::MODULUS.to_string().as_str()).unwrap();
+        let a1 = NBigInt::from_str("64502973549206556628585045361533709077").unwrap();
+        let b1 = NBigInt::from_str("303414439467246543595250775667605759171").unwrap();
+        let a2 = NBigInt::from_str("367917413016453100223835821029139468248").unwrap();
+        println!("r: {:?}", r.to_bytes_le());
+        println!("a1: {:?}", a1.to_bytes_le());
+        println!("b1: {:?}", b1.to_bytes_le());
+        println!("a2: {:?}", a2.to_bytes_le());
+    }*/
 }
 
 /*[0xfd7914a271ed2e42, 0x7fb20973e1035805, 0x8c2c7e3c55347a2f, 0xe069d2fb3df133fd, 0x70e6973fb3b3c61e, 0xaed7312cd8530080, 0x390fa40885dbc7f2, 0x3142c3b27c54160e, 0x62cdfbc1358ff2e7, 0x95bce326ef8d07c0, 0x1a0637809a7c16e3, 0x0197263b9b73d8fe, 0x921e6ffa3fe39600, 0xc1b77824c49ecaa6, 0x25b5d035fbbdcd93, 0xd25330b456437bc4,0xbfc6759e3ab1d57a, 0x2e822c47f143f7dc, 0xf8d88465f162255a, 0xac8cbfb4707c3ba1, 0x92b8007c0027e3b6, 0x3d3a2aaa3b129d3c, 0xc71a36833e579582, 0x63fa22b365e65edc,0x84c60f988985bb6d, 0x3771987a8626ed1b, 0x7d2d842df22e3972, 0x68c3e1d401738d23, 0x7ba86c982b250320, 0x845453face9978fb, 0xd480f970fa1501a4, 0xd9ccbc62a5f896f9]*/

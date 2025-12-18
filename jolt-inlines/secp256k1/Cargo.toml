@@ -19,6 +19,8 @@ ark-secp256k1 = { git="https://github.com/arkworks-rs/algebra", default-features
 ark-serialize = { git="https://github.com/arkworks-rs/algebra", default-features = false }
 ark-ff        = { git="https://github.com/arkworks-rs/algebra", default-features = false }
 ark-ec        = { git="https://github.com/arkworks-rs/algebra", default-features = false }
+num-bigint = { version = "0.4.6", default-features = false }
+num-integer = { version = "0.1.36", default-features = false }
 
 [dev-dependencies]
 hex-literal.workspace = true
