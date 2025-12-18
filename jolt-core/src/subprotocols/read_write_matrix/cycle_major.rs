@@ -214,23 +214,24 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                 k += 1;
             }
         }
+
+        if dry_run {
+            k += even[i..].len();
+            k += odd[j..].len();
+            return k;
+        }
+
         for remaining_even_entry in even[i..].iter() {
-            if !dry_run {
-                let bound_entry = E::bind_entries(Some(remaining_even_entry), None, r);
-                out[k] = MaybeUninit::new(bound_entry);
-            }
+            let bound_entry = E::bind_entries(Some(remaining_even_entry), None, r);
+            out[k] = MaybeUninit::new(bound_entry);
             k += 1;
         }
         for remaining_odd_entry in odd[j..].iter() {
-            if !dry_run {
-                let bound_entry = E::bind_entries(None, Some(remaining_odd_entry), r);
-                out[k] = MaybeUninit::new(bound_entry);
-            }
+            let bound_entry = E::bind_entries(None, Some(remaining_odd_entry), r);
+            out[k] = MaybeUninit::new(bound_entry);
             k += 1;
         }
-        if !dry_run {
-            assert_eq!(out.len(), k);
-        }
+        assert_eq!(out.len(), k);
         k
     }
 
