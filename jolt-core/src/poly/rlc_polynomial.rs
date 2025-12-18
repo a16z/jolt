@@ -410,10 +410,11 @@ impl<F: JoltField> RLCPolynomial<F> {
         let setup = VmvSetup::new(ctx, left_vec, num_rows);
 
         // Divide rows evenly among threads using par_chunks on left_vec
+        // Only use first num_rows elements (left_vec may be longer due to padding)
         let num_threads = rayon::current_num_threads();
         let rows_per_thread = num_rows.div_ceil(num_threads);
 
-        let (dense_accs, onehot_accs) = left_vec
+        let (dense_accs, onehot_accs) = left_vec[..num_rows]
             .par_chunks(rows_per_thread)
             .enumerate()
             .map(|(chunk_idx, row_weights)| {
