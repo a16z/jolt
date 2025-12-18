@@ -76,7 +76,7 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // The overall γ-weights are arranged so that γ multiplies RafVal_j(k) in the final identity.
 //
 // Claims supplied by the accumulator (LHS), all claimed at `SumcheckId::InstructionClaimReduction`
-// and `SumcheckId::ProductVirtualization`:
+// and `SumcheckId::SpartanProductVirtualization`:
 // - rv         := ⟦LookupOutput⟧
 // - left_op    := ⟦LeftLookupOperand⟧
 // - right_op   := ⟦RightLookupOperand⟧
@@ -146,7 +146,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
         );
         let (_, rv_claim_branch) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         // TODO: Make error and move to more appropriate place.
         assert_eq!(rv_claim, rv_claim_branch);
@@ -1307,7 +1307,7 @@ mod tests {
         prover_opening_accumulator.append_virtual(
             prover_transcript,
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
             OpeningPoint::new(r_cycle.clone()),
             rv_claim,
         );
@@ -1357,7 +1357,7 @@ mod tests {
         verifier_opening_accumulator.append_virtual(
             verifier_transcript,
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
             OpeningPoint::new(r_cycle.clone()),
         );
 

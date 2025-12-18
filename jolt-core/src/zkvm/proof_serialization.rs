@@ -37,7 +37,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage7_sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
     #[cfg(test)]
     pub joint_commitment_for_test: Option<PCS::Commitment>,

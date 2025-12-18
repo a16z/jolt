@@ -1,5 +1,4 @@
 use common::jolt_device::MemoryLayout;
-use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 
 use allocative::Allocative;
@@ -133,65 +132,33 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
 
         let in_len = E_lo.len(); // 2^lo_bits
 
-        // Split E_hi into exactly num_threads chunks to minimize allocations
+        // Split E_hi into chunks for parallel processing
         let num_threads = rayon::current_num_threads();
-        let out_len = E_hi.len(); // 2^hi_bits
-        let chunk_size = out_len.div_ceil(num_threads);
-
-        let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
-            .map(|t| {
-                let start = t * chunk_size;
-                let end = std::cmp::min(start + chunk_size, out_len);
-                (start, end)
-            })
-            .filter(|(start, end)| start < end)
-            .collect();
+        let chunk_size = E_hi.len().div_ceil(num_threads);
 
         // Each thread computes partial ra_evals using split-eq optimization
-        let ra_evals: Vec<F> = chunk_ranges
-            .into_par_iter()
-            .map(|(chunk_start, chunk_end)| {
+        let ra_evals: Vec<F> = E_hi
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
                 let mut partial: Vec<F> = unsafe_allocate_zero_vec(K);
 
-                // Reusable local unreduced accumulator (5-limb) and touched flags
-                let mut local_unreduced: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
-                let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
-
-                for c_hi in chunk_start..chunk_end {
-                    let e_hi = E_hi[c_hi];
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, &e_hi) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
                     let c_hi_base = c_hi * in_len;
 
-                    // Clear touched flags and local accumulators for this c_hi
-                    for k in touched.ones() {
-                        local_unreduced[k] = Default::default();
-                    }
-                    touched.clear();
-
-                    // Process all c_lo for this c_hi (contiguous cycles)
                     for c_lo in 0..in_len {
                         let j = c_hi_base + c_lo;
                         if j >= T {
                             break;
                         }
 
-                        // Get 4-limb unreduced representation
-                        let add = *E_lo[c_lo].as_unreduced_ref();
-
                         if let Some(k) =
                             remap_address(trace[j].ram_access().address() as u64, memory_layout)
                         {
-                            let k = k as usize;
-                            if !touched.contains(k) {
-                                touched.insert(k);
-                            }
-                            local_unreduced[k] += add;
+                            partial[k as usize] += e_hi * E_lo[c_lo];
                         }
-                    }
-
-                    // Barrett reduce and scale by E_hi[c_hi], only for touched indices
-                    for k in touched.ones() {
-                        let reduced = F::from_barrett_reduce::<5>(local_unreduced[k]);
-                        partial[k] += e_hi * reduced;
                     }
                 }
 

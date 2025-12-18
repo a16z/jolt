@@ -40,10 +40,10 @@ use crate::{
             AdviceClaimReductionPhase1Params, AdviceClaimReductionPhase1Prover,
             AdviceClaimReductionPhase2Params, AdviceClaimReductionPhase2Prover,
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
-            IncReductionSumcheckParams, IncReductionSumcheckProver,
+            IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
             InstructionLookupsClaimReductionSumcheckProver, RaReductionParams,
-            RamRaReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
+            RamRaClaimReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
             RegistersClaimReductionSumcheckProver,
         },
         config::{get_log_k_chunk, OneHotParams},
@@ -476,11 +476,6 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         #[cfg(not(test))]
         let debug_info = None;
 
-        let dory_state = self
-            .opening_accumulator
-            .dory_opening_state
-            .as_ref()
-            .expect("Stage 7 must be called before finalizing proof");
         let proof = JoltProof {
             opening_claims: Claims(self.opening_accumulator.openings.clone()),
             commitments,
@@ -494,8 +489,6 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             stage5_sumcheck_proof,
             stage6_sumcheck_proof,
             stage7_sumcheck_proof,
-            // Note: verifier no longer uses this field, but kept for proof format compatibility
-            stage7_sumcheck_claims: dory_state.claims.clone(),
             joint_opening_proof,
             #[cfg(test)]
             joint_commitment_for_test: self.joint_commitment_for_test.clone(),
@@ -971,7 +964,6 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         print_current_memory_usage("Stage 5 baseline");
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
-        // Note: RamHammingBooleanity moved to Stage 6 so it shares r_cycle_stage6
         let ram_ra_reduction_params = RaReductionParams::new(
             self.trace.len(),
             &self.one_hot_params,
@@ -991,7 +983,7 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             &self.preprocessing.bytecode,
             &self.program_io.memory_layout,
         );
-        let ram_ra_reduction = RamRaReductionSumcheckProver::initialize(
+        let ram_ra_reduction = RamRaClaimReductionSumcheckProver::initialize(
             ram_ra_reduction_params,
             &self.trace,
             &self.program_io.memory_layout,
@@ -1006,7 +998,7 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
                 "RegistersValEvaluationSumcheckProver",
                 &registers_val_evaluation,
             );
-            print_data_structure_heap_usage("RamRaReductionSumcheckProver", &ram_ra_reduction);
+            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
             print_data_structure_heap_usage("LookupsReadRafSumcheckProver", &lookups_read_raf);
         }
 
@@ -1044,12 +1036,9 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             &mut self.transcript,
         );
 
-        // RamHammingBooleanity - uses r_cycle from Stage 5's RamRaReduction
         let ram_hamming_booleanity_params =
             HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
 
-        // Booleanity: combines instruction, bytecode, and ram booleanity into one
-        // (extracts r_address and r_cycle from Stage 5 internally)
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
@@ -1067,7 +1056,7 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let inc_reduction_params = IncReductionSumcheckParams::new(
+        let inc_reduction_params = IncClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
@@ -1095,7 +1084,6 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
-        // Booleanity prover - handles all three families
         let booleanity = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
@@ -1113,7 +1101,7 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         let lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
         let inc_reduction =
-            IncReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
+            IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 
         // Initialize Phase 1 provers (Stage 6) if advice is present.
         let trusted_advice_phase1 = trusted_advice_phase1_params.map(|params| {
@@ -1145,7 +1133,7 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
-            print_data_structure_heap_usage("IncReductionSumcheckProver", &inc_reduction);
+            print_data_structure_heap_usage("IncClaimReductionSumcheckProver", &inc_reduction);
             if let Some(ref advice) = trusted_advice_phase1 {
                 print_data_structure_heap_usage(
                     "AdviceClaimReductionPhase1Prover(trusted)",
@@ -1195,11 +1183,8 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
     // as part of the batched Stage 8 opening proof.
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
-    /// Produces `DoryOpeningState` for Stage 8.
     #[tracing::instrument(skip_all)]
     fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
-        tracing::info!("Stage 7 proving (HammingWeight claim reduction)");
-
         // Create params and prover for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_params = HammingWeightClaimReductionParams::new(
@@ -1219,7 +1204,8 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
 
         // 3. Run Stage 7 batched sumcheck (address rounds only).
         // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![Box::new(hw_prover)];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
+            vec![Box::new(hw_prover)];
 
         if let Some(gamma) = self.advice_reduction_gamma_trusted {
             if let Some(params) = AdviceClaimReductionPhase2Params::new_trusted(
@@ -1256,179 +1242,17 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             }
         }
 
-        let (sumcheck_proof, r_address_stage7) = BatchedSumcheck::prove(
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
+        tracing::info!("Stage 7 proving");
+        let (sumcheck_proof, _) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
         drop_in_background_thread(instances);
-
-        // 4. Collect all claims for DoryOpeningState
-        let mut claims = Vec::new();
-        let mut polynomials = Vec::new();
-
-        // Dense polynomials: RamInc and RdInc (from IncReduction in Stage 6)
-        // These are at r_cycle_stage6 only (length log_T)
-        let (_ram_inc_point, ram_inc_claim) =
-            self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamInc,
-                SumcheckId::IncReduction,
-            );
-        let (_rd_inc_point, rd_inc_claim) = self
-            .opening_accumulator
-            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::IncReduction);
-
-        #[cfg(test)]
-        {
-            // Verify that Inc openings are at the same point as r_cycle from Booleanity
-            let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::InstructionRa(0),
-                SumcheckId::Booleanity,
-            );
-            let log_k_chunk = self.one_hot_params.log_k_chunk;
-            let r_cycle_from_unified = &unified_point.r[log_k_chunk..];
-
-            debug_assert_eq!(
-                _ram_inc_point.r.as_slice(),
-                r_cycle_from_unified,
-                "RamInc opening point should match r_cycle from Booleanity"
-            );
-            debug_assert_eq!(
-                _rd_inc_point.r.as_slice(),
-                r_cycle_from_unified,
-                "RdInc opening point should match r_cycle from Booleanity"
-            );
-        }
-
-        // Apply Lagrange factor for dense polys: ∏_{i<log_k_chunk} (1 - r_address[i])
-        // Because dense polys have fewer variables, we need to account for this
-        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-
-        claims.push(ram_inc_claim * lagrange_factor);
-        claims.push(rd_inc_claim * lagrange_factor);
-        polynomials.push(CommittedPolynomial::RamInc);
-        polynomials.push(CommittedPolynomial::RdInc);
-
-        // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
-        // These are at (r_address_stage7, r_cycle_stage6)
-        for i in 0..self.one_hot_params.instruction_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::InstructionRa(i),
-                SumcheckId::HammingWeightClaimReduction,
-            );
-            claims.push(claim);
-            polynomials.push(CommittedPolynomial::InstructionRa(i));
-        }
-        for i in 0..self.one_hot_params.bytecode_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::BytecodeRa(i),
-                SumcheckId::HammingWeightClaimReduction,
-            );
-            claims.push(claim);
-            polynomials.push(CommittedPolynomial::BytecodeRa(i));
-        }
-        for i in 0..self.one_hot_params.ram_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamRa(i),
-                SumcheckId::HammingWeightClaimReduction,
-            );
-            claims.push(claim);
-            polynomials.push(CommittedPolynomial::RamRa(i));
-        }
-
-        // 5. Build unified opening point: (r_address_stage7_be || r_cycle_stage6_be)
-        // Note: r_address_stage7 is little-endian from the sumcheck challenge stream, convert to big-endian
-        let mut r_address_stage7_be = r_address_stage7.clone();
-        r_address_stage7_be.reverse();
-
-        // Extract r_cycle from Booleanity (same source as HammingWeightClaimReduction uses)
-        let (unified_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::Booleanity,
-        );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_cycle_stage6_be = &unified_point.r[log_k_chunk..];
-
-        let opening_point = [r_address_stage7_be.as_slice(), r_cycle_stage6_be].concat();
-
-        // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
-        // These are committed with Main context dimensions so they can be batched.
-        // They have fewer variables than main polynomials, so we apply Lagrange factors.
-        if let Some((advice_point, advice_claim)) = self
-            .opening_accumulator
-            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
-        {
-            let advice_vars = advice_point.len();
-            // Dory uses little-endian variable order; the commitment layer reverses the opening point.
-            // Compute the embedding selector for a top-left advice block (balanced dims):
-            // - col selector: fix high column bits to 0  -> ∏_{i=sigma_a..sigma_main-1} (1 - r_cols[i])
-            // - row selector: fix high row bits to 0     -> ∏_{i=nu_a..nu_main-1}   (1 - r_rows[i])
-            let mut r_le = opening_point.clone();
-            r_le.reverse();
-            // Derive (sigma_main, nu_main) from the unified point length (Dory order).
-            // Avoid relying on process-wide DoryGlobals context here.
-            let total_vars = r_le.len();
-            let sigma = total_vars.div_ceil(2);
-            let (r_cols, r_rows) = r_le.split_at(sigma);
-
-            let sigma_a = advice_vars.div_ceil(2);
-            let nu_a = advice_vars - sigma_a;
-
-            let row_factor: F = r_rows
-                .iter()
-                .skip(nu_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-            let col_prefix_factor: F = r_cols
-                .iter()
-                .skip(sigma_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-
-            claims.push(advice_claim * row_factor * col_prefix_factor);
-            polynomials.push(CommittedPolynomial::TrustedAdvice);
-        }
-
-        if let Some((advice_point, advice_claim)) = self
-            .opening_accumulator
-            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
-        {
-            let advice_vars = advice_point.len();
-            let mut r_le = opening_point.clone();
-            r_le.reverse();
-            let total_vars = r_le.len();
-            let sigma = total_vars.div_ceil(2);
-            let (r_cols, r_rows) = r_le.split_at(sigma);
-
-            let sigma_a = advice_vars.div_ceil(2);
-            let nu_a = advice_vars - sigma_a;
-
-            let row_factor: F = r_rows
-                .iter()
-                .skip(nu_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-            let col_prefix_factor: F = r_cols
-                .iter()
-                .skip(sigma_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-
-            claims.push(advice_claim * row_factor * col_prefix_factor);
-            polynomials.push(CommittedPolynomial::UntrustedAdvice);
-        }
-
-        // 6. Sample gamma and compute powers for RLC
-        self.transcript.append_scalars(&claims);
-        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
-
-        // 7. Store DoryOpeningState for Stage 8
-        self.opening_accumulator.dory_opening_state = Some(DoryOpeningState {
-            opening_point,
-            gamma_powers,
-            claims,
-            polynomials,
-        });
 
         sumcheck_proof
     }
@@ -1444,11 +1268,161 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
 
         let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
 
-        let state = self
+        // Get the unified opening point from HammingWeightClaimReduction
+        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
+        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::HammingWeightClaimReduction,
+        );
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+
+        // 1. Collect all (polynomial, claim) pairs
+        let mut polynomial_claims = Vec::new();
+
+        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
+        // These are at r_cycle_stage6 only (length log_T)
+        let (_ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let (_rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
+
+        #[cfg(test)]
+        {
+            // Verify that Inc openings are at the same point as r_cycle from HammingWeightClaimReduction
+            let r_cycle_stage6 = &opening_point.r[log_k_chunk..];
+
+            debug_assert_eq!(
+                _ram_inc_point.r.as_slice(),
+                r_cycle_stage6,
+                "RamInc opening point should match r_cycle from HammingWeightClaimReduction"
+            );
+            debug_assert_eq!(
+                _rd_inc_point.r.as_slice(),
+                r_cycle_stage6,
+                "RdInc opening point should match r_cycle from HammingWeightClaimReduction"
+            );
+        }
+
+        // Apply Lagrange factor for dense polys: ∏_{i<log_k_chunk} (1 - r_address[i])
+        // Because dense polys have fewer variables, we need to account for this
+        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
+        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+
+        // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
+        // These are at (r_address_stage7, r_cycle_stage6)
+        for i in 0..self.one_hot_params.instruction_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.bytecode_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.ram_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
+        }
+
+        // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
+        // These are committed with Main context dimensions so they can be batched.
+        // They have fewer variables than main polynomials, so we apply Lagrange factors.
+        if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
-            .dory_opening_state
-            .as_ref()
-            .expect("Stage 7 must be called before Stage 8");
+            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let advice_vars = advice_point.len();
+            // Dory uses little-endian variable order; the commitment layer reverses the opening point.
+            // Compute the embedding selector for a top-left advice block (balanced dims):
+            // - col selector: fix high column bits to 0  -> ∏_{i=sigma_a..sigma_main-1} (1 - r_cols[i])
+            // - row selector: fix high row bits to 0     -> ∏_{i=nu_a..nu_main-1}   (1 - r_rows[i])
+            let mut r_le = opening_point.r.clone();
+            r_le.reverse();
+            // Derive (sigma_main, nu_main) from the unified point length (Dory order).
+            let total_vars = r_le.len();
+            let sigma = total_vars.div_ceil(2);
+            let (r_cols, r_rows) = r_le.split_at(sigma);
+
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+
+            let row_factor: F = r_rows
+                .iter()
+                .skip(nu_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
+            let col_prefix_factor: F = r_cols
+                .iter()
+                .skip(sigma_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
+
+            polynomial_claims.push((
+                CommittedPolynomial::TrustedAdvice,
+                advice_claim * row_factor * col_prefix_factor,
+            ));
+        }
+
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let advice_vars = advice_point.len();
+            let mut r_le = opening_point.r.clone();
+            r_le.reverse();
+            let total_vars = r_le.len();
+            let sigma = total_vars.div_ceil(2);
+            let (r_cols, r_rows) = r_le.split_at(sigma);
+
+            let sigma_a = advice_vars.div_ceil(2);
+            let nu_a = advice_vars - sigma_a;
+
+            let row_factor: F = r_rows
+                .iter()
+                .skip(nu_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
+            let col_prefix_factor: F = r_cols
+                .iter()
+                .skip(sigma_a)
+                .map(|r| F::one() - (*r).into())
+                .product();
+
+            polynomial_claims.push((
+                CommittedPolynomial::UntrustedAdvice,
+                advice_claim * row_factor * col_prefix_factor,
+            ));
+        }
+
+        // 2. Sample gamma and compute powers for RLC
+        let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
+        self.transcript.append_scalars(&claims);
+        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+
+        // Build DoryOpeningState
+        let state = DoryOpeningState {
+            opening_point: opening_point.r.clone(),
+            gamma_powers,
+            polynomial_claims,
+        };
 
         let streaming_data = Arc::new(RLCStreamingData {
             bytecode: self.preprocessing.bytecode.clone(),
@@ -1478,7 +1452,7 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
-            &state.opening_point,
+            &opening_point.r,
             Some(hint),
             &mut self.transcript,
         )

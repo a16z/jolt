@@ -208,8 +208,14 @@ pub fn compute_all_G<F: JoltField>(
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
 ) -> Vec<Vec<F>> {
-    // Pass 0 as dummy pointer (not used when COLLECT_RA = false)
-    compute_all_G_impl::<F, false>(trace, bytecode, memory_layout, one_hot_params, r_cycle, 0)
+    compute_all_G_impl::<F>(
+        trace,
+        bytecode,
+        memory_layout,
+        one_hot_params,
+        r_cycle,
+        None,
+    )
 }
 
 /// Compute all G evaluations AND RA indices in a single pass over the trace.
@@ -228,18 +234,16 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
     r_cycle: &[F::Challenge],
 ) -> (Vec<Vec<F>>, Vec<RaIndices>) {
     let T = trace.len();
-    // Pre-allocate ra_indices (we'll write to it via raw pointer)
+    // Pre-allocate ra_indices
     let mut ra_indices: Vec<RaIndices> = unsafe_allocate_zero_vec(T);
-    // Convert pointer to usize for thread safety (usize is Send + Sync)
-    let ra_ptr_usize = ra_indices.as_mut_ptr() as usize;
 
-    let G = compute_all_G_impl::<F, true>(
+    let G = compute_all_G_impl::<F>(
         trace,
         bytecode,
         memory_layout,
         one_hot_params,
         r_cycle,
-        ra_ptr_usize,
+        Some(&mut ra_indices),
     );
 
     (G, ra_indices)
@@ -247,19 +251,19 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
 
 /// Core implementation for computing G evaluations.
 ///
-/// When `COLLECT_RA = true`, also writes RaIndices to `ra_indices_ptr_usize`.
+/// When `ra_indices` is `Some`, also writes RaIndices to the provided slice.
 /// This is safe because each cycle index is visited exactly once (disjoint writes).
-///
-/// The pointer is passed as `usize` for thread safety (usize is Send + Sync).
 #[inline(always)]
-fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
+fn compute_all_G_impl<F: JoltField>(
     trace: &[Cycle],
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
-    ra_indices_ptr_usize: usize,
+    ra_indices: Option<&mut [RaIndices]>,
 ) -> Vec<Vec<F>> {
+    // Convert to usize for thread safety (usize is Send + Sync, raw pointers are not Sync)
+    let ra_ptr_usize: usize = ra_indices.map(|s| s.as_mut_ptr() as usize).unwrap_or(0);
     // Verify bounds once at the start
     assert_ra_bounds(one_hot_params);
 
@@ -291,39 +295,58 @@ fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
     let out_len = E_hi.len(); // 2^hi_bits
     let chunk_size = out_len.div_ceil(num_threads);
 
-    // Create index ranges for each thread chunk
-    let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
-        .map(|t| {
-            let start = t * chunk_size;
-            let end = std::cmp::min(start + chunk_size, out_len);
-            (start, end)
-        })
-        .filter(|(start, end)| start < end) // Filter out empty chunks
-        .collect();
+    // Parallel map over thread chunks using deferred reduction
+    E_hi.par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_idx, chunk)| {
+            // Allocate separate arrays per polynomial type
+            let mut partial_instruction: Vec<Vec<F>> = (0..instruction_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut partial_bytecode: Vec<Vec<F>> = (0..bytecode_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut partial_ram: Vec<Vec<F>> =
+                (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
 
-    // Parallel map over thread chunks - each thread allocates exactly once
-    let flat_G: Vec<F> = chunk_ranges
-        .into_par_iter()
-        .map(|(chunk_start, chunk_end)| {
-            // Each thread allocates ONE partial_G for its entire chunk
-            let mut partial_G: Vec<F> = unsafe_allocate_zero_vec(N * K);
+            // Reusable local unreduced accumulators (5-limb) and touched flags
+            let mut local_instruction: Vec<Vec<F::Unreduced<5>>> = (0..instruction_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut local_bytecode: Vec<Vec<F::Unreduced<5>>> = (0..bytecode_d)
+                .map(|_| unsafe_allocate_zero_vec(K))
+                .collect();
+            let mut local_ram: Vec<Vec<F::Unreduced<5>>> =
+                (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
+            let mut touched_instruction: Vec<FixedBitSet> =
+                vec![FixedBitSet::with_capacity(K); instruction_d];
+            let mut touched_bytecode: Vec<FixedBitSet> =
+                vec![FixedBitSet::with_capacity(K); bytecode_d];
+            let mut touched_ram: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); ram_d];
 
-            // Reusable local_unreduced (5-limb) and touched_flags across c_hi iterations
-            // Using 5-limb accumulator since we're adding 4-limb field elements
-            let mut local_unreduced: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(N * K);
-            let mut touched_flags: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); N];
-
-            // Process all c_hi in this thread's chunk
-            for c_hi in chunk_start..chunk_end {
-                let e_hi = E_hi[c_hi];
+            let chunk_start = chunk_idx * chunk_size;
+            for (local_idx, &e_hi) in chunk.iter().enumerate() {
+                let c_hi = chunk_start + local_idx;
                 let c_hi_base = c_hi * in_len;
 
                 // Clear touched flags and local accumulators for this c_hi
-                for poly_idx in 0..N {
-                    for k in touched_flags[poly_idx].ones() {
-                        local_unreduced[poly_idx * K + k] = Default::default();
+                for i in 0..instruction_d {
+                    for k in touched_instruction[i].ones() {
+                        local_instruction[i][k] = Default::default();
                     }
-                    touched_flags[poly_idx].clear();
+                    touched_instruction[i].clear();
+                }
+                for i in 0..bytecode_d {
+                    for k in touched_bytecode[i].ones() {
+                        local_bytecode[i][k] = Default::default();
+                    }
+                    touched_bytecode[i].clear();
+                }
+                for i in 0..ram_d {
+                    for k in touched_ram[i].ones() {
+                        local_ram[i][k] = Default::default();
+                    }
+                    touched_ram[i].clear();
                 }
 
                 // Sequential over c_lo (contiguous cycles for this c_hi)
@@ -333,79 +356,92 @@ fn compute_all_G_impl<F: JoltField, const COLLECT_RA: bool>(
                         break;
                     }
 
-                    // Get 4-limb unreduced representation (copy, since AddAssign takes owned)
+                    // Get 4-limb unreduced representation
                     let add = *E_lo[c_lo].as_unreduced_ref();
 
                     let ra_idx =
                         RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params);
 
                     // Write ra_indices if collecting (disjoint write, each j visited once)
-                    if COLLECT_RA {
+                    if ra_ptr_usize != 0 {
                         // SAFETY: Each j value is unique across all parallel iterations,
                         // so this write is to a disjoint index. No data race possible.
-                        // Convert usize back to pointer.
                         unsafe {
-                            let ra_ptr = ra_indices_ptr_usize as *mut RaIndices;
+                            let ra_ptr = ra_ptr_usize as *mut RaIndices;
                             *ra_ptr.add(j) = ra_idx;
                         }
                     }
 
-                    // InstructionRa contributions
+                    // InstructionRa contributions (unreduced accumulation)
                     for i in 0..instruction_d {
                         let k = ra_idx.instruction[i] as usize;
-                        if !touched_flags[i].contains(k) {
-                            touched_flags[i].insert(k);
+                        if !touched_instruction[i].contains(k) {
+                            touched_instruction[i].insert(k);
                         }
-                        local_unreduced[i * K + k] += add;
+                        local_instruction[i][k] += add;
                     }
 
-                    // BytecodeRa contributions
+                    // BytecodeRa contributions (unreduced accumulation)
                     for i in 0..bytecode_d {
-                        let poly_idx = instruction_d + i;
                         let k = ra_idx.bytecode[i] as usize;
-                        if !touched_flags[poly_idx].contains(k) {
-                            touched_flags[poly_idx].insert(k);
+                        if !touched_bytecode[i].contains(k) {
+                            touched_bytecode[i].insert(k);
                         }
-                        local_unreduced[poly_idx * K + k] += add;
+                        local_bytecode[i][k] += add;
                     }
 
-                    // RamRa contributions (may be None)
+                    // RamRa contributions (may be None, unreduced accumulation)
                     for i in 0..ram_d {
-                        let poly_idx = instruction_d + bytecode_d + i;
                         if let Some(k) = ra_idx.ram[i] {
                             let k = k as usize;
-                            if !touched_flags[poly_idx].contains(k) {
-                                touched_flags[poly_idx].insert(k);
+                            if !touched_ram[i].contains(k) {
+                                touched_ram[i].insert(k);
                             }
-                            local_unreduced[poly_idx * K + k] += add;
+                            local_ram[i][k] += add;
                         }
                     }
                 }
 
                 // Barrett reduce and scale by E_hi[c_hi], only for touched indices
-                for poly_idx in 0..N {
-                    for k in touched_flags[poly_idx].ones() {
-                        let reduced =
-                            F::from_barrett_reduce::<5>(local_unreduced[poly_idx * K + k]);
-                        partial_G[poly_idx * K + k] += e_hi * reduced;
+                for i in 0..instruction_d {
+                    for k in touched_instruction[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_instruction[i][k]);
+                        partial_instruction[i][k] += e_hi * reduced;
+                    }
+                }
+                for i in 0..bytecode_d {
+                    for k in touched_bytecode[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_bytecode[i][k]);
+                        partial_bytecode[i][k] += e_hi * reduced;
+                    }
+                }
+                for i in 0..ram_d {
+                    for k in touched_ram[i].ones() {
+                        let reduced = F::from_barrett_reduce::<5>(local_ram[i][k]);
+                        partial_ram[i][k] += e_hi * reduced;
                     }
                 }
             }
 
-            partial_G
+            // Combine into single Vec<Vec<F>> in order: instruction, bytecode, ram
+            let mut result: Vec<Vec<F>> = Vec::with_capacity(N);
+            result.extend(partial_instruction);
+            result.extend(partial_bytecode);
+            result.extend(partial_ram);
+            result
         })
         .reduce(
-            || unsafe_allocate_zero_vec::<F>(N * K),
+            || (0..N).map(|_| unsafe_allocate_zero_vec::<F>(K)).collect(),
             |mut a, b| {
-                a.par_iter_mut()
-                    .zip(b.par_iter())
-                    .for_each(|(a_val, b_val)| *a_val += *b_val);
+                for (a_poly, b_poly) in a.iter_mut().zip(b.iter()) {
+                    a_poly
+                        .par_iter_mut()
+                        .zip(b_poly.par_iter())
+                        .for_each(|(a_val, b_val)| *a_val += *b_val);
+                }
                 a
             },
-        );
-
-    // Chop flat vector into N vectors of length K
-    flat_G.chunks_exact(K).map(|chunk| chunk.to_vec()).collect()
+        )
 }
 
 // ============================================================================
