@@ -380,7 +380,6 @@ impl<F: JoltField> RLCPolynomial<F> {
         result
     }
 
-
     /// Add the VMV contribution of advice polynomials for the streaming path.
     ///
     /// Advice polynomials are not streamed from the trace; they are stored directly in the
