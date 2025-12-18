@@ -686,21 +686,21 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
             dense_acc.fmadd(&scaled_ram_inc, &diff);
         }
 
-        // One-hot polynomials: accumulate using pre-folded K tables
-        let mut inner_sum = F::zero();
+        // One-hot polynomials: accumulate using pre-folded K tables (unreduced)
+        let mut inner_sum = F::Unreduced::<5>::default();
 
         // Instruction RA chunks
         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
         for (i, table) in self.folded_tables.instruction.iter().enumerate() {
             let k = self.one_hot_params.lookup_index_chunk(lookup_index, i) as usize;
-            inner_sum += table[k];
+            inner_sum += *table[k].as_unreduced_ref();
         }
 
         // Bytecode RA chunks
         let pc = self.bytecode.get_pc(cycle);
         for (i, table) in self.folded_tables.bytecode.iter().enumerate() {
             let k = self.one_hot_params.bytecode_pc_chunk(pc, i) as usize;
-            inner_sum += table[k];
+            inner_sum += *table[k].as_unreduced_ref();
         }
 
         // RAM RA chunks
@@ -708,11 +708,13 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         if let Some(remapped) = remap_address(address, self.memory_layout) {
             for (i, table) in self.folded_tables.ram.iter().enumerate() {
                 let k = self.one_hot_params.ram_address_chunk(remapped, i) as usize;
-                inner_sum += table[k];
+                inner_sum += *table[k].as_unreduced_ref();
             }
         }
 
-        *onehot_acc += row_factor.mul_unreduced::<9>(inner_sum);
+        // Reduce inner_sum before multiplying with row_factor
+        let inner_sum_reduced = F::from_barrett_reduce::<5>(inner_sum);
+        *onehot_acc += row_factor.mul_unreduced::<9>(inner_sum_reduced);
     }
 
     #[inline]
