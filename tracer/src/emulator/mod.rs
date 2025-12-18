@@ -4,6 +4,7 @@ const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_MEMORY_SIZE; // big enough to run L
 
 extern crate fnv;
 
+use crate::emulator::memory::MemoryData;
 use crate::instruction::Cycle;
 
 #[cfg(feature = "std")]
@@ -27,7 +28,7 @@ pub mod memory;
 pub mod mmu;
 pub mod terminal;
 
-use self::cpu::{Cpu, Xlen};
+use self::cpu::{GeneralizedCpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
@@ -49,11 +50,11 @@ use std::path::Path;
 /// emulator.run();
 /// ```
 #[derive(Clone, Debug)]
-pub struct Emulator {
+pub struct GeneralizedEmulator<D> {
     /// addr2line instance for symbol lookups
     pub elf_path: Option<std::path::PathBuf>,
 
-    cpu: Cpu,
+    cpu: GeneralizedCpu<D>,
 
     /// Stores mapping from symbol to virtual address
     symbol_map: FnvHashMap<String, u64>,
@@ -77,23 +78,25 @@ pub struct Emulator {
     pub end_signature_addr: u64,
 }
 
+pub type Emulator = GeneralizedEmulator<Vec<u64>>;
+
 // type alias EmulatorState to Emulator for now
-pub type EmulatorState = Emulator;
+pub type EmulatorState = GeneralizedEmulator<Vec<u64>>;
 
 // Create a new Emulator from a saved state.
 pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
     state
 }
 
-impl Emulator {
+impl<D: MemoryData> GeneralizedEmulator<D> {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
     /// is internally used for transferring input/output data to/from `Emulator`.
     ///
     /// # Arguments
     /// * `terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
-        Emulator {
-            cpu: Cpu::new(terminal),
+        Self {
+            cpu: GeneralizedCpu::new(terminal),
 
             symbol_map: FnvHashMap::default(),
             elf_path: None,
@@ -107,7 +110,7 @@ impl Emulator {
     }
 
     pub fn save_state(&self) -> EmulatorState {
-        self.clone()
+        self.clone().into_vec_memory_emulator()
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
@@ -264,13 +267,13 @@ impl Emulator {
         self.cpu.update_xlen(xlen);
     }
 
-    /// Returns immutable reference to `Cpu`.
-    pub fn get_cpu(&self) -> &Cpu {
+    /// Returns immutable reference to `self.cpu`.
+    pub fn get_cpu(&self) -> &GeneralizedCpu<D> {
         &self.cpu
     }
 
-    /// Returns mutable reference to `Cpu`.
-    pub fn get_mut_cpu(&mut self) -> &mut Cpu {
+    /// Returns mutable reference to `self.cpu`.
+    pub fn get_mut_cpu(&mut self) -> &mut GeneralizedCpu<D> {
         &mut self.cpu
     }
 
@@ -318,5 +321,17 @@ impl Emulator {
         }
 
         Ok(())
+    }
+
+    pub fn into_vec_memory_emulator(self) -> Emulator {
+        Emulator {
+            elf_path: self.elf_path,
+            cpu: self.cpu.into_vec_memory_cpu(),
+            symbol_map: self.symbol_map,
+            is_test: self.is_test,
+            tohost_addr: self.tohost_addr,
+            begin_signature_addr: self.begin_signature_addr,
+            end_signature_addr: self.end_signature_addr,
+        }
     }
 }

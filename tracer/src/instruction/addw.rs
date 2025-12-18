@@ -1,10 +1,10 @@
-use crate::utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator};
+use crate::{
+    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 use super::add::ADD;
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
@@ -21,7 +21,11 @@ declare_riscv_instr!(
 );
 
 impl ADDW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <ADDW as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <ADDW as RISCVInstruction>::RAMAccess,
+    ) {
         cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize]
             .wrapping_add(cpu.x[self.operands.rs2 as usize])
             as i32 as i64;
@@ -29,7 +33,7 @@ impl ADDW {
 }
 
 impl RISCVTrace for ADDW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

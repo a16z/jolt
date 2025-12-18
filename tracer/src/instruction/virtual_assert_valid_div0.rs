@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::{
+        cpu::{GeneralizedCpu, Xlen},
+        memory::MemoryData,
+    },
 };
 
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
@@ -16,7 +19,11 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertValidDiv0 {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertValidDiv0 as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <VirtualAssertValidDiv0 as RISCVInstruction>::RAMAccess,
+    ) {
         let divisor = cpu.x[self.operands.rs1 as usize];
         let quotient = cpu.x[self.operands.rs2 as usize];
         match cpu.xlen {

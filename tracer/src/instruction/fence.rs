@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{declare_riscv_instr, emulator::cpu::GeneralizedCpu};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
@@ -13,7 +13,7 @@ declare_riscv_instr!(
 );
 
 impl FENCE {
-    fn exec(&self, _: &mut Cpu, _: &mut <FENCE as RISCVInstruction>::RAMAccess) {
+    fn exec<D>(&self, _: &mut GeneralizedCpu<D>, _: &mut <FENCE as RISCVInstruction>::RAMAccess) {
         // no-op
     }
 }

@@ -1,8 +1,10 @@
 use common::constants::XLEN;
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::memory::MemoryData;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu, emulator::cpu::Xlen};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 use super::{RISCVInstruction, RISCVTrace};
 
@@ -16,7 +18,11 @@ declare_riscv_instr!(
 );
 
 impl VirtualROTRIW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRIW as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <VirtualROTRIW as RISCVInstruction>::RAMAccess,
+    ) {
         // Extract rotation amount from bitmask: trailing zeros = rotation amount
         let shift = self.operands.imm.trailing_zeros().min(XLEN as u32 / 2);
 

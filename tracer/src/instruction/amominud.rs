@@ -1,3 +1,5 @@
+use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::memory::MemoryData;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
@@ -9,10 +11,7 @@ use super::sd::SD;
 use super::sltu::SLTU;
 use super::xori::XORI;
 use super::Instruction;
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
@@ -25,7 +24,11 @@ declare_riscv_instr!(
 );
 
 impl AMOMINUD {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOMINUD as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <AMOMINUD as RISCVInstruction>::RAMAccess,
+    ) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let compare_value = cpu.x[self.operands.rs2 as usize] as u64;
 
@@ -52,7 +55,7 @@ impl AMOMINUD {
 }
 
 impl RISCVTrace for AMOMINUD {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

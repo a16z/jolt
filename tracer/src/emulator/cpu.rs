@@ -8,6 +8,7 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
 use tracing::{info, warn};
 
+use crate::emulator::memory::MemoryData;
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
@@ -89,7 +90,7 @@ struct ActiveMarker {
 
 /// Emulates a RISC-V CPU core
 #[derive(Clone, Debug)]
-pub struct Cpu {
+pub struct GeneralizedCpu<D> {
     clock: u64,
     pub(crate) xlen: Xlen,
     pub(crate) privilege_mode: PrivilegeMode,
@@ -101,7 +102,7 @@ pub struct Cpu {
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
-    pub mmu: Mmu,
+    pub mmu: Mmu<D>,
     reservation: u64, // @TODO: Should support multiple address reservations
     is_reservation_set: bool,
     _dump_flag: bool,
@@ -114,6 +115,8 @@ pub struct Cpu {
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
 }
+
+pub type Cpu = GeneralizedCpu<Vec<u64>>;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Xlen {
@@ -251,13 +254,13 @@ fn get_trap_cause(trap: &Trap, xlen: &Xlen) -> u64 {
     }
 }
 
-impl Cpu {
+impl<D: MemoryData> GeneralizedCpu<D> {
     /// Creates a new `Cpu`.
     ///
     /// # Arguments
     /// * `Terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
-        let mut cpu = Cpu {
+        let mut cpu = Self {
             clock: 0,
             xlen: Xlen::Bit64,
             privilege_mode: PrivilegeMode::Machine,
@@ -983,7 +986,7 @@ impl Cpu {
     }
 
     /// Returns mutable `Mmu`
-    pub fn get_mut_mmu(&mut self) -> &mut Mmu {
+    pub fn get_mut_mmu(&mut self) -> &mut Mmu<D> {
         &mut self.mmu
     }
 
@@ -1074,9 +1077,38 @@ impl Cpu {
     pub fn get_call_stack(&self) -> &VecDeque<CallFrame> {
         &self.call_stack
     }
+
+    // NOTE: It's an issue here that Cpu implements Drop. The Drop impl doesn't actually do
+    // anything besides warning if the cycle tracing is in the middle of a sequence, but it
+    // prevents us from taking the values out of the Cpu for typing reasons.
+    pub fn into_vec_memory_cpu(self) -> Cpu {
+        Cpu {
+            clock: self.clock,
+            xlen: self.xlen,
+            // XXX Clone required due to Drop impl
+            privilege_mode: self.privilege_mode.clone(),
+            wfi: self.wfi,
+            x: self.x,
+            f: self.f,
+            pc: self.pc,
+            csr: self.csr,
+            // XXX Clone required due to Drop impl
+            mmu: self.mmu.clone().into_vec_memory_mmu(),
+            reservation: self.reservation,
+            is_reservation_set: self.is_reservation_set,
+            _dump_flag: self._dump_flag,
+            unsigned_data_mask: self.unsigned_data_mask,
+            trace_len: self.trace_len,
+            executed_instrs: self.executed_instrs,
+            // XXX Clones required due to Drop impl
+            active_markers: self.active_markers.clone(),
+            vr_allocator: self.vr_allocator.clone(),
+            call_stack: self.call_stack.clone(),
+        }
+    }
 }
 
-impl Drop for Cpu {
+impl<D> Drop for GeneralizedCpu<D> {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
             warn!(

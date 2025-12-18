@@ -7,7 +7,7 @@
 //! Note: SDKs use FormatR in assembly code to be compatible with the `core::arch::asm` macro,
 //! but are parsed as FormatInline instructions by the tracer.
 
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::GeneralizedCpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -75,13 +75,21 @@ impl InstructionFormat for FormatInline {
         }
     }
 
-    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+    fn capture_pre_execution_state<D>(
+        &self,
+        state: &mut Self::RegisterState,
+        cpu: &mut GeneralizedCpu<D>,
+    ) {
         state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
         state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
         state.rs3 = normalize_register_value(cpu.x[self.rs3 as usize], &cpu.xlen);
     }
 
-    fn capture_post_execution_state(&self, _state: &mut Self::RegisterState, _cpu: &mut Cpu) {
+    fn capture_post_execution_state<D>(
+        &self,
+        _state: &mut Self::RegisterState,
+        _cpu: &mut GeneralizedCpu<D>,
+    ) {
         // FormatInline doesn't modify any registers, so nothing to capture post-execution
     }
 

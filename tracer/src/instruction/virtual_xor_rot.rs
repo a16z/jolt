@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{RISCVInstruction, RISCVTrace};
+use crate::declare_riscv_instr;
 use crate::instruction::format::format_r::FormatR;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 macro_rules! declare_xorrot {
     ($name:ident, $rotation:expr) => {
@@ -15,7 +15,11 @@ macro_rules! declare_xorrot {
         );
 
         impl $name {
-            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RAMAccess) {
+            fn exec<D: $crate::emulator::memory::MemoryData>(
+                &self,
+                cpu: &mut $crate::emulator::cpu::GeneralizedCpu<D>,
+                _: &mut <$name as RISCVInstruction>::RAMAccess,
+            ) {
                 let xor_result = cpu.x[self.operands.rs1 as usize] ^ cpu.x[self.operands.rs2 as usize];
                 let rotated = xor_result.rotate_right($rotation);
                 cpu.x[self.operands.rd as usize] = rotated as i64;

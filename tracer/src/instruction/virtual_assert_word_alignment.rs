@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+};
 
 use super::{format::format_assert_align::AssertAlignFormat, RISCVInstruction, RISCVTrace};
 
@@ -13,9 +16,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertWordAlignment {
-    fn exec(
+    fn exec<D: MemoryData>(
         &self,
-        cpu: &mut Cpu,
+        cpu: &mut GeneralizedCpu<D>,
         _: &mut <VirtualAssertWordAlignment as RISCVInstruction>::RAMAccess,
     ) {
         let address = cpu.x[self.operands.rs1 as usize] + self.operands.imm;

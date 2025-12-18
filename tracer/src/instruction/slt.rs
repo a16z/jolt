@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+};
 
 use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
@@ -13,7 +16,11 @@ declare_riscv_instr!(
 );
 
 impl SLT {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLT as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <SLT as RISCVInstruction>::RAMAccess,
+    ) {
         cpu.x[self.operands.rd as usize] =
             match cpu.x[self.operands.rs1 as usize] < cpu.x[self.operands.rs2 as usize] {
                 true => 1,

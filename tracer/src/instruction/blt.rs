@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+};
 
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
 
@@ -13,7 +16,11 @@ declare_riscv_instr!(
 );
 
 impl BLT {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <BLT as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <BLT as RISCVInstruction>::RAMAccess,
+    ) {
         if cpu.sign_extend(cpu.x[self.operands.rs1 as usize])
             < cpu.sign_extend(cpu.x[self.operands.rs2 as usize])
         {

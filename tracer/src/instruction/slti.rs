@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+};
 
 use super::{
     format::{format_i::FormatI, normalize_imm},
@@ -16,7 +19,11 @@ declare_riscv_instr!(
 );
 
 impl SLTI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLTI as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <SLTI as RISCVInstruction>::RAMAccess,
+    ) {
         cpu.x[self.operands.rd as usize] =
             match cpu.x[self.operands.rs1 as usize] < normalize_imm(self.operands.imm, &cpu.xlen) {
                 true => 1,

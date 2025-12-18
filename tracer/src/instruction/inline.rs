@@ -14,7 +14,10 @@ use super::{
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 use crate::{
-    emulator::cpu::{Cpu, Xlen},
+    emulator::{
+        cpu::{GeneralizedCpu, Xlen},
+        memory::MemoryData,
+    },
     instruction::NormalizedInstruction,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
@@ -178,19 +181,23 @@ impl RISCVInstruction for INLINE {
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, ram: &mut Self::RAMAccess) {
+    fn execute<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, ram: &mut Self::RAMAccess) {
         self.exec(cpu, ram)
     }
 }
 
 impl INLINE {
-    pub fn exec(&self, _cpu: &mut Cpu, _: &mut <INLINE as RISCVInstruction>::RAMAccess) {
+    pub fn exec<D>(
+        &self,
+        _cpu: &mut GeneralizedCpu<D>,
+        _: &mut <INLINE as RISCVInstruction>::RAMAccess,
+    ) {
         panic!("Inline instructions must use trace(), not exec()");
     }
 }
 
 impl RISCVTrace for INLINE {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

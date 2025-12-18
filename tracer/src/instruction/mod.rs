@@ -127,7 +127,8 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::{GeneralizedCpu, Xlen};
+use crate::emulator::memory::MemoryData;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
@@ -339,14 +340,14 @@ pub trait RISCVInstruction:
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }
 
-    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
+    fn execute<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, ram_access: &mut Self::RAMAccess);
 }
 
 pub trait RISCVTrace: RISCVInstruction
 where
     RISCVCycle<Self>: Into<Cycle>,
 {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         let mut cycle: RISCVCycle<Self> = RISCVCycle {
             instruction: *self,
             register_state: Default::default(),
@@ -472,7 +473,11 @@ macro_rules! define_rv32im_enums {
         }
 
         impl Instruction {
-            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+            pub fn trace<D: $crate::emulator::memory::MemoryData>(
+                &self,
+                cpu: &mut $crate::emulator::cpu::GeneralizedCpu<D>,
+                trace: Option<&mut Vec<Cycle>>,
+            ) {
                 match self {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
@@ -483,7 +488,7 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn execute(&self, cpu: &mut Cpu) {
+            pub fn execute<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>) {
                 match self {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),

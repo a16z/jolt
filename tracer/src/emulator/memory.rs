@@ -11,6 +11,11 @@ pub trait MemoryData: Clone + Default + std::fmt::Debug {
     // NOTE: This is mutable to support inserting into the checkpointing hashmap. Note that we need
     // to do this even when we're not writing.
     fn get_u64(&mut self, index: usize) -> &mut u64;
+
+    // NOTE: We use this for now to convert into a vector-based emulator, since many parts of the
+    // code seem to assume this is possible. Perhaps we can eliminate that assumption? If so, we
+    // can get rid of this function.
+    fn into_vec_memory(self) -> Vec<u64>;
 }
 
 impl MemoryData for Vec<u64> {
@@ -26,6 +31,10 @@ impl MemoryData for Vec<u64> {
 
     fn get_u64(&mut self, index: usize) -> &mut u64 {
         &mut self[index]
+    }
+
+    fn into_vec_memory(self) -> Vec<u64> {
+        self
     }
 }
 
@@ -54,6 +63,12 @@ impl MemoryData for ReplayableMemory {
         // Return the value at the given index if it's been set. If it hasn't been set, we add it,
         // as if it had been zero initialized.
         self.memory.entry(index).or_insert(0)
+    }
+
+    fn into_vec_memory(self) -> Vec<u64> {
+        (0..self.num_doublewords)
+            .map(|i| *self.memory.get(&i).unwrap_or(&0))
+            .collect()
     }
 }
 
@@ -84,6 +99,10 @@ impl MemoryData for CheckpointingMemory {
         self.checkpoint.entry(index).or_insert(*res);
 
         res
+    }
+
+    fn into_vec_memory(self) -> Vec<u64> {
+        self.memory.data.into_vec_memory()
     }
 }
 
@@ -264,5 +283,11 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     pub fn validate_address(&self, address: u64) -> bool {
         let word_index = (address >> 3) as usize;
         word_index < self.data.get_num_doublewords()
+    }
+
+    pub fn into_vec_memory_backend(self) -> Memory {
+        MemoryBackend {
+            data: self.data.into_vec_memory(),
+        }
     }
 }

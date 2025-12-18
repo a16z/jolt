@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::{
+        cpu::{GeneralizedCpu, Xlen},
+        memory::MemoryData,
+    },
 };
 
 use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
@@ -16,7 +19,11 @@ declare_riscv_instr!(
 );
 
 impl VirtualChangeDivisor {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualChangeDivisor as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <VirtualChangeDivisor as RISCVInstruction>::RAMAccess,
+    ) {
         match cpu.xlen {
             Xlen::Bit32 => {
                 let dividend = cpu.x[self.operands.rs1 as usize] as i32;

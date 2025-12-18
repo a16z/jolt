@@ -2,12 +2,12 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
+use crate::emulator::memory::{MemoryBackend, MemoryData};
 use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
-use super::memory::Memory;
 use super::terminal::Terminal;
 
 /// Emulates Memory Management Unit. It holds the Main memory and peripheral
@@ -16,13 +16,13 @@ use super::terminal::Terminal;
 /// It may also be said Bus.
 /// @TODO: Memory protection is not implemented yet. We should support.
 #[derive(Clone, Debug)]
-pub struct Mmu {
+pub struct Mmu<D> {
     clock: u64,
     xlen: Xlen,
     ppn: u64,
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,
-    pub memory: MemoryWrapper,
+    pub memory: MemoryWrapper<D>,
 
     pub jolt_device: Option<JoltDevice>,
 
@@ -54,7 +54,7 @@ fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
     }
 }
 
-impl Mmu {
+impl<D: MemoryData> Mmu<D> {
     /// Creates a new `Mmu`.
     ///
     /// # Arguments
@@ -1088,19 +1088,32 @@ impl Mmu {
         // println!("PA:{:X}", p_address);
         Ok(p_address)
     }
+
+    pub fn into_vec_memory_mmu(self) -> Mmu<Vec<u64>> {
+        Mmu {
+            clock: self.clock,
+            xlen: self.xlen,
+            ppn: self.ppn,
+            addressing_mode: self.addressing_mode,
+            privilege_mode: self.privilege_mode,
+            memory: self.memory.into_vec_memory_wrapper(),
+            jolt_device: self.jolt_device,
+            mstatus: self.mstatus,
+        }
+    }
 }
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
 #[derive(Clone, Debug)]
-pub struct MemoryWrapper {
-    pub memory: Memory,
+pub struct MemoryWrapper<D> {
+    pub memory: MemoryBackend<D>,
 }
 
-impl MemoryWrapper {
+impl<D: MemoryData> MemoryWrapper<D> {
     fn new() -> Self {
         MemoryWrapper {
-            memory: Memory::default(),
+            memory: MemoryBackend::default(),
         }
     }
 
@@ -1183,6 +1196,12 @@ impl MemoryWrapper {
     pub fn validate_address(&self, address: u64) -> bool {
         self.memory.validate_address(address - DRAM_BASE)
     }
+
+    pub fn into_vec_memory_wrapper(self) -> MemoryWrapper<Vec<u64>> {
+        MemoryWrapper {
+            memory: self.memory.into_vec_memory_backend(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1192,7 +1211,7 @@ mod test_mmu {
     use common::constants::DEFAULT_MEMORY_SIZE;
     use common::jolt_device::MemoryConfig;
 
-    fn setup_mmu() -> Mmu {
+    fn setup_mmu() -> Mmu<Vec<u64>> {
         let terminal = Box::new(DummyTerminal::default());
         let mut mmu = Mmu::new(Xlen::Bit64, terminal);
         let memory_config = MemoryConfig {

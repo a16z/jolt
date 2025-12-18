@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
+use crate::declare_riscv_instr;
+use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::memory::MemoryData;
 use crate::instruction::format::{normalize_imm, NormalizedOperands};
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
     name   = JALR,
@@ -15,7 +17,11 @@ declare_riscv_instr!(
 impl JALR {
     // cpu.pc is pre-incremented by 4 (or 2 for compressed) in tick_operate() before execution,
     // self.address is the instruction address.
-    fn exec(&self, cpu: &mut Cpu, _: &mut <JALR as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <JALR as RISCVInstruction>::RAMAccess,
+    ) {
         let tmp = cpu.sign_extend(cpu.pc as i64);
         cpu.pc = (cpu.x[self.operands.rs1 as usize]
             .wrapping_add(normalize_imm(self.operands.imm, &cpu.xlen)) as u64)

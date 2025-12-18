@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
+use crate::{
+    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    instruction::NormalizedInstruction,
+};
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
@@ -49,7 +52,7 @@ impl RISCVInstruction for VirtualAdvice {
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+    fn execute<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, _: &mut Self::RAMAccess) {
         cpu.x[self.operands.rd as usize] = self.advice as i64;
     }
 }

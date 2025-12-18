@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::declare_riscv_instr;
+use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::memory::MemoryData;
 
 use super::RAMWrite;
 
@@ -15,7 +17,11 @@ declare_riscv_instr!(
 );
 
 impl SD {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SD as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        ram_access: &mut <SD as RISCVInstruction>::RAMAccess,
+    ) {
         // The SD, SW, SH, and SB instructions store 64-bit, 32-bit, 16-bit, and 8-bit values from
         // the low bits of register rs2 to memory respectively.
         *ram_access = cpu
