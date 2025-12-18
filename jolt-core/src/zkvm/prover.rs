@@ -411,28 +411,6 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         // The old separate advice proofs are no longer generated
         let stage7_sumcheck_proof = self.prove_stage7();
 
-        // Build commitments map for Stage 8 (needed for test joint commitment computation)
-        #[cfg(test)]
-        let commitments_map = {
-            let mut map: HashMap<CommittedPolynomial, PCS::Commitment> = HashMap::new();
-            for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
-                .into_iter()
-                .zip_eq(&commitments)
-            {
-                map.insert(polynomial, commitment.clone());
-            }
-            if let Some(ref commitment) = untrusted_advice_commitment {
-                map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
-            }
-            if let Some(ref commitment) = self.advice.trusted_advice_commitment {
-                map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
-            }
-            map
-        };
-
-        #[cfg(test)]
-        let joint_opening_proof = self.prove_stage8(opening_proof_hints, commitments_map);
-        #[cfg(not(test))]
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
@@ -1238,28 +1216,9 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
     /// Stage 8: Dory batch opening proof.
     /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
     #[tracing::instrument(skip_all)]
-    #[cfg(not(test))]
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) -> PCS::Proof {
-        self.prove_stage8_impl(opening_proof_hints, HashMap::new())
-    }
-
-    #[cfg(test)]
-    fn prove_stage8(
-        &mut self,
-        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        commitments_map: HashMap<CommittedPolynomial, PCS::Commitment>,
-    ) -> PCS::Proof {
-        self.prove_stage8_impl(opening_proof_hints, commitments_map)
-    }
-
-    #[tracing::instrument(skip_all)]
-    fn prove_stage8_impl(
-        &mut self,
-        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        #[allow(unused_variables)] commitments_map: HashMap<CommittedPolynomial, PCS::Commitment>,
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
@@ -1417,25 +1376,9 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         // Build DoryOpeningState
         let state = DoryOpeningState {
             opening_point: opening_point.r.clone(),
-            gamma_powers: gamma_powers.clone(),
+            gamma_powers,
             polynomial_claims,
         };
-
-        // Compute joint commitment for test verification
-        #[cfg(test)]
-        {
-            // Accumulate gamma coefficients per polynomial (merge duplicates).
-            let mut rlc_map: HashMap<CommittedPolynomial, F> = HashMap::new();
-            for (gamma, (poly, _)) in gamma_powers.iter().zip(state.polynomial_claims.iter()) {
-                *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-            }
-            let mut commitments = commitments_map;
-            let (coeffs, comms): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-                .into_iter()
-                .map(|(k, v)| (v, commitments.remove(&k).unwrap()))
-                .unzip();
-            self.joint_commitment_for_test = Some(PCS::combine_commitments(&comms, &coeffs));
-        }
 
         let streaming_data = Arc::new(RLCStreamingData {
             bytecode: self.preprocessing.bytecode.clone(),
