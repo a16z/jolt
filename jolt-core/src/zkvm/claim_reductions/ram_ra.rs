@@ -331,21 +331,13 @@ impl<F: JoltField> PhaseAddressProver<F> {
         let num_threads = rayon::current_num_threads();
         let chunk_size = out_len.div_ceil(num_threads);
 
-        let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
-            .map(|t| {
-                let start = t * chunk_size;
-                let end = std::cmp::min(start + chunk_size, out_len);
-                (start, end)
-            })
-            .filter(|(start, end)| start < end)
-            .collect();
-
         // Each thread computes partial G_A and G_B directly
         // G_A = sum_raf + gamma * sum_val, G_B = sum_rw + gamma * sum_val
         // Since E_val_hi is pre-scaled by gamma, we can combine on the fly
-        let (G_A, G_B): (Vec<F>, Vec<F>) = chunk_ranges
-            .into_par_iter()
-            .map(|(chunk_start, chunk_end)| {
+        let (G_A, G_B): (Vec<F>, Vec<F>) = E_raf_hi
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
                 // Each thread allocates partial G_A and G_B directly (2 instead of 3)
                 let mut partial_G_A: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut partial_G_B: Vec<F> = unsafe_allocate_zero_vec(K);
@@ -356,8 +348,9 @@ impl<F: JoltField> PhaseAddressProver<F> {
                 let mut local_val: Vec<F::Unreduced<5>> = unsafe_allocate_zero_vec(K);
                 let mut touched: FixedBitSet = FixedBitSet::with_capacity(K);
 
-                for c_hi in chunk_start..chunk_end {
-                    let e_hi_raf = E_raf_hi[c_hi];
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, &e_hi_raf) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
                     let e_hi_rw = E_rw_hi[c_hi];
                     let e_hi_val_scaled = E_val_hi_scaled[c_hi]; // Already scaled by gamma
                     let c_hi_base = c_hi * in_len;
