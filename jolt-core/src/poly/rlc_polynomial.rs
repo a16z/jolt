@@ -409,27 +409,21 @@ impl<F: JoltField> RLCPolynomial<F> {
         // Setup: precompute coefficients, row factors, and folded one-hot tables.
         let setup = VmvSetup::new(ctx, left_vec, num_rows);
 
-        // Divide rows evenly among threads.
+        // Divide rows evenly among threads using par_chunks on left_vec
         let num_threads = rayon::current_num_threads();
         let rows_per_thread = num_rows.div_ceil(num_threads);
-        let chunk_ranges: Vec<(usize, usize)> = (0..num_threads)
-            .map(|t| {
-                let start = t * rows_per_thread;
-                let end = std::cmp::min(start + rows_per_thread, num_rows);
-                (start, end)
-            })
-            .filter(|(start, end)| start < end)
-            .collect();
 
-        let (dense_accs, onehot_accs) = chunk_ranges
-            .into_par_iter()
-            .map(|(row_start, row_end)| {
+        let (dense_accs, onehot_accs) = left_vec
+            .par_chunks(rows_per_thread)
+            .enumerate()
+            .map(|(chunk_idx, row_weights)| {
                 let (mut dense_accs, mut onehot_accs) =
                     VmvSetup::<F>::create_accumulators(num_columns);
 
-                for row_idx in row_start..row_end {
+                let row_start = chunk_idx * rows_per_thread;
+                for (local_idx, &row_weight) in row_weights.iter().enumerate() {
+                    let row_idx = row_start + local_idx;
                     let chunk_start = row_idx * num_columns;
-                    let row_weight = left_vec[row_idx];
 
                     // Row-scaled dense coefficients.
                     let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
