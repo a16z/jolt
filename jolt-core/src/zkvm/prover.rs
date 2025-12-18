@@ -21,7 +21,8 @@ use crate::{
         commitment::{commitment_scheme::StreamingCommitmentScheme, dory::DoryGlobals},
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            DoryOpeningState, OpeningAccumulator, ProverOpeningAccumulator, SumcheckId,
+            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator,
+            ProverOpeningAccumulator, SumcheckId,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
     },
@@ -283,6 +284,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         if max_sigma_a > 0 || max_nu_a > 0 {
             // Require main matrix dimensions to be large enough to embed advice as the top-left
             // block: sigma_main >= sigma_a and nu_main >= nu_a.
+            //
+            // This loop doubles padded_trace_len until the main Dory matrix is large enough.
+            // Each doubling increases log_t by 1, which increases total_vars by 1 (since
+            // log_k_chunk stays constant for a given log_t range), increasing both sigma_main
+            // and nu_main by roughly 0.5 each iteration.
             while {
                 let log_t = padded_trace_len.log_2();
                 let log_k_chunk = get_log_k_chunk_from_log_t(log_t);
@@ -292,9 +298,24 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 sigma_main < max_sigma_a || nu_main < max_nu_a
             } {
                 if padded_trace_len >= preprocessing.max_padded_trace_length {
+                    // This is a configuration error: the preprocessing was set up with
+                    // max_padded_trace_length too small for the configured advice sizes.
+                    // Cannot recover at runtime - user must fix their configuration.
+                    let log_t = padded_trace_len.log_2();
+                    let log_k_chunk = get_log_k_chunk_from_log_t(log_t);
+                    let total_vars = log_k_chunk + log_t;
+                    let sigma_main = total_vars.div_ceil(2);
+                    let nu_main = total_vars - sigma_main;
                     panic!(
-                        "Trace too small to embed advice into single Dory opening: need (sigma_main, nu_main) >= ({max_sigma_a}, {max_nu_a}), \
-but reached max_padded_trace_length={} (increase max_trace_length in preprocessing or reduce max_*_advice_size)",
+                        "Configuration error: trace too small to embed advice into Dory batch opening.\n\
+                        Current: (sigma_main={}, nu_main={}) from total_vars={} (log_t={}, log_k_chunk={})\n\
+                        Required: (sigma_a={}, nu_a={}) for advice embedding\n\
+                        Solutions:\n\
+                        1. Increase max_trace_length in preprocessing (currently {})\n\
+                        2. Reduce max_trusted_advice_size or max_untrusted_advice_size\n\
+                        3. Run a program with more cycles",
+                        sigma_main, nu_main, total_vars, log_t, log_k_chunk,
+                        max_sigma_a, max_nu_a,
                         preprocessing.max_padded_trace_length
                     );
                 }
@@ -1053,6 +1074,11 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 
         // Initialize Phase 1 provers (Stage 6) if advice is present.
+        // Note: We clone the advice polynomial here because:
+        // 1. Phase1 (Stage 6) destructively binds cycle variables
+        // 2. Phase2 (Stage 7) needs a fresh copy to bind address variables
+        // 3. Stage 8 RLC needs the original polynomial
+        // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
         let trusted_advice_phase1 = trusted_advice_phase1_params.map(|params| {
             self.advice_reduction_gamma_trusted = Some(params.gamma);
             let poly = self
@@ -1292,41 +1318,17 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         }
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
-        // These are committed with Main context dimensions so they can be batched.
-        // They have fewer variables than main polynomials, so we apply Lagrange factors.
+        // These are committed with smaller dimensions, so we apply Lagrange factors to embed
+        // them in the top-left block of the main Dory matrix.
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
             .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
         {
-            let advice_vars = advice_point.len();
-            // Dory uses little-endian variable order; the commitment layer reverses the opening point.
-            // Compute the embedding selector for a top-left advice block (balanced dims):
-            // - col selector: fix high column bits to 0  -> ∏_{i=sigma_a..sigma_main-1} (1 - r_cols[i])
-            // - row selector: fix high row bits to 0     -> ∏_{i=nu_a..nu_main-1}   (1 - r_rows[i])
-            let mut r_le = opening_point.r.clone();
-            r_le.reverse();
-            // Derive (sigma_main, nu_main) from the unified point length (Dory order).
-            let total_vars = r_le.len();
-            let sigma = total_vars.div_ceil(2);
-            let (r_cols, r_rows) = r_le.split_at(sigma);
-
-            let sigma_a = advice_vars.div_ceil(2);
-            let nu_a = advice_vars - sigma_a;
-
-            let row_factor: F = r_rows
-                .iter()
-                .skip(nu_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-            let col_prefix_factor: F = r_cols
-                .iter()
-                .skip(sigma_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
-                advice_claim * row_factor * col_prefix_factor,
+                advice_claim * lagrange_factor,
             ));
         }
 
@@ -1334,30 +1336,11 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
             .opening_accumulator
             .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
         {
-            let advice_vars = advice_point.len();
-            let mut r_le = opening_point.r.clone();
-            r_le.reverse();
-            let total_vars = r_le.len();
-            let sigma = total_vars.div_ceil(2);
-            let (r_cols, r_rows) = r_le.split_at(sigma);
-
-            let sigma_a = advice_vars.div_ceil(2);
-            let nu_a = advice_vars - sigma_a;
-
-            let row_factor: F = r_rows
-                .iter()
-                .skip(nu_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-            let col_prefix_factor: F = r_cols
-                .iter()
-                .skip(sigma_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
-                advice_claim * row_factor * col_prefix_factor,
+                advice_claim * lagrange_factor,
             ));
         }
 
@@ -1523,8 +1506,8 @@ mod tests {
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningAccumulator, SumcheckId},
     };
-    use crate::zkvm::witness::CommittedPolynomial;
     use crate::utils::math::Math;
+    use crate::zkvm::witness::CommittedPolynomial;
     use crate::zkvm::{
         prover::JoltProverPreprocessing,
         ram::populate_memory_states,

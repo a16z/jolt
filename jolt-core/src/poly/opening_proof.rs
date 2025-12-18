@@ -683,3 +683,54 @@ where
         }
     }
 }
+
+/// Computes the Lagrange factor for embedding a smaller "advice" polynomial into the top-left
+/// block of the main Dory matrix.
+///
+/// Advice polynomials have fewer variables than main polynomials. To batch them together,
+/// we embed advice in the top-left corner of the larger matrix and multiply by a Lagrange
+/// selector that is 1 on that block and 0 elsewhere:
+///
+/// ```text
+/// Lagrange factor = ∏_{i=nu_a..nu_main} (1 - r_rows[i]) × ∏_{i=sigma_a..sigma_main} (1 - r_cols[i])
+/// ```
+///
+/// # Arguments
+/// - `opening_point_be`: The unified opening point in big-endian order
+/// - `advice_vars`: Number of variables in the advice polynomial
+///
+/// # Returns
+/// The Lagrange factor as a field element
+pub fn compute_advice_lagrange_factor<F: JoltField>(
+    opening_point_be: &[F::Challenge],
+    advice_vars: usize,
+) -> F {
+    // Convert to little-endian (Dory order)
+    let mut r_le: Vec<F::Challenge> = opening_point_be.to_vec();
+    r_le.reverse();
+
+    // Derive main matrix dimensions from the unified point length
+    let total_vars = r_le.len();
+    let sigma_main = total_vars.div_ceil(2);
+    let (r_cols, r_rows) = r_le.split_at(sigma_main);
+
+    // Advice dimensions (balanced policy)
+    let sigma_a = advice_vars.div_ceil(2);
+    let nu_a = advice_vars - sigma_a;
+
+    // Row selector: ∏_{i=nu_a..nu_main} (1 - r_rows[i])
+    let row_factor: F = r_rows
+        .iter()
+        .skip(nu_a)
+        .map(|r| F::one() - (*r).into())
+        .product();
+
+    // Column selector: ∏_{i=sigma_a..sigma_main} (1 - r_cols[i])
+    let col_factor: F = r_cols
+        .iter()
+        .skip(sigma_a)
+        .map(|r| F::one() - (*r).into())
+        .product();
+
+    row_factor * col_factor
+}

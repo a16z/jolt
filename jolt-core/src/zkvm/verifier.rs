@@ -48,7 +48,8 @@ use crate::zkvm::{
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        DoryOpeningState, OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
+        compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
+        SumcheckId, VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -570,36 +571,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
-        // These are committed with Main context dimensions so they can be batched.
-        // They have fewer variables than main polynomials, so we apply Lagrange factors.
+        // These are committed with smaller dimensions, so we apply Lagrange factors to embed
+        // them in the top-left block of the main Dory matrix.
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
             .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
         {
-            let advice_vars = advice_point.len();
-            let mut r_le = opening_point.r.clone();
-            r_le.reverse();
-            let total_vars = r_le.len();
-            let sigma = total_vars.div_ceil(2);
-            let (r_cols, r_rows) = r_le.split_at(sigma);
-
-            let sigma_a = advice_vars.div_ceil(2);
-            let nu_a = advice_vars - sigma_a;
-
-            let row_factor: F = r_rows
-                .iter()
-                .skip(nu_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-            let col_prefix_factor: F = r_cols
-                .iter()
-                .skip(sigma_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
-                advice_claim * row_factor * col_prefix_factor,
+                advice_claim * lagrange_factor,
             ));
         }
 
@@ -607,30 +589,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .opening_accumulator
             .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
         {
-            let advice_vars = advice_point.len();
-            let mut r_le = opening_point.r.clone();
-            r_le.reverse();
-            let total_vars = r_le.len();
-            let sigma = total_vars.div_ceil(2);
-            let (r_cols, r_rows) = r_le.split_at(sigma);
-
-            let sigma_a = advice_vars.div_ceil(2);
-            let nu_a = advice_vars - sigma_a;
-
-            let row_factor: F = r_rows
-                .iter()
-                .skip(nu_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-            let col_prefix_factor: F = r_cols
-                .iter()
-                .skip(sigma_a)
-                .map(|r| F::one() - (*r).into())
-                .product();
-
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
-                advice_claim * row_factor * col_prefix_factor,
+                advice_claim * lagrange_factor,
             ));
         }
 
