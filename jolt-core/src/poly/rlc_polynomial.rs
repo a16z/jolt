@@ -677,7 +677,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         onehot_acc: &mut F::Unreduced<9>,
     ) {
         // Dense polynomials: accumulate scaled_coeff * (post - pre)
-        let (_, pre_value, post_value) = cycle.rd_write();
+        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
         let diff = s64_from_diff_u64s(post_value, pre_value);
         dense_acc.fmadd(&scaled_rd_inc, &diff);
 

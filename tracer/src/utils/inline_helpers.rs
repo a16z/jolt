@@ -151,9 +151,12 @@ impl InstrAssembler {
 
     /// Validates that rd is an inline virtual register (not RISC-V or reserved virtual registers).
     #[inline]
-    fn is_valid_virtual_rd(virtual_rd: u8) -> bool {
-        virtual_rd == 0
-            || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
+    fn is_valid_virtual_rd(virtual_rd: Option<u8>) -> bool {
+        if let Some(rd) = virtual_rd {
+            rd == 0 || rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
+        } else {
+            true
+        }
     }
 
     #[inline]
@@ -168,7 +171,7 @@ impl InstrAssembler {
                     RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
                 panic!(
                     "Inline instruction attempted to write to register {}, but must use registers >= {}",
-                    normalized.operands.rd, MIN_INLINE_REG
+                    normalized.operands.rd.unwrap(), MIN_INLINE_REG
                 );
             }
         }
@@ -190,9 +193,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd,
-                rs1,
-                rs2,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: Some(rs2),
                 imm: 0,
             },
             is_compressed: false,
@@ -215,9 +218,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd,
-                rs1,
-                rs2: 0,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: None,
                 imm: imm as i128,
             },
             is_compressed: false,
@@ -240,9 +243,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd: 0,
-                rs1,
-                rs2,
+                rd: None,
+                rs1: Some(rs1),
+                rs2: Some(rs2),
                 imm: imm as i128,
             },
             is_compressed: false,
@@ -265,9 +268,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd,
-                rs1,
-                rs2: 0,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: None,
                 imm: imm as i128,
             },
             is_compressed: false,
@@ -290,9 +293,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd: 0,
-                rs1,
-                rs2,
+                rd: None,
+                rs1: Some(rs1),
+                rs2: Some(rs2),
                 imm: imm as i128,
             },
             is_compressed: false,
@@ -311,9 +314,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd,
-                rs1: 0,
-                rs2: 0,
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
                 imm: imm as i128,
             },
             is_compressed: false,
@@ -332,9 +335,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd,
-                rs1: 0,
-                rs2: 0,
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
                 imm: imm as i128,
             },
             is_compressed: false,
@@ -357,9 +360,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd,
-                rs1,
-                rs2: 0,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: None,
                 imm: imm as i128,
             },
             is_compressed: false,
@@ -382,9 +385,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd,
-                rs1,
-                rs2,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: Some(rs2),
                 imm: 0,
             },
             is_compressed: false,
@@ -406,9 +409,9 @@ impl InstrAssembler {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
-                rd: 0,
-                rs1,
-                rs2: 0,
+                rd: None,
+                rs1: Some(rs1),
+                rs2: None,
                 imm: imm as i128,
             },
             is_compressed: false,

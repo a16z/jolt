@@ -236,9 +236,9 @@ impl<F: JoltField> RegistersPhase1Prover<F> {
                         let x_lo = chunk_i * BLOCK_SIZE + i;
                         let x = x_lo + (x_hi << prefix_n_vars);
                         let cycle = &trace[x];
-                        let rd_write_value = cycle.rd_write().2;
-                        let rs1_read_value = cycle.rs1_read().1;
-                        let rs2_read_value = cycle.rs2_read().1;
+                        let rd_write_value = cycle.rd_write().unwrap_or_default().2;
+                        let rs1_read_value = cycle.rs1_read().unwrap_or_default().1;
+                        let rs2_read_value = cycle.rs2_read().unwrap_or_default().1;
 
                         q_rd_write_value[i] +=
                             eq_suffix_evals[x_hi].mul_u64_unreduced(rd_write_value);
@@ -327,9 +327,9 @@ impl<F: JoltField> RegistersPhase2Prover<F> {
                     let mut rs2_read_value_eval_unreduced = F::Unreduced::<6>::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
-                        let rd_write_value = cycle.rd_write().2;
-                        let rs1_value_eval = cycle.rs1_read().1;
-                        let rs2_value_eval = cycle.rs2_read().1;
+                        let rd_write_value = cycle.rd_write().unwrap_or_default().2;
+                        let rs1_value_eval = cycle.rs1_read().unwrap_or_default().1;
+                        let rs2_value_eval = cycle.rs2_read().unwrap_or_default().1;
                         rd_write_value_eval_unreduced +=
                             eq_evals[i].mul_u64_unreduced(rd_write_value);
                         rs1_read_value_eval_unreduced +=

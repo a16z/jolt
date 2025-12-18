@@ -26,8 +26,8 @@ impl InstructionRegisterState for RegisterStateFormatU {
         }
     }
 
-    fn rd_values(&self) -> (u64, u64) {
-        self.rd
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        Some(self.rd)
     }
 }
 
@@ -70,7 +70,7 @@ impl InstructionFormat for FormatU {
 impl From<NormalizedOperands> for FormatU {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rd: operands.rd,
+            rd: operands.rd.unwrap(),
             imm: operands.imm as u64,
         }
     }
@@ -79,9 +79,9 @@ impl From<NormalizedOperands> for FormatU {
 impl From<FormatU> for NormalizedOperands {
     fn from(format: FormatU) -> Self {
         Self {
-            rs1: 0,
-            rs2: 0,
-            rd: format.rd,
+            rs1: None,
+            rs2: None,
+            rd: Some(format.rd),
             imm: format.imm as i128,
         }
     }

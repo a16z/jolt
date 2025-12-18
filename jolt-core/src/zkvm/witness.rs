@@ -70,7 +70,7 @@ impl CommittedPolynomial {
                 let row: Vec<i128> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let (_, pre_value, post_value) = cycle.rd_write();
+                        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
@@ -168,7 +168,7 @@ impl CommittedPolynomial {
                 let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let (_, pre_value, post_value) = cycle.rd_write();
+                        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
