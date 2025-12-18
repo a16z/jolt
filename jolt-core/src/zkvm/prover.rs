@@ -411,50 +411,28 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         // The old separate advice proofs are no longer generated
         let stage7_sumcheck_proof = self.prove_stage7();
 
+        // Build commitments map for Stage 8 (needed for test joint commitment computation)
         #[cfg(test)]
-        {
-            // Compute and store the joint commitment for cross-checking in the verifier.
-            // This helps catch commitment/RLC mismatches early when changing batching logic.
-            if let Some(ref state) = self.opening_accumulator.dory_opening_state {
-                let mut commitments_map: HashMap<CommittedPolynomial, PCS::Commitment> =
-                    HashMap::new();
-                for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
-                    .into_iter()
-                    .zip_eq(&commitments)
-                {
-                    commitments_map.insert(polynomial, commitment.clone());
-                }
-                if let Some(ref commitment) = untrusted_advice_commitment {
-                    if state
-                        .polynomials
-                        .contains(&CommittedPolynomial::UntrustedAdvice)
-                    {
-                        commitments_map
-                            .insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
-                    }
-                }
-                if let Some(ref commitment) = self.advice.trusted_advice_commitment {
-                    if state
-                        .polynomials
-                        .contains(&CommittedPolynomial::TrustedAdvice)
-                    {
-                        commitments_map
-                            .insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
-                    }
-                }
-
-                // Accumulate gamma coefficients per polynomial (merge duplicates).
-                let mut rlc_map = HashMap::new();
-                for (gamma, poly) in state.gamma_powers.iter().zip(state.polynomials.iter()) {
-                    *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-                }
-                let (coeffs, comms): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-                    .into_iter()
-                    .map(|(k, v)| (v, commitments_map.remove(&k).unwrap()))
-                    .unzip();
-                self.joint_commitment_for_test = Some(PCS::combine_commitments(&comms, &coeffs));
+        let commitments_map = {
+            let mut map: HashMap<CommittedPolynomial, PCS::Commitment> = HashMap::new();
+            for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
+                .into_iter()
+                .zip_eq(&commitments)
+            {
+                map.insert(polynomial, commitment.clone());
             }
-        }
+            if let Some(ref commitment) = untrusted_advice_commitment {
+                map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
+            }
+            if let Some(ref commitment) = self.advice.trusted_advice_commitment {
+                map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
+            }
+            map
+        };
+
+        #[cfg(test)]
+        let joint_opening_proof = self.prove_stage8(opening_proof_hints, commitments_map);
+        #[cfg(not(test))]
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
@@ -1260,9 +1238,28 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
     /// Stage 8: Dory batch opening proof.
     /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
     #[tracing::instrument(skip_all)]
+    #[cfg(not(test))]
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> PCS::Proof {
+        self.prove_stage8_impl(opening_proof_hints, HashMap::new())
+    }
+
+    #[cfg(test)]
+    fn prove_stage8(
+        &mut self,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        commitments_map: HashMap<CommittedPolynomial, PCS::Commitment>,
+    ) -> PCS::Proof {
+        self.prove_stage8_impl(opening_proof_hints, commitments_map)
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prove_stage8_impl(
+        &mut self,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        #[allow(unused_variables)] commitments_map: HashMap<CommittedPolynomial, PCS::Commitment>,
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
@@ -1420,9 +1417,25 @@ but reached max_padded_trace_length={} (increase max_trace_length in preprocessi
         // Build DoryOpeningState
         let state = DoryOpeningState {
             opening_point: opening_point.r.clone(),
-            gamma_powers,
+            gamma_powers: gamma_powers.clone(),
             polynomial_claims,
         };
+
+        // Compute joint commitment for test verification
+        #[cfg(test)]
+        {
+            // Accumulate gamma coefficients per polynomial (merge duplicates).
+            let mut rlc_map: HashMap<CommittedPolynomial, F> = HashMap::new();
+            for (gamma, (poly, _)) in gamma_powers.iter().zip(state.polynomial_claims.iter()) {
+                *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
+            }
+            let mut commitments = commitments_map;
+            let (coeffs, comms): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
+                .into_iter()
+                .map(|(k, v)| (v, commitments.remove(&k).unwrap()))
+                .unzip();
+            self.joint_commitment_for_test = Some(PCS::combine_commitments(&comms, &coeffs));
+        }
 
         let streaming_data = Arc::new(RLCStreamingData {
             bytecode: self.preprocessing.bytecode.clone(),
@@ -1572,8 +1585,9 @@ mod tests {
             dory::{DoryCommitmentScheme, DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::SumcheckId,
+        opening_proof::{OpeningAccumulator, SumcheckId},
     };
+    use crate::zkvm::witness::CommittedPolynomial;
     use crate::utils::math::Math;
     use crate::zkvm::{
         prover::JoltProverPreprocessing,
@@ -2181,12 +2195,14 @@ mod tests {
         let debug_info = debug_info.expect("expected debug_info in tests");
 
         // Derive point_dory (little-endian Dory order): [cycle6_le || addr7_le]
-        let state = debug_info
+        // Get the unified opening point from HammingWeightClaimReduction
+        let (opening_point, _) = debug_info
             .opening_accumulator
-            .dory_opening_state
-            .as_ref()
-            .expect("expected dory_opening_state");
-        let mut point_dory_le = state.opening_point.clone();
+            .get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(0),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+        let mut point_dory_le = opening_point.r.clone();
         point_dory_le.reverse();
 
         let total_vars = point_dory_le.len();
