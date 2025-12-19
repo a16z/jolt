@@ -30,7 +30,7 @@ pub struct OneHotPolynomial<F: JoltField> {
     /// In other words, the raf/waf corresponding to this
     /// ra/wa polynomial.
     /// If empty, this polynomial is 0 for all j.
-    pub nonzero_indices: Arc<Vec<Option<u16>>>,
+    pub nonzero_indices: Arc<Vec<Option<u8>>>,
     /// PhantomData to hold the field type parameter.
     _marker: PhantomData<F>,
 }
@@ -73,7 +73,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 let log_K = self.K.log_2();
                 // NOTE: log_K variables are reversed for testing purposes of low to high
                 let k = (k & !((1 << log_K) - 1))
-                    | ((k & ((1 << log_K) - 1)).reverse_bits() >> (u16::BITS as usize - log_K));
+                    | ((k & ((1 << log_K) - 1)).reverse_bits() >> (u8::BITS as usize - log_K));
                 dense_coeffs[k as usize * T + t] = F::one();
             }
         }
@@ -98,9 +98,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .sum()
     }
 
-    pub fn from_indices(nonzero_indices: Vec<Option<u16>>, K: usize) -> Self {
+    pub fn from_indices(nonzero_indices: Vec<Option<u8>>, K: usize) -> Self {
         debug_assert_eq!(DoryGlobals::get_T(), nonzero_indices.len());
-        assert!(K <= 1usize << u16::BITS, "K must be <= 65536 for indices");
+        assert!(K <= 1usize << u8::BITS, "K must be <= 256 for indices");
 
         Self {
             K,
@@ -404,7 +404,7 @@ mod tests {
         let mut rng = test_rng();
 
         let nonzero_indices: Vec<_> = (0..T)
-            .map(|_| Some((rng.next_u64() % K as u64) as u16))
+            .map(|_| Some((rng.next_u64() % K as u64) as u8))
             .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let dense_poly = one_hot_poly.to_dense_poly();

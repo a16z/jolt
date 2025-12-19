@@ -79,6 +79,11 @@ impl OneHotParams {
         bytecode_k: usize,
         ram_k: usize,
     ) -> Self {
+        // log_k_chunk must be at most 8 so that chunk indices fit in u8
+        assert!(
+            log_k_chunk <= 8,
+            "log_k_chunk must be <= 8 to fit in u8, got {log_k_chunk}",
+        );
         let instruction_d = compute_d(LOG_K, log_k_chunk);
         let bytecode_d = compute_d(bytecode_k.log_2(), log_k_chunk);
         let ram_d = compute_d(ram_k.log_2(), log_k_chunk);
@@ -108,18 +113,18 @@ impl OneHotParams {
     }
 
     #[inline(always)]
-    pub fn ram_address_chunk(&self, address: u64, idx: usize) -> u16 {
-        ((address >> self.ram_shifts[idx]) & (self.k_chunk - 1) as u64) as u16
+    pub fn ram_address_chunk(&self, address: u64, idx: usize) -> u8 {
+        ((address >> self.ram_shifts[idx]) & (self.k_chunk - 1) as u64) as u8
     }
 
     #[inline(always)]
-    pub fn bytecode_pc_chunk(&self, pc: usize, idx: usize) -> u16 {
-        ((pc >> self.bytecode_shifts[idx]) & (self.k_chunk - 1)) as u16
+    pub fn bytecode_pc_chunk(&self, pc: usize, idx: usize) -> u8 {
+        ((pc >> self.bytecode_shifts[idx]) & (self.k_chunk - 1)) as u8
     }
 
     #[inline(always)]
-    pub fn lookup_index_chunk(&self, index: u128, idx: usize) -> u16 {
-        ((index >> self.instruction_shifts[idx]) & (self.k_chunk - 1) as u128) as u16
+    pub fn lookup_index_chunk(&self, index: u128, idx: usize) -> u8 {
+        ((index >> self.instruction_shifts[idx]) & (self.k_chunk - 1) as u128) as u8
     }
 
     pub fn compute_r_address_chunks<F: JoltField>(
