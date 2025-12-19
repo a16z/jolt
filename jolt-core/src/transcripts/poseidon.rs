@@ -54,7 +54,11 @@ impl PoseidonTranscript {
     /// # Panics
     /// Panics if `bytes.len() != 32`.
     fn hash_bytes32_and_update(&mut self, bytes: &[u8]) {
-        assert_eq!(bytes.len(), 32, "hash_bytes32_and_update requires exactly 32 bytes");
+        assert_eq!(
+            bytes.len(),
+            32,
+            "hash_bytes32_and_update requires exactly 32 bytes"
+        );
 
         let mut poseidon = Self::hasher();
 
@@ -71,9 +75,7 @@ impl PoseidonTranscript {
             .expect("Poseidon hash failed");
 
         let mut new_state = [0u8; 32];
-        output
-            .serialize_uncompressed(&mut new_state[..])
-            .unwrap();
+        output.serialize_uncompressed(&mut new_state[..]).unwrap();
 
         // serialize_uncompressed gives LE bytes, keep as is (no reverse)
         self.update_state(new_state);
@@ -217,9 +219,7 @@ impl Transcript for PoseidonTranscript {
         }
 
         let mut new_state = [0u8; 32];
-        current
-            .serialize_uncompressed(&mut new_state[..])
-            .unwrap();
+        current.serialize_uncompressed(&mut new_state[..]).unwrap();
 
         self.update_state(new_state);
     }
@@ -431,8 +431,6 @@ mod tests {
         assert_eq!(challenge1, challenge2);
     }
 
-
-
     #[test]
     fn test_label_padding_consistency() {
         // Test that padding is consistent: shorter label gets zero-padded to 32 bytes
@@ -613,5 +611,4 @@ mod tests {
         assert_eq!(powers.len(), 5);
         assert_eq!(powers[0], Fr::from(1u64));
     }
-
 }
