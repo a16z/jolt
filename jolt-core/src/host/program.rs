@@ -273,6 +273,8 @@ impl Program {
         let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
 
+        tracing::info!("max_trusted_advice_size: {}", self.max_trusted_advice_size);
+
         let memory_config = MemoryConfig {
             memory_size: self.memory_size,
             stack_size: self.stack_size,

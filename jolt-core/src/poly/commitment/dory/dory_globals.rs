@@ -225,25 +225,6 @@ impl DoryGlobals {
         Some(())
     }
 
-    /// Initialize the globals for trusted advice commitments with a fixed 1-row matrix.
-    ///
-    /// This is designed for *preprocessing-only* trusted advice commitments: the dimensions
-    /// depend only on the advice polynomial length (a power of two), not on the trace length.
-    ///
-    /// The committed matrix is `1 x num_columns`, i.e. `nu = 0` and `sigma = log2(num_columns)`.
-    /// This makes advice variables correspond to a suffix of the unified main opening point,
-    /// which keeps advice claim-reduction aligned with the batched Stage 6 challenges.
-    pub fn initialize_trusted_advice_1row(num_columns: usize) -> Option<()> {
-        assert!(
-            num_columns.is_power_of_two(),
-            "trusted advice num_columns must be a power of two (got {num_columns})"
-        );
-        Self::set_num_columns_for_context(num_columns, DoryContext::TrustedAdvice);
-        Self::set_T_for_context(num_columns, DoryContext::TrustedAdvice);
-        Self::set_max_num_rows_for_context(1, DoryContext::TrustedAdvice);
-        Some(())
-    }
-
     /// Initialize the globals for trusted advice commitments with an arbitrary matrix shape.
     ///
     /// The committed matrix is `num_rows x num_columns` where both dimensions must be powers of two.
@@ -266,20 +247,6 @@ impl DoryGlobals {
         Self::set_num_columns_for_context(num_columns, DoryContext::TrustedAdvice);
         Self::set_T_for_context(t, DoryContext::TrustedAdvice);
         Self::set_max_num_rows_for_context(num_rows, DoryContext::TrustedAdvice);
-        Some(())
-    }
-
-    /// Initialize the globals for untrusted advice commitments with a fixed 1-row matrix.
-    ///
-    /// See `initialize_trusted_advice_1row` for the rationale.
-    pub fn initialize_untrusted_advice_1row(num_columns: usize) -> Option<()> {
-        assert!(
-            num_columns.is_power_of_two(),
-            "untrusted advice num_columns must be a power of two (got {num_columns})"
-        );
-        Self::set_num_columns_for_context(num_columns, DoryContext::UntrustedAdvice);
-        Self::set_T_for_context(num_columns, DoryContext::UntrustedAdvice);
-        Self::set_max_num_rows_for_context(1, DoryContext::UntrustedAdvice);
         Some(())
     }
 

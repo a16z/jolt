@@ -176,7 +176,10 @@ impl<F: JoltField> RLCPolynomial<F> {
         trace_source: TraceSource,
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
-        advice_poly_map: std::collections::HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut advice_poly_map: std::collections::HashMap<
+            CommittedPolynomial,
+            MultilinearPolynomial<F>,
+        >,
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
@@ -196,8 +199,8 @@ impl<F: JoltField> RLCPolynomial<F> {
                 }
                 CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
                     // Advice polynomials are passed in directly (not streamed from trace)
-                    if let Some(poly) = advice_poly_map.get(poly_id) {
-                        advice_polys.push((*coeff, poly.clone()));
+                    if advice_poly_map.contains_key(poly_id) {
+                        advice_polys.push((*coeff, advice_poly_map.remove(poly_id).unwrap()));
                     }
                 }
             }

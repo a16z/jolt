@@ -1494,6 +1494,26 @@ fn write_instance_flamegraph_svg(
 
 #[cfg(test)]
 mod tests {
+    fn init_tracing_for_tests() {
+        use std::sync::Once;
+
+        use tracing_subscriber::EnvFilter;
+
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            // Prefer `RUST_LOG` if set; otherwise default to `info` so `tracing::info!` shows up.
+            // Note: `cargo test` still captures output by default; run with `-- --nocapture` to see it.
+            let env_filter =
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+            // `with_test_writer()` integrates with libtest output capturing.
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_test_writer()
+                .try_init();
+        });
+    }
+
     use ark_bn254::Fr;
     use serial_test::serial;
 
@@ -1810,6 +1830,8 @@ mod tests {
     #[test]
     #[serial]
     fn max_advice_with_small_trace() {
+        init_tracing_for_tests();
+
         // Tests that max-sized advice (4KB = 512 words) works with a minimal trace.
         // With balanced dims (sigma_a=5, nu_a=4 for 512 words), the minimum padded trace
         // (256 cycles -> total_vars=12) is sufficient to embed advice.
@@ -1827,6 +1849,11 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+        );
+
+        tracing::info!(
+            "preprocessing.memory_layout.max_trusted_advice_size: {}",
+            preprocessing.memory_layout.max_trusted_advice_size
         );
 
         let (trusted_commitment, trusted_hint) =
