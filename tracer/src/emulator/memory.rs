@@ -60,9 +60,11 @@ impl MemoryData for ReplayableMemory {
         if index > self.num_doublewords {
             panic!("Out of bounds memory access");
         }
-        // Return the value at the given index if it's been set. If it hasn't been set, we add it,
-        // as if it had been zero initialized.
-        self.memory.entry(index).or_insert(0)
+        // Return the value at the given index if it's been set. If it hasn't been set, the
+        // executing program should never access it withing the current chunk, so we error out.
+        self.memory
+            .get_mut(&index)
+            .expect("Invalid memory access for chunk")
     }
 
     fn into_vec_memory(self) -> Vec<u64> {
