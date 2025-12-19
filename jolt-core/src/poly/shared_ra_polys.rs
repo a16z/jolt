@@ -77,11 +77,11 @@ pub fn assert_ra_bounds(one_hot_params: &OneHotParams) {
 #[derive(Clone, Copy, Default, Allocative)]
 pub struct RaIndices {
     /// Instruction RA chunk indices (always present)
-    pub instruction: [u16; MAX_INSTRUCTION_D],
+    pub instruction: [u8; MAX_INSTRUCTION_D],
     /// Bytecode RA chunk indices (always present)
-    pub bytecode: [u16; MAX_BYTECODE_D],
+    pub bytecode: [u8; MAX_BYTECODE_D],
     /// RAM RA chunk indices (None for non-memory cycles)
-    pub ram: [Option<u16>; MAX_RAM_D],
+    pub ram: [Option<u8>; MAX_RAM_D],
 }
 
 impl std::ops::Add for RaIndices {
@@ -101,7 +101,7 @@ impl Zero for RaIndices {
         // by all-zero bytes. Constructing `[None; N]` can leave padding / unused enum payload
         // bytes uninitialized, which breaks that invariant (and is UB to inspect as bytes).
         //
-        // All-zero is a valid bit-pattern for `RaIndices` (arrays of integers + `Option<u16>`),
+        // All-zero is a valid bit-pattern for `RaIndices` (arrays of integers + `Option<u8>`),
         // so this is safe here.
         unsafe { core::mem::zeroed() }
     }
@@ -144,14 +144,14 @@ impl RaIndices {
 
         // Instruction indices from lookup index
         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-        let mut instruction = [0u16; MAX_INSTRUCTION_D];
+        let mut instruction = [0u8; MAX_INSTRUCTION_D];
         for i in 0..one_hot_params.instruction_d {
             instruction[i] = one_hot_params.lookup_index_chunk(lookup_index, i);
         }
 
         // Bytecode indices from PC
         let pc = bytecode.get_pc(cycle);
-        let mut bytecode_arr = [0u16; MAX_BYTECODE_D];
+        let mut bytecode_arr = [0u8; MAX_BYTECODE_D];
         for i in 0..one_hot_params.bytecode_d {
             bytecode_arr[i] = one_hot_params.bytecode_pc_chunk(pc, i);
         }
@@ -174,7 +174,7 @@ impl RaIndices {
     /// Extract the index for polynomial `poly_idx` in the unified ordering:
     /// [instruction_0..d, bytecode_0..d, ram_0..d]
     #[inline]
-    pub fn get_index(&self, poly_idx: usize, one_hot_params: &OneHotParams) -> Option<u16> {
+    pub fn get_index(&self, poly_idx: usize, one_hot_params: &OneHotParams) -> Option<u8> {
         let instruction_d = one_hot_params.instruction_d;
         let bytecode_d = one_hot_params.bytecode_d;
 

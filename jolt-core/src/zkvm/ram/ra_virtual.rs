@@ -150,7 +150,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamRaVirtualParams<F> {
 #[derive(Allocative)]
 pub struct RamRaVirtualSumcheckProver<F: JoltField> {
     /// `ra_i` polynomials for each decomposition chunk
-    ra_i_polys: Vec<RaPolynomial<u16, F>>,
+    ra_i_polys: Vec<RaPolynomial<u8, F>>,
     /// eq(r_cycle_reduced, ·) polynomial with Gruen optimization
     eq_poly: GruenSplitEqPolynomial<F>,
     #[allocative(skip)]
@@ -176,11 +176,11 @@ impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
         let eq_poly = GruenSplitEqPolynomial::new(&params.r_cycle.r, BindingOrder::LowToHigh);
 
         // Create ra_i polynomials for each decomposition chunk
-        let ra_i_polys: Vec<RaPolynomial<u16, F>> = (0..params.d)
+        let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..params.d)
             .into_par_iter()
             .zip(eq_tables.into_par_iter())
             .map(|(i, eq_table)| {
-                let ra_i_indices: Vec<Option<u16>> = trace
+                let ra_i_indices: Vec<Option<u8>> = trace
                     .par_iter()
                     .map(|cycle| {
                         remap_address(cycle.ram_access().address() as u64, memory_layout)
