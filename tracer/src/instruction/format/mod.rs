@@ -17,9 +17,9 @@ pub mod format_virtual_right_shift_r;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct NormalizedOperands {
-    pub rs1: u8,
-    pub rs2: u8,
-    pub rd: u8,
+    pub rs1: Option<u8>,
+    pub rs2: Option<u8>,
+    pub rd: Option<u8>,
     pub imm: i128,
 }
 
@@ -40,14 +40,14 @@ pub trait InstructionRegisterState:
 {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self;
-    fn rs1_value(&self) -> u64 {
-        0
+    fn rs1_value(&self) -> Option<u64> {
+        None
     }
-    fn rs2_value(&self) -> u64 {
-        0
+    fn rs2_value(&self) -> Option<u64> {
+        None
     }
-    fn rd_values(&self) -> (u64, u64) {
-        (0, 0)
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        None
     }
 }
 

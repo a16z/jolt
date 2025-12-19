@@ -198,9 +198,9 @@ fn format_instruction_with_placeholders(
         ("rs2", normalized_instr.operands.rs2),
     ] {
         for (input_value, placeholder) in &reg_value_to_placeholder {
-            if value == *input_value {
+            if value == Some(*input_value) {
                 // Replace register value (always in decimal format)
-                let pattern = format!("{register}: {value}");
+                let pattern = format!("{register}: {input_value}");
                 formatted = formatted.replace(&pattern, &format!("{register}: {placeholder}"));
                 break;
             }

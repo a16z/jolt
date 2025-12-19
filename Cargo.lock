@@ -2151,6 +2151,7 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
+ "sha3",
  "tracer",
  "tracing",
 ]
@@ -2177,6 +2178,7 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
+ "sha2",
  "tracer",
  "tracing",
 ]

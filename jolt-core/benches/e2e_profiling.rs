@@ -1,9 +1,8 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
-use jolt_core::zkvm::{
-    prover::JoltProverPreprocessing, verifier::JoltVerifierPreprocessing, RV64IMACProver,
-    RV64IMACVerifier,
-};
+use jolt_core::zkvm::prover::JoltProverPreprocessing;
+use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
+use jolt_core::zkvm::{RV64IMACProver, RV64IMACVerifier};
 use std::fs;
 use std::io::Write;
 use std::time::Instant;
@@ -203,17 +202,18 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
+    let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
 
     let task = move || {
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode,
             program_io.memory_layout.clone(),
             init_memory_state,
-            padded_trace_len,
         );
+        let preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), padded_trace_len);
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -228,7 +228,10 @@ fn prove_example(
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            shared_preprocessing,
+            preprocessing.generators.to_verifier_setup(),
+        );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
                 .expect("Failed to create verifier");
@@ -259,12 +262,13 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
-    let preprocessing = JoltProverPreprocessing::gen(
+    let shared_preprocessing = JoltSharedPreprocessing::new(
         bytecode.clone(),
         program_io.memory_layout.clone(),
         init_memory_state,
-        trace.len().next_power_of_two(),
     );
+    let preprocessing =
+        JoltProverPreprocessing::new(shared_preprocessing, trace.len().next_power_of_two());
 
     let elf_contents_opt = program.get_elf_contents();
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");

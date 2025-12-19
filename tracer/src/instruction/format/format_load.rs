@@ -28,7 +28,7 @@ impl InstructionRegisterState for RegisterStateFormatLoad {
         use rand::RngCore;
         // Use a smaller range to avoid issues with boundaries
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
-        debug_assert_ne!(operands.rs1, 0);
+        debug_assert_ne!(operands.rs1.unwrap(), 0);
 
         let rs1_value = DRAM_BASE + (rng.next_u64() % max_offset);
 
@@ -45,12 +45,12 @@ impl InstructionRegisterState for RegisterStateFormatLoad {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rd_values(&self) -> (u64, u64) {
-        self.rd
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        Some(self.rd)
     }
 }
 
@@ -98,8 +98,8 @@ impl InstructionFormat for FormatLoad {
 impl From<NormalizedOperands> for FormatLoad {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
+            rd: operands.rd.unwrap(),
+            rs1: operands.rs1.unwrap(),
             imm: operands.imm as i64,
         }
     }
@@ -108,9 +108,9 @@ impl From<NormalizedOperands> for FormatLoad {
 impl From<FormatLoad> for NormalizedOperands {
     fn from(format: FormatLoad) -> Self {
         Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: 0,
+            rd: Some(format.rd),
+            rs1: Some(format.rs1),
+            rs2: None,
             imm: format.imm as i128,
         }
     }

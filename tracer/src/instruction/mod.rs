@@ -410,53 +410,89 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn rs1_read(&self) -> (u8, u64) {
+            pub fn rs1_read(&self) -> Option<(u8, u64)> {
                 match self {
-                    Cycle::NoOp => (0, 0),
+                    Cycle::NoOp => None,
                     $(
-                        Cycle::$instr(cycle) => (
-                            NormalizedOperands::from(cycle.instruction.operands).rs1,
-                            cycle.register_state.rs1_value(),
-                        ),
+                        Cycle::$instr(cycle) => {
+                            if let Some(rs1_val) = cycle.register_state.rs1_value() {
+                                Some((
+                                    NormalizedOperands::from(cycle.instruction.operands).rs1.unwrap(),
+                                    rs1_val,
+                                ))
+                            } else {
+                                None
+                            }
+                        },
                     )*
-                    Cycle::INLINE(cycle) => (
-                        cycle.instruction.operands.rs1,
-                        cycle.register_state.rs1_value(),
-                    ),
+                    Cycle::INLINE(cycle) => {
+                        if let Some(rs1_val) = cycle.register_state.rs1_value() {
+                            Some((
+                                cycle.instruction.operands.rs1,
+                                rs1_val,
+                            ))
+                        } else {
+                            None
+                        }
+                    },
                 }
             }
 
-            pub fn rs2_read(&self) -> (u8, u64) {
+            pub fn rs2_read(&self) -> Option<(u8, u64)> {
                 match self {
-                    Cycle::NoOp => (0, 0),
+                    Cycle::NoOp => None,
                     $(
-                        Cycle::$instr(cycle) => (
-                            NormalizedOperands::from(cycle.instruction.operands).rs2,
-                            cycle.register_state.rs2_value(),
-                        ),
+                        Cycle::$instr(cycle) => {
+                            if let Some(rs2_val) = cycle.register_state.rs2_value() {
+                                Some((
+                                    NormalizedOperands::from(cycle.instruction.operands).rs2.unwrap(),
+                                    rs2_val,
+                                ))
+                            } else {
+                                None
+                            }
+                        },
                     )*
-                    Cycle::INLINE(cycle) => (
-                        cycle.instruction.operands.rs2,
-                        cycle.register_state.rs2_value(),
-                    ),
+                    Cycle::INLINE(cycle) => {
+                        if let Some(rs2_val) = cycle.register_state.rs2_value() {
+                            Some((
+                                cycle.instruction.operands.rs2,
+                                rs2_val,
+                            ))
+                        } else {
+                            None
+                        }
+                    },
                 }
             }
 
-            pub fn rd_write(&self) -> (u8, u64, u64) {
+            pub fn rd_write(&self) -> Option<(u8, u64, u64)> {
                 match self {
-                    Cycle::NoOp => (0, 0, 0),
+                    Cycle::NoOp => None,
                     $(
-                        Cycle::$instr(cycle) => (
-                            NormalizedOperands::from(cycle.instruction.operands).rd,
-                            cycle.register_state.rd_values().0,
-                            cycle.register_state.rd_values().1,
-                        ),
+                        Cycle::$instr(cycle) => {
+                            if let Some((rd_pre_val, rd_post_val)) = cycle.register_state.rd_values() {
+                                Some((
+                                    NormalizedOperands::from(cycle.instruction.operands).rd.unwrap(),
+                                    rd_pre_val,
+                                    rd_post_val,
+                                ))
+                            } else {
+                                None
+                            }
+                        },
                     )*
-                    Cycle::INLINE(cycle) => (
-                        cycle.instruction.operands.rs3,
-                        cycle.register_state.rd_values().0,
-                        cycle.register_state.rd_values().1,
-                    ),
+                    Cycle::INLINE(cycle) => {
+                        if let Some((rd_pre_val, rd_post_val)) = cycle.register_state.rd_values() {
+                            Some((
+                                cycle.instruction.operands.rs3,
+                                rd_pre_val,
+                                rd_post_val,
+                            ))
+                        } else {
+                            None
+                        }
+                    },
                 }
             }
 

@@ -104,7 +104,7 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     F: [MultilinearPolynomial<F>; N_STAGES],
     /// Chunked RA polynomials over address variables (one per dimension `d`), used to form
     /// the product ∏_i ra_i during the cycle-binding phase.
-    ra: Vec<RaPolynomial<u16, F>>,
+    ra: Vec<RaPolynomial<u8, F>>,
     /// Binding challenges for the first log_K variables of the sumcheck
     r_address_prime: Vec<F::Challenge>,
     /// Per-stage Gruen-split eq polynomials over cycle vars (low-to-high binding order).
@@ -273,7 +273,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             .iter()
             .enumerate()
             .map(|(i, r_address_chunk)| {
-                let ra_i: Vec<Option<u16>> = self
+                let ra_i: Vec<Option<u8>> = self
                     .pc
                     .par_iter()
                     .map(|pc| Some(self.params.one_hot_params.bytecode_pc_chunk(*pc, i)))
@@ -701,7 +701,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
         let (r_cycle_2, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (r_cycle_3, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
@@ -895,20 +895,20 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ) -> F {
         let (_, jump_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, branch_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, rd_wa_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
-            SumcheckId::ProductVirtualization,
+            SumcheckId::SpartanProductVirtualization,
         );
         let (_, write_lookup_output_to_rd_flag_claim) = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-                SumcheckId::ProductVirtualization,
+                SumcheckId::SpartanProductVirtualization,
             );
 
         [
@@ -1069,7 +1069,13 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
                     .chain(once(instr.operands.rd))
                     .chain(once(instr.operands.rs1))
                     .chain(once(instr.operands.rs2))
-                    .map(|r| eq_r_register[r as usize])
+                    .map(|r| {
+                        if let Some(r) = r {
+                            eq_r_register[r as usize]
+                        } else {
+                            F::zero()
+                        }
+                    })
                     .zip(gamma_powers)
                     .map(|(claim, gamma)| claim * gamma)
                     .sum::<F>()
@@ -1123,7 +1129,10 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             .map(|instruction| {
                 let instr = instruction.normalize();
                 let flags = instruction.circuit_flags();
-                let mut linear_combination = eq_r_register[instr.operands.rd as usize];
+                let mut linear_combination = F::zero();
+                if let Some(rd) = instr.operands.rd {
+                    linear_combination += eq_r_register[rd as usize];
+                }
 
                 if !flags.is_interleaved_operands() {
                     linear_combination += gamma_powers[1];
@@ -1197,7 +1206,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
 enum ReadCheckingValType {
     /// Spartan outer sumcheck
     Stage1,
-    /// Jump flag from ProductVirtualization
+    /// Jump flag from SpartanProductVirtualization
     Stage2,
     /// ShiftSumcheck
     Stage3,

@@ -29,11 +29,11 @@ use tracer::instruction::Cycle;
 const DEGREE_BOUND: usize = 3;
 
 #[derive(Allocative)]
-pub struct HammingBooleanityParams<F: JoltField> {
+pub struct HammingBooleanitySumcheckParams<F: JoltField> {
     r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }
 
-impl<F: JoltField> HammingBooleanityParams<F> {
+impl<F: JoltField> HammingBooleanitySumcheckParams<F> {
     pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
@@ -44,7 +44,7 @@ impl<F: JoltField> HammingBooleanityParams<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for HammingBooleanityParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for HammingBooleanitySumcheckParams<F> {
     fn degree(&self) -> usize {
         DEGREE_BOUND
     }
@@ -69,12 +69,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingBooleanityParams<F> {
 pub struct HammingBooleanitySumcheckProver<F: JoltField> {
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     H: MultilinearPolynomial<F>,
-    params: HammingBooleanityParams<F>,
+    params: HammingBooleanitySumcheckParams<F>,
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::initialize")]
-    pub fn initialize(params: HammingBooleanityParams<F>, trace: &[Cycle]) -> Self {
+    pub fn initialize(params: HammingBooleanitySumcheckParams<F>, trace: &[Cycle]) -> Self {
         let H = trace
             .par_iter()
             .map(|cycle| cycle.ram_access().address() != 0)
@@ -144,13 +144,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 }
 
 pub struct HammingBooleanitySumcheckVerifier<F: JoltField> {
-    params: HammingBooleanityParams<F>,
+    params: HammingBooleanitySumcheckParams<F>,
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
     pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
         Self {
-            params: HammingBooleanityParams::new(opening_accumulator),
+            params: HammingBooleanitySumcheckParams::new(opening_accumulator),
         }
     }
 }
