@@ -10,7 +10,7 @@ use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::InstructionFlags;
-use crate::zkvm::prover::JoltProverPreprocessing;
+use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::{
     field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
@@ -57,7 +57,7 @@ impl CommittedPolynomial {
     pub fn stream_witness_and_commit_rows<F, PCS>(
         &self,
         setup: &PCS::ProverSetup,
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
+        preprocessing: &JoltSharedPreprocessing,
         row_cycles: &[tracer::instruction::Cycle],
         one_hot_params: &OneHotParams,
     ) -> <PCS as StreamingCommitmentScheme>::ChunkState
