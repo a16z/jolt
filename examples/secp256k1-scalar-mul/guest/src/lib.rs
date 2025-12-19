@@ -4,7 +4,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use jolt_inlines_secp256k1::{Secp256k1Fq, Secp256k1Point};
 
-#[inline(never)]
+#[inline(always)]
 fn secp256k1_4x128_scalar_mul(scalars: [u128; 4], points: [Secp256k1Point; 4]) -> [u64; 8] {
     let mut lookup = Vec::<Secp256k1Point>::with_capacity(16);
     lookup.push(Secp256k1Point::infinity());
@@ -36,7 +36,6 @@ fn secp256k1_4x128_scalar_mul(scalars: [u128; 4], points: [Secp256k1Point; 4]) -
     res.to_u64_arr()
 }
 
-#[inline(never)]
 fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
     if cond {
         x.neg()
