@@ -26,15 +26,15 @@ use crate::{
 ))]
 compile_error!("Cannot enable multiple transcript features simultaneously. Please choose exactly one of: 'transcript-poseidon', 'transcript-keccak', or 'transcript-blake2b'.");
 
-#[cfg(feature = "transcript-poseidon")]
-use crate::transcripts::PoseidonTranscript;
-#[cfg(feature = "transcript-keccak")]
-use crate::transcripts::KeccakTranscript;
 #[cfg(any(
     feature = "transcript-blake2b",
     not(any(feature = "transcript-poseidon", feature = "transcript-keccak"))
 ))]
 use crate::transcripts::Blake2bTranscript;
+#[cfg(feature = "transcript-keccak")]
+use crate::transcripts::KeccakTranscript;
+#[cfg(feature = "transcript-poseidon")]
+use crate::transcripts::PoseidonTranscript;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
