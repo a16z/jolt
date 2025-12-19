@@ -3591,18 +3591,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "secp256k1-scalar-mul"
+name = "secp256k1-ecdsa-verify"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-secp256k1",
  "jolt-sdk",
- "secp256k1-scalar-mul-guest",
+ "secp256k1-ecdsa-verify-guest",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "secp256k1-scalar-mul-guest"
+name = "secp256k1-ecdsa-verify-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-secp256k1",

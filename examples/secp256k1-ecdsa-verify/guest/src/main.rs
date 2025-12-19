@@ -2,4 +2,4 @@
 #![no_main]
 
 #[allow(unused_imports)]
-use secp256k1_scalar_mul_guest::*;
+use secp256k1_ecdsa_verify_guest::*;

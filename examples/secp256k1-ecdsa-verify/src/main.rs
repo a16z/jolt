@@ -5,16 +5,16 @@ pub fn main() {
     tracing_subscriber::fmt::init();
 
     let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_secp256k1_scalar_mul(target_dir);
+    let mut program = guest::compile_secp256k1_ecdsa_verify(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_secp256k1_scalar_mul(&mut program);
+    let prover_preprocessing = guest::preprocess_prover_secp256k1_ecdsa_verify(&mut program);
     let verifier_preprocessing =
-        guest::verifier_preprocessing_from_prover_secp256k1_scalar_mul(&prover_preprocessing);
+        guest::verifier_preprocessing_from_prover_secp256k1_ecdsa_verify(&prover_preprocessing);
 
-    let prove_secp256k1_scalar_mul =
-        guest::build_prover_secp256k1_scalar_mul(program, prover_preprocessing);
-    let verify_secp256k1_scalar_mul =
-        guest::build_verifier_secp256k1_scalar_mul(verifier_preprocessing);
+    let prove_secp256k1_ecdsa_verify =
+        guest::build_prover_secp256k1_ecdsa_verify(program, prover_preprocessing);
+    let verify_secp256k1_ecdsa_verify =
+        guest::build_verifier_secp256k1_ecdsa_verify(verifier_preprocessing);
 
     // custom ECDSA signature test vectors, all as little-endian u64 arrays
     // message hash z (the hash of "hello world")
@@ -49,9 +49,9 @@ pub fn main() {
         0xdc7b004d3bb2800d,
     ];
     let now = Instant::now();
-    let (output, proof, program_io) = prove_secp256k1_scalar_mul(z, r, s, q);
+    let (output, proof, program_io) = prove_secp256k1_ecdsa_verify(z, r, s, q);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_secp256k1_scalar_mul(z, r, s, q, output, program_io.panic, proof);
+    let is_valid = verify_secp256k1_ecdsa_verify(z, r, s, q, output, program_io.panic, proof);
 
     info!("valid: {is_valid}");
 }

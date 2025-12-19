@@ -1,7 +1,5 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-//extern crate alloc;
-//use alloc::vec::Vec;
 use jolt_inlines_secp256k1::{ecdsa_verify, Secp256k1Fr, Secp256k1Point};
 
 // verifies an secp256k1 ECDSA signature
@@ -9,7 +7,7 @@ use jolt_inlines_secp256k1::{ecdsa_verify, Secp256k1Fr, Secp256k1Point};
 // all inputs are little-endian u64 arrays in normal form
 // the function panics (and spoils the proof) if the signature is invalid
 #[jolt::provable(memory_size = 300000, max_trace_length = 4194304)]
-fn secp256k1_scalar_mul(z: [u64; 4], r: [u64; 4], s: [u64; 4], q: [u64; 8]) {
+fn secp256k1_ecdsa_verify(z: [u64; 4], r: [u64; 4], s: [u64; 4], q: [u64; 8]) {
     let z = Secp256k1Fr::from_u64_arr(&z);
     let r = Secp256k1Fr::from_u64_arr(&r);
     let s = Secp256k1Fr::from_u64_arr(&s);

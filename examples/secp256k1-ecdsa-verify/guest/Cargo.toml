@@ -1,5 +1,5 @@
 [package]
-name = "secp256k1-scalar-mul-guest"
+name = "secp256k1-ecdsa-verify-guest"
 version = "0.1.0"
 edition = "2021"
 

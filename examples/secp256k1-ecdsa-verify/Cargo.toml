@@ -1,5 +1,5 @@
 [package]
-name = "secp256k1-scalar-mul"
+name = "secp256k1-ecdsa-verify"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,4 +8,4 @@ jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
 tracing-subscriber = "0.3"
 tracing = "0.1"
 jolt-inlines-secp256k1 = { path = "../../jolt-inlines/secp256k1", features = ["host"] }
-guest = { package = "secp256k1-scalar-mul-guest", path = "./guest" }
+guest = { package = "secp256k1-ecdsa-verify-guest", path = "./guest" }
