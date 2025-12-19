@@ -104,7 +104,7 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     F: [MultilinearPolynomial<F>; N_STAGES],
     /// Chunked RA polynomials over address variables (one per dimension `d`), used to form
     /// the product ∏_i ra_i during the cycle-binding phase.
-    ra: Vec<RaPolynomial<u16, F>>,
+    ra: Vec<RaPolynomial<u8, F>>,
     /// Binding challenges for the first log_K variables of the sumcheck
     r_address_prime: Vec<F::Challenge>,
     /// Per-stage Gruen-split eq polynomials over cycle vars (low-to-high binding order).
@@ -273,7 +273,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             .iter()
             .enumerate()
             .map(|(i, r_address_chunk)| {
-                let ra_i: Vec<Option<u16>> = self
+                let ra_i: Vec<Option<u8>> = self
                     .pc
                     .par_iter()
                     .map(|pc| Some(self.params.one_hot_params.bytecode_pc_chunk(*pc, i)))
