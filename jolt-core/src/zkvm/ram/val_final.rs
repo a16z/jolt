@@ -153,7 +153,7 @@ pub struct ValFinalSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: MultilinearPolynomial<F>,
     #[allocative(skip)]
-    params: ValFinalSumcheckParams<F>,
+    pub params: ValFinalSumcheckParams<F>,
 }
 
 impl<F: JoltField> ValFinalSumcheckProver<F> {

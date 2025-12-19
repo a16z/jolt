@@ -203,7 +203,7 @@ pub struct BooleanitySumcheckProver<F: JoltField> {
     #[allocative(skip)]
     one_hot_params: OneHotParams,
     #[allocative(skip)]
-    params: BooleanitySumcheckParams<F>,
+    pub params: BooleanitySumcheckParams<F>,
 }
 
 impl<F: JoltField> BooleanitySumcheckProver<F> {

@@ -180,7 +180,7 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
     wa: RaPolynomial<usize, F>,
     lt: LtPolynomial<F>,
     #[allocative(skip)]
-    params: ValEvaluationSumcheckParams<F>,
+    pub params: ValEvaluationSumcheckParams<F>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {
