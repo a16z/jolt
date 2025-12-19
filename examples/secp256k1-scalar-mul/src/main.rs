@@ -16,40 +16,42 @@ pub fn main() {
     let verify_secp256k1_scalar_mul =
         guest::build_verifier_secp256k1_scalar_mul(verifier_preprocessing);
 
-    // arbitrary secp256k1 point as 8 u64s
-    // x and y coordinates in little endian order
-    // in montgomery form
+    // custom ECDSA signature test vectors, all as little-endian u64 arrays
+    // message hash z (the hash of "hello world")
+    let z = [
+        0x9088f7ace2efcde9,
+        0xc484efe37a5380ee,
+        0xa52e52d7da7dabfa,
+        0xb94d27b9934d3e08,
+    ];
+    // signature (r, s)
+    let r = [
+        0xb8fc413b4b967ed8,
+        0x248d4b0b2829ab00,
+        0x587f69296af3cd88,
+        0x3a5d6a386e6cf7c0,
+    ];
+    let s = [
+        0x66a82f274e3dcafc,
+        0x299a02486be40321,
+        0x6212d714118f617e,
+        0x9d452f63cf91018d,
+    ];
+    // public key Q (as an uncompressed point)
     let q = [
-        0x84c60f988985bb6d,
-        0x3771987a8626ed1b,
-        0x7d2d842df22e3972,
-        0x68c3e1d401738d23,
-        0x7ba86c982b250320,
-        0x845453face9978fb,
-        0xd480f970fa1501a4,
-        0xd9ccbc62a5f896f9,
+        0x0012563f32ed0216,
+        0xee00716af6a73670,
+        0x91fc70e34e00e6c8,
+        0xeeb6be8b9e68868b,
+        0x4780de3d5fda972d,
+        0xcb1b42d72491e47f,
+        0xdc7f31262e4ba2b7,
+        0xdc7b004d3bb2800d,
     ];
-    // two arbitrary scalars as elements of Fr in montgomery form
-    let u = [
-        0x0FEDCBA987654321,
-        0x1234567890ABCDEF,
-        0x3333333333333333,
-        0x4444444444444444,
-    ];
-    let v = [
-        0x5555555555555555,
-        0x6666666666666666,
-        0x7777777777777777,
-        0x8888888888888888,
-    ];
-    let native_output = guest::secp256k1_scalar_mul(u, v, q);
     let now = Instant::now();
-    let (output, proof, program_io) = prove_secp256k1_scalar_mul(u, v, q);
+    let (output, proof, program_io) = prove_secp256k1_scalar_mul(z, r, s, q);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_secp256k1_scalar_mul(u, v, q, output, program_io.panic, proof);
+    let is_valid = verify_secp256k1_scalar_mul(z, r, s, q, output, program_io.panic, proof);
 
-    assert_eq!(output, native_output, "output mismatch");
-    info!("output: {:?}", output);
-    info!("native_output: {:?}", native_output);
     info!("valid: {is_valid}");
 }

@@ -2,9 +2,16 @@
 
 use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
 use ark_secp256k1::{Fq, Fr};
+
+#[cfg(feature = "host")]
 use num_bigint::BigInt as NBigInt;
+#[cfg(feature = "host")]
 use num_bigint::Sign;
+#[cfg(feature = "host")]
 use num_integer::Integer;
+
+extern crate alloc;
+use alloc::vec::Vec;
 
 /// panic instruction
 /// spoils the proof
@@ -28,10 +35,17 @@ pub fn hcf() {
         );
     }
 }
-
-/// secp256k1 scalar field element
-/// in montgomery form
-/// exposed to the host to avoid the need for conversion
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub fn hcf() {
+    panic!("hcf called on non-RISC-V target without host feature");
+}
+#[cfg(feature = "host")]
+pub fn hcf() {
+    panic!("explicit host code panic function called");
+}
 
 /// secp256k1 base field element
 /// in montgomery form
@@ -49,8 +63,24 @@ impl Secp256k1Fq {
         Secp256k1Fq { e }
     }
     /// creates a new Secp256k1Fq element from a [u64; 4] array
+    /// performs conversion to montgomery form
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
+        //println!("Creating Secp256k1Fq from array:\n{:?}", BigInt { 0: *arr });
+        //println!("Modulus:\n{:?}", Fq::MODULUS);
+        // attempt to create a new Fq element from the array
+        let e = Fq::from_bigint(BigInt { 0: *arr });
+        // if not valid, panic
+        if e.is_none() {
+            hcf();
+        }
+        // otherwise, return the element
+        Secp256k1Fq { e: e.unwrap() }
+    }
+    /// creates a new Secp256k1Fq element from a [u64; 4] array (unchecked)
+    /// the array is assumed to be in canonical montgomery form
+    #[inline(always)]
+    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fq {
             e: Fq::new_unchecked(BigInt { 0: *arr }),
         }
@@ -163,18 +193,6 @@ impl Secp256k1Fq {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
-            /*unsafe {
-                let u = 0u64;
-                let v = 1u64;
-                core::arch::asm!(
-                    ".insn b {opcode}, {funct3}, {rs1}, {rs2}, 0",
-                    opcode = const 0x5B, // virtual instruction opcode
-                    funct3 = const 0b001, // VirtualAssertEQ funct3
-                    rs1 = in(reg) u,
-                    rs2 = in(reg) v,
-                    options(nostack)
-                );
-            }*/
             hcf();
         }
         c
@@ -195,6 +213,160 @@ impl Secp256k1Fq {
     }
 }
 
+/// secp256k1 scalar field element
+/// in montgomery form
+/// as a wrapper around the arkworks implementation
+/// so that various operations can be replaced with inlines
+#[derive(Clone, PartialEq, Debug)]
+pub struct Secp256k1Fr {
+    e: ark_secp256k1::Fr,
+}
+
+impl Secp256k1Fr {
+    /// creates a new Secp256k1Fr element from an Fr element
+    #[inline(always)]
+    pub fn new(e: Fr) -> Self {
+        Secp256k1Fr { e }
+    }
+    /// creates a new Secp256k1Fr element from a [u64; 4] array
+    /// performs conversion to montgomery form
+    #[inline(always)]
+    pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
+        // attempt to create a new Fq element from the array
+        let e = Fr::from_bigint(BigInt { 0: *arr });
+        // if not valid, panic
+        if e.is_none() {
+            hcf();
+        }
+        // otherwise, return the element
+        Secp256k1Fr { e: e.unwrap() }
+    }
+    /// creates a new Secp256k1Fr element from a [u64; 4] array (unchecked)
+    /// the array is assumed to be in canonical montgomery form
+    #[inline(always)]
+    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+        Secp256k1Fr {
+            e: Fr::new_unchecked(BigInt { 0: *arr }),
+        }
+    }
+    /// get inner Fr type
+    #[inline(always)]
+    pub fn fr(&self) -> Fr {
+        self.e
+    }
+    /// returns the additive identity element (0)
+    #[inline(always)]
+    pub fn zero() -> Self {
+        Secp256k1Fr { e: Fr::zero() }
+    }
+    /// returns true if the element is zero
+    #[inline(always)]
+    pub fn is_zero(&self) -> bool {
+        self.e.is_zero()
+    }
+    /// returns -self
+    #[inline(always)]
+    pub fn neg(&self) -> Self {
+        Secp256k1Fr { e: -self.e }
+    }
+    /// returns self + other
+    #[inline(always)]
+    pub fn add(&self, other: &Secp256k1Fr) -> Self {
+        Secp256k1Fr {
+            e: self.e + other.e,
+        }
+    }
+    /// returns self - other
+    #[inline(always)]
+    pub fn sub(&self, other: &Secp256k1Fr) -> Self {
+        Secp256k1Fr {
+            e: self.e - other.e,
+        }
+    }
+    /// returns self * other
+    #[inline(always)]
+    pub fn mul(&self, other: &Secp256k1Fr) -> Self {
+        Secp256k1Fr {
+            e: self.e * other.e,
+        }
+    }
+    /// returns self^2
+    #[inline(always)]
+    pub fn square(&self) -> Self {
+        Secp256k1Fr { e: self.e.square() }
+    }
+    /// returns self / other
+    /// uses custom inline for performance
+    /// costs nearly the same as multiplication
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div(&self, other: &Secp256k1Fr) -> Self {
+        // get inverse as pure advice
+        let mut c = Secp256k1Fr::zero();
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_DIVR_ADV_FUNCT3, SECP256K1_FUNCT7};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_DIVR_ADV_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) c.e.0.0.as_mut_ptr(),
+                rs1 = in(reg) self.e.0.0.as_ptr(),
+                rs2 = in(reg) other.e.0.0.as_ptr(),
+                options(nostack)
+            );
+        }
+        // compute tmp = other * c
+        let tmp = other.mul(&c);
+        // if greater than or equal to p, or other * c is not equal to self, panic
+        if tmp.e.0 .0[0] != self.e.0 .0[0]
+            || tmp.e.0 .0[1] != self.e.0 .0[1]
+            || tmp.e.0 .0[2] != self.e.0 .0[2]
+            || tmp.e.0 .0[3] != self.e.0 .0[3]
+        {
+            // literal assembly to induce a panic (spoils the proof)
+            // merely using assert_eq! here is insufficient as it doesn't
+            // spoil the proof
+            hcf();
+        }
+        let mut greater = false;
+        if c.e.0 .0[3] == 0xffffffffffffffff {
+            if c.e.0 .0[2] > Fr::MODULUS.0[2] {
+                greater = true;
+            } else if c.e.0 .0[2] == Fr::MODULUS.0[2] {
+                if c.e.0 .0[1] > Fr::MODULUS.0[1] {
+                    greater = true;
+                } else if c.e.0 .0[1] == Fr::MODULUS.0[1] {
+                    if c.e.0 .0[0] >= Fr::MODULUS.0[0] {
+                        greater = true;
+                    }
+                }
+            }
+        }
+        if greater {
+            hcf();
+        }
+        c
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn div(&self, _other: &Secp256k1Fr) -> Self {
+        panic!("Secp256k1Fr::div called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn div(&self, other: &Secp256k1Fr) -> Self {
+        Secp256k1Fr {
+            e: self.e / other.e,
+        }
+    }
+}
+
 /// secp256k1 point in affine form
 /// (as a pair of base field elements in montgomery form)
 /// infinity is represented as (0, 0) because this point is not on the curve
@@ -206,8 +378,18 @@ pub struct Secp256k1Point {
 
 impl Secp256k1Point {
     /// creates a new Secp256k1Point from two Secp256k1Fq elements
+    /// panics if the point is not on the curve
+    #[inline(always)]
+    pub fn new(x: Secp256k1Fq, y: Secp256k1Fq) -> Self {
+        let p = Secp256k1Point { x, y };
+        if !p.is_on_curve() {
+            hcf();
+        }
+        p
+    }
+    /// creates a new Secp256k1Point from two Secp256k1Fq elements
     /// performs no checks to ensure that the point is on the curve
-    /// #[inline(always)]
+    #[inline(always)]
     pub fn new_unchecked(x: Secp256k1Fq, y: Secp256k1Fq) -> Self {
         Secp256k1Point { x, y }
     }
@@ -219,12 +401,23 @@ impl Secp256k1Point {
         arr[4..8].copy_from_slice(&self.y.e.0 .0);
         arr
     }
-    /// creates a Secp256k1Point from a [u64; 8] array
-    /// performs no checks to ensure that the point is on the curve
+    /// creates a Secp256k1Point from a [u64; 8] array in normal form
+    /// performs checks to ensure that the point is on the curve
+    /// and that the coordinates are well formed
     #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 8]) -> Self {
+    pub fn from_u64_arr(arr: &[u64; 8]) -> Self {
         let x = Secp256k1Fq::from_u64_arr(&[arr[0], arr[1], arr[2], arr[3]]);
         let y = Secp256k1Fq::from_u64_arr(&[arr[4], arr[5], arr[6], arr[7]]);
+        Secp256k1Point::new(x, y)
+    }
+    /// creates a Secp256k1Point from a [u64; 8] array
+    /// which is assumed to correspond to x and y coordinates in montgomery form
+    /// performs no checks to ensure that the point is on the curve
+    /// or that the coordinates are well formed
+    #[inline(always)]
+    pub fn from_u64_arr_unchecked(arr: &[u64; 8]) -> Self {
+        let x = Secp256k1Fq::from_u64_arr_unchecked(&[arr[0], arr[1], arr[2], arr[3]]);
+        let y = Secp256k1Fq::from_u64_arr_unchecked(&[arr[4], arr[5], arr[6], arr[7]]);
         Secp256k1Point { x, y }
     }
     /// get x coordinate
@@ -271,6 +464,12 @@ impl Secp256k1Point {
     #[inline(always)]
     pub fn is_infinity(&self) -> bool {
         self.x.e.is_zero() && self.y.e.is_zero()
+    }
+    /// checks if the point is on the secp256k1 curve
+    #[inline(always)]
+    pub fn is_on_curve(&self) -> bool {
+        self.is_infinity()
+            || self.y.square() == (self.x.square().mul(&self.x).add(&Secp256k1Fq::seven()))
     }
     /// negates a point on the secp256k1 curve
     #[inline(always)]
@@ -356,7 +555,7 @@ impl Secp256k1Point {
             Secp256k1Point::infinity()
         } else {
             // beta = 0x7AE96A2B657C07106E64479EAC3434E99CF0497512F58995C1396C28719501EE
-            let beta = Secp256k1Fq::from_u64_arr(&[
+            let beta = Secp256k1Fq::from_u64_arr_unchecked(&[
                 6387289667796044110u64,
                 287633767014301871u64,
                 17936018142961481989u64,
@@ -377,7 +576,7 @@ impl Secp256k1Point {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn decompose_scalar(k: &Fr) -> [(bool, u128); 2] {
+    pub fn decompose_scalar(k: &Secp256k1Fr) -> [(bool, u128); 2] {
         // get non-deterministic decomposition
         let mut out = [0u64; 6];
         unsafe {
@@ -387,7 +586,7 @@ impl Secp256k1Point {
                 opcode = const INLINE_OPCODE,
                 funct3 = const SECP256K1_GLVR_ADV_FUNCT3,
                 funct7 = const SECP256K1_FUNCT7,
-                rs1 = in(reg) k.0.0.as_ptr(),
+                rs1 = in(reg) k.e.0.0.as_ptr(),
                 rs2 = in(reg) out.as_mut_ptr(),
                 options(nostack)
             );
@@ -417,7 +616,7 @@ impl Secp256k1Point {
             k2 = -k2;
         }
         let recomposed_k = k1 + k2 * lambda;
-        if recomposed_k != *k {
+        if recomposed_k != k.e {
             hcf(); // panic and spoil proof if decomposition is incorrect
         }
         // return as (sign, abs_value) pairs
@@ -435,8 +634,8 @@ impl Secp256k1Point {
     }
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn decompose_scalar(k: &Fr) -> [(bool, u128); 2] {
-        let k: NBigInt = k.into_bigint().into();
+    pub fn decompose_scalar(k: &Secp256k1Fr) -> [(bool, u128); 2] {
+        let k: NBigInt = k.e.into_bigint().into();
         let r = NBigInt::from_bytes_le(
             Sign::Plus,
             &[
@@ -491,8 +690,90 @@ impl Secp256k1Point {
         };
         [to_sign_abs(k1), to_sign_abs(k2)]
     }
-    // unchecked conversion from u64 to scalar
-    pub fn scalar_from_u64_arr(arr: &[u64; 4]) -> Fr {
-        Fr::new_unchecked(BigInt { 0: *arr })
+}
+
+// ECDSA signature verification function + helpers
+
+// performs a 4x128-bit scalar multiplication
+#[inline(always)]
+fn secp256k1_4x128_scalar_mul(scalars: [u128; 4], points: [Secp256k1Point; 4]) -> Secp256k1Point {
+    let mut lookup = Vec::<Secp256k1Point>::with_capacity(16);
+    lookup.push(Secp256k1Point::infinity());
+    lookup.push(points[0].clone());
+    lookup.push(points[1].clone());
+    lookup.push(lookup[1].add(&lookup[2]));
+    lookup.push(points[2].clone());
+    lookup.push(lookup[1].add(&lookup[4]));
+    lookup.push(lookup[2].add(&lookup[4]));
+    lookup.push(lookup[1].add(&lookup[6]));
+    lookup.push(points[3].clone());
+    for i in 1..8 {
+        lookup.push(lookup[i].add(&lookup[8]));
+    }
+    let mut res = Secp256k1Point::infinity();
+    for i in (0..128).rev() {
+        let mut idx = 0;
+        for j in 0..4 {
+            if (scalars[j] >> i) & 1 == 1 {
+                idx |= 1 << j;
+            }
+        }
+        if idx != 0 {
+            res = res.double_and_add(&lookup[idx]);
+        } else {
+            res = res.double();
+        }
+    }
+    res
+}
+
+// if cond is true, negate x, otherwise return x unchanged
+#[inline(always)]
+fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
+    if cond {
+        x.neg()
+    } else {
+        x
+    }
+}
+
+/// verify an ECDSA signature
+/// panics (or spoils the proof) if the signature is invalid
+/// z is the hash of the message being signed
+/// r and s are the signature components
+/// q is the uncompressed public key point
+#[inline(always)]
+pub fn ecdsa_verify(z: Secp256k1Fr, r: Secp256k1Fr, s: Secp256k1Fr, q: Secp256k1Point) {
+    // step 0: check that q is not infinity
+    if q.is_infinity() {
+        hcf();
+    }
+    // step 1: check that r and s are in the correct range
+    if r.is_zero() || s.is_zero() {
+        hcf();
+    }
+    // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
+    let u1 = z.div(&s);
+    let u2 = r.div(&s);
+    // step 3: compute R = u1 * G + u2 * q
+    // 3.1: perform the glv scalar decomposition
+    let decomp_u = Secp256k1Point::decompose_scalar(&u1);
+    let decomp_v = Secp256k1Point::decompose_scalar(&u2);
+    // 3.2: get decomposed scalars as a 4x128-bit array
+    let scalars = [decomp_u[0].1, decomp_u[1].1, decomp_v[0].1, decomp_v[1].1];
+    // 3.3: get 4 points: G, lambda*G, Q, and lambda*Q, appropriately negated
+    let points = [
+        conditional_negate(Secp256k1Point::generator(), decomp_u[0].0),
+        conditional_negate(Secp256k1Point::generator_w_endomorphism(), decomp_u[1].0),
+        conditional_negate(q.clone(), decomp_v[0].0),
+        conditional_negate(q.endomorphism(), decomp_v[1].0),
+    ];
+    // 3.4: perform the 4x128-bit scalar multiplication
+    let r_claim = secp256k1_4x128_scalar_mul(scalars, points);
+    // step 4: check that R.x == r (by converting to bigints and comparing)
+    let r_claim_x_bigint = r_claim.x.e.into_bigint();
+    let r_bigint = r.e.into_bigint();
+    if r_claim_x_bigint != r_bigint {
+        hcf();
     }
 }

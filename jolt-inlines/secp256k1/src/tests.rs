@@ -1,6 +1,6 @@
 mod sequence_tests {
     use crate::sdk::Secp256k1Point;
-    use crate::{INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_FUNCT7};
+    use crate::{Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_FUNCT7};
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::Affine;
@@ -187,7 +187,7 @@ mod sequence_tests {
     }*/
     #[test]
     fn test_decompose_scalar() {
-        let scalar = Fr::from_bigint(BigInt {
+        /*let scalar = Fr::from_bigint(BigInt {
             0: [
                 15694125933356685049,
                 15312512996687020452,
@@ -195,16 +195,22 @@ mod sequence_tests {
                 8910491263567201056,
             ],
         })
-        .unwrap();
+        .unwrap();*/
+        let scalar = Secp256k1Fr::from_u64_arr(&[
+            15694125933356685049,
+            15312512996687020452,
+            9535338647723276539,
+            8910491263567201056,
+        ]);
         // print scalar
-        println!("Scalar: {:?}", scalar.into_bigint().0);
+        //println!("Scalar: {:?}", scalar.into_bigint().0);
         let decomp = Secp256k1Point::decompose_scalar(&scalar);
-        println!("{:?}", decomp);
+        //println!("{:?}", decomp);
     }
 
-    fn scalar_mul_fr(scalar: &Fr, point: &Secp256k1Point) -> Secp256k1Point {
+    fn scalar_mul_fr(scalar: &Secp256k1Fr, point: &Secp256k1Point) -> Secp256k1Point {
         let mut res = Secp256k1Point::infinity();
-        let k = scalar.into_bigint().0;
+        let k = scalar.fr().into_bigint().0;
         for i in (0..256).rev() {
             if (k[i / 64] >> (i % 64)) & 1 == 1 {
                 res = res.double_and_add(point);
@@ -214,7 +220,7 @@ mod sequence_tests {
         }
         res
     }
-    /*#[test]
+    #[test]
     fn print_lambda() {
         // print lambda in montgomery form
         let lambda = Fr::from_bigint(BigInt {
@@ -227,21 +233,27 @@ mod sequence_tests {
         })
         .unwrap();
         println!("Lambda: {:?}", lambda.0 .0);
-    }*/
+    }
 
     #[test]
     fn test_endomorphism_consistency() {
         let mut point = Secp256k1Point::generator();
         let mut endo_point = Secp256k1Point::generator_w_endomorphism();
-        let k = Fr::NEG_ONE
-            * Fr::new(BigInt {
-                0: [
-                    0x1234567890ABCDEF,
-                    0x0FEDCBA987654321,
-                    0x1111111111111111,
-                    0x2222222222222222,
-                ],
-            });
+        /*let k = Fr::NEG_ONE
+        * Fr::new(BigInt {
+            0: [
+                0x1234567890ABCDEF,
+                0x0FEDCBA987654321,
+                0x1111111111111111,
+                0x2222222222222222,
+            ],
+        });*/
+        let k = Secp256k1Fr::from_u64_arr(&[
+            0x1234567890ABCDEF,
+            0x0FEDCBA987654321,
+            0x1111111111111111,
+            0x2222222222222222,
+        ]);
         let decomp = Secp256k1Point::decompose_scalar(&k);
         if decomp[0].0 {
             point = point.neg();
@@ -282,7 +294,7 @@ mod sequence_tests {
             sk2 = -sk2;
         }
         let recombined = sk1 + sk2 * lambda;
-        assert_eq!(recombined, k);
+        assert_eq!(recombined, k.fr());
     }
 
     #[test]
@@ -301,7 +313,7 @@ mod sequence_tests {
             0xd480f970fa1501a4,
             0xd9ccbc62a5f896f9,
         ]);
-        let u = Fr::from_bigint(BigInt {
+        /*let u = Fr::from_bigint(BigInt {
             0: [
                 0x1234567890ABCDEF,
                 0x0FEDCBA987654321,
@@ -318,7 +330,19 @@ mod sequence_tests {
                 0x4444444444444444,
             ],
         })
-        .unwrap();
+        .unwrap();*/
+        let u = Secp256k1Fr::from_u64_arr(&[
+            0x1234567890ABCDEF,
+            0x0FEDCBA987654321,
+            0x1111111111111111,
+            0x2222222222222222,
+        ]);
+        let v = Secp256k1Fr::from_u64_arr(&[
+            0x0FEDCBA987654321,
+            0x1234567890ABCDEF,
+            0x3333333333333333,
+            0x4444444444444444,
+        ]);
         // scalar mul without decomposition
         let u_g = scalar_mul_fr(&u, &g);
         let v_q = scalar_mul_fr(&v, &q);
@@ -374,6 +398,44 @@ mod sequence_tests {
         println!("b1: {:?}", b1.to_bytes_le());
         println!("a2: {:?}", a2.to_bytes_le());
     }*/
+    #[test]
+    fn test_full_sig_verify() {
+        /*
+        z (u64 LE hex): [0x9088f7ace2efcde9, 0xc484efe37a5380ee, 0xa52e52d7da7dabfa, 0xb94d27b9934d3e08]
+        r (u64 LE hex): [0xb8fc413b4b967ed8, 0x248d4b0b2829ab00, 0x587f69296af3cd88, 0x3a5d6a386e6cf7c0]
+        s (u64 LE hex): [0x66a82f274e3dcafc, 0x299a02486be40321, 0x6212d714118f617e, 0x9d452f63cf91018d]
+        Qx (u64 LE hex): [0x0012563f32ed0216, 0xee00716af6a73670, 0x91fc70e34e00e6c8, 0xeeb6be8b9e68868b]
+        Qy (u64 LE hex): [0x4780de3d5fda972d, 0xcb1b42d72491e47f, 0xdc7f31262e4ba2b7, 0xdc7b004d3bb2800d]
+        d (u64 LE hex): [0xf647745551df9a40, 0x12d97a7922ddaa7c, 0x70bfaf452f9367b6, 0x57bab58a7f2bc842]
+         */
+        let z = Secp256k1Fr::from_u64_arr(&[
+            0x9088f7ace2efcde9,
+            0xc484efe37a5380ee,
+            0xa52e52d7da7dabfa,
+            0xb94d27b9934d3e08,
+        ]);
+        let r = Secp256k1Fr::from_u64_arr(&[
+            0xb8fc413b4b967ed8,
+            0x248d4b0b2829ab00,
+            0x587f69296af3cd88,
+            0x3a5d6a386e6cf7c0,
+        ]);
+        let s = Secp256k1Fr::from_u64_arr(&[
+            0x66a82f274e3dcafc,
+            0x299a02486be40321,
+            0x6212d714118f617e,
+            0x9d452f63cf91018d,
+        ]);
+        let q = Secp256k1Point::from_u64_arr(&[
+            0x0012563f32ed0216,
+            0xee00716af6a73670,
+            0x91fc70e34e00e6c8,
+            0xeeb6be8b9e68868b,
+            0x4780de3d5fda972d,
+            0xcb1b42d72491e47f,
+            0xdc7f31262e4ba2b7,
+            0xdc7b004d3bb2800d,
+        ]);
+        crate::sdk::ecdsa_verify(z, r, s, q);
+    }
 }
-
-/*[0xfd7914a271ed2e42, 0x7fb20973e1035805, 0x8c2c7e3c55347a2f, 0xe069d2fb3df133fd, 0x70e6973fb3b3c61e, 0xaed7312cd8530080, 0x390fa40885dbc7f2, 0x3142c3b27c54160e, 0x62cdfbc1358ff2e7, 0x95bce326ef8d07c0, 0x1a0637809a7c16e3, 0x0197263b9b73d8fe, 0x921e6ffa3fe39600, 0xc1b77824c49ecaa6, 0x25b5d035fbbdcd93, 0xd25330b456437bc4,0xbfc6759e3ab1d57a, 0x2e822c47f143f7dc, 0xf8d88465f162255a, 0xac8cbfb4707c3ba1, 0x92b8007c0027e3b6, 0x3d3a2aaa3b129d3c, 0xc71a36833e579582, 0x63fa22b365e65edc,0x84c60f988985bb6d, 0x3771987a8626ed1b, 0x7d2d842df22e3972, 0x68c3e1d401738d23, 0x7ba86c982b250320, 0x845453face9978fb, 0xd480f970fa1501a4, 0xd9ccbc62a5f896f9]*/
