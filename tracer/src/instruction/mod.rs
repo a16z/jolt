@@ -936,12 +936,13 @@ impl Instruction {
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
-            // 0x5B is reserved for I-type virtual instructions.
+            // 0x5B is reserved for virtual instructions.
             0b1011011 => {
                 let funct3 = (instr >> 12) & 0x7;
                 match funct3 {
                     0b000 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
-                    _ => Err("Invalid I-type virtual instruction"),
+                    0b001 => Ok(VirtualAssertEQ::new(instr, address, true, compressed).into()),
+                    _ => Err("Invalid virtual instruction"),
                 }
             }
             _ => Err("Unknown opcode"),

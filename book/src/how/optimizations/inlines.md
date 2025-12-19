@@ -89,6 +89,8 @@ unsafe {
 }
 ```
 
+Additional inlines for Secp256k1 operations are available but wrapped in a higher-level API. See `jolt-inlines/secp256k1` for details and `examples/secp256k1-ecdsa-verify` for an example of a higher-level ECDSA verification function using the Secp256k1 inlines.
+
 ## Benchmarks
 
 The table below compares the performance of reference and inline implementations for each hash function, using identical 32KB inputs and the same API across both reference and inline implementations.

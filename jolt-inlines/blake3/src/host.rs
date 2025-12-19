@@ -16,6 +16,7 @@ pub fn init_inlines() -> Result<(), String> {
         BLAKE3_FUNCT7,
         BLAKE3_NAME,
         std::boxed::Box::new(sequence_builder::blake3_inline_sequence_builder),
+        None,
     )?;
 
     register_inline(
@@ -24,6 +25,7 @@ pub fn init_inlines() -> Result<(), String> {
         BLAKE3_FUNCT7,
         BLAKE3_KEYED64_NAME,
         std::boxed::Box::new(sequence_builder::blake3_keyed64_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())

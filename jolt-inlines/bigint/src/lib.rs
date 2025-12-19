@@ -21,6 +21,7 @@ pub fn init_inlines() -> Result<(), String> {
         multiplication::BIGINT256_MUL_FUNCT7,
         multiplication::BIGINT256_MUL_NAME,
         std::boxed::Box::new(sequence_builder::bigint_mul_sequence_builder),
+        None,
     )?;
 
     Ok(())
