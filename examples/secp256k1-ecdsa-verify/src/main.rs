@@ -7,9 +7,12 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_secp256k1_ecdsa_verify(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_secp256k1_ecdsa_verify(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_secp256k1_ecdsa_verify(&mut program);
+    let prover_preprocessing =
+        guest::preprocess_prover_secp256k1_ecdsa_verify(shared_preprocessing.clone());
+    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
-        guest::verifier_preprocessing_from_prover_secp256k1_ecdsa_verify(&prover_preprocessing);
+        guest::preprocess_verifier_secp256k1_ecdsa_verify(shared_preprocessing, verifier_setup);
 
     let prove_secp256k1_ecdsa_verify =
         guest::build_prover_secp256k1_ecdsa_verify(program, prover_preprocessing);
