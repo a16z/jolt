@@ -41,7 +41,7 @@ impl Secp256k1DivqAdv {
             cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
         ];
         // compute c = a / b
-        let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt { 0: *a });
+        let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
         let advice = (arr_to_fq(&b)
             .inverse()
             .expect("Attempted to invert zero in secp256k1 field")
@@ -123,7 +123,7 @@ impl Secp256k1DivrAdv {
             cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
         ];
         // compute c = a / b
-        let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt { 0: *a });
+        let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt(*a));
         let advice = (arr_to_fr(&b)
             .inverse()
             .expect("Attempted to invert zero in secp256k1 scalar field")
@@ -199,7 +199,7 @@ impl Secp256k1GlvrAdv {
             cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
         ];
         // convert k from montgomery form to normal form
-        let k: NBigInt = Fr::new_unchecked(BigInt { 0: kr }).into_bigint().into();
+        let k: NBigInt = Fr::new_unchecked(BigInt(kr)).into_bigint().into();
         // constants for glv decomposition
         let r = NBigInt::from_bytes_le(
             Sign::Plus,

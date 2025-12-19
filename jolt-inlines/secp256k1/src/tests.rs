@@ -10,11 +10,11 @@ mod sequence_tests {
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value
-        let arr_to_fq = |arr: &[u64; 4]| Fq::new_unchecked(BigInt { 0: *arr });
-        let expected = (arr_to_fq(&b)
+        let arr_to_fq = |arr: &[u64; 4]| Fq::new_unchecked(BigInt(*arr));
+        let expected = (arr_to_fq(b)
             .inverse()
             .expect("Attempted to invert zero in secp256k1 field")
-            * arr_to_fq(&a))
+            * arr_to_fq(a))
         .0
          .0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)

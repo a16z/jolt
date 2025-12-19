@@ -31,12 +31,15 @@ pub type InlineSequenceFunction =
 pub type InlineTraceFunction =
     Box<dyn Fn(InstrAssembler, FormatInline, &mut Cpu, Option<&mut Vec<Cycle>>) + Send + Sync>;
 
+// Type alias for value in the registry
+pub type InlineRegistryValue = (String, InlineSequenceFunction, Option<InlineTraceFunction>);
+
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
 
 // Global registry that maps (opcode, funct3, funct7) tuples to inline implementations
 lazy_static! {
-    static ref INLINE_REGISTRY: RwLock<HashMap<InlineKey, (String, InlineSequenceFunction, Option<InlineTraceFunction>)>> =
+    static ref INLINE_REGISTRY: RwLock<HashMap<InlineKey, InlineRegistryValue>> =
         RwLock::new(HashMap::new());
 }
 

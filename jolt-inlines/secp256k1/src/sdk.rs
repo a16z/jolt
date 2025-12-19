@@ -66,10 +66,8 @@ impl Secp256k1Fq {
     /// performs conversion to montgomery form
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
-        //println!("Creating Secp256k1Fq from array:\n{:?}", BigInt { 0: *arr });
-        //println!("Modulus:\n{:?}", Fq::MODULUS);
         // attempt to create a new Fq element from the array
-        let e = Fq::from_bigint(BigInt { 0: *arr });
+        let e = Fq::from_bigint(BigInt(*arr));
         // if not valid, panic
         if e.is_none() {
             hcf();
@@ -82,7 +80,7 @@ impl Secp256k1Fq {
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fq {
-            e: Fq::new_unchecked(BigInt { 0: *arr }),
+            e: Fq::new_unchecked(BigInt(*arr)),
         }
     }
     /// get inner Fq type
@@ -101,9 +99,7 @@ impl Secp256k1Fq {
         // derived from Fq::from(7)
         // precomputed to avoid recomputation in point doubling
         Secp256k1Fq {
-            e: Fq::new_unchecked(BigInt {
-                0: [30064777911u64, 0u64, 0u64, 0u64],
-            }),
+            e: Fq::new_unchecked(BigInt([30064777911u64, 0u64, 0u64, 0u64])),
         }
     }
     /// returns true if the element is zero
@@ -233,7 +229,7 @@ impl Secp256k1Fr {
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
         // attempt to create a new Fq element from the array
-        let e = Fr::from_bigint(BigInt { 0: *arr });
+        let e = Fr::from_bigint(BigInt(*arr));
         // if not valid, panic
         if e.is_none() {
             hcf();
@@ -246,7 +242,7 @@ impl Secp256k1Fr {
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fr {
-            e: Fr::new_unchecked(BigInt { 0: *arr }),
+            e: Fr::new_unchecked(BigInt(*arr)),
         }
     }
     /// get inner Fr type
@@ -524,16 +520,16 @@ impl Secp256k1Point {
     pub fn double_and_add(&self, other: &Secp256k1Point) -> Self {
         // if self is infinity, then return other
         if self.is_infinity() {
-            return other.clone();
+            other.clone()
         // if other is infinity, then return 2*self
         } else if other.is_infinity() {
-            return self.add(self);
+            self.add(self)
         // if self is equal to other, naive double and add
         } else if self.x == other.x && self.y == other.y {
-            return self.add(self).add(other);
+            self.add(self).add(other)
         // if self and other are inverses, return self
         } else if self.x == other.x && self.y != other.y {
-            return self.clone();
+            self.clone()
         // general case, compute (self + other) + self
         // saving an operation in the middle
         // note that (self + other) cannot equal infinity or self here
@@ -713,8 +709,8 @@ fn secp256k1_4x128_scalar_mul(scalars: [u128; 4], points: [Secp256k1Point; 4]) -
     let mut res = Secp256k1Point::infinity();
     for i in (0..128).rev() {
         let mut idx = 0;
-        for j in 0..4 {
-            if (scalars[j] >> i) & 1 == 1 {
+        for (j, scalar) in scalars.iter().enumerate() {
+            if (scalar >> i) & 1 == 1 {
                 idx |= 1 << j;
             }
         }
