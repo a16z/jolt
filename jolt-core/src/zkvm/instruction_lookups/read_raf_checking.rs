@@ -41,7 +41,7 @@ use crate::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
     zkvm::{
-        config::{self, OneHotParams},
+        config::{OneHotParams, ProverOnlyConfig},
         instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -117,7 +117,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
-        let phases = config::instruction_sumcheck_phases(n_cycle_vars);
+        let phases = ProverOnlyConfig::default_for_trace(n_cycle_vars).instruction_sumcheck_phases;
         let (r_reduction, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,

@@ -10,7 +10,7 @@ use std::{
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::zkvm::config::get_log_k_chunk;
+use crate::zkvm::config::ProofConfig;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -1283,8 +1283,8 @@ where
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
         let max_T: usize = max_trace_length.next_power_of_two();
-        let log_chunk = get_log_k_chunk(max_T);
-        let generators = PCS::setup_prover(log_chunk + max_T.log_2());
+        let proof_config = ProofConfig::default_for_trace(max_T.log_2());
+        let generators = PCS::setup_prover(proof_config.log_k_chunk + max_T.log_2());
         JoltProverPreprocessing { generators, shared }
     }
 
