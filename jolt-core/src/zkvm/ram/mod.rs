@@ -332,7 +332,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         .par_iter_mut()
         .enumerate()
         .for_each(|(k, word)| {
-            *word = final_memory.read_doubleword(8 * k as u64);
+            *word = final_memory.get_doubleword(8 * k as u64);
         });
 
     index = remap_address(

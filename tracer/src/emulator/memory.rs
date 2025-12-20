@@ -134,7 +134,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     ///
     /// # Arguments
     /// * `capacity`
-    pub fn init(&mut self, capacity: u64) {
+    pub(crate) fn init(&mut self, capacity: u64) {
         self.data.init_with_capacity(capacity)
     }
 
@@ -142,7 +142,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_byte(&mut self, address: u64) -> u8 {
+    pub(crate) fn read_byte(&mut self, address: u64) -> u8 {
         let index = (address >> 3) as usize;
         let pos = (address % 8) * 8;
         (*self.data.get_u64(index) >> pos) as u8
@@ -152,7 +152,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_halfword(&mut self, address: u64) -> u16 {
+    pub(crate) fn read_halfword(&mut self, address: u64) -> u16 {
         if address.is_multiple_of(2) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
@@ -166,7 +166,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_word(&mut self, address: u64) -> u32 {
+    pub(crate) fn read_word(&mut self, address: u64) -> u32 {
         if address.is_multiple_of(4) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
@@ -180,7 +180,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     ///
     /// # Arguments
     /// * `address`
-    pub fn read_doubleword(&mut self, address: u64) -> u64 {
+    pub(crate) fn read_doubleword(&mut self, address: u64) -> u64 {
         if address.is_multiple_of(8) {
             let index = (address >> 3) as usize;
             *self.data.get_u64(index)
@@ -197,7 +197,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     /// # Arguments
     /// * `address`
     /// * `width` up to eight
-    pub fn read_bytes(&mut self, address: u64, width: u64) -> u64 {
+    pub(crate) fn read_bytes(&mut self, address: u64, width: u64) -> u64 {
         let mut data = 0_u64;
         for i in 0..width {
             data |= (self.read_byte(address.wrapping_add(i)) as u64) << (i * 8);
@@ -210,7 +210,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     /// # Arguments
     /// * `address`
     /// * `value`
-    pub fn write_byte(&mut self, address: u64, value: u8) {
+    pub(crate) fn write_byte(&mut self, address: u64, value: u8) {
         let index = (address >> 3) as usize;
         let pos = (address % 8) * 8;
         *self.data.get_u64(index) =
@@ -222,7 +222,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     /// # Arguments
     /// * `address`
     /// * `value`
-    pub fn write_halfword(&mut self, address: u64, value: u16) {
+    pub(crate) fn write_halfword(&mut self, address: u64, value: u16) {
         if address.is_multiple_of(2) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
@@ -238,7 +238,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     /// # Arguments
     /// * `address`
     /// * `value`
-    pub fn write_word(&mut self, address: u64, value: u32) {
+    pub(crate) fn write_word(&mut self, address: u64, value: u32) {
         if address.is_multiple_of(4) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
@@ -254,7 +254,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     /// # Arguments
     /// * `address`
     /// * `value`
-    pub fn write_doubleword(&mut self, address: u64, value: u64) {
+    pub(crate) fn write_doubleword(&mut self, address: u64, value: u64) {
         if address.is_multiple_of(8) {
             let index = (address >> 3) as usize;
             *self.data.get_u64(index) = value;
@@ -272,7 +272,7 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     /// * `address`
     /// * `value`
     /// * `width` up to eight
-    pub fn write_bytes(&mut self, address: u64, value: u64, width: u64) {
+    pub(crate) fn write_bytes(&mut self, address: u64, value: u64, width: u64) {
         for i in 0..width {
             self.write_byte(address.wrapping_add(i), (value >> (i * 8)) as u8);
         }
@@ -282,14 +282,69 @@ impl<Data: MemoryData> MemoryBackend<Data> {
     ///
     /// # Arguments
     /// * `address`
-    pub fn validate_address(&self, address: u64) -> bool {
+    pub(crate) fn validate_address(&self, address: u64) -> bool {
         let word_index = (address >> 3) as usize;
         word_index < self.data.get_num_doublewords()
     }
 
-    pub fn into_vec_memory_backend(self) -> Memory {
+    pub(crate) fn into_vec_memory_backend(self) -> Memory {
         MemoryBackend {
             data: self.data.into_vec_memory(),
         }
+    }
+}
+
+impl MemoryBackend<Vec<u64>> {
+    /// Reads a byte from memory.
+    ///
+    /// # Arguments
+    /// * `address`
+    pub fn get_byte(&self, address: u64) -> u8 {
+        let index = (address >> 3) as usize;
+        let pos = (address % 8) * 8;
+        (self.data[index] >> pos) as u8
+    }
+
+    /// Reads four bytes from memory.
+    ///
+    /// # Arguments
+    /// * `address`
+    pub fn get_word(&self, address: u64) -> u32 {
+        if address.is_multiple_of(4) {
+            let index = (address >> 3) as usize;
+            let pos = (address % 8) * 8;
+            (self.data[index] >> pos) as u32
+        } else {
+            self.get_bytes(address, 4) as u32
+        }
+    }
+
+    /// Reads eight bytes from memory.
+    ///
+    /// # Arguments
+    /// * `address`
+    pub fn get_doubleword(&self, address: u64) -> u64 {
+        if address.is_multiple_of(8) {
+            let index = (address >> 3) as usize;
+            self.data[index]
+        } else if address.is_multiple_of(4) {
+            (self.get_word(address) as u64)
+                | ((self.get_word(address.wrapping_add(4)) as u64) << 32)
+        } else {
+            self.get_bytes(address, 8)
+        }
+    }
+
+    /// Reads multiple bytes from memory.
+    ///
+    /// # Arguments
+    /// * `address`
+    /// * `width` up to eight
+    pub(crate) fn get_bytes(&self, address: u64, width: u64) -> u64 {
+        let mut data = 0_u64;
+        for i in 0..width {
+            data |= (self.get_byte(address.wrapping_add(i)) as u64) << (i * 8);
+        }
+        data
     }
 }

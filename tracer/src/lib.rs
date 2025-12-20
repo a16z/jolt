@@ -714,6 +714,8 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 
 #[cfg(test)]
 mod test {
+    use crate::emulator::Emulator;
+
     use super::*;
     const ELF_CONTENTS: [u8; 6404] = [
         0x7f, 0x45, 0x4c, 0x46, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
