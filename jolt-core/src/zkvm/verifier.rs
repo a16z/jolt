@@ -135,12 +135,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let one_hot_params = OneHotParams::new_with_log_k_chunk(
-            proof.log_k_chunk,
-            proof.lookups_ra_virtual_log_k_chunk,
-            proof.bytecode_K,
-            proof.ram_K,
-        );
+        let one_hot_params =
+            OneHotParams::new_with_config(&proof.proof_config, proof.bytecode_K, proof.ram_K);
 
         Ok(Self {
             trusted_advice_commitment,
@@ -245,6 +241,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
             &self.one_hot_params,
             self.proof.trace_length,
+            &self.proof.proof_config,
         );
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
@@ -305,6 +302,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.proof.proof_config,
         );
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,

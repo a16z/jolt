@@ -742,9 +742,14 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
         trace_len: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        config: &ProofConfig,
     ) -> Self {
-        let params =
-            RegistersReadWriteCheckingParams::new(trace_len, opening_accumulator, transcript);
+        let params = RegistersReadWriteCheckingParams::new_with_config(
+            trace_len,
+            opening_accumulator,
+            transcript,
+            config,
+        );
         Self { params }
     }
 }

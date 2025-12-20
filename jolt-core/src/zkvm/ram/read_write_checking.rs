@@ -679,12 +679,14 @@ impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
         transcript: &mut impl Transcript,
         one_hot_params: &OneHotParams,
         trace_length: usize,
+        config: &ProofConfig,
     ) -> Self {
-        let params = RamReadWriteCheckingParams::new(
+        let params = RamReadWriteCheckingParams::new_with_config(
             opening_accumulator,
             transcript,
             one_hot_params,
             trace_length,
+            config,
         );
         RamReadWriteCheckingVerifier { params }
     }

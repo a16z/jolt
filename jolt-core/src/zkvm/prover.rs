@@ -382,8 +382,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
-            log_k_chunk: self.one_hot_params.log_k_chunk,
-            lookups_ra_virtual_log_k_chunk: self.one_hot_params.lookups_ra_virtual_log_k_chunk,
+            proof_config: self.proof_config.clone(),
         };
 
         let prove_duration = start.elapsed();
@@ -606,11 +605,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &self.opening_accumulator,
         );
-        let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
+        let ram_read_write_checking_params = RamReadWriteCheckingParams::new_with_config(
             &self.opening_accumulator,
             &mut self.transcript,
             &self.one_hot_params,
             self.trace.len(),
+            &self.proof_config,
         );
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
@@ -765,11 +765,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        let registers_read_write_checking_params =
+            RegistersReadWriteCheckingParams::new_with_config(
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+                &self.proof_config,
+            );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
             &self.advice.trusted_advice_polynomial,
