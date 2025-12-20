@@ -138,6 +138,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let one_hot_params =
             OneHotParams::new_with_config(&proof.proof_config, proof.bytecode_K, proof.ram_K);
 
+        proof
+            .proof_config
+            .validate_for_trace(proof.trace_length.log_2(), one_hot_params.ram_k.log_2())
+            .map_err(|msg| ProofVerifyError::InvalidProofConfig(msg))?;
+
         Ok(Self {
             trusted_advice_commitment,
             program_io,

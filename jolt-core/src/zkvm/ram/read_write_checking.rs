@@ -102,8 +102,8 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
             T,
             gamma,
             r_cycle,
-            phase1_num_rounds: config.ram_rw_phase1_num_rounds(K, T),
-            phase2_num_rounds: config.ram_rw_phase2_num_rounds(K, T),
+            phase1_num_rounds: config.ram_rw_phase1_num_rounds,
+            phase2_num_rounds: config.ram_rw_phase2_num_rounds,
         }
     }
 
@@ -199,9 +199,12 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
 /// NOTE: This uses the default ProofConfig. For custom configs, check
 /// `config.ram_rw_all_cycle_in_phase1(ram_K, T)` directly.
 pub fn needs_single_advice_opening(T: usize) -> bool {
-    // With default config, phase1_num_rounds == T.log_2(), so this is always true.
-    // This function exists for backward compatibility and for when default config is used.
-    ProofConfig::default_for_trace(T.log_2()).ram_rw_all_cycle_in_phase1(1, T)
+    let log_T = T.log_2();
+    let mut config = ProofConfig::default_for_trace(log_T);
+    config
+        .finalize_for_trace(log_T, 0)
+        .expect("default ProofConfig should be valid");
+    config.ram_rw_all_cycle_in_phase1(1, T)
 }
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {

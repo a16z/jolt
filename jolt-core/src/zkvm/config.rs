@@ -3,6 +3,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::LOG_K;
+use common::constants::REGISTER_COUNT;
 
 // =============================================================================
 // ProofConfig - Configuration that affects proof structure
@@ -12,6 +13,9 @@ use crate::zkvm::instruction_lookups::LOG_K;
 ///
 /// These parameters determine polynomial layouts, binding orders, and opening structures.
 /// If prover and verifier use different ProofConfig values, verification will fail.
+const LOG_VIRTUAL_REGISTERS: usize = REGISTER_COUNT.ilog2() as usize;
+const BIND_ALL_PHASES: usize = usize::MAX;
+
 #[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ProofConfig {
     /// Log of chunk size for one-hot encoding (e.g., 4 or 8).
@@ -22,20 +26,20 @@ pub struct ProofConfig {
     pub lookups_ra_virtual_log_k_chunk: usize,
 
     /// RAM read-write checking: number of cycle variables to bind in phase 1.
-    /// If None, defaults to T.log_2() (bind all cycle vars in phase 1).
-    pub ram_rw_phase1_num_rounds: Option<usize>,
+    /// Default (sentinel) binds all cycle variables.
+    pub ram_rw_phase1_num_rounds: usize,
 
     /// RAM read-write checking: number of address variables to bind in phase 2.
-    /// If None, defaults to K.log_2() (bind all address vars in phase 2).
-    pub ram_rw_phase2_num_rounds: Option<usize>,
+    /// Default (sentinel) binds all address variables.
+    pub ram_rw_phase2_num_rounds: usize,
 
     /// Registers read-write checking: number of cycle variables to bind in phase 1.
-    /// If None, defaults to T.log_2() (bind all cycle vars in phase 1).
-    pub registers_rw_phase1_num_rounds: Option<usize>,
+    /// Default (sentinel) binds all cycle variables.
+    pub registers_rw_phase1_num_rounds: usize,
 
     /// Registers read-write checking: number of address variables to bind in phase 2.
-    /// If None, defaults to LOG_K (7 for 128 registers).
-    pub registers_rw_phase2_num_rounds: Option<usize>,
+    /// Default (sentinel) binds all address variables.
+    pub registers_rw_phase2_num_rounds: usize,
 }
 
 impl Default for ProofConfig {
@@ -43,10 +47,10 @@ impl Default for ProofConfig {
         Self {
             log_k_chunk: 4,
             lookups_ra_virtual_log_k_chunk: LOG_K / 8,
-            ram_rw_phase1_num_rounds: None,
-            ram_rw_phase2_num_rounds: None,
-            registers_rw_phase1_num_rounds: None,
-            registers_rw_phase2_num_rounds: None,
+            ram_rw_phase1_num_rounds: BIND_ALL_PHASES,
+            ram_rw_phase2_num_rounds: BIND_ALL_PHASES,
+            registers_rw_phase1_num_rounds: BIND_ALL_PHASES,
+            registers_rw_phase2_num_rounds: BIND_ALL_PHASES,
         }
     }
 }
@@ -57,10 +61,10 @@ impl ProofConfig {
         Self {
             log_k_chunk: if log_T < 25 { 4 } else { 8 },
             lookups_ra_virtual_log_k_chunk: if log_T < 25 { LOG_K / 8 } else { LOG_K / 4 },
-            ram_rw_phase1_num_rounds: None,
-            ram_rw_phase2_num_rounds: None,
-            registers_rw_phase1_num_rounds: None,
-            registers_rw_phase2_num_rounds: None,
+            ram_rw_phase1_num_rounds: BIND_ALL_PHASES,
+            ram_rw_phase2_num_rounds: BIND_ALL_PHASES,
+            registers_rw_phase1_num_rounds: BIND_ALL_PHASES,
+            registers_rw_phase2_num_rounds: BIND_ALL_PHASES,
         }
     }
 
@@ -68,62 +72,82 @@ impl ProofConfig {
     // RAM read-write checking phase helpers
     // -------------------------------------------------------------------------
 
-    /// Number of cycle variables to bind in RAM RW phase 1.
-    #[inline]
-    pub fn ram_rw_phase1_num_rounds(&self, _ram_K: usize, T: usize) -> usize {
-        self.ram_rw_phase1_num_rounds.unwrap_or_else(|| T.log_2())
-    }
-
-    /// Number of address variables to bind in RAM RW phase 2.
-    #[inline]
-    pub fn ram_rw_phase2_num_rounds(&self, ram_K: usize, _T: usize) -> usize {
-        self.ram_rw_phase2_num_rounds
-            .unwrap_or_else(|| ram_K.log_2())
-    }
-
     /// Returns true if all cycle variables are bound in RAM RW phase 1.
     #[inline]
-    pub fn ram_rw_all_cycle_in_phase1(&self, ram_K: usize, T: usize) -> bool {
-        self.ram_rw_phase1_num_rounds(ram_K, T) == T.log_2()
+    pub fn ram_rw_all_cycle_in_phase1(&self, _ram_K: usize, T: usize) -> bool {
+        let log_t = T.log_2();
+        self.ram_rw_phase1_num_rounds == log_t
     }
 
     /// Returns true if all address variables are bound in RAM RW phase 2.
     #[inline]
-    pub fn ram_rw_all_address_in_phase2(&self, ram_K: usize, T: usize) -> bool {
-        self.ram_rw_phase2_num_rounds(ram_K, T) == ram_K.log_2()
+    pub fn ram_rw_all_address_in_phase2(&self, ram_K: usize, _T: usize) -> bool {
+        let log_k = ram_K.log_2();
+        self.ram_rw_phase2_num_rounds == log_k
     }
 
     // -------------------------------------------------------------------------
     // Registers read-write checking phase helpers
     // -------------------------------------------------------------------------
 
-    /// Number of cycle variables to bind in Registers RW phase 1.
-    #[inline]
-    pub fn registers_rw_phase1_num_rounds(&self, T: usize) -> usize {
-        self.registers_rw_phase1_num_rounds
-            .unwrap_or_else(|| T.log_2())
-    }
-
-    /// Number of address variables to bind in Registers RW phase 2.
-    #[inline]
-    pub fn registers_rw_phase2_num_rounds(&self, _T: usize) -> usize {
-        // Default to 7 for 128 virtual registers (including temporaries)
-        const LOG_VIRTUAL_REGISTERS: usize = 7;
-        self.registers_rw_phase2_num_rounds
-            .unwrap_or(LOG_VIRTUAL_REGISTERS)
-    }
-
     /// Returns true if all cycle variables are bound in Registers RW phase 1.
     #[inline]
     pub fn registers_rw_all_cycle_in_phase1(&self, T: usize) -> bool {
-        self.registers_rw_phase1_num_rounds(T) == T.log_2()
+        self.registers_rw_phase1_num_rounds == T.log_2()
     }
 
     /// Returns true if all address variables are bound in Registers RW phase 2.
     #[inline]
-    pub fn registers_rw_all_address_in_phase2(&self, T: usize) -> bool {
-        const LOG_VIRTUAL_REGISTERS: usize = 7;
-        self.registers_rw_phase2_num_rounds(T) == LOG_VIRTUAL_REGISTERS
+    pub fn registers_rw_all_address_in_phase2(&self, _T: usize) -> bool {
+        self.registers_rw_phase2_num_rounds == LOG_VIRTUAL_REGISTERS
+    }
+
+    fn resolve_rounds(value: usize, default_value: usize) -> usize {
+        if value == BIND_ALL_PHASES {
+            default_value
+        } else {
+            value
+        }
+    }
+
+    pub fn finalize_for_trace(&mut self, log_T: usize, ram_log_K: usize) -> Result<(), String> {
+        self.ram_rw_phase1_num_rounds = Self::resolve_rounds(self.ram_rw_phase1_num_rounds, log_T);
+        self.ram_rw_phase2_num_rounds =
+            Self::resolve_rounds(self.ram_rw_phase2_num_rounds, ram_log_K);
+        self.registers_rw_phase1_num_rounds =
+            Self::resolve_rounds(self.registers_rw_phase1_num_rounds, log_T);
+        self.registers_rw_phase2_num_rounds =
+            Self::resolve_rounds(self.registers_rw_phase2_num_rounds, LOG_VIRTUAL_REGISTERS);
+
+        self.validate_for_trace(log_T, ram_log_K)
+    }
+
+    pub fn validate_for_trace(&self, log_T: usize, ram_log_K: usize) -> Result<(), String> {
+        if self.ram_rw_phase1_num_rounds > log_T {
+            return Err(format!(
+                "ram_rw_phase1_num_rounds ({}) exceeds log_T ({log_T})",
+                self.ram_rw_phase1_num_rounds
+            ));
+        }
+        if self.ram_rw_phase2_num_rounds > ram_log_K {
+            return Err(format!(
+                "ram_rw_phase2_num_rounds ({}) exceeds log_ram_K ({ram_log_K})",
+                self.ram_rw_phase2_num_rounds
+            ));
+        }
+        if self.registers_rw_phase1_num_rounds > log_T {
+            return Err(format!(
+                "registers_rw_phase1_num_rounds ({}) exceeds log_T ({log_T})",
+                self.registers_rw_phase1_num_rounds
+            ));
+        }
+        if self.registers_rw_phase2_num_rounds > LOG_VIRTUAL_REGISTERS {
+            return Err(format!(
+                "registers_rw_phase2_num_rounds ({}) exceeds LOG_VIRTUAL_REGISTERS ({LOG_VIRTUAL_REGISTERS})",
+                self.registers_rw_phase2_num_rounds
+            ));
+        }
+        Ok(())
     }
 }
 

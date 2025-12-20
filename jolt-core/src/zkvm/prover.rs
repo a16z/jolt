@@ -274,7 +274,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &final_memory_state,
         );
 
-        let proof_config = preprocessing.proof_config.clone();
+        let mut proof_config = preprocessing.proof_config.clone();
+        let log_T = padded_trace_len.log_2();
+        let ram_log_K = ram_K.log_2();
+        proof_config
+            .finalize_for_trace(log_T, ram_log_K)
+            .expect("invalid proof configuration");
         let one_hot_params = OneHotParams::new_with_config(
             &proof_config,
             preprocessing.shared.bytecode.code_size,

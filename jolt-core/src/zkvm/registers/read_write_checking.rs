@@ -99,8 +99,8 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
             gamma,
             T: trace_length,
             r_cycle,
-            phase1_num_rounds: config.registers_rw_phase1_num_rounds(trace_length),
-            phase2_num_rounds: config.registers_rw_phase2_num_rounds(trace_length),
+            phase1_num_rounds: config.registers_rw_phase1_num_rounds,
+            phase2_num_rounds: config.registers_rw_phase2_num_rounds,
         }
     }
 
