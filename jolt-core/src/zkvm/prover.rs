@@ -147,6 +147,7 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
+    pub proof_config: ProofConfig,
 }
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
@@ -273,6 +274,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &final_memory_state,
         );
 
+        let proof_config = preprocessing.proof_config.clone();
+        let one_hot_params = OneHotParams::new_with_config(
+            &proof_config,
+            preprocessing.shared.bytecode.code_size,
+            ram_K,
+        );
+
         Self {
             preprocessing,
             program_io,
@@ -290,11 +298,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             spartan_key,
             initial_ram_state,
             final_ram_state,
-            one_hot_params: OneHotParams::new(
-                padded_trace_len.log_2(),
-                preprocessing.shared.bytecode.code_size,
-                ram_K,
-            ),
+            one_hot_params,
+            proof_config,
         }
     }
 
@@ -1270,6 +1275,7 @@ fn write_instance_flamegraph_svg(
 pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
+    pub proof_config: ProofConfig,
 }
 
 impl<F, PCS> JoltProverPreprocessing<F, PCS>
@@ -1285,7 +1291,11 @@ where
         let max_T: usize = max_trace_length.next_power_of_two();
         let proof_config = ProofConfig::default_for_trace(max_T.log_2());
         let generators = PCS::setup_prover(proof_config.log_k_chunk + max_T.log_2());
-        JoltProverPreprocessing { generators, shared }
+        JoltProverPreprocessing {
+            generators,
+            shared,
+            proof_config,
+        }
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
