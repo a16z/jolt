@@ -73,7 +73,13 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
         trace_length: usize,
     ) -> Self {
         let config = ProofConfig::default_for_trace(trace_length.log_2());
-        Self::new_with_config(opening_accumulator, transcript, one_hot_params, trace_length, &config)
+        Self::new_with_config(
+            opening_accumulator,
+            transcript,
+            one_hot_params,
+            trace_length,
+            &config,
+        )
     }
 
     /// Create params with explicit ProofConfig.
@@ -565,8 +571,10 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         if round == params.phase1_num_rounds + params.phase2_num_rounds - 1 {
             let sparse_matrix = std::mem::take(sparse_matrix);
-            let (ra, val) = sparse_matrix
-                .materialize(params.K >> params.phase2_num_rounds, params.T >> params.phase1_num_rounds);
+            let (ra, val) = sparse_matrix.materialize(
+                params.K >> params.phase2_num_rounds,
+                params.T >> params.phase1_num_rounds,
+            );
             self.ra = Some(ra);
             self.val = Some(val);
         }

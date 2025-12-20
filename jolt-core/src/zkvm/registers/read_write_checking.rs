@@ -191,7 +191,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
     }
 }
 
-
 /// Sumcheck prover for [`RegistersReadWriteCheckingVerifier`].
 #[derive(Allocative)]
 pub struct RegistersReadWriteCheckingProver<F: JoltField> {
@@ -568,8 +567,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
 
         if round == params.phase1_num_rounds + params.phase2_num_rounds - 1 {
             let sparse_matrix = std::mem::take(sparse_matrix);
-            let [ra, wa, val] =
-                sparse_matrix.materialize(K >> params.phase2_num_rounds, params.T >> params.phase1_num_rounds);
+            let [ra, wa, val] = sparse_matrix.materialize(
+                K >> params.phase2_num_rounds,
+                params.T >> params.phase1_num_rounds,
+            );
             self.ra = Some(ra);
             self.wa = Some(wa);
             self.val = Some(val);
