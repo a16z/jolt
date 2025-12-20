@@ -83,7 +83,6 @@ use tracer::instruction::Cycle;
 
 use crate::field::JoltField;
 use crate::poly::{
-    commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
@@ -100,7 +99,7 @@ use crate::subprotocols::{
 use crate::transcripts::Transcript;
 use crate::zkvm::{
     config::OneHotParams,
-    prover::JoltProverPreprocessing,
+    verifier::JoltSharedPreprocessing,
     witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -310,10 +309,10 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     /// Initialize the prover by computing all G_i polynomials.
     /// Returns (prover, ram_hw_claims) where ram_hw_claims contains the computed H_i for RAM polynomials.
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::initialize")]
-    pub fn initialize<PCS: CommitmentScheme<Field = F>>(
+    pub fn initialize(
         params: HammingWeightClaimReductionParams<F>,
         trace: &[Cycle],
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
+        preprocessing: &JoltSharedPreprocessing,
         one_hot_params: &OneHotParams,
     ) -> Self {
         // Compute all G_i polynomials via streaming.

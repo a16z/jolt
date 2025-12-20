@@ -95,14 +95,14 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub kind: AdviceKind,
     pub gamma: F,
     pub advice_vars: usize,
-    pub sigma_a: usize,
-    pub nu_a: usize,
+    pub sigma_a: usize, // number of advice columns
+    pub nu_a: usize,    // number of advice rows
     pub single_opening: bool,
     pub log_k_chunk: usize,
     pub log_t: usize,
-    pub sigma_main: usize,
-    pub nu_a_cycle: usize,
-    pub nu_a_addr: usize,
+    pub sigma_main: usize, // number of main columns
+    pub nu_a_cycle: usize, // number of advice rows that come from the cycle variables
+    pub nu_a_addr: usize,  // number of advice rows that come from the address variables
     /// Dummy rounds are `[dummy_start, dummy_end)` within the Phase 1 local round index space.
     pub dummy_start: usize,
     pub dummy_end: usize,
@@ -225,17 +225,6 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             && local_round >= self.dummy_start
             && local_round < self.dummy_end
     }
-
-    #[inline]
-    fn num_rounds_internal(&self) -> usize {
-        if self.nu_a_cycle == 0 {
-            // Only need the low column bits; no need to traverse the cycle gap.
-            self.sigma_a
-        } else {
-            // Need to reach cycle row bits at index sigma_main.
-            self.sigma_main + self.nu_a_cycle
-        }
-    }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase1Params<F> {
@@ -279,7 +268,13 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase1Param
     }
 
     fn num_rounds(&self) -> usize {
-        self.num_rounds_internal()
+        if self.nu_a_cycle == 0 {
+            // Only need the low column bits; no need to traverse the cycle gap.
+            self.sigma_a
+        } else {
+            // Need to reach cycle row bits at index sigma_main.
+            self.sigma_main + self.nu_a_cycle
+        }
     }
 
     fn normalize_opening_point(
@@ -320,17 +315,17 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
                 .r_val_final
                 .as_ref()
                 .expect("r_val_final must exist when !single_opening");
-            let eq_final = EqPolynomial::evals(&r_final.r);
+            let eq_final = EqPolynomial::evals_with_scaling(&r_final.r, Some(gamma));
             let combined: Vec<F> = eq_eval
                 .par_iter()
                 .zip(eq_final.par_iter())
-                .map(|(e1, e2)| *e1 + gamma * e2)
+                .map(|(e1, e2)| *e1 + e2)
                 .collect();
             MultilinearPolynomial::from(combined)
         };
 
         let two_inv = F::from_u64(2).inverse().unwrap();
-        let dummy_after = params.log_t.saturating_sub(params.num_rounds_internal());
+        let dummy_after = params.log_t.saturating_sub(params.num_rounds());
         let after_scale = F::one().mul_pow_2(dummy_after);
         let after_inv_scale = after_scale.inverse().unwrap();
         Self {
@@ -346,25 +341,38 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
     }
 
     fn compute_message_unscaled(&mut self, previous_claim_unscaled: F) -> UniPoly<F> {
-        let mut evals = [F::zero(); DEGREE_BOUND];
         let half = self.advice_poly.len() / 2;
-        for j in 0..half {
-            let a_evals = self
-                .advice_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let eq_evals = self
-                .eq_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            for k in 0..DEGREE_BOUND {
-                evals[k] += a_evals[k] * eq_evals[k];
-            }
-        }
+        let evals: [F; DEGREE_BOUND] = (0..half)
+            .into_par_iter()
+            .map(|j| {
+                let a_evals = self
+                    .advice_poly
+                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                let eq_evals = self
+                    .eq_poly
+                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+
+                let mut out = [F::zero(); DEGREE_BOUND];
+                for i in 0..DEGREE_BOUND {
+                    out[i] = a_evals[i] * eq_evals[i];
+                }
+                out
+            })
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, arr| {
+                    acc.par_iter_mut()
+                        .zip(arr.par_iter())
+                        .for_each(|(a, b)| *a += *b);
+                    acc
+                },
+            );
         UniPoly::from_evals_and_hint(previous_claim_unscaled, &evals)
     }
 
     fn bind_real_var(&mut self, r_j: F::Challenge) {
-        self.advice_poly.bind(r_j, BindingOrder::LowToHigh);
-        self.eq_poly.bind(r_j, BindingOrder::LowToHigh);
+        self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn step_dummy(&mut self) {
@@ -635,14 +643,14 @@ pub struct AdviceClaimReductionPhase2Params<F: JoltField> {
     pub kind: AdviceKind,
     pub gamma: F,
     pub advice_vars: usize,
-    pub sigma_a: usize,
-    pub nu_a: usize,
+    pub sigma_a: usize, // number of advice columns
+    pub nu_a: usize,    // number of advice rows
     pub single_opening: bool,
     pub log_k_chunk: usize,
     pub log_t: usize,
-    pub sigma_main: usize,
-    pub nu_a_cycle: usize,
-    pub nu_a_addr: usize,
+    pub sigma_main: usize, // number of main columns
+    pub nu_a_cycle: usize, // number of advice rows that come from the cycle variables
+    pub nu_a_addr: usize,  // number of advice rows that come from the address variables
     /// Constant scaling factor carried from Phase 1 (equals 2^{-gap_len}).
     pub scale: F,
     pub inv_scale: F,
@@ -848,11 +856,11 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
                 .r_val_final
                 .as_ref()
                 .expect("r_val_final must exist when !single_opening");
-            let eq_final = EqPolynomial::evals(&r_final.r);
+            let eq_final = EqPolynomial::evals_with_scaling(&r_final.r, Some(gamma));
             let combined: Vec<F> = eq_eval
                 .par_iter()
                 .zip(eq_final.par_iter())
-                .map(|(e1, e2)| *e1 + gamma * e2)
+                .map(|(e1, e2)| *e1 + e2)
                 .collect();
             MultilinearPolynomial::from(combined)
         };
@@ -860,8 +868,8 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
         // Pre-bind cycle-derived advice variables in Dory order:
         // [col_bits || row_cycle_bits].
         for &r in params.cycle_bind_le.iter() {
-            advice_poly.bind(r, BindingOrder::LowToHigh);
-            eq_poly.bind(r, BindingOrder::LowToHigh);
+            advice_poly.bind_parallel(r, BindingOrder::LowToHigh);
+            eq_poly.bind_parallel(r, BindingOrder::LowToHigh);
         }
 
         let two_inv = F::from_u64(2).inverse().unwrap();
@@ -879,25 +887,52 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
     }
 
     fn compute_message_unscaled(&mut self, previous_claim_unscaled: F) -> UniPoly<F> {
-        let mut evals = [F::zero(); DEGREE_BOUND];
         let half = self.advice_poly.len() / 2;
-        for j in 0..half {
-            let a_evals = self
-                .advice_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let eq_evals = self
-                .eq_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            for k in 0..DEGREE_BOUND {
-                evals[k] += a_evals[k] * eq_evals[k];
-            }
-        }
+
+        let evals: [F; DEGREE_BOUND] = (0..half)
+            .into_par_iter()
+            .map(|j| {
+                let a_evals = self
+                    .advice_poly
+                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                let eq_evals = self
+                    .eq_poly
+                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+
+                let mut out = [F::zero(); DEGREE_BOUND];
+                for i in 0..DEGREE_BOUND {
+                    out[i] = a_evals[i] * eq_evals[i];
+                }
+                out
+            })
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, arr| {
+                    acc.par_iter_mut()
+                        .zip(arr.par_iter())
+                        .for_each(|(a, b)| *a += *b);
+                    acc
+                },
+            );
+
+        // let mut evals = [F::zero(); DEGREE_BOUND];
+        // for j in 0..half {
+        //     let a_evals = self
+        //         .advice_poly
+        //         .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+        //     let eq_evals = self
+        //         .eq_poly
+        //         .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+        //     for k in 0..DEGREE_BOUND {
+        //         evals[k] += a_evals[k] * eq_evals[k];
+        //     }
+        // }
         UniPoly::from_evals_and_hint(previous_claim_unscaled, &evals)
     }
 
     fn bind_real_var(&mut self, r_j: F::Challenge) {
-        self.advice_poly.bind(r_j, BindingOrder::LowToHigh);
-        self.eq_poly.bind(r_j, BindingOrder::LowToHigh);
+        self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 }
 

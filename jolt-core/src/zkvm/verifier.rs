@@ -5,15 +5,17 @@ use std::path::Path;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
+use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
-use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::{get_log_k_chunk, OneHotParams};
+#[cfg(feature = "prover")]
+use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
+use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
+use crate::zkvm::Serializable;
 use crate::zkvm::{
-    bytecode::{
-        read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
-        BytecodePreprocessing,
-    },
+    bytecode::read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
     claim_reductions::{
         AdviceClaimReductionPhase1Verifier, AdviceClaimReductionPhase2Verifier,
         HammingWeightClaimReductionVerifier, IncClaimReductionSumcheckVerifier,
@@ -32,7 +34,7 @@ use crate::zkvm::{
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
-        verifier_accumulate_advice, RAMPreprocessing,
+        verifier_accumulate_advice,
     },
     registers::{
         read_write_checking::RegistersReadWriteCheckingVerifier,
@@ -43,7 +45,7 @@ use crate::zkvm::{
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
-    ProverDebugInfo, Serializable,
+    ProverDebugInfo,
 };
 use crate::{
     field::JoltField,
@@ -64,6 +66,7 @@ use anyhow::Context;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
+use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -96,13 +99,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<Self, ProofVerifyError> {
         // Memory layout checks
-        if program_io.memory_layout != preprocessing.memory_layout {
+        if program_io.memory_layout != preprocessing.shared.memory_layout {
             return Err(ProofVerifyError::MemoryLayoutMismatch);
         }
-        if program_io.inputs.len() > preprocessing.memory_layout.max_input_size as usize {
+        if program_io.inputs.len() > preprocessing.shared.memory_layout.max_input_size as usize {
             return Err(ProofVerifyError::InputTooLarge);
         }
-        if program_io.outputs.len() > preprocessing.memory_layout.max_output_size as usize {
+        if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
             return Err(ProofVerifyError::OutputTooLarge);
         }
 
@@ -320,7 +323,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
-            &self.preprocessing.ram,
+            &self.preprocessing.shared.ram,
             &self.program_io,
         );
         let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
@@ -388,7 +391,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     fn verify_stage6(&mut self) -> Result<(), anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
-            &self.preprocessing.bytecode,
+            &self.preprocessing.shared.bytecode,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -690,15 +693,42 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltSharedPreprocessing {
+    pub bytecode: BytecodePreprocessing,
+    pub ram: RAMPreprocessing,
+    pub memory_layout: MemoryLayout,
+    pub max_padded_trace_length: usize,
+    pub log_k_chunk: usize,
+}
+
+impl JoltSharedPreprocessing {
+    #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
+    pub fn new(
+        bytecode: Vec<Instruction>,
+        memory_layout: MemoryLayout,
+        memory_init: Vec<(u64, u8)>,
+        max_padded_trace_length: usize,
+    ) -> JoltSharedPreprocessing {
+        let bytecode = BytecodePreprocessing::preprocess(bytecode);
+        let ram = RAMPreprocessing::preprocess(memory_init);
+        Self {
+            bytecode,
+            ram,
+            memory_layout,
+            max_padded_trace_length,
+            log_k_chunk: get_log_k_chunk(max_padded_trace_length),
+        }
+    }
+}
+
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
-    pub bytecode: BytecodePreprocessing,
-    pub ram: RAMPreprocessing,
-    pub memory_layout: MemoryLayout,
+    pub shared: JoltSharedPreprocessing,
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -728,5 +758,31 @@ where
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;
         Ok(Self::deserialize_compressed(&*data).unwrap())
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS> {
+    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
+    pub fn new(
+        shared: JoltSharedPreprocessing,
+        generators: PCS::VerifierSetup,
+    ) -> JoltVerifierPreprocessing<F, PCS> {
+        Self {
+            generators,
+            shared: shared.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "prover")]
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessing<F, PCS>>
+    for JoltVerifierPreprocessing<F, PCS>
+{
+    fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
+        let generators = PCS::setup_verifier(&prover_preprocessing.generators);
+        Self {
+            generators,
+            shared: prover_preprocessing.shared.clone(),
+        }
     }
 }
