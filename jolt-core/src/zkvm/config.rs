@@ -1,3 +1,5 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::LOG_K;
@@ -10,7 +12,7 @@ use crate::zkvm::instruction_lookups::LOG_K;
 ///
 /// These parameters determine polynomial layouts, binding orders, and opening structures.
 /// If prover and verifier use different ProofConfig values, verification will fail.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ProofConfig {
     /// Log of chunk size for one-hot encoding (e.g., 4 or 8).
     /// Affects RA polynomial chunking and Dory opening structure.
@@ -153,41 +155,6 @@ impl ProverOnlyConfig {
         Self {
             instruction_sumcheck_phases: if log_T < 23 { 16 } else { 8 },
         }
-    }
-}
-
-// =============================================================================
-// Legacy helper functions (for backward compatibility)
-// =============================================================================
-
-/// Helper to get log_k_chunk based on log_T.
-#[inline]
-pub const fn get_log_k_chunk(log_T: usize) -> usize {
-    if log_T < 25 {
-        4
-    } else {
-        8
-    }
-}
-
-/// Helper to get lookups_ra_virtual_log_k_chunk based on log_T.
-pub const fn get_lookups_ra_virtual_log_k_chunk(log_T: usize) -> usize {
-    if log_T < 25 {
-        LOG_K / 8
-    } else {
-        LOG_K / 4
-    }
-}
-
-/// Compute the number of phases for instruction lookups based on trace length.
-/// For traces below 2^23 cycles we want to use 16 phases, otherwise 8.
-/// NOTE: currently only divisors of 128 are supported
-#[inline]
-pub const fn instruction_sumcheck_phases(log_T: usize) -> usize {
-    if log_T < 23 {
-        16
-    } else {
-        8
     }
 }
 
