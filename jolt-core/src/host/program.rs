@@ -106,12 +106,20 @@ impl Program {
                 args.push("--std".to_string());
             }
 
+            // Create per-guest target directory (isolates builds)
+            let guest_target_dir = format!(
+                "{}/{}-{}",
+                target_dir,
+                self.guest,
+                self.func.as_ref().unwrap_or(&"".to_string())
+            );
+
             // Add separator for cargo passthrough args
             args.push("--".to_string());
 
             // Pass --target-dir to cargo (not cargo-jolt)
             args.push("--target-dir".to_string());
-            args.push(target_dir.to_string());
+            args.push(guest_target_dir.clone());
 
             // Always pass --features guest to enable the guest feature on the example package
             // (this is separate from the jolt-sdk features specified in the example's Cargo.toml)
@@ -141,13 +149,13 @@ impl Program {
 
             // Determine the ELF path based on std mode
             let target_triple = if self.std {
-                "riscv64imac-lz-linux-musl"
+                "riscv64imac-zero-linux-musl"
             } else {
                 "riscv64imac-unknown-none-elf"
             };
 
-            // ELF is built to target_dir with standard cargo layout
-            let elf_path = PathBuf::from(target_dir)
+            // ELF is built to guest_target_dir with standard cargo layout
+            let elf_path = PathBuf::from(&guest_target_dir)
                 .join(target_triple)
                 .join("release")
                 .join(&self.guest);

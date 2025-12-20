@@ -34,11 +34,11 @@ extern "C" {
     ) -> !;
 
     static __stack_top: u8;
+    static __stack_bottom: u8;
     static __ehdr_start: u8;
-
 }
 
-use bolt::utils::build_musl_stack;
+use zeroos_runtime_musl::build_musl_stack;
 
 static PROGRAM_NAME: &[u8] = b"jolt-guest\0";
 
@@ -104,11 +104,11 @@ pub extern "C" fn trap_handler(
 
 /// Jolt-specific trap handler using ECALL for CSR operations.
 ///
-/// This is equivalent to bolt's _default_trap_handler but uses ECALL
+/// This is equivalent to ZeroOS's _default_trap_handler but uses ECALL
 /// instead of csrr/csrw instructions, which are not supported in Jolt's emulator.
 ///
-/// Key differences from bolt's version:
-/// - Bolt uses csrr/csrw which don't clobber registers
+/// Key differences from ZeroOS's version:
+/// - ZeroOS uses csrr/csrw which don't clobber registers
 /// - We use ECALL which clobbers a0-a3 (and returns in a0)
 /// - So we must save/restore a0-a7 around the ECALLs
 /// - Uses RET ECALL (0x524554) instead of mret to return from trap
@@ -262,11 +262,14 @@ extern "C" fn kernel_main() -> ! {
         // Initialize the heap allocator before musl starts
         init_heap();
 
-        let mut current_sp: usize;
-        core::arch::asm!("mv {}, sp", out(reg) current_sp);
-
+        // Get stack bounds from linker symbols
+        let stack_top = core::ptr::addr_of!(__stack_top) as usize;
+        let stack_bottom = core::ptr::addr_of!(__stack_bottom) as usize;
         let ehdr_start = core::ptr::addr_of!(__ehdr_start) as usize;
-        let musl_sp = build_musl_stack(current_sp, ehdr_start, PROGRAM_NAME);
+
+        // ZeroOS API: build_musl_stack returns size used, not new SP
+        let size_used = build_musl_stack(stack_top, stack_bottom, ehdr_start, PROGRAM_NAME);
+        let musl_sp = stack_top - size_used;
 
         core::arch::asm!(
             // Switch to new stack

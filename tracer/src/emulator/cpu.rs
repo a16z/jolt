@@ -620,7 +620,7 @@ impl Cpu {
 
                     if syscall_nr != 0 {
                         // This is a Linux syscall - handle it in the emulator
-                        tracing::warn!("ECALL detected: a0={:#x} a7={} (syscall_nr)", self.x[10], syscall_nr);
+                        // tracing::warn!("ECALL detected: a0={:#x} a7={} (syscall_nr)", self.x[10], syscall_nr);
 
                         let result = self.handle_syscall(
                             syscall_nr,
@@ -632,9 +632,9 @@ impl Cpu {
                             self.x[15] as usize,  // a5
                         );
 
-                        tracing::info!("SYSCALL nr={} (a7) with args: a0={:#x} a1={:#x} a2={:#x}",
-                            syscall_nr, self.x[10], self.x[11], self.x[12]);
-                        tracing::info!("SYSCALL nr={} returned: {}", syscall_nr, result);
+                        // tracing::info!("SYSCALL nr={} (a7) with args: a0={:#x} a1={:#x} a2={:#x}",
+                        //     syscall_nr, self.x[10], self.x[11], self.x[12]);
+                        // tracing::info!("SYSCALL nr={} returned: {}", syscall_nr, result);
 
                         // Store syscall result for later - ECALL trace will handle writing to a0
                         // via VirtualAdvice instruction to properly capture in the trace

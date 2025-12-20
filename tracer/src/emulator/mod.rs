@@ -124,11 +124,11 @@ impl Emulator {
         loop {
             // Log every 1000 cycles to see progress, and log more detail near cycle 13000
             if cycle_count % 1000 == 0 || cycle_count < 10 || (cycle_count >= 13005 && cycle_count < 13020) {
-                let disas = self.cpu.disassemble_next_instruction();
-                tracing::info!("Cycle {}: PC={:#x} a0={:#x} a1={:#x} | {}", cycle_count, self.cpu.pc, self.cpu.x[10], self.cpu.x[11], disas);
+                // let disas = self.cpu.disassemble_next_instruction();
+                // tracing::info!("Cycle {}: PC={:#x} a0={:#x} a1={:#x} | {}", cycle_count, self.cpu.pc, self.cpu.x[10], self.cpu.x[11], disas);
             }
-            let disas = self.cpu.disassemble_next_instruction();
-            tracing::debug!("{disas}");
+            // let disas = self.cpu.disassemble_next_instruction();
+            // tracing::debug!("{disas}");
 
             let mut traces = if trace { Some(Vec::new()) } else { None };
             self.tick(traces.as_mut());

@@ -62,7 +62,7 @@ impl Cpu {
             }
             SYS_EXIT | SYS_EXIT_GROUP => {
                 // sys_exit / sys_exit_group
-                tracing::info!("SYSCALL EXIT: exit_code={}", a0);
+                // tracing::info!("SYSCALL EXIT: exit_code={}", a0);
                 self.exit_code = Some(a0 as u32);
                 0
             }

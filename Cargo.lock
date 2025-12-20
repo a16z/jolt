@@ -447,15 +447,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bolt"
-version = "0.3.0"
-dependencies = [
- "cfg-if",
- "libc",
- "riscv",
-]
-
-[[package]]
 name = "btreemap"
 version = "0.1.0"
 dependencies = [
@@ -788,12 +779,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "critical-section"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
-
-[[package]]
 name = "crossbeam-channel"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1009,12 +994,6 @@ name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
-
-[[package]]
-name = "embedded-hal"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
 name = "embedded-io"
@@ -2098,7 +2077,6 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
- "bolt",
  "common",
  "hex-literal",
  "jolt-core",
@@ -2109,6 +2087,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "tracer",
+ "zeroos-runtime-musl",
 ]
 
 [[package]]
@@ -3303,16 +3282,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "riscv"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f5c1b8bf41ea746266cdee443d1d1e9125c86ce1447e1a2615abd34330d33a9"
-dependencies = [
- "critical-section",
- "embedded-hal",
 ]
 
 [[package]]
@@ -5107,6 +5076,30 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "zeroos-debug"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
+name = "zeroos-foundation"
+version = "0.3.0"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "zeroos-debug",
+]
+
+[[package]]
+name = "zeroos-runtime-musl"
+version = "0.1.0"
+dependencies = [
+ "zeroos-debug",
+ "zeroos-foundation",
 ]
 
 [[package]]

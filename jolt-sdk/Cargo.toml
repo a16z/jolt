@@ -31,7 +31,7 @@ guest-std = [
     "jolt-platform/std",
     "jolt-sdk-macros/guest-std",
     "serde/std",
-    "dep:bolt",
+    "dep:zeroos-runtime-musl",
     "dep:linked_list_allocator",
 ]
 guest-verifier = [
@@ -57,8 +57,8 @@ jolt-core = { workspace = true, default-features = false, optional = true }
 tracer = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 
-# Guest std boot code dependencies (from ZeroKernel)
-bolt = { path = "/Users/sdhawan/Work/ZeroKernel/crates/bolt", features = ["std"], optional = true }
+# Guest std boot code dependencies (from ZeroOS)
+zeroos-runtime-musl = { path = "/Users/sdhawan/Work/ZeroOS/crates/zeroos-runtime-musl", optional = true }
 linked_list_allocator = { version = "0.10", default-features = false, features = ["use_spin_nightly"], optional = true }
 
 [dev-dependencies]
