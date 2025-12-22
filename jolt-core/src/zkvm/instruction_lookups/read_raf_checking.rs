@@ -240,9 +240,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::initialize")]
     pub fn initialize(params: ReadRafSumcheckParams<F>, trace: &[Cycle]) -> Self {
-        let log_T = trace.len().log_2();
-        let phases =
-            ProverOnlyConfig::default_for_trace(params.log_T).instruction_sumcheck_phases;
+        let phases = ProverOnlyConfig::default_for_trace(params.log_T).instruction_sumcheck_phases;
         let log_m = LOG_K / phases;
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
@@ -571,9 +569,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
                             for (phase, table) in zip(phase_offset.., v_chunk) {
                                 let v: u128 = i.into();
-                                let i_segment = ((v >> ((self.phases - 1 - phase) * log_m))
-                                    as usize)
-                                    & m_mask;
+                                let i_segment =
+                                    ((v >> ((self.phases - 1 - phase) * log_m)) as usize) & m_mask;
                                 acc *= table[i_segment];
                             }
 

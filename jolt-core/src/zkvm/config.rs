@@ -163,7 +163,6 @@ pub struct ProverOnlyConfig {
     /// Number of phases for instruction lookups batching.
     /// Must be a divisor of 128. Common values: 8 or 16.
     pub instruction_sumcheck_phases: usize,
-
     // TODO: Sumcheck streaming schedule will go here in future.
 }
 
