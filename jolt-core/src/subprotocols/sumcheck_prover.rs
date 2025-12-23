@@ -47,6 +47,16 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     /// Ingest the verifier's challenge for a sumcheck round.
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize);
 
+    /// Finalize prover state after the last challenge has been ingested, but before
+    /// [`Self::cache_openings`] is called.
+    ///
+    /// This hook is useful for sumcheck implementations that need to perform
+    /// end-of-protocol work (e.g., flushing delayed/streaming bindings or releasing
+    /// intermediate state) once all challenges are known.
+    ///
+    /// Default implementation is a no-op.
+    fn finalize(&mut self) {}
+
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
     fn cache_openings(

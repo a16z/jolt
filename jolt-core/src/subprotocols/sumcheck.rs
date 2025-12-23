@@ -141,6 +141,13 @@ impl BatchedSumcheck {
             compressed_polys.push(compressed_poly);
         }
 
+        // Allow each sumcheck instance to perform any end-of-protocol work (e.g. flushing
+        // delayed bindings) after the final challenge has been ingested and before we cache
+        // openings.
+        for sumcheck in sumcheck_instances.iter_mut() {
+            sumcheck.finalize();
+        }
+
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
