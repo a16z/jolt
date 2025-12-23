@@ -715,16 +715,17 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use common::jolt_device::MemoryConfig;
+
     const ELF_CONTENTS: &[u8] = include_bytes!("testfiles/muldiv-guest");
     const INPUTS: [u8; 6] = [0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c];
+
     #[test]
     /// Test that the trace function produces the expected number of cycles for a given ELF input.
     /// Test the checkpointing functionality by verifying the number of checkpoints created and
     /// if the traces from checkpoints match the overall execution trace.
     /// The test is based on the muldiv benchmark.
-    fn test_trace() {
-        use common::jolt_device::MemoryConfig;
-
+    fn test_checkpoints() {
         let expected_trace_length = 441;
         let elf: Vec<u8> = ELF_CONTENTS.to_vec();
         let n = 50;
@@ -747,8 +748,7 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_lazy_iterator() {
+    fn test_trace_length<D: MemoryData>() {
         let elf = ELF_CONTENTS.to_vec();
         let memory_config = MemoryConfig {
             program_size: Some(elf.len() as u64),
@@ -756,7 +756,7 @@ mod test {
         };
 
         let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
-        let mut emulator: GeneralizedEmulator<Vec<u64>> = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+        let mut emulator: GeneralizedEmulator<D> = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
         let mut prev_trace_len = 0;
@@ -768,5 +768,15 @@ mod test {
             prev_trace_len = trace.len();
         }
         assert_eq!(execution_trace, trace);
+    }
+
+    #[test]
+    fn test_trace_length_vec_memory() {
+        test_trace_length::<Vec<u64>>();
+    }
+
+    #[test]
+    fn test_trace_length_checkpointing_memory() {
+        test_trace_length::<CheckpointingMemory>();
     }
 }
