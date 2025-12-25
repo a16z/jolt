@@ -422,25 +422,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 });
         }
 
-        rayon::scope(|s| {
-            // Single pass over lookup_indices_uninterleave for both operands
-            s.spawn(|_| {
-                PrefixSuffixDecomposition::init_Q_dual(
-                    &mut self.left_operand_ps,
-                    &mut self.right_operand_ps,
-                    &self.u_evals,
-                    &self.lookup_indices_uninterleave,
-                    &self.lookup_indices,
-                )
-            });
-            s.spawn(|_| {
-                self.identity_ps.init_Q(
-                    &self.u_evals,
-                    &self.lookup_indices_identity,
-                    &self.lookup_indices,
-                )
-            });
-        });
+        PrefixSuffixDecomposition::init_Q_raf(
+            &mut self.left_operand_ps,
+            &mut self.right_operand_ps,
+            &mut self.identity_ps,
+            &self.u_evals,
+            &self.lookup_indices,
+            &self.is_interleaved_operands,
+        );
 
         self.init_suffix_polys(phase);
 
@@ -470,6 +459,17 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .zip(self.lookup_indices_by_table.par_iter())
                 .map(|(table, lookup_indices)| {
                     let suffixes = table.suffixes();
+                    // Pre-partition suffixes into those that are guaranteed {0,1}-valued and all others.
+                    // This lets us apply the `t==1` fast path without adding overhead to non-boolean suffixes.
+                    let mut suffix_01_indices: Vec<usize> = Vec::new();
+                    let mut suffix_other_indices: Vec<usize> = Vec::new();
+                    for (s_idx, suffix) in suffixes.iter().enumerate() {
+                        if suffix.is_01_valued() {
+                            suffix_01_indices.push(s_idx);
+                        } else {
+                            suffix_other_indices.push(s_idx);
+                        }
+                    }
                     let unreduced_polys = lookup_indices
                         .par_chunks(chunk_size)
                         .map(|chunk| {
@@ -480,12 +480,30 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 let k = self.lookup_indices[*j];
                                 let (prefix_bits, suffix_bits) =
                                     k.split((self.params.phases - 1 - phase) * log_m);
-                                for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut())
-                                {
+                                let idx = prefix_bits & m_mask;
+                                let u = self.u_evals[*j];
+
+                                // General suffixes: keep the existing path unchanged.
+                                for &s_idx in suffix_other_indices.iter() {
+                                    let suffix = &suffixes[s_idx];
                                     let t = suffix.suffix_mle::<XLEN>(suffix_bits);
                                     if t != 0 {
-                                        let u = self.u_evals[*j];
-                                        result[prefix_bits & m_mask] += u.mul_u64_unreduced(t);
+                                        chunk_result[s_idx][idx] += u.mul_u64_unreduced(t);
+                                    }
+                                }
+
+                                // {0,1}-valued suffixes: avoid `mul_u64_unreduced(1)` by directly
+                                // adding the unreduced field element when `t == 1`.
+                                for &s_idx in suffix_01_indices.iter() {
+                                    let suffix = &suffixes[s_idx];
+                                    if matches!(suffix, &crate::zkvm::lookup_table::suffixes::Suffixes::One) {
+                                        chunk_result[s_idx][idx] += *u.as_unreduced_ref();
+                                        continue;
+                                    }
+                                    let t = suffix.suffix_mle::<XLEN>(suffix_bits);
+                                    debug_assert!(t == 0 || t == 1);
+                                    if t == 1 {
+                                        chunk_result[s_idx][idx] += *u.as_unreduced_ref();
                                     }
                                 }
                             }

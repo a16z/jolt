@@ -433,6 +433,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
     }
 
+    // NOTE: RAF-specific fused Q initialization lives in a specialization below:
+    // `impl<F: JoltField> PrefixSuffixDecomposition<F, 2>`.
+
     /// Returns evaluation at 0 and at 2 at index
     pub fn sumcheck_evals(&self, index: usize) -> (F, F) {
         let len = self.Q[0].len();
@@ -529,12 +532,180 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 }
 
+impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
+    /// Specialized fused initializer for the RAF sumcheck Q polynomials.
+    ///
+    /// This replaces `init_Q_dual(left_operand, right_operand, ...)` plus
+    /// `identity.init_Q(...)` with a single scan over cycles.
+    ///
+    /// Assumptions (true for `ReadRafSumcheckProver`):
+    /// - `left` and `right` are `OperandPolynomial` prefix-suffix decompositions.
+    ///   Their suffixes are `[ShiftHalfSuffixPolynomial, OperandPolynomial(side)]`.
+    /// - `identity` is an `IdentityPolynomial` prefix-suffix decomposition.
+    ///   Its suffixes are `[ShiftSuffixPolynomial, IdentityPolynomial]`.
+    ///
+    /// Under these assumptions we can avoid dynamic dispatch and compute:
+    /// - Shift terms once per phase (they are constants depending only on `suffix_len`)
+    /// - Operand `uninterleave()` once per cycle and reuse for both left/right
+    #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q_raf")]
+    pub fn init_Q_raf(
+        left: &mut PrefixSuffixDecomposition<F, 2>,
+        right: &mut PrefixSuffixDecomposition<F, 2>,
+        identity: &mut PrefixSuffixDecomposition<F, 2>,
+        u_evals: &[F],
+        lookup_bits: &[LookupBits],
+        is_interleaved_operands: &[bool],
+    ) {
+        debug_assert_eq!(left.chunk_len, right.chunk_len);
+        debug_assert_eq!(left.total_len, right.total_len);
+        debug_assert_eq!(left.phase, right.phase);
+        debug_assert_eq!(left.chunk_len, identity.chunk_len);
+        debug_assert_eq!(left.total_len, identity.total_len);
+        debug_assert_eq!(left.phase, identity.phase);
+        debug_assert_eq!(lookup_bits.len(), u_evals.len());
+        debug_assert_eq!(lookup_bits.len(), is_interleaved_operands.len());
+
+        let poly_len = left.chunk_len.pow2();
+        let suffix_len = left.suffix_len();
+        debug_assert!(suffix_len % 2 == 0);
+
+        // Constants for this phase:
+        // - Operand path: ShiftHalfSuffixPolynomial(b) = 2^{|b|/2}
+        // - Identity path: ShiftSuffixPolynomial(b) = 2^{|b|}
+        let shift_half: u128 = 1u128 << (suffix_len / 2);
+        let shift_full: u128 = 1u128 << suffix_len;
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (lookup_bits.len() / num_chunks).max(1);
+
+        type U7<F> = <F as JoltField>::Unreduced<7>;
+
+        #[allow(clippy::type_complexity)]
+        let (rows_shift_half, rows_left, rows_right, rows_shift_full, rows_identity): (
+            Vec<U7<F>>,
+            Vec<U7<F>>,
+            Vec<U7<F>>,
+            Vec<U7<F>>,
+            Vec<U7<F>>,
+        ) = lookup_bits
+            .par_chunks(chunk_size)
+            .zip(u_evals.par_chunks(chunk_size))
+            .zip(is_interleaved_operands.par_chunks(chunk_size))
+            .fold(
+                || {
+                    (
+                        vec![U7::<F>::zero(); poly_len], // operand shift-half (shared by left/right)
+                        vec![U7::<F>::zero(); poly_len], // operand left value
+                        vec![U7::<F>::zero(); poly_len], // operand right value
+                        vec![U7::<F>::zero(); poly_len], // identity shift-full
+                        vec![U7::<F>::zero(); poly_len], // identity value
+                    )
+                },
+                |(mut acc_sh, mut acc_l, mut acc_r, mut acc_sf, mut acc_id),
+                 ((k_chunk, u_chunk), inter_chunk)| {
+                    debug_assert_eq!(k_chunk.len(), u_chunk.len());
+                    debug_assert_eq!(k_chunk.len(), inter_chunk.len());
+
+                    for ((k, u), is_interleaved) in
+                        k_chunk.iter().zip(u_chunk.iter()).zip(inter_chunk.iter())
+                    {
+                        let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                        let r_index: usize = prefix_bits & (poly_len - 1);
+
+                        if *is_interleaved {
+                            // Operand path (left/right)
+                            acc_sh[r_index] += u.mul_u128_unreduced(shift_half);
+
+                            let (lo_bits, ro_bits) = suffix_bits.uninterleave();
+                            let lo: u128 = lo_bits.into();
+                            if lo != 0 {
+                                acc_l[r_index] += u.mul_u128_unreduced(lo);
+                            }
+                            let ro: u128 = ro_bits.into();
+                            if ro != 0 {
+                                acc_r[r_index] += u.mul_u128_unreduced(ro);
+                            }
+                        } else {
+                            // Identity path
+                            acc_sf[r_index] += u.mul_u128_unreduced(shift_full);
+                            let id: u128 = suffix_bits.into();
+                            if id != 0 {
+                                acc_id[r_index] += u.mul_u128_unreduced(id);
+                            }
+                        }
+                    }
+
+                    (acc_sh, acc_l, acc_r, acc_sf, acc_id)
+                },
+            )
+            .reduce(
+                || {
+                    (
+                        vec![U7::<F>::zero(); poly_len],
+                        vec![U7::<F>::zero(); poly_len],
+                        vec![U7::<F>::zero(); poly_len],
+                        vec![U7::<F>::zero(); poly_len],
+                        vec![U7::<F>::zero(); poly_len],
+                    )
+                },
+                |(mut a_sh, mut a_l, mut a_r, mut a_sf, mut a_id),
+                 (b_sh, b_l, b_r, b_sf, b_id)| {
+                    for (a, b) in a_sh.iter_mut().zip(b_sh.iter()) {
+                        *a += b;
+                    }
+                    for (a, b) in a_l.iter_mut().zip(b_l.iter()) {
+                        *a += b;
+                    }
+                    for (a, b) in a_r.iter_mut().zip(b_r.iter()) {
+                        *a += b;
+                    }
+                    for (a, b) in a_sf.iter_mut().zip(b_sf.iter()) {
+                        *a += b;
+                    }
+                    for (a, b) in a_id.iter_mut().zip(b_id.iter()) {
+                        *a += b;
+                    }
+                    (a_sh, a_l, a_r, a_sf, a_id)
+                },
+            );
+
+        // Reduce to field elements.
+        let mut q_shift_half: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+        let mut q_left: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+        let mut q_right: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+        let mut q_shift_full: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+        let mut q_identity: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+
+        for i in 0..poly_len {
+            q_shift_half[i] = F::from_barrett_reduce(rows_shift_half[i]);
+            q_left[i] = F::from_barrett_reduce(rows_left[i]);
+            q_right[i] = F::from_barrett_reduce(rows_right[i]);
+            q_shift_full[i] = F::from_barrett_reduce(rows_shift_full[i]);
+            q_identity[i] = F::from_barrett_reduce(rows_identity[i]);
+        }
+
+        // Operand Q0 is shared (ShiftHalfSuffixPolynomial).
+        left.Q = [
+            DensePolynomial::new(q_shift_half.clone()),
+            DensePolynomial::new(q_left),
+        ];
+        right.Q = [DensePolynomial::new(q_shift_half), DensePolynomial::new(q_right)];
+
+        identity.Q = [
+            DensePolynomial::new(q_shift_full),
+            DensePolynomial::new(q_identity),
+        ];
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
-    use ark_std::test_rng;
+    use ark_std::{test_rng, UniformRand};
+    use rand_core::RngCore;
+    use crate::poly::identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide};
 
     pub fn prefix_suffix_decomposition_test<
         const NUM_VARS: usize,
@@ -642,5 +813,114 @@ pub mod tests {
             prefix_registry.checkpoints[prefix_registry_index],
             Some(poly.evaluate(&rr))
         )
+    }
+
+    #[test]
+    fn init_q_raf_matches_legacy_init_q() {
+        // Compare the fused RAF initializer against the legacy path:
+        //   init_Q_dual(left_operand, right_operand) + init_Q(identity)
+        //
+        // We exercise multiple phases by binding `chunk_len` challenges between inits.
+        const TOTAL_LEN: usize = 8;
+        const CHUNK_LEN: usize = 2;
+        const N_CYCLES: usize = 64;
+
+        let mut rng = test_rng();
+
+        // Random per-cycle lookup bits (address index) and weights.
+        let lookup_bits: Vec<LookupBits> = (0..N_CYCLES)
+            .map(|_| {
+                let lo = rng.next_u64() as u128;
+                let hi = rng.next_u64() as u128;
+                LookupBits::new((hi << 64) | lo, TOTAL_LEN)
+            })
+            .collect();
+
+        let u_evals: Vec<Fr> = (0..N_CYCLES).map(|_| Fr::rand(&mut rng)).collect();
+
+        let is_interleaved: Vec<bool> = (0..N_CYCLES).map(|_| (rng.next_u64() & 1) == 1).collect();
+        let indices_interleaved: Vec<usize> = is_interleaved
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| if *b { Some(i) } else { None })
+            .collect();
+        let indices_identity: Vec<usize> = is_interleaved
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| if !*b { Some(i) } else { None })
+            .collect();
+
+        // Legacy instances
+        let mut left_old = PrefixSuffixDecomposition::new(
+            Box::new(OperandPolynomial::<Fr>::new(TOTAL_LEN, OperandSide::Left)),
+            CHUNK_LEN,
+            TOTAL_LEN,
+        );
+        let mut right_old = PrefixSuffixDecomposition::new(
+            Box::new(OperandPolynomial::<Fr>::new(TOTAL_LEN, OperandSide::Right)),
+            CHUNK_LEN,
+            TOTAL_LEN,
+        );
+        let mut identity_old = PrefixSuffixDecomposition::new(
+            Box::new(IdentityPolynomial::<Fr>::new(TOTAL_LEN)),
+            CHUNK_LEN,
+            TOTAL_LEN,
+        );
+
+        // Fused instances
+        let mut left_new = PrefixSuffixDecomposition::new(
+            Box::new(OperandPolynomial::<Fr>::new(TOTAL_LEN, OperandSide::Left)),
+            CHUNK_LEN,
+            TOTAL_LEN,
+        );
+        let mut right_new = PrefixSuffixDecomposition::new(
+            Box::new(OperandPolynomial::<Fr>::new(TOTAL_LEN, OperandSide::Right)),
+            CHUNK_LEN,
+            TOTAL_LEN,
+        );
+        let mut identity_new = PrefixSuffixDecomposition::new(
+            Box::new(IdentityPolynomial::<Fr>::new(TOTAL_LEN)),
+            CHUNK_LEN,
+            TOTAL_LEN,
+        );
+
+        let total_phases = TOTAL_LEN / CHUNK_LEN;
+        for _phase in 0..total_phases {
+            // Legacy
+            PrefixSuffixDecomposition::init_Q_dual(
+                &mut left_old,
+                &mut right_old,
+                &u_evals,
+                &indices_interleaved,
+                &lookup_bits,
+            );
+            identity_old.init_Q(&u_evals, &indices_identity, &lookup_bits);
+
+            // Fused
+            PrefixSuffixDecomposition::init_Q_raf(
+                &mut left_new,
+                &mut right_new,
+                &mut identity_new,
+                &u_evals,
+                &lookup_bits,
+                &is_interleaved,
+            );
+
+            assert_eq!(left_old.Q, left_new.Q);
+            assert_eq!(right_old.Q, right_new.Q);
+            assert_eq!(identity_old.Q, identity_new.Q);
+
+            // Advance to next phase by binding `chunk_len` variables.
+            for _ in 0..CHUNK_LEN {
+                let r = <Fr as JoltField>::Challenge::random(&mut rng);
+                left_old.bind(r);
+                right_old.bind(r);
+                identity_old.bind(r);
+
+                left_new.bind(r);
+                right_new.bind(r);
+                identity_new.bind(r);
+            }
+        }
     }
 }
