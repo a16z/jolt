@@ -459,6 +459,12 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .zip(self.lookup_indices_by_table.par_iter())
                 .map(|(table, lookup_indices)| {
                     let suffixes = table.suffixes();
+
+                    // Early exit: if no cycles use this table, return zero polynomials
+                    if lookup_indices.is_empty() {
+                        return vec![vec![F::zero(); m]; suffixes.len()];
+                    }
+
                     // Pre-partition suffixes into those that are guaranteed {0,1}-valued and all others.
                     // This lets us apply the `t==1` fast path without adding overhead to non-boolean suffixes.
                     let mut suffix_01_indices: Vec<usize> = Vec::new();
@@ -496,7 +502,10 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 // adding the unreduced field element when `t == 1`.
                                 for &s_idx in suffix_01_indices.iter() {
                                     let suffix = &suffixes[s_idx];
-                                    if matches!(suffix, &crate::zkvm::lookup_table::suffixes::Suffixes::One) {
+                                    if matches!(
+                                        suffix,
+                                        &crate::zkvm::lookup_table::suffixes::Suffixes::One
+                                    ) {
                                         chunk_result[s_idx][idx] += *u.as_unreduced_ref();
                                         continue;
                                     }

@@ -539,8 +539,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                         vec![U7::<F>::zero(); poly_len],
                     )
                 },
-                |(mut a_sh, mut a_l, mut a_r, mut a_sf, mut a_id),
-                 (b_sh, b_l, b_r, b_sf, b_id)| {
+                |(mut a_sh, mut a_l, mut a_r, mut a_sf, mut a_id), (b_sh, b_l, b_r, b_sf, b_id)| {
                     for (a, b) in a_sh.iter_mut().zip(b_sh.iter()) {
                         *a += b;
                     }
@@ -580,7 +579,10 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             DensePolynomial::new(q_shift_half.clone()),
             DensePolynomial::new(q_left),
         ];
-        right.Q = [DensePolynomial::new(q_shift_half), DensePolynomial::new(q_right)];
+        right.Q = [
+            DensePolynomial::new(q_shift_half),
+            DensePolynomial::new(q_right),
+        ];
 
         identity.Q = [
             DensePolynomial::new(q_shift_full),
