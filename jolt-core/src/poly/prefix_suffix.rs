@@ -465,6 +465,9 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         // - Identity path: ShiftSuffixPolynomial(b) = 2^{|b|}
         let shift_half: u128 = 1u128 << (suffix_len / 2);
         let shift_full: u128 = 1u128 << suffix_len;
+        let id_fits_u64 = suffix_len <= 64;
+        let shift_half_f = F::from_u128(shift_half);
+        let shift_full_f = F::from_u128(shift_full);
 
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (lookup_bits.len() / num_chunks).max(1);
@@ -505,23 +508,37 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
 
                         if *is_interleaved {
                             // Operand path (left/right)
-                            acc_sh[r_index] += u.mul_u128_unreduced(shift_half);
+                            // ShiftHalfSuffixPolynomial is constant for a fixed `suffix_len`, so
+                            // we just accumulate `u` here and apply the 2^{suffix_len/2} scaling
+                            // once per bucket after reduction.
+                            acc_sh[r_index] += *u.as_unreduced_ref();
 
                             let (lo_bits, ro_bits) = suffix_bits.uninterleave();
-                            let lo: u128 = lo_bits.into();
+                            let lo: u64 = lo_bits.into();
                             if lo != 0 {
-                                acc_l[r_index] += u.mul_u128_unreduced(lo);
+                                acc_l[r_index] += u.mul_u64_unreduced(lo);
                             }
-                            let ro: u128 = ro_bits.into();
+                            let ro: u64 = ro_bits.into();
                             if ro != 0 {
-                                acc_r[r_index] += u.mul_u128_unreduced(ro);
+                                acc_r[r_index] += u.mul_u64_unreduced(ro);
                             }
                         } else {
                             // Identity path
-                            acc_sf[r_index] += u.mul_u128_unreduced(shift_full);
-                            let id: u128 = suffix_bits.into();
-                            if id != 0 {
-                                acc_id[r_index] += u.mul_u128_unreduced(id);
+                            // ShiftSuffixPolynomial is constant for a fixed `suffix_len`, so
+                            // we just accumulate `u` here and apply the 2^{suffix_len} scaling
+                            // once per bucket after reduction.
+                            acc_sf[r_index] += *u.as_unreduced_ref();
+
+                            if id_fits_u64 {
+                                let id: u64 = suffix_bits.into();
+                                if id != 0 {
+                                    acc_id[r_index] += u.mul_u64_unreduced(id);
+                                }
+                            } else {
+                                let id: u128 = suffix_bits.into();
+                                if id != 0 {
+                                    acc_id[r_index] += u.mul_u128_unreduced(id);
+                                }
                             }
                         }
                     }
@@ -567,10 +584,20 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         let mut q_identity: Vec<F> = unsafe_allocate_zero_vec(poly_len);
 
         for i in 0..poly_len {
-            q_shift_half[i] = F::from_barrett_reduce(rows_shift_half[i]);
+            let sum_u_interleaved = F::from_barrett_reduce(rows_shift_half[i]);
+            q_shift_half[i] = if shift_half == 1 {
+                sum_u_interleaved
+            } else {
+                sum_u_interleaved * shift_half_f
+            };
             q_left[i] = F::from_barrett_reduce(rows_left[i]);
             q_right[i] = F::from_barrett_reduce(rows_right[i]);
-            q_shift_full[i] = F::from_barrett_reduce(rows_shift_full[i]);
+            let sum_u_identity = F::from_barrett_reduce(rows_shift_full[i]);
+            q_shift_full[i] = if shift_full == 1 {
+                sum_u_identity
+            } else {
+                sum_u_identity * shift_full_f
+            };
             q_identity[i] = F::from_barrett_reduce(rows_identity[i]);
         }
 
