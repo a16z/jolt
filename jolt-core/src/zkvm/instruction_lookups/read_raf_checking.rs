@@ -623,6 +623,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
         let m_mask = m - 1;
+        let num_cycles = self.lookup_indices.len();
         // Drop stuff that's no longer needed
         drop_in_background_thread((
             std::mem::take(&mut self.u_evals),
@@ -687,7 +688,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             .collect();
         // Materialize combined_val_poly = Val_j(k) + γ·RafVal_j(k)
         // combining lookup table values with RAF operand contributions in a single pass.
-        let mut combined_val_poly: Vec<F> = unsafe_allocate_zero_vec(self.lookup_indices.len());
+        let mut combined_val_poly: Vec<F> = unsafe_allocate_zero_vec(num_cycles);
         {
             let span = tracing::span!(tracing::Level::INFO, "Materialize combined_val_poly");
             let _guard = span.enter();
@@ -737,6 +738,16 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
         self.ra_polys = Some(ra_polys);
+
+        // After the address rounds are complete and we have materialized `ra_polys` and the
+        // `combined_val_polynomial`, the following buffers are no longer needed for the remaining
+        // log(T) cycle rounds:
+        // - `lookup_indices` (used only to build `ra_polys` and to size `combined_val_poly`)
+        // - `suffix_polys` (used only during the first LOG_K address rounds)
+        drop_in_background_thread((
+            std::mem::take(&mut self.lookup_indices),
+            std::mem::take(&mut self.suffix_polys),
+        ));
     }
 }
 
