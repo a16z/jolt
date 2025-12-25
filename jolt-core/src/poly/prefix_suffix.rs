@@ -424,20 +424,33 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 }
 
 impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
-    /// Specialized fused initializer for the RAF sumcheck Q polynomials.
+    /// Fused initializer for RAF sumcheck Q polynomials.
     ///
-    /// Initializes Q polynomials for left/right operand and identity decompositions
-    /// in a single scan over all cycles, exploiting the known structure of RAF suffixes.
+    /// Initializes Q polynomials for left operand, right operand, and identity
+    /// decompositions in a single scan over all cycles. This exploits the known
+    /// structure of RAF suffixes to avoid dynamic dispatch and redundant computation.
     ///
-    /// Assumptions (true for `ReadRafSumcheckProver`):
-    /// - `left` and `right` are `OperandPolynomial` prefix-suffix decompositions.
-    ///   Their suffixes are `[ShiftHalfSuffixPolynomial, OperandPolynomial(side)]`.
-    /// - `identity` is an `IdentityPolynomial` prefix-suffix decomposition.
-    ///   Its suffixes are `[ShiftSuffixPolynomial, IdentityPolynomial]`.
+    /// # Assumptions
     ///
-    /// Under these assumptions we avoid dynamic dispatch and compute:
-    /// - Shift terms once per phase (they are constants depending only on `suffix_len`)
-    /// - Operand `uninterleave()` once per cycle and reuse for both left/right
+    /// These assumptions hold for `ReadRafSumcheckProver`:
+    ///
+    /// - **`left` and `right`**: `OperandPolynomial` prefix-suffix decompositions
+    ///   with suffixes `[ShiftHalfSuffixPolynomial, OperandPolynomial(side)]`.
+    /// - **`identity`**: `IdentityPolynomial` prefix-suffix decomposition
+    ///   with suffixes `[ShiftSuffixPolynomial, IdentityPolynomial]`.
+    ///
+    /// # Optimizations
+    ///
+    /// - Shift terms (`2^{suffix_len}` or `2^{suffix_len/2}`) are constants per phase,
+    ///   so we accumulate raw `u_evals` and apply the shift multiplier once after reduction.
+    /// - `uninterleave()` is computed once per cycle and reused for both left/right operands.
+    ///
+    /// # Arguments
+    ///
+    /// * `left`, `right`, `identity` - Decompositions to initialize (mutated in place).
+    /// * `u_evals` - Per-cycle equality polynomial evaluations `eq(r_reduction, j)`.
+    /// * `lookup_bits` - Per-cycle lookup indices (bit-packed).
+    /// * `is_interleaved_operands` - Per-cycle flag: true for operand path, false for identity.
     #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q_raf")]
     pub fn init_Q_raf(
         left: &mut PrefixSuffixDecomposition<F, 2>,
@@ -555,51 +568,63 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                     )
                 },
                 |(mut a_sh, mut a_l, mut a_r, mut a_sf, mut a_id), (b_sh, b_l, b_r, b_sf, b_id)| {
-                    for (a, b) in a_sh.iter_mut().zip(b_sh.iter()) {
-                        *a += b;
-                    }
-                    for (a, b) in a_l.iter_mut().zip(b_l.iter()) {
-                        *a += b;
-                    }
-                    for (a, b) in a_r.iter_mut().zip(b_r.iter()) {
-                        *a += b;
-                    }
-                    for (a, b) in a_sf.iter_mut().zip(b_sf.iter()) {
-                        *a += b;
-                    }
-                    for (a, b) in a_id.iter_mut().zip(b_id.iter()) {
-                        *a += b;
-                    }
+                    // Merge 5 accumulator vectors
+                    a_sh.par_iter_mut().zip(&b_sh).for_each(|(a, b)| *a += b);
+                    a_l.par_iter_mut().zip(&b_l).for_each(|(a, b)| *a += b);
+                    a_r.par_iter_mut().zip(&b_r).for_each(|(a, b)| *a += b);
+                    a_sf.par_iter_mut().zip(&b_sf).for_each(|(a, b)| *a += b);
+                    a_id.par_iter_mut().zip(&b_id).for_each(|(a, b)| *a += b);
                     (a_sh, a_l, a_r, a_sf, a_id)
                 },
             );
 
-        // Reduce to field elements.
-        let mut q_shift_half: Vec<F> = unsafe_allocate_zero_vec(poly_len);
-        let mut q_left: Vec<F> = unsafe_allocate_zero_vec(poly_len);
-        let mut q_right: Vec<F> = unsafe_allocate_zero_vec(poly_len);
-        let mut q_shift_full: Vec<F> = unsafe_allocate_zero_vec(poly_len);
-        let mut q_identity: Vec<F> = unsafe_allocate_zero_vec(poly_len);
-
+        // Reduce unreduced accumulators to field elements
         let span = tracing::span!(tracing::Level::INFO, "PrefixSuffix::init_Q_raf_reduce");
         let _guard = span.enter();
-        for i in 0..poly_len {
-            let sum_u_interleaved = F::from_barrett_reduce(rows_shift_half[i]);
-            q_shift_half[i] = if shift_half == 1 {
-                sum_u_interleaved
-            } else {
-                sum_u_interleaved * shift_half_f
-            };
-            q_left[i] = F::from_barrett_reduce(rows_left[i]);
-            q_right[i] = F::from_barrett_reduce(rows_right[i]);
-            let sum_u_identity = F::from_barrett_reduce(rows_shift_full[i]);
-            q_shift_full[i] = if shift_full == 1 {
-                sum_u_identity
-            } else {
-                sum_u_identity * shift_full_f
-            };
-            q_identity[i] = F::from_barrett_reduce(rows_identity[i]);
-        }
+
+        // Simple reductions (no scaling): left, right, identity
+        let ([q_left, q_right, q_identity], (q_shift_half, q_shift_full)) = rayon::join(
+            || {
+                [rows_left, rows_right, rows_identity]
+                    .into_par_iter()
+                    .map(|rows| rows.into_par_iter().map(F::from_barrett_reduce).collect())
+                    .collect::<Vec<Vec<F>>>()
+                    .try_into()
+                    .unwrap()
+            },
+            // Scaled reductions: shift_half and shift_full need post-reduction scaling
+            || {
+                rayon::join(
+                    || {
+                        rows_shift_half
+                            .into_par_iter()
+                            .map(|v| {
+                                let reduced = F::from_barrett_reduce(v);
+                                if shift_half == 1 {
+                                    reduced
+                                } else {
+                                    reduced * shift_half_f
+                                }
+                            })
+                            .collect::<Vec<F>>()
+                    },
+                    || {
+                        rows_shift_full
+                            .into_par_iter()
+                            .map(|v| {
+                                let reduced = F::from_barrett_reduce(v);
+                                if shift_full == 1 {
+                                    reduced
+                                } else {
+                                    reduced * shift_full_f
+                                }
+                            })
+                            .collect::<Vec<F>>()
+                    },
+                )
+            },
+        );
+
         drop(_guard);
 
         // Operand Q0 is shared (ShiftHalfSuffixPolynomial).

@@ -45,6 +45,7 @@ use crate::{
         instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
+            suffixes::Suffixes,
             LookupTables,
         },
         witness::VirtualPolynomial,
@@ -440,15 +441,25 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         self.v[phase].reset(F::one());
     }
 
-    /// Recomputes per-table suffix accumulators used by read-checking for the
-    /// current phase. For each table's suffix family, bucket cycles by the
-    /// current chunk value and aggregate weighted contributions into Dense MLEs
-    /// of size M = 2^{log_m}.
+    /// Recomputes per-table suffix accumulators for the current phase of read-checking.
+    ///
+    /// For each lookup table's suffix family, this function:
+    /// 1. Partitions cycles by their current chunk value (the `log_m`-bit segment
+    ///    extracted from each cycle's lookup index for this phase).
+    /// 2. Aggregates weighted contributions `u_evals[j] * suffix_mle(suffix_bits)`
+    ///    into dense MLEs of size `M = 2^{log_m}`.
+    ///
+    /// # Suffix classification
+    ///
+    /// Suffixes are classified into three categories for efficient accumulation:
+    /// - **`Suffixes::One`**: Always evaluates to 1; we simply accumulate `u_evals[j]`.
+    /// - **{0,1}-valued suffixes**: Add `u_evals[j]` only when `suffix_mle == 1`.
+    /// - **General suffixes**: Multiply `u_evals[j]` by `suffix_mle` value.
     #[tracing::instrument(skip_all, name = "InstructionReadRafProver::init_suffix_polys")]
     fn init_suffix_polys(&mut self, phase: usize) {
-        // Maximum number of suffixes any lookup table can have
-        // (ValidSignedRemainderTable has 5)
-        const MAX_SUFFIXES: usize = 6;
+        /// Maximum number of suffixes any lookup table can have.
+        /// (Currently `ValidSignedRemainderTable` has the most with 5.)
+        const MAX_SUFFIXES: usize = 5;
 
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
@@ -480,7 +491,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     let mut suffix_other_count = 0usize;
 
                     for (s_idx, suffix) in suffixes.iter().enumerate() {
-                        if matches!(suffix, crate::zkvm::lookup_table::suffixes::Suffixes::One) {
+                        if matches!(suffix, Suffixes::One) {
                             suffix_one_idx = Some(s_idx);
                         } else if suffix.is_01_valued() {
                             suffix_01_indices[suffix_01_count] = s_idx;
@@ -534,11 +545,12 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                         .reduce(
                             || vec![unsafe_allocate_zero_vec(m); num_suffixes],
                             |mut acc, new| {
+                                // Merge accumulator vectors (parallelize over m coefficients)
                                 for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
-                                    for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter())
-                                    {
-                                        *acc_coeff += new_coeff;
-                                    }
+                                    acc_i
+                                        .par_iter_mut()
+                                        .zip(new_i.par_iter())
+                                        .for_each(|(a, b)| *a += b);
                                 }
                                 acc
                             },
