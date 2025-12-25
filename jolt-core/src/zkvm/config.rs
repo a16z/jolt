@@ -28,7 +28,7 @@ pub const fn get_lookups_ra_virtual_log_k_chunk(log_T: usize) -> usize {
 /// NOTE: currently only divisors of 128 are supported
 #[inline]
 pub const fn instruction_sumcheck_phases(log_T: usize) -> usize {
-    if log_T < 23 {
+    if log_T < 25 {
         16
     } else {
         8

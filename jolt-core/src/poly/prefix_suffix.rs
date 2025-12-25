@@ -498,6 +498,15 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             .zip(is_interleaved_operands.par_chunks(chunk_size))
             .fold(
                 || {
+                    // This runs once per Rayon worker for the fold identity, and performs
+                    // large zeroed allocations. Instrument it to account for any time before
+                    // we enter the per-chunk build span.
+                    let span = tracing::span!(
+                        tracing::Level::INFO,
+                        "PrefixSuffix::init_Q_raf_fold_init_alloc",
+                        poly_len = poly_len
+                    );
+                    let _guard = span.enter();
                     (
                         unsafe_allocate_zero_vec(poly_len), // operand shift-half (shared by left/right)
                         unsafe_allocate_zero_vec(poly_len), // operand left value
@@ -568,6 +577,13 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             )
             .reduce(
                 || {
+                    // Identity allocation for the reduce tree can also be non-trivial.
+                    let span = tracing::span!(
+                        tracing::Level::INFO,
+                        "PrefixSuffix::init_Q_raf_reduce_init_alloc",
+                        poly_len = poly_len
+                    );
+                    let _guard = span.enter();
                     (
                         unsafe_allocate_zero_vec(poly_len),
                         unsafe_allocate_zero_vec(poly_len),

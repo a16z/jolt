@@ -552,7 +552,20 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                             chunk_result
                         })
                         .reduce(
-                            || vec![unsafe_allocate_zero_vec(m); num_suffixes],
+                            || {
+                                // Identity allocation for the reduce tree; can show up as time
+                                // before any per-chunk spans depending on scheduling.
+                                let span = tracing::span!(
+                                    tracing::Level::INFO,
+                                    "InstructionReadRafProver::init_suffix_polys_reduce_init_alloc",
+                                    num_suffixes = num_suffixes,
+                                    m = m
+                                );
+                                let _guard = span.enter();
+                                let out = vec![unsafe_allocate_zero_vec(m); num_suffixes];
+                                drop(_guard);
+                                out
+                            },
                             |mut acc, new| {
                                 let span = tracing::span!(
                                     tracing::Level::INFO,
