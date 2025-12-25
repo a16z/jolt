@@ -508,6 +508,14 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                 },
                 |(mut acc_sh, mut acc_l, mut acc_r, mut acc_sf, mut acc_id),
                  ((k_chunk, u_chunk), inter_chunk)| {
+                    let span = tracing::span!(
+                        tracing::Level::INFO,
+                        "PrefixSuffix::init_Q_raf_chunk_build",
+                        chunk_len = k_chunk.len(),
+                        poly_len = poly_len,
+                        suffix_len = suffix_len
+                    );
+                    let _guard = span.enter();
                     debug_assert_eq!(k_chunk.len(), u_chunk.len());
                     debug_assert_eq!(k_chunk.len(), inter_chunk.len());
 
@@ -554,6 +562,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                         }
                     }
 
+                    drop(_guard);
                     (acc_sh, acc_l, acc_r, acc_sf, acc_id)
                 },
             )
@@ -568,12 +577,19 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                     )
                 },
                 |(mut a_sh, mut a_l, mut a_r, mut a_sf, mut a_id), (b_sh, b_l, b_r, b_sf, b_id)| {
+                    let span = tracing::span!(
+                        tracing::Level::INFO,
+                        "PrefixSuffix::init_Q_raf_merge_reduce",
+                        poly_len = poly_len
+                    );
+                    let _guard = span.enter();
                     // Merge 5 accumulator vectors
                     a_sh.par_iter_mut().zip(&b_sh).for_each(|(a, b)| *a += b);
                     a_l.par_iter_mut().zip(&b_l).for_each(|(a, b)| *a += b);
                     a_r.par_iter_mut().zip(&b_r).for_each(|(a, b)| *a += b);
                     a_sf.par_iter_mut().zip(&b_sf).for_each(|(a, b)| *a += b);
                     a_id.par_iter_mut().zip(&b_id).for_each(|(a, b)| *a += b);
+                    drop(_guard);
                     (a_sh, a_l, a_r, a_sf, a_id)
                 },
             );
@@ -585,6 +601,12 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         // Simple reductions (no scaling): left, right, identity
         let ([q_left, q_right, q_identity], (q_shift_half, q_shift_full)) = rayon::join(
             || {
+                let span = tracing::span!(
+                    tracing::Level::INFO,
+                    "PrefixSuffix::init_Q_raf_barrett_reduce_simple",
+                    poly_len = poly_len
+                );
+                let _guard = span.enter();
                 [rows_left, rows_right, rows_identity]
                     .into_par_iter()
                     .map(|rows| rows.into_par_iter().map(F::from_barrett_reduce).collect())
@@ -596,6 +618,12 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             || {
                 rayon::join(
                     || {
+                        let span = tracing::span!(
+                            tracing::Level::INFO,
+                            "PrefixSuffix::init_Q_raf_barrett_reduce_shift_half",
+                            poly_len = poly_len
+                        );
+                        let _guard = span.enter();
                         rows_shift_half
                             .into_par_iter()
                             .map(|v| {
@@ -609,6 +637,12 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                             .collect::<Vec<F>>()
                     },
                     || {
+                        let span = tracing::span!(
+                            tracing::Level::INFO,
+                            "PrefixSuffix::init_Q_raf_barrett_reduce_shift_full",
+                            poly_len = poly_len
+                        );
+                        let _guard = span.enter();
                         rows_shift_full
                             .into_par_iter()
                             .map(|v| {

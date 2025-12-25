@@ -505,6 +505,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     let unreduced_polys = lookup_indices
                         .par_chunks(chunk_size)
                         .map(|chunk| {
+                            let span = tracing::span!(
+                                tracing::Level::INFO,
+                                "InstructionReadRafProver::init_suffix_polys_chunk_build",
+                                chunk_len = chunk.len(),
+                                num_suffixes = num_suffixes,
+                                m = m
+                            );
+                            let _guard = span.enter();
                             let mut chunk_result: Vec<Vec<F::Unreduced<6>>> =
                                 vec![unsafe_allocate_zero_vec(m); num_suffixes];
 
@@ -540,11 +548,19 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 }
                             }
 
+                            drop(_guard);
                             chunk_result
                         })
                         .reduce(
                             || vec![unsafe_allocate_zero_vec(m); num_suffixes],
                             |mut acc, new| {
+                                let span = tracing::span!(
+                                    tracing::Level::INFO,
+                                    "InstructionReadRafProver::init_suffix_polys_merge_reduce",
+                                    num_suffixes = num_suffixes,
+                                    m = m
+                                );
+                                let _guard = span.enter();
                                 // Merge accumulator vectors (parallelize over m coefficients)
                                 for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
                                     acc_i
@@ -552,20 +568,32 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                         .zip(new_i.par_iter())
                                         .for_each(|(a, b)| *a += b);
                                 }
+                                drop(_guard);
                                 acc
                             },
                         );
 
                     // Reduce the unreduced values to field elements (parallelized over suffixes)
-                    unreduced_polys
-                        .into_par_iter()
-                        .map(|unreduced_coeffs| {
-                            unreduced_coeffs
-                                .into_iter()
-                                .map(F::from_barrett_reduce)
-                                .collect::<Vec<F>>()
-                        })
-                        .collect::<Vec<_>>()
+                    {
+                        let span = tracing::span!(
+                            tracing::Level::INFO,
+                            "InstructionReadRafProver::init_suffix_polys_barrett_reduce",
+                            num_suffixes = num_suffixes,
+                            m = m
+                        );
+                        let _guard = span.enter();
+                        let out = unreduced_polys
+                            .into_par_iter()
+                            .map(|unreduced_coeffs| {
+                                unreduced_coeffs
+                                    .into_iter()
+                                    .map(F::from_barrett_reduce)
+                                    .collect::<Vec<F>>()
+                            })
+                            .collect::<Vec<_>>();
+                        drop(_guard);
+                        out
+                    }
                 })
                 .collect()
         };
@@ -664,13 +692,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                         .suffixes()
                         .iter()
                         .map(|suffix| {
-                            // Suffix MLEs are u64-valued; convert once here (not in the hot loop).
+                            // Suffix MLEs are u64-valued; convert once here.
                             F::from_u64(suffix.suffix_mle::<XLEN>(empty_suffix_bits))
                         })
                         .collect();
                     table.combine(&prefixes, &suffix_evals)
                 })
                 .collect();
+
             combined_val_poly
                 .par_iter_mut()
                 .zip(std::mem::take(&mut self.lookup_tables))
