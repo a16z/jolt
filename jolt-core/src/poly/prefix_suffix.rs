@@ -472,15 +472,13 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (lookup_bits.len() / num_chunks).max(1);
 
-        type U7<F> = <F as JoltField>::Unreduced<7>;
-
         #[allow(clippy::type_complexity)]
         let (rows_shift_half, rows_left, rows_right, rows_shift_full, rows_identity): (
-            Vec<U7<F>>,
-            Vec<U7<F>>,
-            Vec<U7<F>>,
-            Vec<U7<F>>,
-            Vec<U7<F>>,
+            Vec<F::Unreduced<7>>,
+            Vec<F::Unreduced<7>>,
+            Vec<F::Unreduced<7>>,
+            Vec<F::Unreduced<7>>,
+            Vec<F::Unreduced<7>>,
         ) = lookup_bits
             .par_chunks(chunk_size)
             .zip(u_evals.par_chunks(chunk_size))
@@ -488,11 +486,11 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             .fold(
                 || {
                     (
-                        vec![U7::<F>::zero(); poly_len], // operand shift-half (shared by left/right)
-                        vec![U7::<F>::zero(); poly_len], // operand left value
-                        vec![U7::<F>::zero(); poly_len], // operand right value
-                        vec![U7::<F>::zero(); poly_len], // identity shift-full
-                        vec![U7::<F>::zero(); poly_len], // identity value
+                        unsafe_allocate_zero_vec(poly_len), // operand shift-half (shared by left/right)
+                        unsafe_allocate_zero_vec(poly_len), // operand left value
+                        unsafe_allocate_zero_vec(poly_len), // operand right value
+                        unsafe_allocate_zero_vec(poly_len), // identity shift-full
+                        unsafe_allocate_zero_vec(poly_len), // identity value
                     )
                 },
                 |(mut acc_sh, mut acc_l, mut acc_r, mut acc_sf, mut acc_id),
@@ -549,11 +547,11 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             .reduce(
                 || {
                     (
-                        vec![U7::<F>::zero(); poly_len],
-                        vec![U7::<F>::zero(); poly_len],
-                        vec![U7::<F>::zero(); poly_len],
-                        vec![U7::<F>::zero(); poly_len],
-                        vec![U7::<F>::zero(); poly_len],
+                        unsafe_allocate_zero_vec(poly_len),
+                        unsafe_allocate_zero_vec(poly_len),
+                        unsafe_allocate_zero_vec(poly_len),
+                        unsafe_allocate_zero_vec(poly_len),
+                        unsafe_allocate_zero_vec(poly_len),
                     )
                 },
                 |(mut a_sh, mut a_l, mut a_r, mut a_sf, mut a_id), (b_sh, b_l, b_r, b_sf, b_id)| {
@@ -583,6 +581,8 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         let mut q_shift_full: Vec<F> = unsafe_allocate_zero_vec(poly_len);
         let mut q_identity: Vec<F> = unsafe_allocate_zero_vec(poly_len);
 
+        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffix::init_Q_raf_reduce");
+        let _guard = span.enter();
         for i in 0..poly_len {
             let sum_u_interleaved = F::from_barrett_reduce(rows_shift_half[i]);
             q_shift_half[i] = if shift_half == 1 {
@@ -600,6 +600,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             };
             q_identity[i] = F::from_barrett_reduce(rows_identity[i]);
         }
+        drop(_guard);
 
         // Operand Q0 is shared (ShiftHalfSuffixPolynomial).
         left.Q = [
