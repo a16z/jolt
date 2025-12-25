@@ -645,14 +645,30 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                         .par_iter()
                         .with_min_len(1024)
                         .map(|i| {
-                            let mut acc = F::one();
+                            // Hot path: compute ra_i(k_i, j) as a product of per-phase expanding-table
+                            // values. This is performance sensitive, so we:
+                            // - Convert `LookupBits` -> `u128` once per cycle
+                            // - Use a decrementing shift instead of recomputing `(phases-1-phase)*log_m`
+                            // - Avoid an initial multiply-by-one by seeding `acc` with the first term
+                            let v: u128 = (*i).into();
 
-                            for (phase, table) in zip(phase_offset.., v_chunk) {
-                                let v: u128 = i.into();
-                                let i_segment = ((v >> ((self.params.phases - 1 - phase) * log_m))
-                                    as usize)
-                                    & m_mask;
-                                acc *= table[i_segment];
+                            if v_chunk.is_empty() {
+                                return F::one();
+                            }
+
+                            // shift(phase) = (phases - 1 - phase) * log_m
+                            // For consecutive phases, this decreases by `log_m` each step.
+                            let mut shift = (self.params.phases - 1 - phase_offset) * log_m;
+
+                            let mut iter = v_chunk.iter();
+                            let first = iter.next().unwrap();
+                            let first_idx = ((v >> shift) as usize) & m_mask;
+                            let mut acc = first[first_idx];
+
+                            for table in iter {
+                                shift -= log_m;
+                                let idx = ((v >> shift) as usize) & m_mask;
+                                acc *= table[idx];
                             }
 
                             acc
