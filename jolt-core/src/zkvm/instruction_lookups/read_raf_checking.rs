@@ -650,6 +650,27 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             let left_prefix = self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
             let right_prefix = self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
             let identity_prefix = self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
+            let raf_interleaved = gamma * left_prefix + gamma_sqr * right_prefix;
+            let raf_identity = gamma_sqr * identity_prefix;
+
+            // At this point we've finished all LOG_K address rounds, so the lookup-table suffix
+            // variable set is empty. That means every suffix MLE is evaluated on an empty bitstring,
+            // and `table.combine(&prefixes, &suffixes)` becomes a per-table constant that can be
+            // precomputed once (instead of allocating a suffix Vec per cycle).
+            let empty_suffix_bits = LookupBits::new(0, 0);
+            let table_values_at_r_addr: Vec<F> = LookupTables::<XLEN>::iter()
+                .map(|table| {
+                    let suffix_evals: Vec<F> = table
+                        .suffixes()
+                        .iter()
+                        .map(|suffix| {
+                            // Suffix MLEs are u64-valued; convert once here (not in the hot loop).
+                            F::from_u64(suffix.suffix_mle::<XLEN>(empty_suffix_bits))
+                        })
+                        .collect();
+                    table.combine(&prefixes, &suffix_evals)
+                })
+                .collect();
             combined_val_poly
                 .par_iter_mut()
                 .zip(std::mem::take(&mut self.lookup_tables))
@@ -657,20 +678,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .for_each(|((val, table), is_interleaved_operands)| {
                     // Add lookup table value (Val_j(k))
                     if let Some(table) = table {
-                        let suffixes: Vec<_> = table
-                            .suffixes()
-                            .iter()
-                            .map(|suffix| {
-                                F::from_u64(suffix.suffix_mle::<XLEN>(LookupBits::new(0, 0)))
-                            })
-                            .collect();
-                        *val += table.combine(&prefixes, &suffixes);
+                        let t_idx = LookupTables::<XLEN>::enum_index(&table);
+                        *val += table_values_at_r_addr[t_idx];
                     }
                     // Add RAF operand contribution (γ·RafVal_j(k))
                     if is_interleaved_operands {
-                        *val += gamma * left_prefix + gamma_sqr * right_prefix;
+                        *val += raf_interleaved;
                     } else {
-                        *val += gamma_sqr * identity_prefix;
+                        *val += raf_identity;
                     }
                 });
         }
