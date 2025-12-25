@@ -469,8 +469,8 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         let shift_half_f = F::from_u128(shift_half);
         let shift_full_f = F::from_u128(shift_full);
 
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = (lookup_bits.len() / num_chunks).max(1);
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = lookup_bits.len().div_ceil(num_threads).max(1);
 
         #[allow(clippy::type_complexity)]
         let (rows_shift_half, rows_left, rows_right, rows_shift_full, rows_identity): (

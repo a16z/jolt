@@ -453,8 +453,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
         let m_mask = m - 1;
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = self.lookup_indices.len().div_ceil(num_threads).max(1);
 
         let new_suffix_polys: Vec<_> = {
             LookupTables::<XLEN>::iter()
