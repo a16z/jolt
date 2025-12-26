@@ -513,8 +513,12 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 m = m
                             );
                             let _guard = span.enter();
-                            let mut chunk_result: Vec<Vec<F::Unreduced<6>>> =
-                                vec![unsafe_allocate_zero_vec(m); num_suffixes];
+                            // Single allocation for all suffix accumulators:
+                            // layout: [suffix_0 | suffix_1 | ... | suffix_{num_suffixes-1}],
+                            // each suffix segment has length `m`.
+                            let total_len = num_suffixes * m;
+                            let mut chunk_result: Vec<F::Unreduced<6>> =
+                                unsafe_allocate_zero_vec(total_len);
 
                             for j in chunk {
                                 let k = self.lookup_indices[*j];
@@ -525,7 +529,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
                                 // Suffixes::One always evaluates to 1, so just add u directly.
                                 if let Some(one_idx) = suffix_one_idx {
-                                    chunk_result[one_idx][idx] += *u.as_unreduced_ref();
+                                    chunk_result[one_idx * m + idx] += *u.as_unreduced_ref();
                                 }
 
                                 // Other {0,1}-valued suffixes: add u when suffix_mle == 1.
@@ -534,7 +538,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                     let t = suffixes[s_idx].suffix_mle::<XLEN>(suffix_bits);
                                     debug_assert!(t == 0 || t == 1);
                                     if t == 1 {
-                                        chunk_result[s_idx][idx] += *u.as_unreduced_ref();
+                                        chunk_result[s_idx * m + idx] += *u.as_unreduced_ref();
                                     }
                                 }
 
@@ -543,7 +547,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                     let s_idx = suffix_other_indices[i];
                                     let t = suffixes[s_idx].suffix_mle::<XLEN>(suffix_bits);
                                     if t != 0 {
-                                        chunk_result[s_idx][idx] += u.mul_u64_unreduced(t);
+                                        chunk_result[s_idx * m + idx] += u.mul_u64_unreduced(t);
                                     }
                                 }
                             }
@@ -562,7 +566,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                     m = m
                                 );
                                 let _guard = span.enter();
-                                let out = vec![unsafe_allocate_zero_vec(m); num_suffixes];
+                                let out: Vec<F::Unreduced<6>> =
+                                    unsafe_allocate_zero_vec(num_suffixes * m);
                                 drop(_guard);
                                 out
                             },
@@ -574,13 +579,10 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                     m = m
                                 );
                                 let _guard = span.enter();
-                                // Merge accumulator vectors (parallelize over m coefficients)
-                                for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
-                                    acc_i
-                                        .par_iter_mut()
-                                        .zip(new_i.par_iter())
-                                        .for_each(|(a, b)| *a += b);
-                                }
+                                // Merge accumulator vectors (parallelize over the flat buffer)
+                                acc.par_iter_mut()
+                                    .zip(new.par_iter())
+                                    .for_each(|(a, b)| *a += b);
                                 drop(_guard);
                                 acc
                             },
@@ -595,11 +597,14 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                             m = m
                         );
                         let _guard = span.enter();
-                        let out = unreduced_polys
+                        let out = (0..num_suffixes)
                             .into_par_iter()
-                            .map(|unreduced_coeffs| {
-                                unreduced_coeffs
-                                    .into_iter()
+                            .map(|s_idx| {
+                                let start = s_idx * m;
+                                let end = start + m;
+                                unreduced_polys[start..end]
+                                    .iter()
+                                    .copied()
                                     .map(F::from_barrett_reduce)
                                     .collect::<Vec<F>>()
                             })
