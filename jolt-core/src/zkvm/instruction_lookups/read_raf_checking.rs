@@ -505,14 +505,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     let unreduced_polys = lookup_indices
                         .par_chunks(chunk_size)
                         .map(|chunk| {
-                            let span = tracing::span!(
-                                tracing::Level::INFO,
-                                "InstructionReadRafProver::init_suffix_polys_chunk_build",
-                                chunk_len = chunk.len(),
-                                num_suffixes = num_suffixes,
-                                m = m
-                            );
-                            let _guard = span.enter();
                             // Single allocation for all suffix accumulators:
                             // layout: [suffix_0 | suffix_1 | ... | suffix_{num_suffixes-1}],
                             // each suffix segment has length `m`.
@@ -552,66 +544,32 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                                 }
                             }
 
-                            drop(_guard);
                             chunk_result
                         })
                         .reduce(
-                            || {
-                                // Identity allocation for the reduce tree; can show up as time
-                                // before any per-chunk spans depending on scheduling.
-                                let span = tracing::span!(
-                                    tracing::Level::INFO,
-                                    "InstructionReadRafProver::init_suffix_polys_reduce_init_alloc",
-                                    num_suffixes = num_suffixes,
-                                    m = m
-                                );
-                                let _guard = span.enter();
-                                let out: Vec<F::Unreduced<6>> =
-                                    unsafe_allocate_zero_vec(num_suffixes * m);
-                                drop(_guard);
-                                out
-                            },
+                            || unsafe_allocate_zero_vec(num_suffixes * m),
                             |mut acc, new| {
-                                let span = tracing::span!(
-                                    tracing::Level::INFO,
-                                    "InstructionReadRafProver::init_suffix_polys_merge_reduce",
-                                    num_suffixes = num_suffixes,
-                                    m = m
-                                );
-                                let _guard = span.enter();
                                 // Merge accumulator vectors (parallelize over the flat buffer)
                                 acc.par_iter_mut()
                                     .zip(new.par_iter())
                                     .for_each(|(a, b)| *a += b);
-                                drop(_guard);
                                 acc
                             },
                         );
 
                     // Reduce the unreduced values to field elements (parallelized over suffixes)
-                    {
-                        let span = tracing::span!(
-                            tracing::Level::INFO,
-                            "InstructionReadRafProver::init_suffix_polys_barrett_reduce",
-                            num_suffixes = num_suffixes,
-                            m = m
-                        );
-                        let _guard = span.enter();
-                        let out = (0..num_suffixes)
-                            .into_par_iter()
-                            .map(|s_idx| {
-                                let start = s_idx * m;
-                                let end = start + m;
-                                unreduced_polys[start..end]
-                                    .iter()
-                                    .copied()
-                                    .map(F::from_barrett_reduce)
-                                    .collect::<Vec<F>>()
-                            })
-                            .collect::<Vec<_>>();
-                        drop(_guard);
-                        out
-                    }
+                    (0..num_suffixes)
+                        .into_par_iter()
+                        .map(|s_idx| {
+                            let start = s_idx * m;
+                            let end = start + m;
+                            unreduced_polys[start..end]
+                                .iter()
+                                .copied()
+                                .map(F::from_barrett_reduce)
+                                .collect::<Vec<F>>()
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .collect()
         };

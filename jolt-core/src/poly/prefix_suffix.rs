@@ -495,30 +495,8 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             .zip(u_evals.par_chunks(chunk_size))
             .zip(is_interleaved_operands.par_chunks(chunk_size))
             .fold(
-                || {
-                    // This runs once per Rayon worker for the fold identity, and performs
-                    // large zeroed allocations. Instrument it to account for any time before
-                    // we enter the per-chunk build span.
-                    let span = tracing::span!(
-                        tracing::Level::INFO,
-                        "PrefixSuffix::init_Q_raf_fold_init_alloc",
-                        poly_len = poly_len,
-                        total_len = total_len
-                    );
-                    let _guard = span.enter();
-                    let out: Vec<U7<F>> = unsafe_allocate_zero_vec(total_len);
-                    drop(_guard);
-                    out
-                },
+                || unsafe_allocate_zero_vec(total_len),
                 |mut acc, ((k_chunk, u_chunk), inter_chunk)| {
-                    let span = tracing::span!(
-                        tracing::Level::INFO,
-                        "PrefixSuffix::init_Q_raf_chunk_build",
-                        chunk_len = k_chunk.len(),
-                        poly_len = poly_len,
-                        suffix_len = suffix_len
-                    );
-                    let _guard = span.enter();
                     debug_assert_eq!(k_chunk.len(), u_chunk.len());
                     debug_assert_eq!(k_chunk.len(), inter_chunk.len());
 
@@ -576,43 +554,20 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                         }
                     }
 
-                    drop(_guard);
                     acc
                 },
             )
             .reduce(
-                || {
-                    // Identity allocation for the reduce tree can also be non-trivial.
-                    let span = tracing::span!(
-                        tracing::Level::INFO,
-                        "PrefixSuffix::init_Q_raf_reduce_init_alloc",
-                        poly_len = poly_len,
-                        total_len = total_len
-                    );
-                    let _guard = span.enter();
-                    let out: Vec<U7<F>> = unsafe_allocate_zero_vec(total_len);
-                    drop(_guard);
-                    out
-                },
+                || unsafe_allocate_zero_vec(total_len),
                 |mut a, b| {
-                    let span = tracing::span!(
-                        tracing::Level::INFO,
-                        "PrefixSuffix::init_Q_raf_merge_reduce",
-                        poly_len = poly_len
-                    );
-                    let _guard = span.enter();
                     a.par_iter_mut()
                         .zip(b.par_iter())
                         .for_each(|(x, y)| *x += y);
-                    drop(_guard);
                     a
                 },
             );
 
         // Reduce unreduced accumulators to field elements
-        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffix::init_Q_raf_reduce");
-        let _guard = span.enter();
-
         let rows_shift_half: &[U7<F>] = &rows[0 * poly_len..1 * poly_len];
         let rows_left: &[U7<F>] = &rows[1 * poly_len..2 * poly_len];
         let rows_right: &[U7<F>] = &rows[2 * poly_len..3 * poly_len];
@@ -622,12 +577,6 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         // Simple reductions (no scaling): left, right, identity
         let ([q_left, q_right, q_identity], (q_shift_half, q_shift_full)) = rayon::join(
             || {
-                let span = tracing::span!(
-                    tracing::Level::INFO,
-                    "PrefixSuffix::init_Q_raf_barrett_reduce_simple",
-                    poly_len = poly_len
-                );
-                let _guard = span.enter();
                 let (q_left, (q_right, q_identity)) = rayon::join(
                     || {
                         rows_left
@@ -655,20 +604,13 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                         )
                     },
                 );
-                drop(_guard);
                 [q_left, q_right, q_identity]
             },
             // Scaled reductions: shift_half and shift_full need post-reduction scaling
             || {
                 rayon::join(
                     || {
-                        let span = tracing::span!(
-                            tracing::Level::INFO,
-                            "PrefixSuffix::init_Q_raf_barrett_reduce_shift_half",
-                            poly_len = poly_len
-                        );
-                        let _guard = span.enter();
-                        let out = rows_shift_half
+                        rows_shift_half
                             .par_iter()
                             .copied()
                             .map(|v| {
@@ -679,18 +621,10 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                                     reduced * shift_half_f
                                 }
                             })
-                            .collect::<Vec<F>>();
-                        drop(_guard);
-                        out
+                            .collect::<Vec<F>>()
                     },
                     || {
-                        let span = tracing::span!(
-                            tracing::Level::INFO,
-                            "PrefixSuffix::init_Q_raf_barrett_reduce_shift_full",
-                            poly_len = poly_len
-                        );
-                        let _guard = span.enter();
-                        let out = rows_shift_full
+                        rows_shift_full
                             .par_iter()
                             .copied()
                             .map(|v| {
@@ -701,15 +635,11 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                                     reduced * shift_full_f
                                 }
                             })
-                            .collect::<Vec<F>>();
-                        drop(_guard);
-                        out
+                            .collect::<Vec<F>>()
                     },
                 )
             },
         );
-
-        drop(_guard);
 
         // Operand Q0 is shared (ShiftHalfSuffixPolynomial).
         left.Q = [
