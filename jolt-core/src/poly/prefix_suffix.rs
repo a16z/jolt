@@ -500,8 +500,8 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                     debug_assert_eq!(k_chunk.len(), u_chunk.len());
                     debug_assert_eq!(k_chunk.len(), inter_chunk.len());
 
-                    let sh_off = 0 * poly_len;
-                    let l_off = 1 * poly_len;
+                    let sh_off = 0;
+                    let l_off = poly_len;
                     let r_off = 2 * poly_len;
                     let sf_off = 3 * poly_len;
                     let id_off = 4 * poly_len;
@@ -568,8 +568,8 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             );
 
         // Reduce unreduced accumulators to field elements
-        let rows_shift_half: &[U7<F>] = &rows[0 * poly_len..1 * poly_len];
-        let rows_left: &[U7<F>] = &rows[1 * poly_len..2 * poly_len];
+        let rows_shift_half: &[U7<F>] = &rows[..poly_len];
+        let rows_left: &[U7<F>] = &rows[poly_len..2 * poly_len];
         let rows_right: &[U7<F>] = &rows[2 * poly_len..3 * poly_len];
         let rows_shift_full: &[U7<F>] = &rows[3 * poly_len..4 * poly_len];
         let rows_identity: &[U7<F>] = &rows[4 * poly_len..5 * poly_len];
