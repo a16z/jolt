@@ -65,25 +65,7 @@ pub struct RamReadWriteCheckingParams<F: JoltField> {
 }
 
 impl<F: JoltField> RamReadWriteCheckingParams<F> {
-    /// Create params using default ProofConfig based on trace length.
     pub fn new(
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-        one_hot_params: &OneHotParams,
-        trace_length: usize,
-    ) -> Self {
-        let config = ProofConfig::default_for_trace(trace_length.log_2());
-        Self::new_with_config(
-            opening_accumulator,
-            transcript,
-            one_hot_params,
-            trace_length,
-            &config,
-        )
-    }
-
-    /// Create params with explicit ProofConfig.
-    pub fn new_with_config(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
         one_hot_params: &OneHotParams,
@@ -196,15 +178,12 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
 /// When this returns true, the advice opening points for `RamValEvaluation` and
 /// `RamValFinalEvaluation` are identical, so we only need one advice opening.
 ///
-/// NOTE: This uses the default ProofConfig. For custom configs, check
-/// `config.ram_rw_all_cycle_in_phase1(ram_K, T)` directly.
+/// NOTE: This uses the default ProofConfig.
 pub fn needs_single_advice_opening(T: usize) -> bool {
     let log_T = T.log_2();
-    let mut config = ProofConfig::default_for_trace(log_T);
-    config
-        .finalize_for_trace(log_T, 0)
-        .expect("default ProofConfig should be valid");
-    config.ram_rw_all_cycle_in_phase1(1, T)
+    let config = ProofConfig::new(log_T, 0);
+    // Check if all cycle variables are bound in phase 1
+    config.ram_rw_phase1_num_rounds == log_T
 }
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
@@ -684,7 +663,7 @@ impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
         trace_length: usize,
         config: &ProofConfig,
     ) -> Self {
-        let params = RamReadWriteCheckingParams::new_with_config(
+        let params = RamReadWriteCheckingParams::new(
             opening_accumulator,
             transcript,
             one_hot_params,

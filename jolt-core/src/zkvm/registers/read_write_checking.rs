@@ -73,18 +73,7 @@ pub struct RegistersReadWriteCheckingParams<F: JoltField> {
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
-    /// Create params using default ProofConfig based on trace length.
     pub fn new(
-        trace_length: usize,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-    ) -> Self {
-        let config = ProofConfig::default_for_trace(trace_length.log_2());
-        Self::new_with_config(trace_length, opening_accumulator, transcript, &config)
-    }
-
-    /// Create params with explicit ProofConfig.
-    pub fn new_with_config(
         trace_length: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
@@ -744,7 +733,7 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
         transcript: &mut impl Transcript,
         config: &ProofConfig,
     ) -> Self {
-        let params = RegistersReadWriteCheckingParams::new_with_config(
+        let params = RegistersReadWriteCheckingParams::new(
             trace_len,
             opening_accumulator,
             transcript,

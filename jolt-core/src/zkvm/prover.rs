@@ -274,13 +274,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &final_memory_state,
         );
 
-        let mut proof_config = preprocessing.proof_config.clone();
         let log_T = padded_trace_len.log_2();
         let ram_log_K = ram_K.log_2();
-        proof_config
-            .finalize_for_trace(log_T, ram_log_K)
-            .expect("invalid proof configuration");
-        let one_hot_params = OneHotParams::new_with_config(
+        let proof_config = ProofConfig::new(log_T, ram_log_K);
+        let one_hot_params = OneHotParams::new(
             &proof_config,
             preprocessing.shared.bytecode.code_size,
             ram_K,
@@ -610,7 +607,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &self.opening_accumulator,
         );
-        let ram_read_write_checking_params = RamReadWriteCheckingParams::new_with_config(
+        let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
             &self.one_hot_params,
@@ -770,13 +767,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        let registers_read_write_checking_params =
-            RegistersReadWriteCheckingParams::new_with_config(
-                self.trace.len(),
-                &self.opening_accumulator,
-                &mut self.transcript,
-                &self.proof_config,
-            );
+        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+            &self.proof_config,
+        );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
             &self.advice.trusted_advice_polynomial,
@@ -1282,7 +1278,6 @@ fn write_instance_flamegraph_svg(
 pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
-    pub proof_config: ProofConfig,
 }
 
 impl<F, PCS> JoltProverPreprocessing<F, PCS>
@@ -1296,13 +1291,11 @@ where
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
         let max_T: usize = max_trace_length.next_power_of_two();
-        let proof_config = ProofConfig::default_for_trace(max_T.log_2());
-        let generators = PCS::setup_prover(proof_config.log_k_chunk + max_T.log_2());
-        JoltProverPreprocessing {
-            generators,
-            shared,
-            proof_config,
-        }
+        let max_log_T = max_T.log_2();
+        // Use the maximum possible log_k_chunk for generator setup
+        let max_log_k_chunk = if max_log_T < 25 { 4 } else { 8 };
+        let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
+        JoltProverPreprocessing { generators, shared }
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {

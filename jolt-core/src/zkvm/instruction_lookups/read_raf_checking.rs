@@ -41,7 +41,7 @@ use crate::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
     zkvm::{
-        config::{OneHotParams, ProverOnlyConfig},
+        config::{get_instruction_sumcheck_phases, OneHotParams},
         instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -240,7 +240,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::initialize")]
     pub fn initialize(params: ReadRafSumcheckParams<F>, trace: &[Cycle]) -> Self {
-        let phases = ProverOnlyConfig::default_for_trace(params.log_T).instruction_sumcheck_phases;
+        let phases = get_instruction_sumcheck_phases(params.log_T);
         let log_m = LOG_K / phases;
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
@@ -1162,6 +1162,7 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
+    use crate::zkvm::config::ProofConfig;
     use ark_bn254::Fr;
     use ark_std::Zero;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -1308,7 +1309,8 @@ mod tests {
             rv_claim,
         );
 
-        let one_hot_params = OneHotParams::new(trace.len().log_2(), 100, 100);
+        let config = ProofConfig::new(trace.len().log_2(), 0);
+        let one_hot_params = OneHotParams::new(&config, 100, 100);
 
         let params = ReadRafSumcheckParams::new(
             trace.len().log_2(),

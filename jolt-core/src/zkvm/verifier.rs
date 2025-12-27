@@ -135,12 +135,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let one_hot_params =
-            OneHotParams::new_with_config(&proof.proof_config, proof.bytecode_K, proof.ram_K);
+        let one_hot_params = OneHotParams::new(&proof.proof_config, proof.bytecode_K, proof.ram_K);
 
         proof
             .proof_config
-            .validate_for_trace(proof.trace_length.log_2(), one_hot_params.ram_k.log_2())
+            .validate(proof.trace_length.log_2(), one_hot_params.ram_k.log_2())
             .map_err(ProofVerifyError::InvalidProofConfig)?;
 
         Ok(Self {
