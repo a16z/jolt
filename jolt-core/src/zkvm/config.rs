@@ -3,11 +3,16 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::LOG_K;
-use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT};
+use common::constants::{
+    INSTRUCTION_PHASES_THRESHOLD_LOG_T, ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT,
+};
 
 /// Returns the number of phases for instruction sumcheck based on trace length.
+///
+/// For shorter traces (log_T < threshold), uses 16 phases for better parallelism.
+/// For longer traces, uses 8 phases to reduce overhead.
 pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
-    if log_t < 23 {
+    if log_t < INSTRUCTION_PHASES_THRESHOLD_LOG_T {
         16
     } else {
         8
