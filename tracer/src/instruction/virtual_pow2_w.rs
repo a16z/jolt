@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::{
+        cpu::{GeneralizedCpu, Xlen},
+        memory::MemoryData,
+    },
 };
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
@@ -16,7 +19,11 @@ declare_riscv_instr!(
 );
 
 impl VirtualPow2W {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPow2W as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <VirtualPow2W as RISCVInstruction>::RAMAccess,
+    ) {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualPow2W is invalid in 32b mode"),
             Xlen::Bit64 => {

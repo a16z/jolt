@@ -1,3 +1,5 @@
+use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::memory::MemoryData;
 use crate::instruction::sub::SUB;
 use crate::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
@@ -7,10 +9,7 @@ use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
@@ -27,7 +26,11 @@ declare_riscv_instr!(
 );
 
 impl REM {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <REM as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <REM as RISCVInstruction>::RAMAccess,
+    ) {
         let dividend = cpu.x[self.operands.rs1 as usize];
         let divisor = cpu.x[self.operands.rs2 as usize];
         if divisor == 0 {
@@ -43,7 +46,7 @@ impl REM {
 }
 
 impl RISCVTrace for REM {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         // RISCV spec: For REM, the sign of a nonzero result equals the sign of the dividend.
         // REM operands
         let x = cpu.x[self.operands.rs1 as usize];

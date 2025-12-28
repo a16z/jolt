@@ -1,11 +1,9 @@
-use crate::utils::inline_helpers::InstrAssembler;
+use crate::emulator::cpu::GeneralizedCpu;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{emulator::memory::MemoryData, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 use super::addi::ADDI;
 use super::andi::ANDI;
@@ -28,7 +26,11 @@ declare_riscv_instr!(
 );
 
 impl LB {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LB as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        ram_access: &mut <LB as RISCVInstruction>::RAMAccess,
+    ) {
         cpu.x[self.operands.rd as usize] = match cpu
             .mmu
             .load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
@@ -43,7 +45,7 @@ impl LB {
 }
 
 impl RISCVTrace for LB {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

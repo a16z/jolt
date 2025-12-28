@@ -1,11 +1,9 @@
-use crate::utils::inline_helpers::InstrAssembler;
+use crate::emulator::cpu::GeneralizedCpu;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{emulator::memory::MemoryData, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 use super::{
     add::ADD, andi::ANDI, format::format_r::FormatR, mul::MUL, mulhu::MULHU, sltu::SLTU,
@@ -21,7 +19,11 @@ declare_riscv_instr!(
 );
 
 impl MULHSU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <MULHSU as RISCVInstruction>::RAMAccess,
+    ) {
         cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => cpu.sign_extend(
                 cpu.x[self.operands.rs1 as usize]
@@ -38,7 +40,7 @@ impl MULHSU {
 }
 
 impl RISCVTrace for MULHSU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

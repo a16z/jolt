@@ -8,12 +8,11 @@ use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::xori::XORI;
 use super::{addi::ADDI, Instruction};
 use super::{Cycle, RISCVInstruction, RISCVTrace};
+use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::memory::MemoryData;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 use serde::{Deserialize, Serialize};
 
 declare_riscv_instr!(
@@ -25,7 +24,11 @@ declare_riscv_instr!(
 );
 
 impl LWU {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LWU as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        ram_access: &mut <LWU as RISCVInstruction>::RAMAccess,
+    ) {
         // The LWU instruction, on the other hand, zero-extends the 32-bit value from memory for
         // RV64I.
         let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64;
@@ -43,7 +46,7 @@ impl LWU {
 }
 
 impl RISCVTrace for LWU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

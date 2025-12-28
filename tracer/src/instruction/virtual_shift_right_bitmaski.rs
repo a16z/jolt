@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::{
+        cpu::{GeneralizedCpu, Xlen},
+        memory::MemoryData,
+    },
 };
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
@@ -16,9 +19,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualShiftRightBitmaskI {
-    fn exec(
+    fn exec<D: MemoryData>(
         &self,
-        cpu: &mut Cpu,
+        cpu: &mut GeneralizedCpu<D>,
         _: &mut <VirtualShiftRightBitmaskI as RISCVInstruction>::RAMAccess,
     ) {
         match cpu.xlen {

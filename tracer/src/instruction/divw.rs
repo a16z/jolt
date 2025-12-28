@@ -1,3 +1,5 @@
+use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::memory::MemoryData;
 use crate::instruction::add::ADD;
 use crate::instruction::mul::MUL;
 use crate::instruction::srai::SRAI;
@@ -10,10 +12,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 use super::{
     format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
@@ -32,7 +31,11 @@ declare_riscv_instr!(
 );
 
 impl DIVW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <DIVW as RISCVInstruction>::RAMAccess) {
+    fn exec<D: MemoryData>(
+        &self,
+        cpu: &mut GeneralizedCpu<D>,
+        _: &mut <DIVW as RISCVInstruction>::RAMAccess,
+    ) {
         // DIVW and DIVUW are RV64 instructions that divide the lower 32 bits of rs1 by the lower
         // 32 bits of rs2, treating them as signed and unsigned integers, placing the 32-bit
         // quotient in rd, sign-extended to 64 bits.
@@ -49,7 +52,7 @@ impl DIVW {
 }
 
 impl RISCVTrace for DIVW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
         // DIVW operands
         let x = cpu.x[self.operands.rs1 as usize] as i32;
         let y = cpu.x[self.operands.rs2 as usize] as i32;
