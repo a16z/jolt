@@ -1,44 +1,89 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::LOG_K;
+use common::constants::REGISTER_COUNT;
 
-/// Helper to get log_k_chunk based on log_T
-#[inline]
-pub const fn get_log_k_chunk(log_T: usize) -> usize {
-    // TODO: Determine best point to switch based on empirical data.
-    if log_T < 25 {
-        4
-    } else {
-        8
-    }
-}
+const LOG_REGISTER_COUNT: usize = REGISTER_COUNT.ilog2() as usize;
 
-pub const fn get_lookups_ra_virtual_log_k_chunk(log_T: usize) -> usize {
-    // TODO: Determine best point to switch based on empirical data.
-    if log_T < 25 {
-        LOG_K / 8
-    } else {
-        LOG_K / 4
-    }
-}
-
-/// Compute the number of phases for instruction lookups based on trace length.
-/// For traces below 2^23 cycles we want to use 16 phases, otherwise 8.
-/// TODO: explore using other number of phases
-/// NOTE: currently only divisors of 128 are supported
-#[inline]
-pub const fn instruction_sumcheck_phases(log_T: usize) -> usize {
-    if log_T < 23 {
+/// Returns the number of phases for instruction sumcheck based on trace length.
+pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
+    if log_t < 23 {
         16
     } else {
         8
     }
 }
 
-/// Helper to compute d (number of chunks) from log_k and log_k_chunk.
-#[inline]
-fn compute_d(log_k: usize, log_chunk: usize) -> usize {
-    log_k.div_ceil(log_chunk)
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct ProofConfig {
+    /// Log of chunk size for one-hot encoding (e.g., 4 or 8).
+    /// Affects RA polynomial chunking and Dory opening structure.
+    pub log_k_chunk: usize,
+
+    /// Log of chunk size for lookups RA virtual.
+    pub lookups_ra_virtual_log_k_chunk: usize,
+
+    /// RAM read-write checking: number of cycle variables to bind in phase 1.
+    pub ram_rw_phase1_num_rounds: usize,
+
+    /// RAM read-write checking: number of address variables to bind in phase 2.
+    pub ram_rw_phase2_num_rounds: usize,
+
+    /// Registers read-write checking: number of cycle variables to bind in phase 1.
+    pub registers_rw_phase1_num_rounds: usize,
+
+    /// Registers read-write checking: number of address variables to bind in phase 2.
+    pub registers_rw_phase2_num_rounds: usize,
+}
+
+impl ProofConfig {
+    /// Create a ProofConfig for the given trace parameters.
+    pub fn new(log_T: usize, ram_log_K: usize) -> Self {
+        let config = Self {
+            log_k_chunk: if log_T < 25 { 4 } else { 8 },
+            lookups_ra_virtual_log_k_chunk: if log_T < 25 { LOG_K / 8 } else { LOG_K / 4 },
+            ram_rw_phase1_num_rounds: log_T,
+            ram_rw_phase2_num_rounds: ram_log_K,
+            registers_rw_phase1_num_rounds: log_T,
+            registers_rw_phase2_num_rounds: LOG_REGISTER_COUNT,
+        };
+
+        // Validate the configuration
+        config
+            .validate(log_T, ram_log_K)
+            .expect("invalid proof configuration");
+        config
+    }
+
+    pub fn validate(&self, log_T: usize, ram_log_K: usize) -> Result<(), String> {
+        if self.ram_rw_phase1_num_rounds > log_T {
+            return Err(format!(
+                "ram_rw_phase1_num_rounds ({}) exceeds log_T ({log_T})",
+                self.ram_rw_phase1_num_rounds
+            ));
+        }
+        if self.ram_rw_phase2_num_rounds > ram_log_K {
+            return Err(format!(
+                "ram_rw_phase2_num_rounds ({}) exceeds log_ram_K ({ram_log_K})",
+                self.ram_rw_phase2_num_rounds
+            ));
+        }
+        if self.registers_rw_phase1_num_rounds > log_T {
+            return Err(format!(
+                "registers_rw_phase1_num_rounds ({}) exceeds log_T ({log_T})",
+                self.registers_rw_phase1_num_rounds
+            ));
+        }
+        if self.registers_rw_phase2_num_rounds > LOG_REGISTER_COUNT {
+            return Err(format!(
+                "registers_rw_phase2_num_rounds ({}) exceeds LOG_REGISTER_COUNT ({LOG_REGISTER_COUNT})",
+                self.registers_rw_phase2_num_rounds
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -60,33 +105,20 @@ pub struct OneHotParams {
 }
 
 impl OneHotParams {
-    // TODO: Should check the params are valid. Return a Result.
-    pub fn new(log_T: usize, bytecode_k: usize, ram_k: usize) -> Self {
-        let log_k_chunk = get_log_k_chunk(log_T);
-        let lookups_ra_virtual_log_k_chunk = get_lookups_ra_virtual_log_k_chunk(log_T);
-        Self::new_with_log_k_chunk(
-            log_k_chunk,
-            lookups_ra_virtual_log_k_chunk,
-            bytecode_k,
-            ram_k,
-        )
-    }
+    /// Create OneHotParams from a ProofConfig.
+    pub fn new(config: &ProofConfig, bytecode_k: usize, ram_k: usize) -> Self {
+        let log_k_chunk = config.log_k_chunk;
+        let lookups_ra_virtual_log_k_chunk = config.lookups_ra_virtual_log_k_chunk;
 
-    // TODO: Should check the params are valid. Return a Result.
-    pub fn new_with_log_k_chunk(
-        log_k_chunk: usize,
-        lookups_ra_virtual_log_k_chunk: usize,
-        bytecode_k: usize,
-        ram_k: usize,
-    ) -> Self {
         // log_k_chunk must be at most 8 so that chunk indices fit in u8
         assert!(
             log_k_chunk <= 8,
             "log_k_chunk must be <= 8 to fit in u8, got {log_k_chunk}",
         );
-        let instruction_d = compute_d(LOG_K, log_k_chunk);
-        let bytecode_d = compute_d(bytecode_k.log_2(), log_k_chunk);
-        let ram_d = compute_d(ram_k.log_2(), log_k_chunk);
+
+        let instruction_d = LOG_K.div_ceil(log_k_chunk);
+        let bytecode_d = bytecode_k.log_2().div_ceil(log_k_chunk);
+        let ram_d = ram_k.log_2().div_ceil(log_k_chunk);
 
         let instruction_shifts = (0..instruction_d)
             .map(|i| log_k_chunk * (instruction_d - 1 - i))
@@ -96,11 +128,10 @@ impl OneHotParams {
             .map(|i| log_k_chunk * (bytecode_d - 1 - i))
             .collect();
 
-        let k_chunk = 1 << log_k_chunk;
         Self {
             log_k_chunk,
             lookups_ra_virtual_log_k_chunk,
-            k_chunk,
+            k_chunk: 1 << log_k_chunk,
             bytecode_k,
             ram_k,
             instruction_d,
@@ -112,17 +143,14 @@ impl OneHotParams {
         }
     }
 
-    #[inline(always)]
     pub fn ram_address_chunk(&self, address: u64, idx: usize) -> u8 {
         ((address >> self.ram_shifts[idx]) & (self.k_chunk - 1) as u64) as u8
     }
 
-    #[inline(always)]
     pub fn bytecode_pc_chunk(&self, pc: usize, idx: usize) -> u8 {
         ((pc >> self.bytecode_shifts[idx]) & (self.k_chunk - 1)) as u8
     }
 
-    #[inline(always)]
     pub fn lookup_index_chunk(&self, index: u128, idx: usize) -> u8 {
         ((index >> self.instruction_shifts[idx]) & (self.k_chunk - 1) as u128) as u8
     }

@@ -19,6 +19,7 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::{
+        config::ProofConfig,
         instruction::{CircuitFlags, InstructionFlags},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -50,8 +51,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
-    pub log_k_chunk: usize,
-    pub lookups_ra_virtual_log_k_chunk: usize,
+    pub proof_config: ProofConfig,
 }
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
