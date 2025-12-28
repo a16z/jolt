@@ -6,6 +6,12 @@ pub const REGISTER_COUNT: u8 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT; //
 pub const BYTES_PER_INSTRUCTION: usize = 4;
 pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
 
+/// Threshold for trace length (log scale) at which we switch between different
+/// one-hot chunking parameters. Below this threshold (i.e., for smaller traces),
+/// we use smaller chunk sizes for better performance. This value was empirically
+/// determined to optimize prover performance.
+pub const ONEHOT_CHUNK_THRESHOLD_LOG_T: usize = 25;
+
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 
 // big enough to run Linux and xv6
