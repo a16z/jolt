@@ -11,10 +11,6 @@ impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
-lazy_static::lazy_static! {
-    static ref SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = ark_bn254::Fr::compute_lookup_tables();
-}
-
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
     /// The Montgomery factor R = 2^(64*N) mod p
