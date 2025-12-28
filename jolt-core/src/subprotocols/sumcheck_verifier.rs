@@ -21,6 +21,14 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
         self.get_params().num_rounds()
     }
 
+    /// Returns the global round offset (0-based) at which this instance becomes active in a
+    /// batched sumcheck of `max_num_rounds` total rounds.
+    ///
+    /// Default preserves existing "front-loaded" batching behavior.
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        max_num_rounds - self.num_rounds()
+    }
+
     /// Returns the initial claim of this sumcheck instance.
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
         self.get_params().input_claim(accumulator)

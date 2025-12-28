@@ -227,6 +227,19 @@ fn setup_emulator_with_backtraces(
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 
+    assert!(
+        trusted_advice.len() as u64 <= memory_config.max_trusted_advice_size,
+        "Trusted advice too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_trusted_advice_size).",
+        trusted_advice.len(),
+        memory_config.max_trusted_advice_size,
+    );
+    assert!(
+        untrusted_advice.len() as u64 <= memory_config.max_untrusted_advice_size,
+        "Untrusted advice too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_untrusted_advice_size).",
+        untrusted_advice.len(),
+        memory_config.max_untrusted_advice_size,
+    );
+
     let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
     jolt_device.trusted_advice = trusted_advice.to_vec();
@@ -237,6 +250,45 @@ fn setup_emulator_with_backtraces(
     }
     emulator.setup_program(elf_contents);
     emulator
+}
+
+#[cfg(test)]
+mod advice_len_tests {
+    use super::*;
+
+    fn minimal_elf() -> Vec<u8> {
+        vec![
+            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+            0x38, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]
+    }
+
+    #[test]
+    #[should_panic(expected = "Trusted advice too long")]
+    fn panics_when_trusted_advice_exceeds_max() {
+        let elf = minimal_elf();
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 2048,
+            ..Default::default()
+        };
+        let _ = setup_emulator(&elf, b"[]", &[], &[0u8; 4096], &memory_config);
+    }
+
+    #[test]
+    #[should_panic(expected = "Untrusted advice too long")]
+    fn panics_when_untrusted_advice_exceeds_max() {
+        let elf = minimal_elf();
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            max_untrusted_advice_size: 128,
+            ..Default::default()
+        };
+        let _ = setup_emulator(&elf, b"[]", &[0u8; 256], &[], &memory_config);
+    }
 }
 
 /// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.

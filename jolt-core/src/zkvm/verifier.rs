@@ -7,7 +7,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
-use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::{get_log_k_chunk, OneHotParams};
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
@@ -17,6 +17,7 @@ use crate::zkvm::Serializable;
 use crate::zkvm::{
     bytecode::read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
     claim_reductions::{
+        AdviceClaimReductionPhase1Verifier, AdviceClaimReductionPhase2Verifier,
         HammingWeightClaimReductionVerifier, IncClaimReductionSumcheckVerifier,
         InstructionLookupsClaimReductionSumcheckVerifier, RamRaClaimReductionSumcheckVerifier,
     },
@@ -49,7 +50,8 @@ use crate::zkvm::{
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        DoryOpeningState, OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
+        compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
+        SumcheckId, VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -79,6 +81,9 @@ pub struct JoltVerifier<
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
+    /// Phase-bridge randomness for two-phase advice claim reduction.
+    advice_reduction_gamma_trusted: Option<F>,
+    advice_reduction_gamma_untrusted: Option<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
 }
@@ -149,6 +154,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             preprocessing,
             transcript,
             opening_accumulator,
+            advice_reduction_gamma_trusted: None,
+            advice_reduction_gamma_untrusted: None,
             spartan_key,
             one_hot_params,
         })
@@ -187,8 +194,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_stage4()?;
         self.verify_stage5()?;
         self.verify_stage6()?;
-        self.verify_trusted_advice_opening_proofs()?;
-        self.verify_untrusted_advice_opening_proofs()?;
+        // Advice claims are now reduced in Stage 6 and verified in Stage 8 batch opening
         self.verify_stage7()?;
         self.verify_stage8()?;
 
@@ -419,16 +425,44 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
+        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        let trusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new_trusted(
+            &self.program_io.memory_layout,
+            self.proof.trace_length,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        if let Some(ref v) = trusted_advice_phase1 {
+            self.advice_reduction_gamma_trusted = Some(v.gamma());
+        }
+        let untrusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new_untrusted(
+            &self.program_io.memory_layout,
+            self.proof.trace_length,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        if let Some(ref v) = untrusted_advice_phase1 {
+            self.advice_reduction_gamma_untrusted = Some(v.gamma());
+        }
+
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
+            &bytecode_read_raf,
+            &ram_hamming_booleanity,
+            &booleanity,
+            &ram_ra_virtual,
+            &lookups_ra_virtual,
+            &inc_reduction,
+        ];
+        if let Some(ref advice) = trusted_advice_phase1 {
+            instances.push(advice);
+        }
+        if let Some(ref advice) = untrusted_advice_phase1 {
+            instances.push(advice);
+        }
+
         let _r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
-            vec![
-                &bytecode_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_hamming_booleanity,
-                &booleanity,
-                &ram_ra_virtual,
-                &lookups_ra_virtual,
-                &inc_reduction,
-            ],
+            instances,
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
@@ -447,8 +481,33 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        // Verify sumcheck (only log_k_chunk rounds)
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![&hw_verifier];
+        // 3. Verify Stage 7 batched sumcheck (address rounds only).
+        // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
+        let trusted_advice_phase2 = self.advice_reduction_gamma_trusted.and_then(|gamma| {
+            AdviceClaimReductionPhase2Verifier::new_trusted(
+                &self.program_io.memory_layout,
+                self.proof.trace_length,
+                gamma,
+                &self.opening_accumulator,
+            )
+        });
+        let untrusted_advice_phase2 = self.advice_reduction_gamma_untrusted.and_then(|gamma| {
+            AdviceClaimReductionPhase2Verifier::new_untrusted(
+                &self.program_io.memory_layout,
+                self.proof.trace_length,
+                gamma,
+                &self.opening_accumulator,
+            )
+        });
+
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
+            vec![&hw_verifier];
+        if let Some(ref v) = trusted_advice_phase2 {
+            instances.push(v);
+        }
+        if let Some(ref v) = untrusted_advice_phase2 {
+            instances.push(v);
+        }
         let _r_address_stage7 = BatchedSumcheck::verify(
             &self.proof.stage7_sumcheck_proof,
             instances,
@@ -514,6 +573,33 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
         }
 
+        // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
+        // These are committed with smaller dimensions, so we apply Lagrange factors to embed
+        // them in the top-left block of the main Dory matrix.
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+            polynomial_claims.push((
+                CommittedPolynomial::TrustedAdvice,
+                advice_claim * lagrange_factor,
+            ));
+        }
+
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
+        {
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+            polynomial_claims.push((
+                CommittedPolynomial::UntrustedAdvice,
+                advice_claim * lagrange_factor,
+            ));
+        }
+
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
@@ -533,6 +619,26 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .zip_eq(&self.proof.commitments)
         {
             commitments_map.insert(polynomial, commitment.clone());
+        }
+
+        // Add advice commitments if they're part of the batch
+        if let Some(ref commitment) = self.trusted_advice_commitment {
+            if state
+                .polynomial_claims
+                .iter()
+                .any(|(p, _)| *p == CommittedPolynomial::TrustedAdvice)
+            {
+                commitments_map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
+            }
+        }
+        if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
+            if state
+                .polynomial_claims
+                .iter()
+                .any(|(p, _)| *p == CommittedPolynomial::UntrustedAdvice)
+            {
+                commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
+            }
         }
 
         // Compute joint commitment: Σ γ_i · C_i
@@ -581,124 +687,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         PCS::combine_commitments(&commitments, &coeffs)
     }
 
-    fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
-        if let Some(ref commitment) = self.trusted_advice_commitment {
-            // Verify at RamValEvaluation point
-            let Some(ref proof) = self.proof.trusted_advice_val_evaluation_proof else {
-                return Err(anyhow::anyhow!(
-                    "Trusted advice val evaluation proof not found"
-                ));
-            };
-            let Some((point, eval)) = self
-                .opening_accumulator
-                .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
-            else {
-                return Err(anyhow::anyhow!("Trusted advice opening not found"));
-            };
-            PCS::verify(
-                proof,
-                &self.preprocessing.generators,
-                &mut self.transcript,
-                &point.r,
-                &eval,
-                commitment,
-            )
-            .map_err(|e| {
-                anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}")
-            })?;
-
-            // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
-            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
-                let Some(ref proof_val_final) = self.proof.trusted_advice_val_final_proof else {
-                    return Err(anyhow::anyhow!("Trusted advice val final proof not found"));
-                };
-                let Some((point_val_final, eval_val_final)) = self
-                    .opening_accumulator
-                    .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                else {
-                    return Err(anyhow::anyhow!(
-                        "Trusted advice val final opening not found"
-                    ));
-                };
-                PCS::verify(
-                    proof_val_final,
-                    &self.preprocessing.generators,
-                    &mut self.transcript,
-                    &point_val_final.r,
-                    &eval_val_final,
-                    commitment,
-                )
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Trusted advice val final opening proof verification failed: {e:?}"
-                    )
-                })?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn verify_untrusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {
-        use crate::poly::opening_proof::SumcheckId;
-        if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
-            // Verify at RamValEvaluation point
-            let Some(ref proof) = self.proof.untrusted_advice_val_evaluation_proof else {
-                return Err(anyhow::anyhow!(
-                    "Untrusted advice val evaluation proof not found"
-                ));
-            };
-            let Some((point, eval)) = self
-                .opening_accumulator
-                .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
-            else {
-                return Err(anyhow::anyhow!("Untrusted advice opening not found"));
-            };
-            PCS::verify(
-                proof,
-                &self.preprocessing.generators,
-                &mut self.transcript,
-                &point.r,
-                &eval,
-                commitment,
-            )
-            .map_err(|e| {
-                anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
-            })?;
-
-            // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
-            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
-                let Some(ref proof_val_final) = self.proof.untrusted_advice_val_final_proof else {
-                    return Err(anyhow::anyhow!(
-                        "Untrusted advice val final proof not found"
-                    ));
-                };
-                let Some((point_val_final, eval_val_final)) = self
-                    .opening_accumulator
-                    .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                else {
-                    return Err(anyhow::anyhow!(
-                        "Untrusted advice val final opening not found"
-                    ));
-                };
-                PCS::verify(
-                    proof_val_final,
-                    &self.preprocessing.generators,
-                    &mut self.transcript,
-                    &point_val_final.r,
-                    &eval_val_final,
-                    commitment,
-                )
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Untrusted advice val final opening proof verification failed: {e:?}"
-                    )
-                })?;
-            }
-        }
-
-        Ok(())
-    }
+    // Note: verify_trusted_advice_opening_proofs and verify_untrusted_advice_opening_proofs
+    // have been removed. Advice claims are now reduced via AdviceClaimReduction in Stage 6
+    // and verified as part of the batched Stage 8 opening proof.
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -706,6 +697,8 @@ pub struct JoltSharedPreprocessing {
     pub bytecode: BytecodePreprocessing,
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
+    pub max_padded_trace_length: usize,
+    pub log_k_chunk: usize,
 }
 
 impl JoltSharedPreprocessing {
@@ -714,6 +707,7 @@ impl JoltSharedPreprocessing {
         bytecode: Vec<Instruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
+        max_padded_trace_length: usize,
     ) -> JoltSharedPreprocessing {
         let bytecode = BytecodePreprocessing::preprocess(bytecode);
         let ram = RAMPreprocessing::preprocess(memory_init);
@@ -721,6 +715,8 @@ impl JoltSharedPreprocessing {
             bytecode,
             ram,
             memory_layout,
+            max_padded_trace_length,
+            log_k_chunk: get_log_k_chunk(max_padded_trace_length),
         }
     }
 }
