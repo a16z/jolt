@@ -136,6 +136,29 @@ pub enum Suffixes {
 pub type SuffixEval<F: JoltField> = F;
 
 impl Suffixes {
+    /// Returns true iff this suffix's `suffix_mle` output is guaranteed to be in {0, 1}.
+    ///
+    /// This is used for micro-optimizations that avoid calling `mul_u64_unreduced(1)`
+    /// and instead directly add the unreduced field element when the suffix evaluates to 1.
+    #[inline(always)]
+    pub fn is_01_valued(&self) -> bool {
+        matches!(
+            self,
+            Suffixes::One
+                | Suffixes::Eq
+                | Suffixes::LessThan
+                | Suffixes::GreaterThan
+                | Suffixes::LeftOperandIsZero
+                | Suffixes::RightOperandIsZero
+                | Suffixes::Lsb
+                | Suffixes::TwoLsb
+                | Suffixes::DivByZero
+                | Suffixes::OverflowBitsZero
+                | Suffixes::ChangeDivisor
+                | Suffixes::ChangeDivisorW
+        )
+    }
+
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
     /// `b` represents `b.len()` variables, each assuming a Boolean value.
     pub fn suffix_mle<const XLEN: usize>(&self, b: LookupBits) -> u64 {

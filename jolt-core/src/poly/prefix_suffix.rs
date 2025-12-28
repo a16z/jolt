@@ -326,112 +326,6 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         self.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_Q[i])));
     }
 
-    /// Initialize Q for two PrefixSuffixDecomposition instances in a single pass over indices
-    /// Q array is defined as Q[x] = \sum_{y \in {0, 1}^m} u(x || y) * suffix(y)
-    /// Read more about prefix-suffix argument in Appendix A of the paper
-    /// https://eprint.iacr.org/2025/611.pdf
-    #[tracing::instrument(skip_all)]
-    pub fn init_Q_dual(
-        left: &mut PrefixSuffixDecomposition<F, ORDER>,
-        right: &mut PrefixSuffixDecomposition<F, ORDER>,
-        u_evals: &[F],
-        indices: &[usize],
-        lookup_bits: &[LookupBits],
-    ) {
-        debug_assert_eq!(left.chunk_len, right.chunk_len);
-        debug_assert_eq!(left.total_len, right.total_len);
-        debug_assert_eq!(left.phase, right.phase);
-
-        let poly_len = left.chunk_len.pow2();
-        let suffix_len = left.suffix_len();
-        let suffixes_left = left.poly.suffixes();
-        let suffixes_right = right.poly.suffixes();
-
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = (indices.len() / num_chunks).max(1);
-
-        #[allow(clippy::type_complexity)]
-        let (new_left_rows, new_right_rows): (
-            Vec<[F::Unreduced<7>; ORDER]>,
-            Vec<[F::Unreduced<7>; ORDER]>,
-        ) = indices
-            .par_chunks(chunk_size)
-            .fold(
-                || {
-                    (
-                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
-                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
-                    )
-                },
-                |(mut acc_l, mut acc_r), chunk| {
-                    for j in chunk {
-                        let k = lookup_bits[*j];
-                        let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                        let r_index: usize = (u128::from(&prefix_bits) as usize) & (poly_len - 1);
-                        if let Some(u) = u_evals.get(*j) {
-                            // Left
-                            for (s_idx, suffix) in suffixes_left.iter().enumerate() {
-                                let t = suffix.suffix_mle(suffix_bits);
-                                if t != 0 {
-                                    acc_l[r_index][s_idx] += u.mul_u128_unreduced(t);
-                                }
-                            }
-                            // Right
-                            for (s_idx, suffix) in suffixes_right.iter().enumerate() {
-                                let t = suffix.suffix_mle(suffix_bits);
-                                if t != 0 {
-                                    acc_r[r_index][s_idx] += u.mul_u128_unreduced(t);
-                                }
-                            }
-                        }
-                    }
-                    (acc_l, acc_r)
-                },
-            )
-            .reduce(
-                || {
-                    (
-                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
-                        vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
-                    )
-                },
-                |(mut acc_l, mut acc_r), (new_l, new_r)| {
-                    for (acc_row, new_row) in acc_l.iter_mut().zip(new_l.iter()) {
-                        for s in 0..ORDER {
-                            acc_row[s] += new_row[s];
-                        }
-                    }
-                    for (acc_row, new_row) in acc_r.iter_mut().zip(new_r.iter()) {
-                        for s in 0..ORDER {
-                            acc_row[s] += new_row[s];
-                        }
-                    }
-                    (acc_l, acc_r)
-                },
-            );
-
-        // Reduce to field for left and right (transpose rows to suffix-major)
-        let mut reduced_left: [Vec<F>; ORDER] =
-            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-        for r_idx in 0..poly_len {
-            for s in 0..ORDER {
-                reduced_left[s][r_idx] = F::from_barrett_reduce(new_left_rows[r_idx][s]);
-            }
-        }
-        let mut reduced_right: [Vec<F>; ORDER] =
-            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
-        for r_idx in 0..poly_len {
-            for s in 0..ORDER {
-                reduced_right[s][r_idx] = F::from_barrett_reduce(new_right_rows[r_idx][s]);
-            }
-        }
-
-        left.Q =
-            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_left[i])));
-        right.Q =
-            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
-    }
-
     /// Returns evaluation at 0 and at 2 at index
     pub fn sumcheck_evals(&self, index: usize) -> (F, F) {
         let len = self.Q[0].len();
@@ -525,6 +419,241 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
     pub fn Q_len(&self) -> usize {
         self.Q[0].len()
+    }
+}
+
+impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
+    /// Fused initializer for RAF sumcheck Q polynomials.
+    ///
+    /// Initializes Q polynomials for left operand, right operand, and identity
+    /// decompositions in a single scan over all cycles. This exploits the known
+    /// structure of RAF suffixes to avoid dynamic dispatch and redundant computation.
+    ///
+    /// # Assumptions
+    ///
+    /// These assumptions hold for `ReadRafSumcheckProver`:
+    ///
+    /// - **`left` and `right`**: `OperandPolynomial` prefix-suffix decompositions
+    ///   with suffixes `[ShiftHalfSuffixPolynomial, OperandPolynomial(side)]`.
+    /// - **`identity`**: `IdentityPolynomial` prefix-suffix decomposition
+    ///   with suffixes `[ShiftSuffixPolynomial, IdentityPolynomial]`.
+    ///
+    /// # Optimizations
+    ///
+    /// - Shift terms (`2^{suffix_len}` or `2^{suffix_len/2}`) are constants per phase,
+    ///   so we accumulate raw `u_evals` and apply the shift multiplier once after reduction.
+    /// - `uninterleave()` is computed once per cycle and reused for both left/right operands.
+    ///
+    /// # Arguments
+    ///
+    /// * `left`, `right`, `identity` - Decompositions to initialize (mutated in place).
+    /// * `u_evals` - Per-cycle equality polynomial evaluations `eq(r_reduction, j)`.
+    /// * `lookup_bits` - Per-cycle lookup indices (bit-packed).
+    /// * `is_interleaved_operands` - Per-cycle flag: true for operand path, false for identity.
+    #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q_raf")]
+    pub fn init_Q_raf(
+        left: &mut PrefixSuffixDecomposition<F, 2>,
+        right: &mut PrefixSuffixDecomposition<F, 2>,
+        identity: &mut PrefixSuffixDecomposition<F, 2>,
+        u_evals: &[F],
+        lookup_bits: &[LookupBits],
+        is_interleaved_operands: &[bool],
+    ) {
+        debug_assert_eq!(left.chunk_len, right.chunk_len);
+        debug_assert_eq!(left.total_len, right.total_len);
+        debug_assert_eq!(left.phase, right.phase);
+        debug_assert_eq!(left.chunk_len, identity.chunk_len);
+        debug_assert_eq!(left.total_len, identity.total_len);
+        debug_assert_eq!(left.phase, identity.phase);
+        debug_assert_eq!(lookup_bits.len(), u_evals.len());
+        debug_assert_eq!(lookup_bits.len(), is_interleaved_operands.len());
+
+        let poly_len = left.chunk_len.pow2();
+        let suffix_len = left.suffix_len();
+        debug_assert!(suffix_len % 2 == 0);
+
+        // Constants for this phase:
+        // - Operand path: ShiftHalfSuffixPolynomial(b) = 2^{|b|/2}
+        // - Identity path: ShiftSuffixPolynomial(b) = 2^{|b|}
+        let shift_half: u128 = 1u128 << (suffix_len / 2);
+        let shift_full: u128 = 1u128 << suffix_len;
+        let id_fits_u64 = suffix_len <= 64;
+        let shift_half_f = F::from_u128(shift_half);
+        let shift_full_f = F::from_u128(shift_full);
+
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = lookup_bits.len().div_ceil(num_threads).max(1);
+
+        type U7<F> = <F as JoltField>::Unreduced<7>;
+        let total_len = 5 * poly_len;
+
+        // Single allocation for all 5 accumulators (layout: [sh | l | r | sf | id]).
+        // This reduces allocator overhead and helps explain any delay before per-chunk spans fire.
+        let rows: Vec<U7<F>> = lookup_bits
+            .par_chunks(chunk_size)
+            .zip(u_evals.par_chunks(chunk_size))
+            .zip(is_interleaved_operands.par_chunks(chunk_size))
+            .fold(
+                || unsafe_allocate_zero_vec(total_len),
+                |mut acc, ((k_chunk, u_chunk), inter_chunk)| {
+                    debug_assert_eq!(k_chunk.len(), u_chunk.len());
+                    debug_assert_eq!(k_chunk.len(), inter_chunk.len());
+
+                    let sh_off = 0;
+                    let l_off = poly_len;
+                    let r_off = 2 * poly_len;
+                    let sf_off = 3 * poly_len;
+                    let id_off = 4 * poly_len;
+
+                    for ((k, u), is_interleaved) in
+                        k_chunk.iter().zip(u_chunk.iter()).zip(inter_chunk.iter())
+                    {
+                        let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                        let r_index: usize = prefix_bits & (poly_len - 1);
+                        let sh_idx = sh_off + r_index;
+                        let l_idx = l_off + r_index;
+                        let r_idx = r_off + r_index;
+                        let sf_idx = sf_off + r_index;
+                        let id_idx = id_off + r_index;
+
+                        if *is_interleaved {
+                            // Operand path (left/right)
+                            // ShiftHalfSuffixPolynomial is constant for a fixed `suffix_len`, so
+                            // we just accumulate `u` here and apply the 2^{suffix_len/2} scaling
+                            // once per bucket after reduction.
+                            acc[sh_idx] += *u.as_unreduced_ref();
+
+                            let (lo_bits, ro_bits) = suffix_bits.uninterleave();
+                            let lo: u64 = lo_bits.into();
+                            if lo != 0 {
+                                acc[l_idx] += u.mul_u64_unreduced(lo);
+                            }
+                            let ro: u64 = ro_bits.into();
+                            if ro != 0 {
+                                acc[r_idx] += u.mul_u64_unreduced(ro);
+                            }
+                        } else {
+                            // Identity path
+                            // ShiftSuffixPolynomial is constant for a fixed `suffix_len`, so
+                            // we just accumulate `u` here and apply the 2^{suffix_len} scaling
+                            // once per bucket after reduction.
+                            acc[sf_idx] += *u.as_unreduced_ref();
+
+                            if id_fits_u64 {
+                                let id: u64 = suffix_bits.into();
+                                if id != 0 {
+                                    acc[id_idx] += u.mul_u64_unreduced(id);
+                                }
+                            } else {
+                                let id: u128 = suffix_bits.into();
+                                if id != 0 {
+                                    acc[id_idx] += u.mul_u128_unreduced(id);
+                                }
+                            }
+                        }
+                    }
+
+                    acc
+                },
+            )
+            .reduce(
+                || unsafe_allocate_zero_vec(total_len),
+                |mut a, b| {
+                    a.par_iter_mut()
+                        .zip(b.par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    a
+                },
+            );
+
+        // Reduce unreduced accumulators to field elements
+        let rows_shift_half: &[U7<F>] = &rows[..poly_len];
+        let rows_left: &[U7<F>] = &rows[poly_len..2 * poly_len];
+        let rows_right: &[U7<F>] = &rows[2 * poly_len..3 * poly_len];
+        let rows_shift_full: &[U7<F>] = &rows[3 * poly_len..4 * poly_len];
+        let rows_identity: &[U7<F>] = &rows[4 * poly_len..5 * poly_len];
+
+        // Simple reductions (no scaling): left, right, identity
+        let ([q_left, q_right, q_identity], (q_shift_half, q_shift_full)) = rayon::join(
+            || {
+                let (q_left, (q_right, q_identity)) = rayon::join(
+                    || {
+                        rows_left
+                            .par_iter()
+                            .copied()
+                            .map(F::from_barrett_reduce)
+                            .collect::<Vec<F>>()
+                    },
+                    || {
+                        rayon::join(
+                            || {
+                                rows_right
+                                    .par_iter()
+                                    .copied()
+                                    .map(F::from_barrett_reduce)
+                                    .collect::<Vec<F>>()
+                            },
+                            || {
+                                rows_identity
+                                    .par_iter()
+                                    .copied()
+                                    .map(F::from_barrett_reduce)
+                                    .collect::<Vec<F>>()
+                            },
+                        )
+                    },
+                );
+                [q_left, q_right, q_identity]
+            },
+            // Scaled reductions: shift_half and shift_full need post-reduction scaling
+            || {
+                rayon::join(
+                    || {
+                        rows_shift_half
+                            .par_iter()
+                            .copied()
+                            .map(|v| {
+                                let reduced = F::from_barrett_reduce(v);
+                                if shift_half == 1 {
+                                    reduced
+                                } else {
+                                    reduced * shift_half_f
+                                }
+                            })
+                            .collect::<Vec<F>>()
+                    },
+                    || {
+                        rows_shift_full
+                            .par_iter()
+                            .copied()
+                            .map(|v| {
+                                let reduced = F::from_barrett_reduce(v);
+                                if shift_full == 1 {
+                                    reduced
+                                } else {
+                                    reduced * shift_full_f
+                                }
+                            })
+                            .collect::<Vec<F>>()
+                    },
+                )
+            },
+        );
+
+        // Operand Q0 is shared (ShiftHalfSuffixPolynomial).
+        left.Q = [
+            DensePolynomial::new(q_shift_half.clone()),
+            DensePolynomial::new(q_left),
+        ];
+        right.Q = [
+            DensePolynomial::new(q_shift_half),
+            DensePolynomial::new(q_right),
+        ];
+
+        identity.Q = [
+            DensePolynomial::new(q_shift_full),
+            DensePolynomial::new(q_identity),
+        ];
     }
 }
 
