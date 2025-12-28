@@ -6,7 +6,7 @@ use crate::subprotocols::read_write_matrix::{
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::config::ProofConfig;
+use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
     field::JoltField,
@@ -77,7 +77,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         trace_length: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-        config: &ProofConfig,
+        config: &ReadWriteConfig,
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -88,21 +88,9 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
             gamma,
             T: trace_length,
             r_cycle,
-            phase1_num_rounds: config.registers_rw_phase1_num_rounds,
-            phase2_num_rounds: config.registers_rw_phase2_num_rounds,
+            phase1_num_rounds: config.registers_rw_phase1_num_rounds as usize,
+            phase2_num_rounds: config.registers_rw_phase2_num_rounds as usize,
         }
-    }
-
-    /// Returns true if all cycle variables are bound in phase 1.
-    #[inline]
-    pub fn all_cycle_in_phase1(&self) -> bool {
-        self.phase1_num_rounds == self.T.log_2()
-    }
-
-    /// Returns true if all address variables are bound in phase 2.
-    #[inline]
-    pub fn all_address_in_phase2(&self) -> bool {
-        self.phase2_num_rounds == LOG_K
     }
 }
 
@@ -603,10 +591,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        let phase12_rounds = self.params.phase1_num_rounds + self.params.phase2_num_rounds;
         if round < self.params.phase1_num_rounds {
             self.phase1_compute_message(previous_claim)
-        } else if round < phase12_rounds {
+        } else if round < self.params.phase1_num_rounds + self.params.phase2_num_rounds {
             self.phase2_compute_message(previous_claim)
         } else {
             self.phase3_compute_message(previous_claim)
@@ -615,10 +602,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        let phase12_rounds = self.params.phase1_num_rounds + self.params.phase2_num_rounds;
         if round < self.params.phase1_num_rounds {
             self.phase1_bind(r_j, round);
-        } else if round < phase12_rounds {
+        } else if round < self.params.phase1_num_rounds + self.params.phase2_num_rounds {
             self.phase2_bind(r_j, round);
         } else {
             self.phase3_bind(r_j);
@@ -731,7 +717,7 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
         trace_len: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-        config: &ProofConfig,
+        config: &ReadWriteConfig,
     ) -> Self {
         let params = RegistersReadWriteCheckingParams::new(
             trace_len,

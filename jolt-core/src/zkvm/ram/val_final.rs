@@ -75,14 +75,15 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
 
         let n_memory_vars = ram_K.log_2();
 
-        // When needs_single_advice_opening(T) is true, advice is only opened at RamValEvaluation
+        // When needs_single_advice_opening is true, advice is only opened at RamValEvaluation
         // (the two points are identical). Otherwise, we use RamValFinalEvaluation.
-        let advice_sumcheck_id =
-            if super::read_write_checking::needs_single_advice_opening(trace_len) {
-                SumcheckId::RamValEvaluation
-            } else {
-                SumcheckId::RamValFinalEvaluation
-            };
+        let log_T = trace_len.log_2();
+        let rw_config = crate::zkvm::config::ReadWriteConfig::new(log_T, ram_K.log_2());
+        let advice_sumcheck_id = if rw_config.needs_single_advice_opening(log_T) {
+            SumcheckId::RamValEvaluation
+        } else {
+            SumcheckId::RamValFinalEvaluation
+        };
 
         let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
             opening_accumulator.get_untrusted_advice_opening(advice_sumcheck_id),

@@ -1162,7 +1162,6 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
-    use crate::zkvm::config::ProofConfig;
     use ark_bn254::Fr;
     use ark_std::Zero;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -1309,8 +1308,7 @@ mod tests {
             rv_claim,
         );
 
-        let config = ProofConfig::new(trace.len().log_2(), 0);
-        let one_hot_params = OneHotParams::new(&config, 100, 100);
+        let one_hot_params = OneHotParams::new(trace.len().log_2(), 100, 100);
 
         let params = ReadRafSumcheckParams::new(
             trace.len().log_2(),

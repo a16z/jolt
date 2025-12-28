@@ -14,7 +14,7 @@ use crate::subprotocols::read_write_matrix::{
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::config::{OneHotParams, ProofConfig};
+use crate::zkvm::config::{OneHotParams, ReadWriteConfig};
 use crate::{
     field::JoltField,
     poly::{
@@ -70,7 +70,7 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
         transcript: &mut impl Transcript,
         one_hot_params: &OneHotParams,
         trace_length: usize,
-        config: &ProofConfig,
+        config: &ReadWriteConfig,
     ) -> Self {
         let gamma = transcript.challenge_scalar();
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -84,21 +84,9 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
             T,
             gamma,
             r_cycle,
-            phase1_num_rounds: config.ram_rw_phase1_num_rounds,
-            phase2_num_rounds: config.ram_rw_phase2_num_rounds,
+            phase1_num_rounds: config.ram_rw_phase1_num_rounds as usize,
+            phase2_num_rounds: config.ram_rw_phase2_num_rounds as usize,
         }
-    }
-
-    /// Returns true if all cycle variables are bound in phase 1.
-    #[inline]
-    pub fn all_cycle_in_phase1(&self) -> bool {
-        self.phase1_num_rounds == self.T.log_2()
-    }
-
-    /// Returns true if all address variables are bound in phase 2.
-    #[inline]
-    pub fn all_address_in_phase2(&self) -> bool {
-        self.phase2_num_rounds == self.K.log_2()
     }
 }
 
@@ -171,19 +159,6 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     merged_eq: Option<MultilinearPolynomial<F>>,
     #[allocative(skip)]
     params: RamReadWriteCheckingParams<F>,
-}
-
-/// Returns true if all cycle variables are bound in phase 1.
-///
-/// When this returns true, the advice opening points for `RamValEvaluation` and
-/// `RamValFinalEvaluation` are identical, so we only need one advice opening.
-///
-/// NOTE: This uses the default ProofConfig.
-pub fn needs_single_advice_opening(T: usize) -> bool {
-    let log_T = T.log_2();
-    let config = ProofConfig::new(log_T, 0);
-    // Check if all cycle variables are bound in phase 1
-    config.ram_rw_phase1_num_rounds == log_T
 }
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
@@ -592,10 +567,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
 
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        let phase12_rounds = self.params.phase1_num_rounds + self.params.phase2_num_rounds;
         if round < self.params.phase1_num_rounds {
             self.phase1_compute_message(previous_claim)
-        } else if round < phase12_rounds {
+        } else if round < self.params.phase1_num_rounds + self.params.phase2_num_rounds {
             self.phase2_compute_message(previous_claim)
         } else {
             self.phase3_compute_message(previous_claim)
@@ -604,10 +578,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
 
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        let phase12_rounds = self.params.phase1_num_rounds + self.params.phase2_num_rounds;
         if round < self.params.phase1_num_rounds {
             self.phase1_bind(r_j, round);
-        } else if round < phase12_rounds {
+        } else if round < self.params.phase1_num_rounds + self.params.phase2_num_rounds {
             self.phase2_bind(r_j, round);
         } else {
             self.phase3_bind(r_j);
@@ -661,7 +634,7 @@ impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
         transcript: &mut impl Transcript,
         one_hot_params: &OneHotParams,
         trace_length: usize,
-        config: &ProofConfig,
+        config: &ReadWriteConfig,
     ) -> Self {
         let params = RamReadWriteCheckingParams::new(
             opening_accumulator,
