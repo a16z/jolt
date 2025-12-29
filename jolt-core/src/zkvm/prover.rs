@@ -10,7 +10,7 @@ use std::{
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::zkvm::config::get_log_k_chunk;
+use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -97,7 +97,7 @@ use crate::{
         proof_serialization::{Claims, JoltProof},
         r1cs::key::UniformSpartanKey,
         ram::{
-            self, gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
+            gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
             output_check::OutputSumcheckProver, prover_accumulate_advice,
             ra_virtual::RamRaVirtualSumcheckProver,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
@@ -147,6 +147,7 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
+    pub rw_config: ReadWriteConfig,
 }
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
@@ -273,6 +274,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &final_memory_state,
         );
 
+        let log_T = trace.len().log_2();
+        let ram_log_K = ram_K.log_2();
+        let rw_config = ReadWriteConfig::new(log_T, ram_log_K);
+        let one_hot_params =
+            OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
+
         Self {
             preprocessing,
             program_io,
@@ -290,11 +297,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             spartan_key,
             initial_ram_state,
             final_ram_state,
-            one_hot_params: OneHotParams::new(
-                padded_trace_len.log_2(),
-                preprocessing.shared.bytecode.code_size,
-                ram_K,
-            ),
+            one_hot_params,
+            rw_config,
         }
     }
 
@@ -377,8 +381,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
-            log_k_chunk: self.one_hot_params.log_k_chunk,
-            lookups_ra_virtual_log_k_chunk: self.one_hot_params.lookups_ra_virtual_log_k_chunk,
+            rw_config: self.rw_config.clone(),
+            one_hot_config: self.one_hot_params.to_config(),
         };
 
         let prove_duration = start.elapsed();
@@ -606,6 +610,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
             &self.one_hot_params,
             self.trace.len(),
+            &self.rw_config,
         );
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
@@ -764,6 +769,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.rw_config,
         );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
@@ -772,7 +778,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.opening_accumulator,
             &mut self.transcript,
-            ram::read_write_checking::needs_single_advice_opening(self.trace.len()),
+            self.rw_config
+                .needs_single_advice_opening(self.trace.len().log_2()),
         );
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
@@ -1024,22 +1031,24 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
-        let proof_val_final =
-            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
-                None
-            } else {
-                let (point_val_final, _) = self
-                    .opening_accumulator
-                    .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                    .unwrap();
-                Some(PCS::prove(
-                    &self.preprocessing.generators,
-                    poly,
-                    &point_val_final.r,
-                    None,
-                    &mut self.transcript,
-                ))
-            };
+        let proof_val_final = if self
+            .rw_config
+            .needs_single_advice_opening(self.trace.len().log_2())
+        {
+            None
+        } else {
+            let (point_val_final, _) = self
+                .opening_accumulator
+                .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                .unwrap();
+            Some(PCS::prove(
+                &self.preprocessing.generators,
+                poly,
+                &point_val_final.r,
+                None,
+                &mut self.transcript,
+            ))
+        };
 
         (Some(proof_val), proof_val_final)
     }
@@ -1067,22 +1076,24 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
-        let proof_val_final =
-            if ram::read_write_checking::needs_single_advice_opening(self.trace.len()) {
-                None
-            } else {
-                let (point_val_final, _) = self
-                    .opening_accumulator
-                    .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                    .unwrap();
-                Some(PCS::prove(
-                    &self.preprocessing.generators,
-                    poly,
-                    &point_val_final.r,
-                    None,
-                    &mut self.transcript,
-                ))
-            };
+        let proof_val_final = if self
+            .rw_config
+            .needs_single_advice_opening(self.trace.len().log_2())
+        {
+            None
+        } else {
+            let (point_val_final, _) = self
+                .opening_accumulator
+                .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                .unwrap();
+            Some(PCS::prove(
+                &self.preprocessing.generators,
+                poly,
+                &point_val_final.r,
+                None,
+                &mut self.transcript,
+            ))
+        };
 
         (Some(proof_val), proof_val_final)
     }
@@ -1282,9 +1293,16 @@ where
         shared: JoltSharedPreprocessing,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
+        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = max_trace_length.next_power_of_two();
-        let log_chunk = get_log_k_chunk(max_T);
-        let generators = PCS::setup_prover(log_chunk + max_T.log_2());
+        let max_log_T = max_T.log_2();
+        // Use the maximum possible log_k_chunk for generator setup
+        let max_log_k_chunk = if max_log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
+        let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
         JoltProverPreprocessing { generators, shared }
     }
 

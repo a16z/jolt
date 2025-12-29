@@ -135,12 +135,21 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let one_hot_params = OneHotParams::new_with_log_k_chunk(
-            proof.log_k_chunk,
-            proof.lookups_ra_virtual_log_k_chunk,
-            proof.bytecode_K,
-            proof.ram_K,
-        );
+
+        // Validate configs from the proof
+        proof
+            .one_hot_config
+            .validate()
+            .map_err(ProofVerifyError::InvalidOneHotConfig)?;
+
+        proof
+            .rw_config
+            .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
+            .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
+
+        // Construct full params from the validated config
+        let one_hot_params =
+            OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
 
         Ok(Self {
             trusted_advice_commitment,
@@ -245,6 +254,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
             &self.one_hot_params,
             self.proof.trace_length,
+            &self.proof.rw_config,
         );
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
@@ -305,6 +315,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.proof.rw_config,
         );
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,
@@ -313,7 +324,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-            ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length),
+            self.proof
+                .rw_config
+                .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
@@ -608,7 +621,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             })?;
 
             // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
-            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
+            if !self
+                .proof
+                .rw_config
+                .needs_single_advice_opening(self.proof.trace_length.log_2())
+            {
                 let Some(ref proof_val_final) = self.proof.trusted_advice_val_final_proof else {
                     return Err(anyhow::anyhow!("Trusted advice val final proof not found"));
                 };
@@ -667,7 +684,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             })?;
 
             // Verify at RamValFinalEvaluation point - only if different from ValEvaluation
-            if !ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length) {
+            if !self
+                .proof
+                .rw_config
+                .needs_single_advice_opening(self.proof.trace_length.log_2())
+            {
                 let Some(ref proof_val_final) = self.proof.untrusted_advice_val_final_proof else {
                     return Err(anyhow::anyhow!(
                         "Untrusted advice val final proof not found"
