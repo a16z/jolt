@@ -168,8 +168,8 @@ pub fn trace_checkpoints(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
     checkpoint_interval: usize,
-) -> (Vec<std::iter::Take<LazyTraceIterator>>, JoltDevice) {
-    let mut emulator_trace_iter = LazyTraceIterator::new(setup_emulator(
+) -> (Vec<Checkpoint>, JoltDevice) {
+    let mut emulator_trace_iter = CheckpointingTraceIter::new(setup_emulator(
         elf_contents,
         inputs,
         untrusted_advice,
@@ -179,9 +179,9 @@ pub fn trace_checkpoints(
     let mut checkpoints = Vec::new();
 
     loop {
-        let chkpt = emulator_trace_iter.clone().take(checkpoint_interval);
-        checkpoints.push(chkpt);
         emulator_trace_iter = emulator_trace_iter.dropping(checkpoint_interval);
+        let chkpt = emulator_trace_iter.save_checkpoint();
+        checkpoints.push(chkpt);
         if emulator_trace_iter.is_empty() {
             break;
         }
@@ -299,7 +299,7 @@ impl Iterator for Checkpoint {
     }
 }
 
-pub struct CheckpointingEmulator {
+pub struct CheckpointingTraceIter {
     emulator_state: GeneralizedEmulator<CheckpointingMemory>,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
@@ -309,7 +309,7 @@ pub struct CheckpointingEmulator {
     pub(crate) final_memory_state: Option<Memory>,
 }
 
-impl CheckpointingEmulator {
+impl CheckpointingTraceIter {
     pub fn new(emulator_state: GeneralizedEmulator<CheckpointingMemory>) -> Self {
         Self {
             emulator_state,
@@ -361,7 +361,7 @@ impl CheckpointingEmulator {
         let res = Checkpoint {
             emulator_state: self.emulator_state.save_checkpoint(),
             prev_pc: self.prev_pc,
-            current_traces: vec![],
+            current_traces: self.current_traces.clone(),
             cycles_remaining: self.cycles_since_last_checkpoint,
             cycle_count: self.cycle_count,
         };
@@ -384,7 +384,7 @@ impl CheckpointingEmulator {
     }
 }
 
-impl Iterator for CheckpointingEmulator {
+impl Iterator for CheckpointingTraceIter {
     type Item = Cycle;
 
     /// Advances the iterator and returns the next trace entry.
