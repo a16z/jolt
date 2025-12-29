@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1766882551670,
+  "lastUpdate": 1767042984801,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -42418,6 +42418,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 337344,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "183745461+danielwlz@users.noreply.github.com",
+            "name": "danielwlz",
+            "username": "danielwlz"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f80e83b11287d6f58f8c4e5b83fbc19831183419",
+          "message": "feat: proof config API (#1180)\n\n* refactor: introduce ProofConfig and ProverOnlyConfig for runtime configuration\n\n- ProofConfig: affects proof structure, must match prover & verifier\n  - log_k_chunk, lookups_ra_virtual_log_k_chunk\n  - ram_rw_phase1/2_num_rounds, registers_rw_phase1/2_num_rounds\n  - default_for_trace(log_T) constructor\n\n- ProverOnlyConfig: prover-only hints, verifier doesn't need\n  - instruction_sumcheck_phases\n  - default_for_trace(log_T) constructor\n\n- RAM/Registers ReadWriteCheckingParams now store phase rounds\n  - Added new_with_config() for explicit ProofConfig\n  - Kept new() for backward compat (uses default config)\n  - Made all fields pub for external access\n\n- Registers phase2 defaults to 7 rounds (128 virtual registers)\n\n- Legacy helper functions kept for backward compatibility\n\n* cargo fmt\n\n* refactor: integrate ProofConfig into JoltCpuProver and JoltProverPreprocessing\n\n- Updated JoltCpuProver to include proof_config field for better configuration management.\n- Modified JoltProverPreprocessing to utilize ProofConfig for setting up generators.\n- Replaced legacy log_k_chunk retrieval with ProofConfig defaults for improved clarity and maintainability.\n\n* refactor: enhance JoltCpuProver and JoltProverPreprocessing with ProofConfig integration\n\n- Added proof_config field to JoltCpuProver for improved configuration management.\n- Updated JoltProverPreprocessing to include proof_config, enhancing generator setup.\n- Replaced legacy one_hot_params initialization with a new approach utilizing proof_config for better clarity and maintainability.\n\n* Fix build\n\n* refactor: integrate ProofConfig into JoltProof and related components\n\n- Replaced log_k_chunk and lookups_ra_virtual_log_k_chunk fields in JoltProof with a proof_config field for improved configuration management.\n- Updated JoltCpuProver and JoltProverPreprocessing to utilize proof_config for better clarity and maintainability.\n- Modified RAM and Registers ReadWriteCheckingParams to accept ProofConfig, enhancing the overall structure and consistency across the codebase.\n\n* feat: enhance ProofConfig with validation and finalization methods\n\n- Added `InvalidProofConfig` error variant to `ProofVerifyError` for better error handling.\n- Introduced `finalize_for_trace` and `validate_for_trace` methods in `ProofConfig` to ensure configuration integrity during proof generation and verification.\n- Updated `JoltProver` and `JoltVerifier` to utilize the new validation methods, improving robustness in proof configuration management.\n- Refactored RAM and Registers read-write checking to directly use the updated `ProofConfig` fields, enhancing clarity and maintainability.\n\n* Remove phases from ReadRafSumcheckParams and get it from ProverOnlyConfig directly\n\n* clippy\n\n* cargo fmt\n\n* Apply patch\n\n* testing push\n\n* addressed further comments\n\n* refactor: add INSTRUCTION_PHASES_THRESHOLD_LOG_T constant\n\n- Extract magic number 23->24 to named constant in constants.rs\n- Add docstring explaining the threshold purpose\n- Update get_instruction_sumcheck_phases to use the constant\n\n---------\n\nCo-authored-by: Quang Dao <quang.dao@layerzerolabs.org>",
+          "timestamp": "2025-12-29T12:36:16-08:00",
+          "tree_id": "e5a77449f47eedf5ff4b9085103437c83146ff82",
+          "url": "https://github.com/a16z/jolt/commit/f80e83b11287d6f58f8c4e5b83fbc19831183419"
+        },
+        "date": 1767042983933,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 343048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 431152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 344880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 347404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 352616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 351416,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 341208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 353460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 350404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2713236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 336716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 341116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 340236,
             "unit": "KB",
             "extra": ""
           }
