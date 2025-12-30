@@ -30,6 +30,7 @@ use crate::{
 /// Degree bound of the sumcheck round polynomials.
 const DEGREE_BOUND: usize = 3;
 
+#[derive(Clone)]
 pub struct InstructionInputParams<F: JoltField> {
     pub r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
     pub r_cycle_stage_2: OpeningPoint<BIG_ENDIAN, F>,
@@ -113,12 +114,12 @@ pub struct InstructionInputSumcheckProver<F: JoltField> {
     unexpanded_pc_poly: MultilinearPolynomial<F>,
     eq_r_cycle_stage_1: GruenSplitEqPolynomial<F>,
     eq_r_cycle_stage_2: GruenSplitEqPolynomial<F>,
-    prev_claim_stage_1: F,
-    prev_claim_stage_2: F,
+    pub prev_claim_stage_1: F,
+    pub prev_claim_stage_2: F,
     prev_round_poly_stage_1: Option<UniPoly<F>>,
     prev_round_poly_stage_2: Option<UniPoly<F>>,
     #[allocative(skip)]
-    params: InstructionInputParams<F>,
+    pub params: InstructionInputParams<F>,
 }
 
 impl<F: JoltField> InstructionInputSumcheckProver<F> {
