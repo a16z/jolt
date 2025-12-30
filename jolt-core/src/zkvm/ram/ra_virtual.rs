@@ -154,7 +154,7 @@ pub struct RamRaVirtualSumcheckProver<F: JoltField> {
     /// eq(r_cycle_reduced, ·) polynomial with Gruen optimization
     eq_poly: GruenSplitEqPolynomial<F>,
     #[allocative(skip)]
-    params: RamRaVirtualParams<F>,
+    pub params: RamRaVirtualParams<F>,
 }
 
 impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
