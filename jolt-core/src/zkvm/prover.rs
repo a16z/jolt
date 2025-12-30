@@ -957,7 +957,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
-            &self.one_hot_params,
         );
 
         let ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(

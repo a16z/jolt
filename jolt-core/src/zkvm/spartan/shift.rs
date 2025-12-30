@@ -1,5 +1,5 @@
+use std::array;
 use std::sync::Arc;
-use std::{array, mem};
 
 use allocative::Allocative;
 use ark_std::Zero;
@@ -44,7 +44,7 @@ use rayon::prelude::*;
 /// Degree bound of the sumcheck round polynomials in [`ShiftSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
 
-#[derive(Default)]
+#[derive(Allocative, Clone)]
 pub struct ShiftSumcheckParams<F: JoltField> {
     pub gamma_powers: [F; 5],
     pub n_cycle_vars: usize, // = log(T)
@@ -130,10 +130,16 @@ fn normalize_opening_point<F: JoltField>(
 
 /// Sumcheck prover for [`ShiftSumcheckVerifier`].
 #[derive(Allocative)]
-#[allow(clippy::large_enum_variant, private_interfaces)]
-pub enum ShiftSumcheckProver<F: JoltField> {
-    Phase1(Phase1Prover<F>), // 1st half (prefix-suffix sc)
-    Phase2(Phase2Prover<F>), // 2st half (regular sc)
+pub struct ShiftSumcheckProver<F: JoltField> {
+    phase: ShiftSumcheckPhase<F>,
+    pub params: ShiftSumcheckParams<F>,
+}
+
+#[derive(Allocative)]
+#[allow(clippy::large_enum_variant)]
+enum ShiftSumcheckPhase<F: JoltField> {
+    Phase1(Phase1State<F>), // 1st half (prefix-suffix sc)
+    Phase2(Phase2State<F>), // 2nd half (regular sc)
 }
 
 impl<F: JoltField> ShiftSumcheckProver<F> {
@@ -143,46 +149,48 @@ impl<F: JoltField> ShiftSumcheckProver<F> {
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: &BytecodePreprocessing,
     ) -> Self {
-        Self::Phase1(Phase1Prover::gen(trace, bytecode_preprocessing, params))
+        let phase =
+            ShiftSumcheckPhase::Phase1(Phase1State::gen(trace, bytecode_preprocessing, &params));
+        Self { phase, params }
     }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        match self {
-            ShiftSumcheckProver::Phase1(phase1_prover) => &phase1_prover.params,
-            ShiftSumcheckProver::Phase2(phase2_prover) => &phase2_prover.params,
-        }
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        match self {
-            Self::Phase1(prover) => prover.compute_message(previous_claim),
-            Self::Phase2(prover) => prover.compute_message(previous_claim),
+        match &self.phase {
+            ShiftSumcheckPhase::Phase1(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
+            ShiftSumcheckPhase::Phase2(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
         }
     }
 
     #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        match self {
-            Self::Phase1(prover) => {
-                if prover.should_transition_to_phase2() {
-                    let params = mem::take(&mut prover.params);
-                    let sumcheck_challenges = &mut prover.sumcheck_challenges;
+        match &mut self.phase {
+            ShiftSumcheckPhase::Phase1(state) => {
+                if state.should_transition_to_phase2() {
+                    let mut sumcheck_challenges = state.sumcheck_challenges.clone();
                     sumcheck_challenges.push(r_j);
-                    *self = Self::Phase2(Phase2Prover::gen(
-                        &prover.trace,
-                        &prover.bytecode_preprocessing,
-                        sumcheck_challenges,
-                        params,
+                    self.phase = ShiftSumcheckPhase::Phase2(Phase2State::gen(
+                        &state.trace,
+                        &state.bytecode_preprocessing,
+                        &sumcheck_challenges,
+                        &self.params,
                     ));
                     return;
                 }
 
-                prover.bind(r_j);
+                state.bind(r_j);
             }
-            Self::Phase2(prover) => prover.bind(r_j),
+            ShiftSumcheckPhase::Phase2(state) => state.bind(r_j),
         }
     }
 
@@ -192,15 +200,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
-        let Self::Phase2(prover) = &self else {
+        let ShiftSumcheckPhase::Phase2(state) = &self.phase else {
             panic!("Should finish sumcheck on phase 2");
         };
 
-        let unexpanded_pc_eval = prover.unexpanded_pc_poly.final_sumcheck_claim();
-        let pc_eval = prover.pc_poly.final_sumcheck_claim();
-        let is_virtual_eval = prover.is_virtual_poly.final_sumcheck_claim();
-        let is_first_in_sequence_eval = prover.is_first_in_sequence_poly.final_sumcheck_claim();
-        let is_noop_eval = prover.is_noop_poly.final_sumcheck_claim();
+        let unexpanded_pc_eval = state.unexpanded_pc_poly.final_sumcheck_claim();
+        let pc_eval = state.pc_poly.final_sumcheck_claim();
+        let is_virtual_eval = state.is_virtual_poly.final_sumcheck_claim();
+        let is_first_in_sequence_eval = state.is_first_in_sequence_poly.final_sumcheck_claim();
+        let is_noop_eval = state.is_noop_poly.final_sumcheck_claim();
 
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
@@ -353,28 +361,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
     }
 }
 
-/// Prover for 1st half of the rounds.
+/// State for 1st half of the rounds.
 ///
 /// Performs prefix-suffix sumcheck. See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
 #[derive(Allocative)]
-struct Phase1Prover<F: JoltField> {
+struct Phase1State<F: JoltField> {
     // All prefix-suffix (P, Q) buffers for this sumcheck.
     prefix_suffix_pairs: Vec<(MultilinearPolynomial<F>, MultilinearPolynomial<F>)>,
-    // Below all stored to gen phase 2 prover.
+    // Below all stored to gen phase 2 state.
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     #[allocative(skip)]
     bytecode_preprocessing: BytecodePreprocessing,
     sumcheck_challenges: Vec<F::Challenge>,
-    #[allocative(skip)]
-    params: ShiftSumcheckParams<F>,
 }
 
-impl<F: JoltField> Phase1Prover<F> {
+impl<F: JoltField> Phase1State<F> {
     fn gen(
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: &BytecodePreprocessing,
-        params: ShiftSumcheckParams<F>,
+        params: &ShiftSumcheckParams<F>,
     ) -> Self {
         let EqPlusOnePrefixSuffixPoly {
             prefix_0: prefix_0_for_r_outer,
@@ -490,11 +496,10 @@ impl<F: JoltField> Phase1Prover<F> {
             trace,
             bytecode_preprocessing: bytecode_preprocessing.clone(),
             sumcheck_challenges: Vec::new(),
-            params,
         }
     }
 
-    fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(&self, _params: &ShiftSumcheckParams<F>, previous_claim: F) -> UniPoly<F> {
         let evals = self
             .prefix_suffix_pairs
             .par_iter()
@@ -531,9 +536,9 @@ impl<F: JoltField> Phase1Prover<F> {
     }
 }
 
-/// Prover for 2nd half of the rounds.
+/// State for 2nd half of the rounds.
 #[derive(Allocative)]
-struct Phase2Prover<F: JoltField> {
+struct Phase2State<F: JoltField> {
     unexpanded_pc_poly: MultilinearPolynomial<F>,
     pc_poly: MultilinearPolynomial<F>,
     is_virtual_poly: MultilinearPolynomial<F>,
@@ -541,16 +546,14 @@ struct Phase2Prover<F: JoltField> {
     is_noop_poly: MultilinearPolynomial<F>,
     eq_plus_one_r_outer: MultilinearPolynomial<F>,
     eq_plus_one_r_product: MultilinearPolynomial<F>,
-    #[allocative(skip)]
-    params: ShiftSumcheckParams<F>,
 }
 
-impl<F: JoltField> Phase2Prover<F> {
+impl<F: JoltField> Phase2State<F> {
     fn gen(
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         sumcheck_challenges: &[F::Challenge],
-        params: ShiftSumcheckParams<F>,
+        params: &ShiftSumcheckParams<F>,
     ) -> Self {
         let n_remaining_rounds = params.r_outer.len() - sumcheck_challenges.len();
         let r_prefix: OpeningPoint<BIG_ENDIAN, F> =
@@ -654,11 +657,10 @@ impl<F: JoltField> Phase2Prover<F> {
             is_noop_poly: is_noop_poly.into(),
             eq_plus_one_r_outer,
             eq_plus_one_r_product,
-            params,
         }
     }
 
-    fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(&self, params: &ShiftSumcheckParams<F>, previous_claim: F) -> UniPoly<F> {
         let half_n = self.unexpanded_pc_poly.len() / 2;
         let mut evals = [F::zero(); DEGREE_BOUND];
         for j in 0..half_n {
@@ -687,10 +689,10 @@ impl<F: JoltField> Phase2Prover<F> {
                 evals[i]
                     + eq_plus_one_r_outer_evals[i]
                         * (unexpanded_pc_evals[i]
-                            + self.params.gamma_powers[1] * pc_evals[i]
-                            + self.params.gamma_powers[2] * is_virtual_evals[i]
-                            + self.params.gamma_powers[3] * is_first_in_sequence_evals[i])
-                    + self.params.gamma_powers[4]
+                            + params.gamma_powers[1] * pc_evals[i]
+                            + params.gamma_powers[2] * is_virtual_evals[i]
+                            + params.gamma_powers[3] * is_first_in_sequence_evals[i])
+                    + params.gamma_powers[4]
                         * eq_plus_one_r_product_evals[i]
                         * (F::one() - is_noop_evals[i])
             });
@@ -708,7 +710,6 @@ impl<F: JoltField> Phase2Prover<F> {
             is_noop_poly,
             eq_plus_one_r_outer,
             eq_plus_one_r_product,
-            params: _,
         } = self;
         unexpanded_pc_poly.bind(r_j, BindingOrder::LowToHigh);
         pc_poly.bind(r_j, BindingOrder::LowToHigh);

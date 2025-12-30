@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::field::JoltField;
@@ -201,7 +202,7 @@ impl OneHotConfig {
 ///
 /// This struct is NOT serialized in the proof. It is constructed by the prover
 /// and verifier from `OneHotConfig` plus the proof parameters (bytecode_K, ram_K).
-#[derive(Clone, Debug, Default)]
+#[derive(Allocative, Clone, Debug, Default)]
 pub struct OneHotParams {
     pub log_k_chunk: usize,
     pub lookups_ra_virtual_log_k_chunk: usize,

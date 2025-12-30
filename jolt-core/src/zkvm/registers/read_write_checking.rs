@@ -62,6 +62,7 @@ const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
 /// Degree bound of the sumcheck round polynomials in [`RegistersReadWriteCheckingVerifier`].
 const DEGREE_BOUND: usize = 3;
 
+#[derive(Allocative, Clone)]
 pub struct RegistersReadWriteCheckingParams<F: JoltField> {
     pub gamma: F,
     pub T: usize,
@@ -171,8 +172,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
 /// Sumcheck prover for [`RegistersReadWriteCheckingVerifier`].
 #[derive(Allocative)]
 pub struct RegistersReadWriteCheckingProver<F: JoltField> {
-    #[allocative(skip)]
-    params: RegistersReadWriteCheckingParams<F>,
     sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>>,
     sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
@@ -185,6 +184,7 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
     wa: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
     merged_eq: Option<MultilinearPolynomial<F>>,
+    pub params: RegistersReadWriteCheckingParams<F>,
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
