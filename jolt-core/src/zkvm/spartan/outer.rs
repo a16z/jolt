@@ -453,12 +453,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
-struct OuterStreamingProverParams<F: JoltField> {
+pub struct OuterStreamingProverParams<F: JoltField> {
     /// Number of cycle bits for splitting opening points
     /// Total number of rounds equals num_cycles_bits
-    num_cycles_bits: usize,
+    pub num_cycles_bits: usize,
     /// The univariate-skip first round challenge
-    r0_uniskip: F::Challenge,
+    pub r0_uniskip: F::Challenge,
 }
 
 impl<F: JoltField> OuterStreamingProverParams<F> {

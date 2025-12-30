@@ -78,7 +78,7 @@ pub struct ProductVirtualUniSkipParams<F: JoltField> {
     pub tau: Vec<F::Challenge>,
     /// Base evaluations (claims) for the five product terms at the base domain
     /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
-    base_evals: [F; NUM_PRODUCT_VIRTUAL],
+    pub base_evals: [F; NUM_PRODUCT_VIRTUAL],
 }
 
 impl<F: JoltField> ProductVirtualUniSkipParams<F> {
@@ -341,11 +341,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
 pub struct ProductVirtualRemainderParams<F: JoltField> {
     /// Number of cycle variables to bind in this remainder (equals log2(T))
-    n_cycle_vars: usize,
+    pub n_cycle_vars: usize,
     /// Verifier challenge for univariate skip round
-    r0: F::Challenge,
+    pub r0: F::Challenge,
     /// The tau vector (length 1 + n_cycle_vars), available to prover and verifier
-    tau: Vec<F::Challenge>,
+    pub tau: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> ProductVirtualRemainderParams<F> {
