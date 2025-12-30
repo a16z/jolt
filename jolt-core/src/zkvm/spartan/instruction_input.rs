@@ -31,9 +31,9 @@ use crate::{
 const DEGREE_BOUND: usize = 3;
 
 pub struct InstructionInputParams<F: JoltField> {
-    r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
-    r_cycle_stage_2: OpeningPoint<BIG_ENDIAN, F>,
-    gamma: F,
+    pub r_cycle_stage_1: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_cycle_stage_2: OpeningPoint<BIG_ENDIAN, F>,
+    pub gamma: F,
 }
 
 impl<F: JoltField> InstructionInputParams<F> {
