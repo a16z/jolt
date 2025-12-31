@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767078848115,
+  "lastUpdate": 1767153040725,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -42778,6 +42778,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 349384,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "04f981b2415fdab96ef0303c36aa9ab876290540",
+          "message": "refactor: uniformize shared params in prover structs (#1185)\n\n* expose fields for sparta instruction input\n\n* make remaining params fields pub\n\n* Make params visibility public for RamRaVirtualSumcheckProver\n\n* refactor: centralize shared params in multi-phase sumcheck provers\n\n- Refactor 5 multi-phase sumcheck provers from enum to struct pattern:\n  - IncClaimReductionSumcheckProver (2 phases)\n  - RamRaClaimReductionSumcheckProver (3 phases)\n  - RegistersClaimReductionSumcheckProver (2 phases)\n  - InstructionLookupsClaimReductionSumcheckProver (2 phases)\n  - ShiftSumcheckProver (2 phases)\n\n- Extract shared params field to avoid duplication across phase variants\n- Rename phase structs from *Prover to *State for clarity\n- Move one_hot_params into BooleanitySumcheckParams\n- Add Allocative + Clone derives to params structs\n- Make params fields public on all sumcheck provers\n- Add allocative dependency to common crate\n- Add Allocative derive to JoltDevice, MemoryLayout, OneHotParams\n\n* removed pub from internal prover field\n\n---------\n\nCo-authored-by: sumchecker <241190306+sumchecker@users.noreply.github.com>\nCo-authored-by: Omid Bodaghi <42227752+omibo@users.noreply.github.com>",
+          "timestamp": "2025-12-30T19:09:20-08:00",
+          "tree_id": "e31113706ba9af8e32694f4de8d7289f8712c9a6",
+          "url": "https://github.com/a16z/jolt/commit/04f981b2415fdab96ef0303c36aa9ab876290540"
+        },
+        "date": 1767153039105,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 383004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 432924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 388052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 382668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 383880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 383584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 386836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 388148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 383632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2708220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 384804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 388112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 382320,
             "unit": "KB",
             "extra": ""
           }
