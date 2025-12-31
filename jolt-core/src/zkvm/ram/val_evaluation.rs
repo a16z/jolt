@@ -54,6 +54,7 @@ use rayon::prelude::*;
 /// Degree bound of the sumcheck round polynomials in [`ValEvaluationSumcheckVerifier`].
 const DEGREE_BOUND: usize = 3;
 
+#[derive(Allocative, Clone)]
 pub struct ValEvaluationSumcheckParams<F: JoltField> {
     /// Initial evaluation to subtract (for RAM).
     pub init_eval: F,
@@ -179,7 +180,6 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: RaPolynomial<usize, F>,
     lt: LtPolynomial<F>,
-    #[allocative(skip)]
     pub params: ValEvaluationSumcheckParams<F>,
 }
 

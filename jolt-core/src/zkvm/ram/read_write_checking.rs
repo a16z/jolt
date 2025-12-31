@@ -53,6 +53,7 @@ use tracer::instruction::Cycle;
 /// Degree bound of the sumcheck round polynomials in [`RamReadWriteCheckingVerifier`].
 const DEGREE_BOUND: usize = 3;
 
+#[derive(Allocative, Clone)]
 pub struct RamReadWriteCheckingParams<F: JoltField> {
     pub K: usize,
     pub T: usize,
@@ -157,8 +158,7 @@ pub struct RamReadWriteCheckingProver<F: JoltField> {
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
     merged_eq: Option<MultilinearPolynomial<F>>,
-    #[allocative(skip)]
-    params: RamReadWriteCheckingParams<F>,
+    pub params: RamReadWriteCheckingParams<F>,
 }
 
 impl<F: JoltField> RamReadWriteCheckingProver<F> {
@@ -625,7 +625,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
 }
 
 pub struct RamReadWriteCheckingVerifier<F: JoltField> {
-    pub params: RamReadWriteCheckingParams<F>,
+    params: RamReadWriteCheckingParams<F>,
 }
 
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {

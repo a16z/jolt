@@ -48,6 +48,7 @@ use tracer::JoltDevice;
 /// Degree bonud of the sumcheck round polynomials in [`OutputSumcheckVerifier`].
 const OUTPUT_SUMCHECK_DEGREE_BOUND: usize = 3;
 
+#[derive(Allocative, Clone)]
 pub struct OutputSumcheckParams<F: JoltField> {
     pub K: usize,
     pub r_address: Vec<F::Challenge>,
@@ -105,7 +106,7 @@ pub struct OutputSumcheckProver<F: JoltField> {
     /// and 0 otherwise.
     io_mask: MultilinearPolynomial<F>,
     #[allocative(skip)]
-    params: OutputSumcheckParams<F>,
+    pub params: OutputSumcheckParams<F>,
 }
 
 impl<F: JoltField> OutputSumcheckProver<F> {

@@ -95,6 +95,7 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // - Last log(T) rounds bind cycle vars producing a degree-3 univariate with the required previous-round claim.
 // - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
 
+#[derive(Allocative, Clone)]
 pub struct ReadRafSumcheckParams<F: JoltField> {
     /// γ and its square (γ^2) used for batching rv/branch/raf components.
     pub gamma: F,
@@ -225,9 +226,8 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     /// Materialized RafVal_j(k) (with γ-weights folded into prefixes) over (address, cycle).
     combined_raf_val_polynomial: Option<MultilinearPolynomial<F>>,
 
-    #[allocative(skip)]
-    params: ReadRafSumcheckParams<F>,
     phases: usize,
+    pub params: ReadRafSumcheckParams<F>,
 }
 
 impl<F: JoltField> ReadRafSumcheckProver<F> {

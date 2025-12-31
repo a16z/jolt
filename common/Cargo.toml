@@ -15,6 +15,7 @@ std = [
 
 [dependencies]
 derive_more.workspace = true
+allocative.workspace = true
 ark-serialize = { workspace = true, default-features = false }
 serde = { workspace = true, default-features = false }
 serde_json = { workspace = true, features = [

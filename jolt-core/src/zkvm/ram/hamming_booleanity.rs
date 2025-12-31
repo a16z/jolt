@@ -28,7 +28,7 @@ use tracer::instruction::Cycle;
 /// Degree bound of the sumcheck round polynomials in [`HammingBooleanitySumcheckVerifier`].
 const DEGREE_BOUND: usize = 3;
 
-#[derive(Allocative)]
+#[derive(Allocative, Clone)]
 pub struct HammingBooleanitySumcheckParams<F: JoltField> {
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
 }

@@ -141,11 +141,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
 pub struct ProductVirtualUniSkipProver<F: JoltField> {
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
-    params: ProductVirtualUniSkipParams<F>,
     /// Verifier challenge for this univariate skip round
     r0: Option<F::Challenge>,
     /// Prover message for this univariate skip round
     uni_poly: Option<UniPoly<F>>,
+    pub params: ProductVirtualUniSkipParams<F>,
 }
 
 impl<F: JoltField> ProductVirtualUniSkipProver<F> {
@@ -339,6 +339,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
+#[derive(Allocative, Clone)]
 pub struct ProductVirtualRemainderParams<F: JoltField> {
     /// Number of cycle variables to bind in this remainder (equals log2(T))
     pub n_cycle_vars: usize,
@@ -433,8 +434,7 @@ pub struct ProductVirtualRemainderProver<F: JoltField> {
     right: DensePolynomial<F>,
     /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
     first_round_evals: (F, F),
-    #[allocative(skip)]
-    params: ProductVirtualRemainderParams<F>,
+    pub params: ProductVirtualRemainderParams<F>,
 }
 
 impl<F: JoltField> ProductVirtualRemainderProver<F> {

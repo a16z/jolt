@@ -35,6 +35,7 @@ use tracer::{instruction::Cycle, JoltDevice};
 /// Degree bound of the sumcheck round polynomials in [`ValFinalSumcheckVerifier`].
 const VAL_FINAL_SUMCHECK_DEGREE_BOUND: usize = 2;
 
+#[derive(Allocative, Clone)]
 pub struct ValFinalSumcheckParams<F: JoltField> {
     pub T: usize,
     pub r_address: Vec<F::Challenge>,
@@ -153,7 +154,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
 pub struct ValFinalSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: MultilinearPolynomial<F>,
-    #[allocative(skip)]
     pub params: ValFinalSumcheckParams<F>,
 }
 
