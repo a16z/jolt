@@ -2,7 +2,7 @@
 
 git submodule update --init --recursive
 
-apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip build-essential device-tree-compiler gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
+apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip python3-dev build-essential device-tree-compiler gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
 
 mkdir -p ~/.config/pip && printf "[global]\nbreak-system-packages = true\n" > ~/.config/pip/pip.conf
 python3 -m pip install --force-reinstall --upgrade pip

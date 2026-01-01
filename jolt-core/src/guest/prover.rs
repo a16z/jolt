@@ -23,11 +23,12 @@ pub fn preprocess(
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared_preprocessing = JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init);
-    JoltProverPreprocessing::new(shared_preprocessing, max_trace_length)
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length);
+    JoltProverPreprocessing::new(shared_preprocessing)
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 #[cfg(feature = "prover")]
 pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
     guest: &Program,
@@ -35,6 +36,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
     untrusted_advice_bytes: &[u8],
     trusted_advice_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
+    trusted_advice_hint: Option<<PCS as CommitmentScheme>::OpeningProofHint>,
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
 ) -> (
@@ -51,6 +53,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
         untrusted_advice_bytes,
         trusted_advice_bytes,
         trusted_advice_commitment,
+        trusted_advice_hint,
     );
     let io_device = prover.program_io.clone();
     let (proof, debug_info) = prover.prove();
