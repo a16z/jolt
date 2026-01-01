@@ -117,7 +117,6 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     bound_val_evals: Option<[F; N_STAGES]>,
     /// Program counter per cycle, used to materialize chunked RA polynomials.
     pc: Vec<usize>,
-    #[allocative(skip)]
     pub params: ReadRafSumcheckParams<F>,
 }
 
@@ -602,6 +601,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
     }
 }
 
+#[derive(Allocative, Clone)]
 pub struct ReadRafSumcheckParams<F: JoltField> {
     /// Index `i` stores `gamma^i`.
     pub gamma_powers: Vec<F>,

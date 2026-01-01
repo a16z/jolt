@@ -7,7 +7,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
-use crate::zkvm::config::{get_log_k_chunk, OneHotParams};
+use crate::zkvm::config::OneHotParams;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
@@ -140,12 +140,21 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let one_hot_params = OneHotParams::new_with_log_k_chunk(
-            proof.log_k_chunk,
-            proof.lookups_ra_virtual_log_k_chunk,
-            proof.bytecode_K,
-            proof.ram_K,
-        );
+
+        // Validate configs from the proof
+        proof
+            .one_hot_config
+            .validate()
+            .map_err(ProofVerifyError::InvalidOneHotConfig)?;
+
+        proof
+            .rw_config
+            .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
+            .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
+
+        // Construct full params from the validated config
+        let one_hot_params =
+            OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
 
         Ok(Self {
             trusted_advice_commitment,
@@ -251,6 +260,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
             &self.one_hot_params,
             self.proof.trace_length,
+            &self.proof.rw_config,
         );
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
@@ -311,6 +321,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.proof.rw_config,
         );
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,
@@ -319,7 +330,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-            ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length),
+            self.proof
+                .rw_config
+                .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
@@ -431,6 +444,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
+            self.proof
+                .rw_config
+                .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
         if let Some(ref v) = trusted_advice_phase1 {
             self.advice_reduction_gamma_trusted = Some(v.gamma());
@@ -440,6 +456,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
+            self.proof
+                .rw_config
+                .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
         if let Some(ref v) = untrusted_advice_phase1 {
             self.advice_reduction_gamma_untrusted = Some(v.gamma());
@@ -489,6 +508,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 self.proof.trace_length,
                 gamma,
                 &self.opening_accumulator,
+                self.proof
+                    .rw_config
+                    .needs_single_advice_opening(self.proof.trace_length.log_2()),
             )
         });
         let untrusted_advice_phase2 = self.advice_reduction_gamma_untrusted.and_then(|gamma| {
@@ -497,6 +519,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 self.proof.trace_length,
                 gamma,
                 &self.opening_accumulator,
+                self.proof
+                    .rw_config
+                    .needs_single_advice_opening(self.proof.trace_length.log_2()),
             )
         });
 
@@ -686,10 +711,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         PCS::combine_commitments(&commitments, &coeffs)
     }
-
-    // Note: verify_trusted_advice_opening_proofs and verify_untrusted_advice_opening_proofs
-    // have been removed. Advice claims are now reduced via AdviceClaimReduction in Stage 6
-    // and verified as part of the batched Stage 8 opening proof.
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -698,7 +719,6 @@ pub struct JoltSharedPreprocessing {
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
-    pub log_k_chunk: usize,
 }
 
 impl JoltSharedPreprocessing {
@@ -716,7 +736,6 @@ impl JoltSharedPreprocessing {
             ram,
             memory_layout,
             max_padded_trace_length,
-            log_k_chunk: get_log_k_chunk(max_padded_trace_length),
         }
     }
 }

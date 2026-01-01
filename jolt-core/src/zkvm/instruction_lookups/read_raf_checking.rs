@@ -41,7 +41,7 @@ use crate::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
     zkvm::{
-        config::{self, OneHotParams},
+        config::{get_instruction_sumcheck_phases, OneHotParams},
         instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -95,6 +95,7 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // - Last log(T) rounds bind cycle vars producing a degree-3 univariate with the required previous-round claim.
 // - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
 
+#[derive(Allocative, Clone)]
 pub struct ReadRafSumcheckParams<F: JoltField> {
     /// γ and its square (γ^2) used for batching rv/branch/raf components.
     pub gamma: F,
@@ -103,8 +104,6 @@ pub struct ReadRafSumcheckParams<F: JoltField> {
     pub log_T: usize,
     /// How many address variables each virtual ra polynomial has.
     pub ra_virtual_log_k_chunk: usize,
-    /// Number of phases for instruction lookups.
-    pub phases: usize,
     pub r_reduction: OpeningPoint<BIG_ENDIAN, F>,
 }
 
@@ -117,7 +116,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
-        let phases = config::instruction_sumcheck_phases(n_cycle_vars);
         let (r_reduction, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
@@ -128,7 +126,6 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
             gamma_sqr,
             log_T: n_cycle_vars,
             ra_virtual_log_k_chunk: one_hot_params.lookups_ra_virtual_log_k_chunk,
-            phases,
             r_reduction,
         }
     }
@@ -229,8 +226,8 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     /// Materialized RafVal_j(k) (with γ-weights folded into prefixes) over (address, cycle).
     combined_raf_val_polynomial: Option<MultilinearPolynomial<F>>,
 
-    #[allocative(skip)]
-    params: ReadRafSumcheckParams<F>,
+    phases: usize,
+    pub params: ReadRafSumcheckParams<F>,
 }
 
 impl<F: JoltField> ReadRafSumcheckProver<F> {
@@ -243,9 +240,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::initialize")]
     pub fn initialize(params: ReadRafSumcheckParams<F>, trace: &[Cycle]) -> Self {
-        let log_T = trace.len().log_2();
-
-        let log_m = LOG_K / params.phases;
+        let phases = get_instruction_sumcheck_phases(params.log_T);
+        let log_m = LOG_K / phases;
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
         let identity_poly = IdentityPolynomial::new(LOG_K);
@@ -367,7 +363,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         drop(span);
 
         let mut res = Self {
-            r: Vec::with_capacity(log_T + LOG_K),
+            r: Vec::with_capacity(params.log_T + LOG_K),
             lookup_tables,
             lookup_indices,
 
@@ -378,7 +374,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
-            v: (0..params.phases)
+            v: (0..phases)
                 .map(|_| ExpandingTable::new(1 << log_m, BindingOrder::HighToLow))
                 .collect(),
             u_evals,
@@ -393,6 +389,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             combined_val_polynomial: None,
             combined_raf_val_polynomial: None,
             params,
+            phases,
         };
         res.init_phase(0);
         res
@@ -407,7 +404,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Resets the current expanding table accumulator for this phase
     #[tracing::instrument(skip_all, name = "InstructionReadRafProver::init_phase")]
     fn init_phase(&mut self, phase: usize) {
-        let log_m = LOG_K / self.params.phases;
+        let log_m = LOG_K / self.phases;
         let m = 1 << log_m;
         let m_mask = m - 1;
         // Condensation
@@ -418,7 +415,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                 .par_iter()
                 .zip(&mut self.u_evals)
                 .for_each(|(k, u_eval)| {
-                    let (prefix, _) = k.split((self.params.phases - phase) * log_m);
+                    let (prefix, _) = k.split((self.phases - phase) * log_m);
                     let k_bound = prefix & m_mask;
                     *u_eval *= self.v[phase - 1][k_bound];
                 });
@@ -459,7 +456,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// of size M = 2^{log_m}.
     #[tracing::instrument(skip_all, name = "InstructionReadRafProver::init_suffix_polys")]
     fn init_suffix_polys(&mut self, phase: usize) {
-        let log_m = LOG_K / self.params.phases;
+        let log_m = LOG_K / self.phases;
         let m = 1 << log_m;
         let m_mask = m - 1;
         let num_chunks = rayon::current_num_threads().next_power_of_two();
@@ -481,7 +478,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                             for j in chunk {
                                 let k = self.lookup_indices[*j];
                                 let (prefix_bits, suffix_bits) =
-                                    k.split((self.params.phases - 1 - phase) * log_m);
+                                    k.split((self.phases - 1 - phase) * log_m);
                                 for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut())
                                 {
                                     let t = suffix.suffix_mle::<XLEN>(suffix_bits);
@@ -543,7 +540,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Converts ra/Val/RafVal into MultilinearPolynomial over (addr,cycle)
     #[tracing::instrument(skip_all, name = "InstructionReadRafProver::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_sqr: F) {
-        let log_m = LOG_K / self.params.phases;
+        let log_m = LOG_K / self.phases;
         let m = 1 << log_m;
         let m_mask = m - 1;
         // Drop stuff that's no longer needed
@@ -572,9 +569,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
                             for (phase, table) in zip(phase_offset.., v_chunk) {
                                 let v: u128 = i.into();
-                                let i_segment = ((v >> ((self.params.phases - 1 - phase) * log_m))
-                                    as usize)
-                                    & m_mask;
+                                let i_segment =
+                                    ((v >> ((self.phases - 1 - phase) * log_m)) as usize) & m_mask;
                                 acc *= table[i_segment];
                             }
 
@@ -721,7 +717,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
     /// initialize next phase/handoff when needed. Cycle rounds: bind the ra/Val
     /// polynomials and Gruen EQ.
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        let log_m = LOG_K / self.params.phases;
+        let log_m = LOG_K / self.phases;
         self.r.push(r_j);
         if round < LOG_K {
             let phase = round / log_m;
@@ -755,7 +751,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
             // check if this is the last round in the phase
             if (round + 1).is_multiple_of(log_m) {
                 self.prefix_registry.update_checkpoints();
-                if phase != self.params.phases - 1 {
+                if phase != self.phases - 1 {
                     // if not last phase, init next phase
                     self.init_phase(phase + 1);
                 }

@@ -57,6 +57,7 @@ use crate::{
 const DEGREE_BOUND: usize = 3;
 
 /// Parameters for the booleanity sumcheck.
+#[derive(Allocative, Clone)]
 pub struct BooleanitySumcheckParams<F: JoltField> {
     /// Log of chunk size (shared across all families)
     pub log_k_chunk: usize,
@@ -70,6 +71,8 @@ pub struct BooleanitySumcheckParams<F: JoltField> {
     pub r_cycle: Vec<F::Challenge>,
     /// Polynomial types for all families
     pub polynomial_types: Vec<CommittedPolynomial>,
+    /// OneHotParams for SharedRaPolynomials
+    pub one_hot_params: OneHotParams,
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
@@ -178,6 +181,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             r_address,
             r_cycle,
             polynomial_types,
+            one_hot_params: one_hot_params.clone(),
         }
     }
 }
@@ -199,10 +203,6 @@ pub struct BooleanitySumcheckProver<F: JoltField> {
     eq_r_r: F,
     /// RA indices (non-transposed, one per cycle)
     ra_indices: Vec<RaIndices>,
-    /// OneHotParams for SharedRaPolynomials
-    #[allocative(skip)]
-    one_hot_params: OneHotParams,
-    #[allocative(skip)]
     pub params: BooleanitySumcheckParams<F>,
 }
 
@@ -219,14 +219,13 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         trace: &[Cycle],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        one_hot_params: &OneHotParams,
     ) -> Self {
         // Compute G and RA indices in a single pass over the trace
         let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
             trace,
             bytecode,
             memory_layout,
-            one_hot_params,
+            &params.one_hot_params,
             &params.r_cycle,
         );
 
@@ -244,7 +243,6 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             D,
             G,
             ra_indices,
-            one_hot_params: one_hot_params.clone(),
             H: None,
             F: F_table,
             eq_r_r: F::zero(),
@@ -379,11 +377,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
                 // Initialize SharedRaPolynomials with shared eq table
                 let F_table = std::mem::take(&mut self.F);
                 let ra_indices = std::mem::take(&mut self.ra_indices);
-                let one_hot_params = self.one_hot_params.clone();
                 self.H = Some(SharedRaPolynomials::new(
                     F_table.clone_values(),
                     ra_indices,
-                    one_hot_params,
+                    self.params.one_hot_params.clone(),
                 ));
 
                 // Drop G arrays

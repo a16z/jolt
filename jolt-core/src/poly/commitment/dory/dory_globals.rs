@@ -2,23 +2,25 @@
 
 use crate::utils::math::Math;
 use dory::backends::arkworks::{init_cache, is_cached, ArkG1, ArkG2};
-use once_cell::sync::OnceCell;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    OnceLock,
+};
 
 // Main polynomial globals
-static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
-static mut MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
-static mut NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
+static mut GLOBAL_T: OnceLock<usize> = OnceLock::new();
+static mut MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
+static mut NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 
 // Trusted advice globals
-static mut TRUSTED_ADVICE_T: OnceCell<usize> = OnceCell::new();
-static mut TRUSTED_ADVICE_MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
-static mut TRUSTED_ADVICE_NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
+static mut TRUSTED_ADVICE_T: OnceLock<usize> = OnceLock::new();
+static mut TRUSTED_ADVICE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
+static mut TRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 
 // Untrusted advice globals
-static mut UNTRUSTED_ADVICE_T: OnceCell<usize> = OnceCell::new();
-static mut UNTRUSTED_ADVICE_MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
-static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
+static mut UNTRUSTED_ADVICE_T: OnceLock<usize> = OnceLock::new();
+static mut UNTRUSTED_ADVICE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
+static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 
 // Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);

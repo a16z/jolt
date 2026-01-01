@@ -50,6 +50,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
+use crate::zkvm::config::OneHotConfig;
 use crate::zkvm::witness::CommittedPolynomial;
 use allocative::Allocative;
 use common::jolt_device::MemoryLayout;
@@ -116,6 +117,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        single_opening: bool,
     ) -> Option<Self> {
         Self::new(
             AdviceKind::Trusted,
@@ -123,6 +125,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             trace_len,
             accumulator,
             transcript,
+            single_opening,
         )
     }
 
@@ -131,6 +134,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        single_opening: bool,
     ) -> Option<Self> {
         Self::new(
             AdviceKind::Untrusted,
@@ -138,6 +142,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             trace_len,
             accumulator,
             transcript,
+            single_opening,
         )
     }
 
@@ -147,13 +152,11 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        single_opening: bool,
     ) -> Option<Self> {
         let log_t = trace_len.log_2();
-        let log_k_chunk = crate::zkvm::config::get_log_k_chunk(log_t);
+        let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
         let (sigma_main, _nu_main) = main_sigma_nu(log_k_chunk, log_t);
-
-        let single_opening =
-            crate::zkvm::ram::read_write_checking::needs_single_advice_opening(trace_len);
 
         let (r_val_eval, r_val_final) = match kind {
             AdviceKind::Trusted => {
@@ -507,12 +510,14 @@ impl<F: JoltField> AdviceClaimReductionPhase1Verifier<F> {
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        single_opening: bool,
     ) -> Option<Self> {
         let params = AdviceClaimReductionPhase1Params::new_trusted(
             memory_layout,
             trace_len,
             accumulator,
             transcript,
+            single_opening,
         )?;
         Some(Self { params })
     }
@@ -522,12 +527,14 @@ impl<F: JoltField> AdviceClaimReductionPhase1Verifier<F> {
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        single_opening: bool,
     ) -> Option<Self> {
         let params = AdviceClaimReductionPhase1Params::new_untrusted(
             memory_layout,
             trace_len,
             accumulator,
             transcript,
+            single_opening,
         )?;
         Some(Self { params })
     }
@@ -667,6 +674,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         trace_len: usize,
         gamma: F,
         accumulator: &dyn OpeningAccumulator<F>,
+        single_opening: bool,
     ) -> Option<Self> {
         Self::new(
             AdviceKind::Trusted,
@@ -674,6 +682,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
             trace_len,
             gamma,
             accumulator,
+            single_opening,
         )
     }
 
@@ -682,6 +691,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         trace_len: usize,
         gamma: F,
         accumulator: &dyn OpeningAccumulator<F>,
+        single_opening: bool,
     ) -> Option<Self> {
         Self::new(
             AdviceKind::Untrusted,
@@ -689,6 +699,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
             trace_len,
             gamma,
             accumulator,
+            single_opening,
         )
     }
 
@@ -698,12 +709,11 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         trace_len: usize,
         gamma: F,
         accumulator: &dyn OpeningAccumulator<F>,
+        single_opening: bool,
     ) -> Option<Self> {
         let log_t = trace_len.log_2();
-        let log_k_chunk = crate::zkvm::config::get_log_k_chunk(log_t);
+        let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
         let (sigma_main, _nu_main) = main_sigma_nu(log_k_chunk, log_t);
-        let single_opening =
-            crate::zkvm::ram::read_write_checking::needs_single_advice_opening(trace_len);
 
         let (r_val_eval, r_val_final) = match kind {
             AdviceKind::Trusted => {
@@ -1017,12 +1027,14 @@ impl<F: JoltField> AdviceClaimReductionPhase2Verifier<F> {
         trace_len: usize,
         gamma: F,
         accumulator: &VerifierOpeningAccumulator<F>,
+        single_opening: bool,
     ) -> Option<Self> {
         let params = AdviceClaimReductionPhase2Params::new_trusted(
             memory_layout,
             trace_len,
             gamma,
             accumulator,
+            single_opening,
         )?;
         Some(Self { params })
     }
@@ -1032,12 +1044,14 @@ impl<F: JoltField> AdviceClaimReductionPhase2Verifier<F> {
         trace_len: usize,
         gamma: F,
         accumulator: &VerifierOpeningAccumulator<F>,
+        single_opening: bool,
     ) -> Option<Self> {
         let params = AdviceClaimReductionPhase2Params::new_untrusted(
             memory_layout,
             trace_len,
             gamma,
             accumulator,
+            single_opening,
         )?;
         Some(Self { params })
     }

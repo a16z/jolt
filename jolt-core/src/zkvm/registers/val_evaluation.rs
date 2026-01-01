@@ -50,7 +50,7 @@ const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
 /// Degree bound of the sumcheck round polynomials in [`ValEvaluationSumcheckVerifier`].
 const DEGREE_BOUND: usize = 3;
 
-#[derive(Allocative)]
+#[derive(Allocative, Clone)]
 pub struct RegistersValEvaluationSumcheckParams<F: JoltField> {
     pub r_address: OpeningPoint<BIG_ENDIAN, F>,
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
@@ -98,7 +98,7 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: RaPolynomial<u8, F>,
     lt: LtPolynomial<F>,
-    params: RegistersValEvaluationSumcheckParams<F>,
+    pub params: RegistersValEvaluationSumcheckParams<F>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {

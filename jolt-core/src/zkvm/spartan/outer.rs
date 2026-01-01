@@ -117,13 +117,13 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
 /// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
 #[derive(Allocative)]
 pub struct OuterUniSkipProver<F: JoltField> {
-    params: OuterUniSkipParams<F>,
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; OUTER_UNIVARIATE_SKIP_DEGREE],
     /// Verifier challenge for this univariate skip round
     r0: Option<F::Challenge>,
     /// Prover message for this univariate skip round
     uni_poly: Option<UniPoly<F>>,
+    pub params: OuterUniSkipParams<F>,
 }
 
 impl<F: JoltField> OuterUniSkipProver<F> {
@@ -453,12 +453,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
-struct OuterStreamingProverParams<F: JoltField> {
+#[derive(Allocative, Clone)]
+pub struct OuterStreamingProverParams<F: JoltField> {
     /// Number of cycle bits for splitting opening points
     /// Total number of rounds equals num_cycles_bits
-    num_cycles_bits: usize,
+    pub num_cycles_bits: usize,
     /// The univariate-skip first round challenge
-    r0_uniskip: F::Challenge,
+    pub r0_uniskip: F::Challenge,
 }
 
 impl<F: JoltField> OuterStreamingProverParams<F> {
@@ -505,9 +506,8 @@ pub struct OuterSharedState<F: JoltField> {
     t_prime_poly: Option<MultiquadraticPolynomial<F>>,
     r_grid: ExpandingTable<F>,
     #[allocative(skip)]
-    params: OuterStreamingProverParams<F>,
-    #[allocative(skip)]
     lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+    pub params: OuterStreamingProverParams<F>,
 }
 
 impl<F: JoltField> OuterSharedState<F> {

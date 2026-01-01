@@ -187,16 +187,25 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
 // ============================================================================
 
 #[derive(Allocative)]
-#[allow(clippy::large_enum_variant, private_interfaces)]
-pub enum IncClaimReductionSumcheckProver<F: JoltField> {
-    Phase1(IncClaimReductionPhase1Prover<F>),
-    Phase2(IncClaimReductionPhase2Prover<F>),
+pub struct IncClaimReductionSumcheckProver<F: JoltField> {
+    phase: IncClaimReductionPhase<F>,
+    pub params: IncClaimReductionSumcheckParams<F>,
+}
+
+#[derive(Allocative)]
+#[allow(clippy::large_enum_variant)]
+enum IncClaimReductionPhase<F: JoltField> {
+    Phase1(IncClaimReductionPhase1State<F>),
+    Phase2(IncClaimReductionPhase2State<F>),
 }
 
 impl<F: JoltField> IncClaimReductionSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "IncClaimReductionSumcheckProver::initialize")]
     pub fn initialize(params: IncClaimReductionSumcheckParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
-        Self::Phase1(IncClaimReductionPhase1Prover::initialize(trace, params))
+        let phase = IncClaimReductionPhase::Phase1(IncClaimReductionPhase1State::initialize(
+            trace, &params,
+        ));
+        Self { params, phase }
     }
 }
 
@@ -204,38 +213,38 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for IncClaimReductionSumcheckProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        match self {
-            Self::Phase1(prover) => &prover.params,
-            Self::Phase2(prover) => &prover.params,
-        }
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "IncClaimReductionSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        match self {
-            Self::Phase1(prover) => prover.compute_message(previous_claim),
-            Self::Phase2(prover) => prover.compute_message(previous_claim),
+        match &self.phase {
+            IncClaimReductionPhase::Phase1(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
+            IncClaimReductionPhase::Phase2(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
         }
     }
 
     #[tracing::instrument(skip_all, name = "IncClaimReductionSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        match self {
-            Self::Phase1(prover) => {
-                if prover.should_transition_to_phase2() {
-                    let params = prover.params.clone();
-                    let mut sumcheck_challenges = prover.sumcheck_challenges.clone();
+        match &mut self.phase {
+            IncClaimReductionPhase::Phase1(state) => {
+                if state.should_transition_to_phase2() {
+                    let mut sumcheck_challenges = state.sumcheck_challenges.clone();
                     sumcheck_challenges.push(r_j);
-                    *self = Self::Phase2(IncClaimReductionPhase2Prover::gen(
-                        &prover.trace,
+                    self.phase = IncClaimReductionPhase::Phase2(IncClaimReductionPhase2State::gen(
+                        &state.trace,
                         &sumcheck_challenges,
-                        params,
+                        &self.params,
                     ));
                     return;
                 }
-                prover.bind(r_j);
+                state.bind(r_j);
             }
-            Self::Phase2(prover) => prover.bind(r_j),
+            IncClaimReductionPhase::Phase2(state) => state.bind(r_j),
         }
     }
 
@@ -245,15 +254,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let Self::Phase2(prover) = self else {
+        let IncClaimReductionPhase::Phase2(state) = &self.phase else {
             panic!("Should finish sumcheck on phase 2");
         };
 
         let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
-        let ram_inc_claim = prover.ram_inc.final_sumcheck_claim();
-        let rd_inc_claim = prover.rd_inc.final_sumcheck_claim();
+        let ram_inc_claim = state.ram_inc.final_sumcheck_claim();
+        let rd_inc_claim = state.rd_inc.final_sumcheck_claim();
 
         accumulator.append_dense(
             transcript,
@@ -273,10 +282,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
-        match self {
-            Self::Phase1(prover) => flamegraph.visit_root(prover),
-            Self::Phase2(prover) => flamegraph.visit_root(prover),
-        }
+        flamegraph.visit_root(self);
     }
 }
 
@@ -285,7 +291,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 // ============================================================================
 
 #[derive(Allocative)]
-struct IncClaimReductionPhase1Prover<F: JoltField> {
+struct IncClaimReductionPhase1State<F: JoltField> {
     // P buffers: prefix eq evaluations (one per opening point)
     // P_ram[0] = eq(r_cycle_stage2_lo, ·)
     // P_ram[1] = eq(r_cycle_stage4_lo, ·)
@@ -303,12 +309,11 @@ struct IncClaimReductionPhase1Prover<F: JoltField> {
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     sumcheck_challenges: Vec<F::Challenge>,
-    params: IncClaimReductionSumcheckParams<F>,
 }
 
-impl<F: JoltField> IncClaimReductionPhase1Prover<F> {
-    #[tracing::instrument(skip_all, name = "IncClaimReductionPhase1Prover::initialize")]
-    fn initialize(trace: Arc<Vec<Cycle>>, params: IncClaimReductionSumcheckParams<F>) -> Self {
+impl<F: JoltField> IncClaimReductionPhase1State<F> {
+    #[tracing::instrument(skip_all, name = "IncClaimReductionPhase1State::initialize")]
+    fn initialize(trace: Arc<Vec<Cycle>>, params: &IncClaimReductionSumcheckParams<F>) -> Self {
         let n_vars = params.n_cycle_vars;
         let prefix_n_vars = n_vars / 2;
         let suffix_n_vars = n_vars - prefix_n_vars;
@@ -396,12 +401,15 @@ impl<F: JoltField> IncClaimReductionPhase1Prover<F> {
             Q_rd: [Q_rd_0.into(), Q_rd_1.into()],
             trace,
             sumcheck_challenges: Vec::new(),
-            params,
         }
     }
 
-    fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
-        let [gamma, gamma_sqr, gamma_cub] = self.params.gamma_powers;
+    fn compute_message(
+        &self,
+        params: &IncClaimReductionSumcheckParams<F>,
+        previous_claim: F,
+    ) -> UniPoly<F> {
+        let [gamma, gamma_sqr, gamma_cub] = params.gamma_powers;
         let half_n = self.P_ram[0].len() / 2;
 
         let evals = (0..half_n)
@@ -476,21 +484,20 @@ impl<F: JoltField> IncClaimReductionPhase1Prover<F> {
 // ============================================================================
 
 #[derive(Allocative)]
-struct IncClaimReductionPhase2Prover<F: JoltField> {
+struct IncClaimReductionPhase2State<F: JoltField> {
     ram_inc: MultilinearPolynomial<F>,
     rd_inc: MultilinearPolynomial<F>,
     // Combined eq polynomials
     eq_ram: MultilinearPolynomial<F>, // eq(r_stage2, ·) + γ·eq(r_stage4, ·)
     eq_rd: MultilinearPolynomial<F>,  // eq(s_stage4, ·) + γ·eq(s_stage5, ·)
-    params: IncClaimReductionSumcheckParams<F>,
 }
 
-impl<F: JoltField> IncClaimReductionPhase2Prover<F> {
-    #[tracing::instrument(skip_all, name = "IncClaimReductionPhase2Prover::gen")]
+impl<F: JoltField> IncClaimReductionPhase2State<F> {
+    #[tracing::instrument(skip_all, name = "IncClaimReductionPhase2State::gen")]
     fn gen(
         trace: &[Cycle],
         sumcheck_challenges: &[F::Challenge],
-        params: IncClaimReductionSumcheckParams<F>,
+        params: &IncClaimReductionSumcheckParams<F>,
     ) -> Self {
         let n_vars = params.n_cycle_vars;
         let prefix_n_vars = n_vars / 2;
@@ -591,12 +598,15 @@ impl<F: JoltField> IncClaimReductionPhase2Prover<F> {
             rd_inc: rd_inc.into(),
             eq_ram: eq_ram.into(),
             eq_rd: eq_rd.into(),
-            params,
         }
     }
 
-    fn compute_message(&mut self, previous_claim: F) -> UniPoly<F> {
-        let gamma_sqr = self.params.gamma_powers[1];
+    fn compute_message(
+        &self,
+        params: &IncClaimReductionSumcheckParams<F>,
+        previous_claim: F,
+    ) -> UniPoly<F> {
+        let gamma_sqr = params.gamma_powers[1];
         let half_n = self.ram_inc.len() / 2;
 
         let evals = (0..half_n)

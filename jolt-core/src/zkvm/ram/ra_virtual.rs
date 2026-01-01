@@ -77,6 +77,7 @@ use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 /// Shared parameters between prover and verifier.
+#[derive(Allocative, Clone)]
 pub struct RamRaVirtualParams<F: JoltField> {
     /// r_cycle_reduced from RA reduction sumcheck
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
@@ -153,8 +154,7 @@ pub struct RamRaVirtualSumcheckProver<F: JoltField> {
     ra_i_polys: Vec<RaPolynomial<u8, F>>,
     /// eq(r_cycle_reduced, ·) polynomial with Gruen optimization
     eq_poly: GruenSplitEqPolynomial<F>,
-    #[allocative(skip)]
-    params: RamRaVirtualParams<F>,
+    pub params: RamRaVirtualParams<F>,
 }
 
 impl<F: JoltField> RamRaVirtualSumcheckProver<F> {

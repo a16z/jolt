@@ -302,7 +302,7 @@ pub struct HammingWeightClaimReductionProver<F: JoltField> {
     /// eq(r_addr_virt_i, ·) for each ra polynomial (N total)
     eq_virt: Vec<MultilinearPolynomial<F>>,
     #[allocative(skip)]
-    params: HammingWeightClaimReductionParams<F>,
+    pub params: HammingWeightClaimReductionParams<F>,
 }
 
 impl<F: JoltField> HammingWeightClaimReductionProver<F> {

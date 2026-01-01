@@ -1,4 +1,4 @@
-use crate::subprotocols::streaming_schedule::LinearOnlySchedule;
+use crate::{subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::config::OneHotConfig};
 use std::{
     collections::HashMap,
     fs::File,
@@ -11,7 +11,7 @@ use std::{
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::zkvm::config::get_log_k_chunk;
+use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -19,7 +19,6 @@ use crate::zkvm::Serializable;
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
-use crate::zkvm::config::get_log_k_chunk as get_log_k_chunk_from_log_t;
 use crate::{
     field::JoltField,
     guest,
@@ -99,7 +98,7 @@ use crate::{
         proof_serialization::{Claims, JoltProof},
         r1cs::key::UniformSpartanKey,
         ram::{
-            self, gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
+            gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
             output_check::OutputSumcheckProver, prover_accumulate_advice,
             ra_virtual::RamRaVirtualSumcheckProver,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
@@ -153,6 +152,7 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
+    pub rw_config: ReadWriteConfig,
 }
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
@@ -291,7 +291,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             // and nu_main by roughly 0.5 each iteration.
             while {
                 let log_t = padded_trace_len.log_2();
-                let log_k_chunk = get_log_k_chunk_from_log_t(log_t);
+                let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
                 let total_vars = log_k_chunk + log_t;
                 let sigma_main = total_vars.div_ceil(2);
                 let nu_main = total_vars - sigma_main;
@@ -302,7 +302,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                     // max_padded_trace_length too small for the configured advice sizes.
                     // Cannot recover at runtime - user must fix their configuration.
                     let log_t = padded_trace_len.log_2();
-                    let log_k_chunk = get_log_k_chunk_from_log_t(log_t);
+                    let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
                     let total_vars = log_k_chunk + log_t;
                     let sigma_main = total_vars.div_ceil(2);
                     let nu_main = total_vars - sigma_main;
@@ -360,6 +360,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &final_memory_state,
         );
 
+        let log_T = trace.len().log_2();
+        let ram_log_K = ram_K.log_2();
+        let rw_config = ReadWriteConfig::new(log_T, ram_log_K);
+        let one_hot_params =
+            OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
+
         Self {
             preprocessing,
             program_io,
@@ -381,11 +387,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             spartan_key,
             initial_ram_state,
             final_ram_state,
-            one_hot_params: OneHotParams::new(
-                padded_trace_len.log_2(),
-                preprocessing.shared.bytecode.code_size,
-                ram_K,
-            ),
+            one_hot_params,
+            rw_config,
         }
     }
 
@@ -472,8 +475,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
-            log_k_chunk: self.one_hot_params.log_k_chunk,
-            lookups_ra_virtual_log_k_chunk: self.one_hot_params.lookups_ra_virtual_log_k_chunk,
+            rw_config: self.rw_config.clone(),
+            one_hot_config: self.one_hot_params.to_config(),
         };
 
         let prove_duration = start.elapsed();
@@ -708,6 +711,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
             &self.one_hot_params,
             self.trace.len(),
+            &self.rw_config,
         );
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
@@ -866,6 +870,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.rw_config,
         );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
@@ -874,7 +879,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.opening_accumulator,
             &mut self.transcript,
-            ram::read_write_checking::needs_single_advice_opening(self.trace.len()),
+            self.rw_config
+                .needs_single_advice_opening(self.trace.len().log_2()),
         );
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
@@ -1045,12 +1051,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
+            self.rw_config
+                .needs_single_advice_opening(self.trace.len().log_2()),
         );
         let untrusted_advice_phase1_params = AdviceClaimReductionPhase1Params::new_untrusted(
             &self.program_io.memory_layout,
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
+            self.rw_config
+                .needs_single_advice_opening(self.trace.len().log_2()),
         );
 
         let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
@@ -1066,7 +1076,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
-            &self.one_hot_params,
         );
 
         let ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
@@ -1195,6 +1204,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 self.trace.len(),
                 gamma,
                 &self.opening_accumulator,
+                self.rw_config
+                    .needs_single_advice_opening(self.trace.len().log_2()),
             ) {
                 let poly = self
                     .advice
@@ -1212,6 +1223,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 self.trace.len(),
                 gamma,
                 &self.opening_accumulator,
+                self.rw_config
+                    .needs_single_advice_opening(self.trace.len().log_2()),
             ) {
                 let poly = self
                     .advice
@@ -1432,10 +1445,20 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
-    pub fn new(shared: JoltSharedPreprocessing) -> JoltProverPreprocessing<F, PCS> {
+    pub fn new(
+        shared: JoltSharedPreprocessing,
+        // max_trace_length: usize,
+    ) -> JoltProverPreprocessing<F, PCS> {
+        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
-        let log_chunk = get_log_k_chunk(max_T);
-        let generators = PCS::setup_prover(log_chunk + max_T.log_2());
+        let max_log_T = max_T.log_2();
+        // Use the maximum possible log_k_chunk for generator setup
+        let max_log_k_chunk = if max_log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
+        let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
         JoltProverPreprocessing { generators, shared }
     }
 
