@@ -10,6 +10,7 @@ use crate::{
 };
 
 // Compile-time error if multiple transcript features are enabled
+// When none of the transcript features are enabled, Jolt defaults to `Blake2bTranscript`
 #[cfg(any(
     all(feature = "transcript-poseidon", feature = "transcript-keccak"),
     all(feature = "transcript-poseidon", feature = "transcript-blake2b"),
