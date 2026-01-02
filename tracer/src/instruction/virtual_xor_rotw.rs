@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{RISCVInstruction, RISCVTrace};
 use crate::instruction::format::format_r::FormatR;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu, emulator::cpu::Xlen};
+use crate::{declare_riscv_instr, emulator::cpu::Xlen};
 
 macro_rules! declare_xorrotw {
     ($name:ident, $rotation:expr) => {
@@ -15,7 +15,11 @@ macro_rules! declare_xorrotw {
         );
 
         impl $name {
-            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RAMAccess) {
+            fn exec<D: $crate::emulator::memory::MemoryData>(
+                &self,
+                cpu: &mut $crate::emulator::cpu::GeneralizedCpu<D>,
+                _: &mut <$name as RISCVInstruction>::RAMAccess,
+            ) {
                 match cpu.xlen {
                     Xlen::Bit32 => {
                         panic!("XORROTW instructions are not supported in 32-bit mode");
