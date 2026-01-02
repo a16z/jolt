@@ -21,6 +21,8 @@ ark-ff.workspace = true
 clap.workspace = true
 rand_core = { version = "0.6.4", default-features = false }
 regex = "1.11.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 strum.workspace = true
 build-fs-tree = "0.7.1"
 allocative.workspace = true

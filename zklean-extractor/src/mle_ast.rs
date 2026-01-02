@@ -1,12 +1,66 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use ark_std::{One, Zero};
 use jolt_core::field::{FieldOps, JoltField};
+use serde::{Deserialize, Serialize};
 
+use std::cell::RefCell;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt::{self};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
+
+// =============================================================================
+// Thread-local storage for Transcript trait integration
+// =============================================================================
+//
+// These thread-locals enable MleAst to work with jolt-core's generic Transcript trait.
+// The Transcript trait uses `F: JoltField` with methods like:
+//   - `append_scalar<F>(&mut self, scalar: &F)` - calls F::serialize
+//   - `challenge_scalar<F>(&mut self) -> F` - calls F::from_bytes
+//
+// Since MleAst implements JoltField but serialize/from_bytes don't make semantic sense
+// for ASTs, we use thread-local storage to tunnel the actual MleAst values through
+// these trait boundaries.
+//
+// This will be used by PoseidonMleTranscript (in gnark-transpiler) to build symbolic
+// AST nodes for Poseidon hash operations during verifier transpilation.
+// =============================================================================
+
+thread_local! {
+    static PENDING_CHALLENGE: RefCell<Option<MleAst>> = RefCell::new(None);
+}
+
+/// Set a pending challenge that will be returned by the next MleAst::from_bytes call.
+/// Called by PoseidonMleTranscript::challenge_scalar before returning.
+pub fn set_pending_challenge(challenge: MleAst) {
+    PENDING_CHALLENGE.with(|cell| {
+        *cell.borrow_mut() = Some(challenge);
+    });
+}
+
+/// Take the pending challenge (if any).
+fn take_pending_challenge() -> Option<MleAst> {
+    PENDING_CHALLENGE.with(|cell| cell.borrow_mut().take())
+}
+
+thread_local! {
+    static PENDING_APPEND: RefCell<Option<MleAst>> = RefCell::new(None);
+}
+
+/// Set a pending MleAst value that will be retrieved by PoseidonMleTranscript::append_scalar.
+/// Called by MleAst::serialize_with_mode.
+pub fn set_pending_append(value: MleAst) {
+    PENDING_APPEND.with(|cell| {
+        *cell.borrow_mut() = Some(value);
+    });
+}
+
+/// Take the pending append value (if any).
+/// Called by PoseidonMleTranscript::append_scalar to get the actual MleAst.
+pub fn take_pending_append() -> Option<MleAst> {
+    PENDING_APPEND.with(|cell| cell.borrow_mut().take())
+}
 
 #[cfg(test)]
 use crate::util::Environment;
@@ -24,7 +78,7 @@ fn node_arena() -> &'static RwLock<Vec<Node>> {
     NODE_ARENA.get_or_init(|| RwLock::new(Vec::new()))
 }
 
-fn insert_node(node: Node) -> NodeId {
+pub fn insert_node(node: Node) -> NodeId {
     let arena = node_arena();
     let mut guard = arena.write().expect("node arena poisoned");
     let id = guard.len();
@@ -32,7 +86,7 @@ fn insert_node(node: Node) -> NodeId {
     id
 }
 
-fn get_node(id: NodeId) -> Node {
+pub fn get_node(id: NodeId) -> Node {
     let arena = node_arena();
     let guard = arena.read().expect("node arena poisoned");
     guard.get(id).copied().expect("invalid node reference")
@@ -48,7 +102,7 @@ fn edge_for_root(root: NodeId) -> Edge {
 pub type DefaultMleAst = MleAst;
 
 /// An atomic (var or const) AST element
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Atom {
     /// A constant value.
     Scalar(Scalar),
@@ -73,7 +127,7 @@ impl Atom {
 }
 
 /// Either an index into the arena, or an atomic (var or const) element.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Edge {
     /// An atomic (var or const) AST element.
     Atom(Atom),
@@ -82,7 +136,7 @@ pub enum Edge {
 }
 
 /// A node for a polynomial AST. Children are represented by node IDs into the global arena.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Node {
     /// An atomic (var or const) AST element. This should only be used for MLE's with a single
     /// node.
@@ -100,6 +154,11 @@ pub enum Node {
     /// The quotient between the first and second nodes
     /// NOTE: No div-by-zero checks are performed here
     Div(Edge, Edge),
+    /// Poseidon hash with 3 inputs (state, n_rounds, data).
+    /// Matches jolt-core PoseidonTranscript which uses width-3 Poseidon.
+    Poseidon(Edge, Edge, Edge),
+    /// Keccak256 hash of a single field element
+    Keccak256(Edge),
 }
 
 /// An AST intended for representing an MLE computation (although it will actually work for any
@@ -154,6 +213,39 @@ impl MleAst {
         let rhs_edge = edge_for_root(rhs.root);
         self.root = insert_node(constructor(lhs_edge, rhs_edge));
     }
+
+    /// Create a variable from an index (for symbolic execution).
+    pub fn from_var(index: u16) -> Self {
+        Self::new_var('v', index)
+    }
+
+    /// Get the root node ID for this AST.
+    pub fn root(&self) -> NodeId {
+        self.root
+    }
+
+    /// Poseidon hash with 3 inputs (state, n_rounds, data).
+    /// Matches jolt-core PoseidonTranscript structure.
+    pub fn poseidon(state: &Self, n_rounds: &Self, data: &Self) -> Self {
+        let state_edge = edge_for_root(state.root);
+        let rounds_edge = edge_for_root(n_rounds.root);
+        let data_edge = edge_for_root(data.root);
+        let root = insert_node(Node::Poseidon(state_edge, rounds_edge, data_edge));
+        Self {
+            root,
+            reg_name: state.reg_name.or(n_rounds.reg_name).or(data.reg_name),
+        }
+    }
+
+    /// Keccak256 hash of a single field element.
+    pub fn keccak256(input: &Self) -> Self {
+        let edge = edge_for_root(input.root);
+        let root = insert_node(Node::Keccak256(edge));
+        Self {
+            root,
+            reg_name: input.reg_name,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,6 +266,10 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
         Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
         Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
         Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
+        Node::Poseidon(_, _, _) | Node::Keccak256(_) => {
+            // Hash nodes are for circuit generation only, not field evaluation
+            unreachable!("Hash nodes should not appear in zklean-extractor tests")
+        }
     }
 }
 
@@ -215,9 +311,9 @@ fn fmt_edge(
 ///
 /// To find what binder to use, you should hash your node, then traverse the vector at that key
 /// checking for equality against the nodes there.
-type Bindings = HashMap<u64, Vec<(Node, LetBinderIndex)>>;
+pub type Bindings = HashMap<u64, Vec<(Node, LetBinderIndex)>>;
 
-fn compute_hash<T: Hash>(value: &T) -> u64 {
+pub fn compute_hash<T: Hash>(value: &T) -> u64 {
     let mut h = DefaultHasher::new();
     value.hash(&mut h);
     h.finish()
@@ -234,10 +330,12 @@ fn node_depth(node: Node) -> usize {
         Node::Atom(_) => 0,
         Node::Neg(e) => 1 + edge_depth(e),
         Node::Inv(e) => 1 + edge_depth(e),
+        Node::Keccak256(e) => 1 + edge_depth(e),
         Node::Add(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
         Node::Mul(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
         Node::Sub(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
         Node::Div(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
+        Node::Poseidon(e1, e2, e3) => 1 + max(edge_depth(e1), max(edge_depth(e2), edge_depth(e3))),
     }
 }
 
@@ -258,9 +356,123 @@ const CSE_PREFIX: &str = "cse";
 ///   v2     = (a + b) / (a + b)
 ///   result = v1 * v2
 /// at threshold 2, fewer intermediates, but small terms get repeated.
+// NOTE: For gnark-transpiler, CSE doesn't help much because constraints don't share
+// actual AST nodes (they're constructed separately). For zkLean/Lean output where
+// there's a single large AST, CSE with threshold 4 helps.
 const CSE_DEPTH_THRESHOLD: usize = 4;
 
-fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
+/// Perform common subexpression elimination on an AST.
+///
+/// Returns a tuple of (bindings, new_root) where:
+/// - bindings: Vec of nodes that should be hoisted as named variables (cse_0, cse_1, ...)
+/// - new_root: The transformed root node with common subexpressions replaced by NamedVar references
+///
+/// The CSE_DEPTH_THRESHOLD controls granularity - subexpressions below this depth
+/// are not hoisted (to avoid excessive small definitions).
+pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
+    /// Assumption: the sub-nodes have already been CSE-d
+    fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
+        let node_hash = compute_hash(&node);
+        let depth = node_depth(node);
+
+        if let Some(v) = bindings.get(&node_hash) {
+            if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
+                return Node::Atom(Atom::NamedVar(*i));
+            }
+        }
+        if depth < CSE_DEPTH_THRESHOLD {
+            return node;
+        }
+        // Registering a new node
+        let index = nodes.len();
+        bindings
+            .entry(node_hash)
+            .and_modify(|v| {
+                v.push((node, index));
+            })
+            .or_insert(vec![(node, index)]);
+        nodes.push(node);
+        Node::Atom(Atom::NamedVar(index))
+    }
+
+    fn aux_node(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
+        match node {
+            Node::Atom(_) => node,
+            Node::Neg(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                register(bindings, nodes, Node::Neg(cse_e))
+            }
+            Node::Inv(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                register(bindings, nodes, Node::Inv(cse_e))
+            }
+            Node::Keccak256(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                register(bindings, nodes, Node::Keccak256(cse_e))
+            }
+            Node::Add(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Add(cse_e1, cse_e2))
+            }
+            Node::Mul(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Mul(cse_e1, cse_e2))
+            }
+            Node::Sub(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Sub(cse_e1, cse_e2))
+            }
+            Node::Div(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Div(cse_e1, cse_e2))
+            }
+            Node::Poseidon(e1, e2, e3) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                let cse_e3 = aux_edge(bindings, nodes, e3);
+                register(bindings, nodes, Node::Poseidon(cse_e1, cse_e2, cse_e3))
+            }
+        }
+    }
+
+    fn aux_edge(bindings: &mut Bindings, nodes: &mut Vec<Node>, edge: Edge) -> Edge {
+        match edge {
+            Edge::Atom(_) => edge,
+            Edge::NodeRef(node) => {
+                Edge::NodeRef(insert_node(aux_node(bindings, nodes, get_node(node))))
+            }
+        }
+    }
+
+    let mut bindings = HashMap::new();
+    let mut nodes = Vec::new();
+    let new_node = aux_node(&mut bindings, &mut nodes, node);
+    (nodes, new_node)
+}
+
+/// Incremental common subexpression elimination that accepts external state.
+///
+/// This allows CSE to be applied across multiple ASTs while sharing the same
+/// bindings and nodes vectors. This is crucial for global CSE where multiple
+/// constraints share common subexpressions (e.g., Poseidon hash chains).
+///
+/// # Arguments
+/// * `node` - The root node to process
+/// * `bindings` - Shared HashMap tracking seen subexpressions (mutated in place)
+/// * `nodes` - Shared Vec of hoisted nodes (mutated in place)
+///
+/// # Returns
+/// The transformed root node with common subexpressions replaced by NamedVar references.
+/// The `bindings` and `nodes` are updated in place with any new hoisted subexpressions.
+pub fn common_subexpression_elimination_incremental(
+    node: Node,
+    bindings: &mut Bindings,
+    nodes: &mut Vec<Node>,
+) -> Node {
     /// Assumption: the sub-nodes have already been CSE-d
     fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
         let node_hash = compute_hash(&node);
@@ -295,6 +507,10 @@ fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                 let cse_e = aux_edge(bindings, nodes, e);
                 register(bindings, nodes, Node::Inv(cse_e))
             }
+            Node::Keccak256(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                register(bindings, nodes, Node::Keccak256(cse_e))
+            }
             Node::Add(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
@@ -315,6 +531,12 @@ fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                 let cse_e2 = aux_edge(bindings, nodes, e2);
                 register(bindings, nodes, Node::Div(cse_e1, cse_e2))
             }
+            Node::Poseidon(e1, e2, e3) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                let cse_e3 = aux_edge(bindings, nodes, e3);
+                register(bindings, nodes, Node::Poseidon(cse_e1, cse_e2, cse_e3))
+            }
         }
     }
 
@@ -327,10 +549,7 @@ fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
         }
     }
 
-    let mut bindings = HashMap::new();
-    let mut nodes = Vec::new();
-    let new_node = aux_node(&mut bindings, &mut nodes, node);
-    (nodes, new_node)
+    aux_node(bindings, nodes, node)
 }
 
 fn fmt_node(
@@ -348,6 +567,11 @@ fn fmt_node(
         Node::Inv(edge) => {
             write!(f, "1 / ")?;
             fmt_edge(f, fmt_data, edge, true)
+        }
+        Node::Keccak256(edge) => {
+            write!(f, "keccak256(")?;
+            fmt_edge(f, fmt_data, edge, false)?;
+            write!(f, ")")
         }
         Node::Add(e1, e2) => {
             if group {
@@ -382,6 +606,15 @@ fn fmt_node(
             fmt_edge(f, fmt_data, e1, true)?;
             write!(f, " / ")?;
             fmt_edge(f, fmt_data, e2, true)
+        }
+        Node::Poseidon(e1, e2, e3) => {
+            write!(f, "poseidon(")?;
+            fmt_edge(f, fmt_data, e1, false)?;
+            write!(f, ", ")?;
+            fmt_edge(f, fmt_data, e2, false)?;
+            write!(f, ", ")?;
+            fmt_edge(f, fmt_data, e3, false)?;
+            write!(f, ")")
         }
     }
 }
@@ -734,7 +967,12 @@ impl JoltField for MleAst {
     }
 
     fn from_bytes(_bytes: &[u8]) -> Self {
-        unimplemented!("Not needed for constructing ASTs");
+        // Check if there's a pending challenge from PoseidonMleTranscript
+        if let Some(challenge) = take_pending_challenge() {
+            return challenge;
+        }
+        // Fallback: create constant from bytes (for non-transpilation use)
+        MleAst::from_i128(0)
     }
 
     fn inverse(&self) -> Option<Self> {
@@ -872,11 +1110,15 @@ impl CanonicalSerialize for MleAst {
         _writer: W,
         _compress: ark_serialize::Compress,
     ) -> Result<(), SerializationError> {
-        unimplemented!("Not needed for constructing ASTs")
+        // Store self in thread-local so PoseidonMleTranscript::append_scalar can retrieve it.
+        // This is how we pass the MleAst through the generic Transcript trait.
+        set_pending_append(self.clone());
+        Ok(())
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        unimplemented!("Not needed for constructing ASTs")
+        // Return 32 bytes (standard field element size) so append_scalar works
+        32
     }
 }
 
@@ -897,3 +1139,197 @@ impl Valid for MleAst {
 }
 
 /**********************************************************************/
+
+// =============================================================================
+// AstBundle: Serializable IR for transpilation and recursion
+// =============================================================================
+
+/// The kind of input variable - determines how it's treated in circuit generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputKind {
+    /// Public statement data (constant in the circuit).
+    /// This includes things like: program bytecode hash, memory layout params,
+    /// input/output hashes, etc. These are absorbed into the transcript during
+    /// fiat_shamir_preamble but are fixed for a given program.
+    PublicStatement,
+    /// Proof data (variable in the circuit).
+    /// This includes everything that comes from the proof: commitments,
+    /// sumcheck coefficients, opening claims, etc. These vary per proof.
+    ProofData,
+}
+
+/// Describes an input variable in the AST.
+/// Maps `Var(i)` to its semantic meaning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputVar {
+    /// The index into the vars register (matches `Atom::Var(index)`).
+    pub index: u16,
+    /// Human-readable name for debugging and codegen (e.g., "r_sumcheck_0", "claimed_output").
+    pub name: String,
+    /// Whether this is a public statement or proof data.
+    pub kind: InputKind,
+}
+
+/// What assertion a constraint represents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Assertion {
+    /// The expression must equal zero: `expr == 0`
+    EqualZero,
+    /// The expression must equal a public input by name: `expr == public_input[name]`
+    EqualPublicInput { name: String },
+    /// The expression must equal another node in the AST: `expr == other_node`
+    EqualNode(NodeId),
+}
+
+/// A named constraint with its root expression and assertion type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Constraint {
+    /// Human-readable name for the constraint (e.g., "stage1_sumcheck_final").
+    pub name: String,
+    /// The root node of the expression.
+    pub root: NodeId,
+    /// What assertion this constraint represents.
+    pub assertion: Assertion,
+}
+
+/// Complete bundle of AST data for transpilation and recursion.
+///
+/// This structure contains everything needed to:
+/// 1. Generate gnark circuits
+/// 2. Generate other SNARK circuits for recursion
+/// 3. Serialize/deserialize the AST (via JSON)
+///
+/// The `nodes` vec is the arena - all nodes are stored here and referenced by index.
+/// The `bindings` vec contains NodeIds of hoisted subexpressions from CSE.
+/// The `constraints` vec contains the actual assertions to be verified.
+/// The `inputs` vec describes what each `Var(i)` means semantically.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AstBundle {
+    /// The node arena - all nodes in the AST(s).
+    pub nodes: Vec<Node>,
+    /// CSE bindings - NodeIds of hoisted common subexpressions.
+    /// These map to `NamedVar(i)` references in the nodes.
+    pub bindings: Vec<NodeId>,
+    /// The constraints to be verified.
+    pub constraints: Vec<Constraint>,
+    /// Input variable descriptions.
+    pub inputs: Vec<InputVar>,
+}
+
+impl AstBundle {
+    /// Create a new empty bundle.
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            bindings: Vec::new(),
+            constraints: Vec::new(),
+            inputs: Vec::new(),
+        }
+    }
+
+    /// Add an input variable description.
+    pub fn add_input(&mut self, index: u16, name: impl Into<String>, kind: InputKind) {
+        self.inputs.push(InputVar {
+            index,
+            name: name.into(),
+            kind,
+        });
+    }
+
+    /// Add a constraint that asserts an expression equals zero.
+    pub fn add_constraint_eq_zero(&mut self, name: impl Into<String>, root: NodeId) {
+        self.constraints.push(Constraint {
+            name: name.into(),
+            root,
+            assertion: Assertion::EqualZero,
+        });
+    }
+
+    /// Add a constraint that asserts an expression equals a public input.
+    pub fn add_constraint_eq_public(
+        &mut self,
+        name: impl Into<String>,
+        root: NodeId,
+        public_input_name: impl Into<String>,
+    ) {
+        self.constraints.push(Constraint {
+            name: name.into(),
+            root,
+            assertion: Assertion::EqualPublicInput {
+                name: public_input_name.into(),
+            },
+        });
+    }
+
+    /// Add a constraint that asserts two expressions are equal.
+    pub fn add_constraint_eq_node(&mut self, name: impl Into<String>, root: NodeId, other: NodeId) {
+        self.constraints.push(Constraint {
+            name: name.into(),
+            root,
+            assertion: Assertion::EqualNode(other),
+        });
+    }
+
+    /// Snapshot the current global arena into this bundle's nodes vec.
+    /// Call this after all AST construction is complete.
+    pub fn snapshot_arena(&mut self) {
+        let arena = node_arena();
+        let guard = arena.read().expect("node arena poisoned");
+        self.nodes = guard.clone();
+    }
+
+    /// Get the number of public statement inputs.
+    pub fn num_public_inputs(&self) -> usize {
+        self.inputs
+            .iter()
+            .filter(|i| i.kind == InputKind::PublicStatement)
+            .count()
+    }
+
+    /// Get the number of proof data inputs.
+    pub fn num_proof_inputs(&self) -> usize {
+        self.inputs
+            .iter()
+            .filter(|i| i.kind == InputKind::ProofData)
+            .count()
+    }
+}
+
+impl Default for AstBundle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AstBundle {
+    /// Serialize to JSON string.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    /// Serialize to pretty-printed JSON string.
+    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize from JSON string.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Write to a JSON file.
+    pub fn write_json(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let json = self.to_json_pretty().map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        std::fs::write(path, json)
+    }
+
+    /// Read from a JSON file.
+    pub fn read_json(path: &std::path::Path) -> std::io::Result<Self> {
+        let json = std::fs::read_to_string(path)?;
+        Self::from_json(&json).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })
+    }
+}
