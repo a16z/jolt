@@ -93,7 +93,11 @@ pub fn trace(
     ));
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
-    let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
+    let final_memory_state = lazy_trace_iter
+        .final_memory_state
+        .as_mut()
+        .unwrap()
+        .take_as_vec_memory_backend();
     (
         lazy_trace_iter_,
         trace,
@@ -176,6 +180,7 @@ pub fn trace_checkpoints(
         trusted_advice,
         memory_config,
     ));
+    emulator_trace_iter.start_saving_checkpoints();
     let mut checkpoints = Vec::new();
 
     loop {
@@ -249,12 +254,13 @@ fn setup_emulator_with_backtraces<D: MemoryData>(
     emulator
 }
 
+#[derive(Debug)]
 pub struct Checkpoint {
     emulator_state: GeneralizedEmulator<ReplayableMemory>,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
     /// The remaining number of cycles that can be replayed for this checkpoint
-    cycles_remaining: usize,
+    trace_steps_remaining: usize,
     /// The total number of cycles executed so far, including the ones prior to this checkpoint
     cycle_count: usize,
 }
@@ -262,19 +268,47 @@ pub struct Checkpoint {
 // SAFETY: Checkpoint contains only owned data and can be safely sent between threads
 unsafe impl Send for Checkpoint {}
 
+impl Checkpoint {
+    pub(crate) fn new_with_empty_memory<D: MemoryData>(
+        emulator_state: &GeneralizedEmulator<D>,
+        prev_pc: u64,
+        current_traces: &[Cycle],
+        cycle_count: usize,
+    ) -> Self {
+        Self {
+            emulator_state: emulator_state.save_state_with_empty_memory(),
+            prev_pc,
+            current_traces: current_traces.to_vec(),
+            trace_steps_remaining: 0,
+            cycle_count,
+        }
+    }
+
+    pub(crate) fn set_memory_state(&mut self, data: ReplayableMemory, cycles_remaining: usize) {
+        self.trace_steps_remaining = cycles_remaining;
+        self.emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .memory
+            .memory
+            .data = data;
+    }
+}
+
 impl Iterator for Checkpoint {
     type Item = Cycle;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.trace_steps_remaining == 0 {
+            return None;
+        }
+
         if !self.current_traces.is_empty() {
+            self.trace_steps_remaining -= 1;
             return self.current_traces.pop();
         }
         debug_assert!(self.current_traces.is_empty());
 
-        if self.cycles_remaining == 0 {
-            return None;
-        }
-        self.cycles_remaining -= 1;
         self.cycle_count += 1;
 
         step_emulator(
@@ -293,6 +327,7 @@ impl Iterator for Checkpoint {
             }
             None
         } else {
+            self.trace_steps_remaining -= 1;
             self.current_traces.reverse();
             self.current_traces.pop()
         }
@@ -303,9 +338,10 @@ pub struct CheckpointingTraceIter {
     emulator_state: GeneralizedEmulator<CheckpointingMemory>,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
-    cycles_since_last_checkpoint: usize,
+    trace_steps_since_last_checkpoint: usize,
     cycle_count: usize,
     finished: bool,
+    saved_processor_state: Option<Checkpoint>,
     pub(crate) final_memory_state: Option<Memory>,
 }
 
@@ -315,9 +351,10 @@ impl CheckpointingTraceIter {
             emulator_state,
             prev_pc: 0,
             current_traces: vec![],
-            cycles_since_last_checkpoint: 0,
+            trace_steps_since_last_checkpoint: 0,
             cycle_count: 0,
             finished: false,
+            saved_processor_state: None,
             final_memory_state: None,
         }
     }
@@ -339,35 +376,55 @@ impl CheckpointingTraceIter {
 
         let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
 
-        Self {
-            emulator_state,
-            prev_pc: 0,
-            current_traces: vec![],
-            cycles_since_last_checkpoint: 0,
-            cycle_count: 0,
-            finished: true,
-            final_memory_state: Some(emulator::memory::Memory::default()),
-        }
+        Self::new(emulator_state)
     }
 
     pub fn at_tick_boundary(&self) -> bool {
         self.current_traces.is_empty()
     }
 
+    pub fn start_saving_checkpoints(&mut self) {
+        self.saved_processor_state = Some(Checkpoint::new_with_empty_memory(
+            &self.emulator_state,
+            self.prev_pc,
+            &self.current_traces,
+            self.cycle_count,
+        ));
+        self.emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .memory
+            .memory
+            .data
+            .start_saving_checkpoints();
+    }
+
     pub fn save_checkpoint(&mut self) -> Checkpoint {
-        // XXX: What should we do if we're not at a tick boundary?
-        assert!(self.at_tick_boundary());
+        // Save the processor state at the start of the current chunk
+        let mut new_processor_state = Checkpoint::new_with_empty_memory(
+            &self.emulator_state,
+            self.prev_pc,
+            &self.current_traces,
+            self.cycle_count,
+        );
+        core::mem::swap(
+            self.saved_processor_state.as_mut().unwrap(),
+            &mut new_processor_state,
+        );
 
-        let res = Checkpoint {
-            emulator_state: self.emulator_state.save_checkpoint(),
-            prev_pc: self.prev_pc,
-            current_traces: self.current_traces.clone(),
-            cycles_remaining: self.cycles_since_last_checkpoint,
-            cycle_count: self.cycle_count,
-        };
-        self.cycles_since_last_checkpoint = 0;
+        // Store the hashmap of memory assignments since the last chunk
+        let data = self
+            .emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .memory
+            .memory
+            .data
+            .save_checkpoint();
+        new_processor_state.set_memory_state(data, self.trace_steps_since_last_checkpoint);
+        self.trace_steps_since_last_checkpoint = 0;
 
-        res
+        new_processor_state
     }
 
     pub fn get_jolt_device(mut self) -> JoltDevice {
@@ -405,12 +462,12 @@ impl Iterator for CheckpointingTraceIter {
     /// 5. Returns the next trace or None if execution is complete
     fn next(&mut self) -> Option<Self::Item> {
         if !self.current_traces.is_empty() {
+            self.trace_steps_since_last_checkpoint += 1;
             return self.current_traces.pop();
         }
         debug_assert!(self.current_traces.is_empty());
 
         self.cycle_count += 1;
-        self.cycles_since_last_checkpoint += 1;
 
         step_emulator(
             &mut self.emulator_state,
@@ -421,8 +478,7 @@ impl Iterator for CheckpointingTraceIter {
             self.finished = true;
             let emulator = &mut self.emulator_state;
             let cpu = emulator.get_mut_cpu();
-            let memory = std::mem::take(&mut cpu.mmu.memory.memory);
-            self.final_memory_state = Some(memory.into_vec_memory_backend());
+            self.final_memory_state = Some(cpu.mmu.memory.memory.take_as_vec_memory_backend());
 
             if cpu.mmu.jolt_device.as_ref().unwrap().panic {
                 error!(
@@ -433,6 +489,7 @@ impl Iterator for CheckpointingTraceIter {
             }
             None
         } else {
+            self.trace_steps_since_last_checkpoint += 1;
             self.current_traces.reverse();
             self.current_traces.pop()
         }
@@ -500,7 +557,7 @@ impl LazyTraceIterator {
             current_traces: vec![],
             count: 0,
             finished: true,
-            final_memory_state: Some(emulator::memory::Memory::default()),
+            final_memory_state: Some(emulator::memory::Memory::empty()),
         }
     }
 
@@ -565,8 +622,7 @@ impl Iterator for LazyTraceIterator {
             self.finished = true;
             let emulator = get_mut_emulator(&mut self.emulator_state);
             let cpu = emulator.get_mut_cpu();
-            let memory = std::mem::take(&mut cpu.mmu.memory.memory);
-            self.final_memory_state = Some(memory);
+            self.final_memory_state = Some(cpu.mmu.memory.memory.take_as_vec_memory_backend());
 
             if cpu.mmu.jolt_device.as_ref().unwrap().panic {
                 error!(
@@ -756,7 +812,8 @@ mod test {
         };
 
         let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
-        let mut emulator: GeneralizedEmulator<D> = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+        let mut emulator: GeneralizedEmulator<D> =
+            setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
         let mut prev_trace_len = 0;

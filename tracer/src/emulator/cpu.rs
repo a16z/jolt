@@ -8,7 +8,7 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
 use tracing::{info, warn};
 
-use crate::emulator::memory::{CheckpointingMemory, MemoryData, ReplayableMemory};
+use crate::emulator::memory::{MemoryData, ReplayableMemory};
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
@@ -1081,7 +1081,7 @@ impl<D: MemoryData> GeneralizedCpu<D> {
     // NOTE: It's an issue here that Cpu implements Drop. The Drop impl doesn't actually do
     // anything besides warning if the cycle tracing is in the middle of a sequence, but it
     // prevents us from taking the values out of the Cpu for typing reasons.
-    pub fn into_vec_memory_cpu(self) -> Cpu {
+    pub fn into_vec_memory_cpu(mut self) -> Cpu {
         Cpu {
             clock: self.clock,
             xlen: self.xlen,
@@ -1092,8 +1092,7 @@ impl<D: MemoryData> GeneralizedCpu<D> {
             f: self.f,
             pc: self.pc,
             csr: self.csr,
-            // XXX Clone required due to Drop impl
-            mmu: self.mmu.clone().into_vec_memory_mmu(),
+            mmu: self.mmu.take_as_vec_memory_mmu(),
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
             _dump_flag: self._dump_flag,
@@ -1108,8 +1107,8 @@ impl<D: MemoryData> GeneralizedCpu<D> {
     }
 }
 
-impl GeneralizedCpu<CheckpointingMemory> {
-    pub fn save_checkpoint(&mut self) -> GeneralizedCpu<ReplayableMemory> {
+impl<D: MemoryData> GeneralizedCpu<D> {
+    pub fn save_state_with_empty_memory(&self) -> GeneralizedCpu<ReplayableMemory> {
         GeneralizedCpu::<ReplayableMemory> {
             clock: self.clock,
             xlen: self.xlen,
@@ -1119,7 +1118,7 @@ impl GeneralizedCpu<CheckpointingMemory> {
             f: self.f,
             pc: self.pc,
             csr: self.csr,
-            mmu: self.mmu.save_checkpoint(),
+            mmu: self.mmu.save_state_with_empty_memory(),
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
             _dump_flag: self._dump_flag,

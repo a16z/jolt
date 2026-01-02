@@ -2,7 +2,7 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
-use crate::emulator::memory::{CheckpointingMemory, MemoryBackend, MemoryData, ReplayableMemory};
+use crate::emulator::memory::{MemoryBackend, MemoryData, ReplayableMemory};
 use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
@@ -1089,29 +1089,33 @@ impl<D: MemoryData> Mmu<D> {
         Ok(p_address)
     }
 
-    pub fn into_vec_memory_mmu(self) -> Mmu<Vec<u64>> {
+    pub fn take_as_vec_memory_mmu(&mut self) -> Mmu<Vec<u64>> {
         Mmu {
             clock: self.clock,
             xlen: self.xlen,
             ppn: self.ppn,
-            addressing_mode: self.addressing_mode,
-            privilege_mode: self.privilege_mode,
-            memory: self.memory.into_vec_memory_wrapper(),
-            jolt_device: self.jolt_device,
+            addressing_mode: self.addressing_mode.clone(),
+            privilege_mode: self.privilege_mode.clone(),
+            memory: self.memory.take_as_vec_memory_wrapper(),
+            jolt_device: std::mem::take(&mut self.jolt_device),
             mstatus: self.mstatus,
         }
     }
 }
 
-impl Mmu<CheckpointingMemory> {
-    pub fn save_checkpoint(&mut self) -> Mmu<ReplayableMemory> {
+impl<D: MemoryData> Mmu<D> {
+    pub fn save_state_with_empty_memory(&self) -> Mmu<ReplayableMemory> {
         Mmu::<ReplayableMemory> {
             clock: self.clock,
             xlen: self.xlen,
             ppn: self.ppn,
             addressing_mode: self.addressing_mode.clone(),
             privilege_mode: self.privilege_mode.clone(),
-            memory: self.memory.save_checkpoint(),
+            memory: MemoryWrapper {
+                memory: MemoryBackend {
+                    data: ReplayableMemory::empty(),
+                },
+            },
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
         }
@@ -1128,7 +1132,7 @@ pub struct MemoryWrapper<D> {
 impl<D: MemoryData> MemoryWrapper<D> {
     fn new() -> Self {
         MemoryWrapper {
-            memory: MemoryBackend::default(),
+            memory: MemoryBackend::empty(),
         }
     }
 
@@ -1212,19 +1216,9 @@ impl<D: MemoryData> MemoryWrapper<D> {
         self.memory.validate_address(address - DRAM_BASE)
     }
 
-    pub fn into_vec_memory_wrapper(self) -> MemoryWrapper<Vec<u64>> {
+    pub fn take_as_vec_memory_wrapper(&mut self) -> MemoryWrapper<Vec<u64>> {
         MemoryWrapper {
-            memory: self.memory.into_vec_memory_backend(),
-        }
-    }
-}
-
-impl MemoryWrapper<CheckpointingMemory> {
-    pub fn save_checkpoint(&mut self) -> MemoryWrapper<ReplayableMemory> {
-        MemoryWrapper::<ReplayableMemory> {
-            memory: MemoryBackend {
-                data: self.memory.data.save_checkpoint(),
-            },
+            memory: self.memory.take_as_vec_memory_backend(),
         }
     }
 }
