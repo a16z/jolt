@@ -1,3 +1,4 @@
+use crate::subprotocols::streaming_schedule::LinearOnlySchedule;
 use std::{
     collections::HashMap,
     fs::File,
@@ -6,6 +7,12 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
+use crate::zkvm::config::ReadWriteConfig;
+use crate::zkvm::verifier::JoltSharedPreprocessing;
+use crate::zkvm::Serializable;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -20,71 +27,104 @@ use crate::{
             dory::{DoryContext, DoryGlobals},
         },
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{ProverOpeningAccumulator, ReducedOpeningProof},
-        rlc_polynomial::RLCStreamingData,
+        opening_proof::{
+            DoryOpeningState, OpeningAccumulator, ProverOpeningAccumulator, SumcheckId,
+        },
+        rlc_polynomial::{RLCStreamingData, TraceSource},
     },
     pprof_scope,
     subprotocols::{
-        sumcheck::{BatchedSumcheck, SumcheckInstanceProof, UniSkipFirstRoundProof},
+        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
+        sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
+        univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProof},
     },
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
-        config::{get_log_k_chunk, OneHotParams},
-        ram::populate_memory_states,
-        verifier::JoltVerifierPreprocessing,
+        bytecode::read_raf_checking::ReadRafSumcheckParams as BytecodeReadRafParams,
+        claim_reductions::{
+            HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
+            IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
+            InstructionLookupsClaimReductionSumcheckParams,
+            InstructionLookupsClaimReductionSumcheckProver, RaReductionParams,
+            RamRaClaimReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
+            RegistersClaimReductionSumcheckProver,
+        },
+        config::OneHotParams,
+        instruction_lookups::{
+            ra_virtual::InstructionRaSumcheckParams,
+            read_raf_checking::ReadRafSumcheckParams as InstructionReadRafParams,
+        },
+        ram::{
+            hamming_booleanity::HammingBooleanitySumcheckParams,
+            output_check::OutputSumcheckParams,
+            populate_memory_states,
+            ra_virtual::RamRaVirtualParams,
+            raf_evaluation::RafEvaluationSumcheckParams,
+            read_write_checking::RamReadWriteCheckingParams,
+            val_evaluation::{
+                ValEvaluationSumcheckParams,
+                ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
+            },
+            val_final::{ValFinalSumcheckParams, ValFinalSumcheckProver},
+        },
+        registers::{
+            read_write_checking::RegistersReadWriteCheckingParams,
+            val_evaluation::RegistersValEvaluationSumcheckParams,
+        },
+        spartan::{
+            instruction_input::InstructionInputParams,
+            outer::{OuterUniSkipParams, OuterUniSkipProver},
+            product::{
+                ProductVirtualRemainderParams, ProductVirtualUniSkipParams,
+                ProductVirtualUniSkipProver,
+            },
+            shift::ShiftSumcheckParams,
+        },
+        witness::all_committed_polynomials,
     },
 };
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     zkvm::{
-        bytecode::{
-            self, read_raf_checking::ReadRafSumcheckProver as BytecodeReadRafSumcheckProver,
-            BytecodePreprocessing,
-        },
+        bytecode::read_raf_checking::ReadRafSumcheckProver as BytecodeReadRafSumcheckProver,
         fiat_shamir_preamble,
         instruction_lookups::{
-            self, ra_virtual::RaSumcheckProver as LookupsRaSumcheckProver,
+            ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::ReadRafSumcheckProver as LookupsReadRafSumcheckProver,
         },
         proof_serialization::{Claims, JoltProof},
         r1cs::key::UniformSpartanKey,
         ram::{
-            self, gen_ram_memory_states,
-            hamming_booleanity::HammingBooleanitySumcheckProver,
-            output_check::{OutputSumcheckProver, ValFinalSumcheckProver},
-            prover_accumulate_advice,
-            ra_virtual::RaSumcheckProver as RamRaSumcheckProver,
+            gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
+            output_check::OutputSumcheckProver, prover_accumulate_advice,
+            ra_virtual::RamRaVirtualSumcheckProver,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
             read_write_checking::RamReadWriteCheckingProver,
-            val_evaluation::ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
-            RAMPreprocessing,
         },
         registers::{
             read_write_checking::RegistersReadWriteCheckingProver,
             val_evaluation::ValEvaluationSumcheckProver as RegistersValEvaluationSumcheckProver,
         },
         spartan::{
-            claim_reductions::InstructionLookupsClaimReductionSumcheckProver,
-            instruction_input::InstructionInputSumcheckProver, outer::OuterRemainingSumcheckProver,
-            product::ProductVirtualRemainderProver, prove_stage1_uni_skip, prove_stage2_uni_skip,
+            instruction_input::InstructionInputSumcheckProver,
+            outer::{OuterRemainingStreamingSumcheck, OuterSharedState},
+            product::ProductVirtualRemainderProver,
             shift::ShiftSumcheckProver,
         },
-        witness::{AllCommittedPolynomials, CommittedPolynomial},
-        ProverDebugInfo, Serializable,
+        witness::CommittedPolynomial,
+        ProverDebugInfo,
     },
 };
+
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::{MemoryConfig, MemoryLayout};
-use itertools::Itertools;
+use common::jolt_device::MemoryConfig;
+use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
 use tracer::{
-    emulator::memory::Memory,
-    instruction::{Cycle, Instruction},
-    ChunksIterator, JoltDevice, LazyTraceIterator,
+    emulator::memory::Memory, instruction::Cycle, ChunksIterator, JoltDevice, LazyTraceIterator,
 };
 
 /// Jolt CPU prover for RV64IMAC.
@@ -107,8 +147,8 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
+    pub rw_config: ReadWriteConfig,
 }
-
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
 {
@@ -121,13 +161,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_commitment: Option<PCS::Commitment>,
     ) -> Self {
         let memory_config = MemoryConfig {
-            max_untrusted_advice_size: preprocessing.memory_layout.max_untrusted_advice_size,
-            max_trusted_advice_size: preprocessing.memory_layout.max_trusted_advice_size,
-            max_input_size: preprocessing.memory_layout.max_input_size,
-            max_output_size: preprocessing.memory_layout.max_output_size,
-            stack_size: preprocessing.memory_layout.stack_size,
-            memory_size: preprocessing.memory_layout.memory_size,
-            program_size: Some(preprocessing.memory_layout.program_size),
+            max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
+            max_input_size: preprocessing.shared.memory_layout.max_input_size,
+            max_output_size: preprocessing.shared.memory_layout.max_output_size,
+            stack_size: preprocessing.shared.memory_layout.stack_size,
+            memory_size: preprocessing.shared.memory_layout.memory_size,
+            program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
         let (lazy_trace, trace, final_memory_state, program_io) = {
@@ -141,6 +181,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &memory_config,
             )
         };
+
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -205,18 +246,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .filter_map(|cycle| {
                 crate::zkvm::ram::remap_address(
                     cycle.ram_access().address() as u64,
-                    &preprocessing.memory_layout,
+                    &preprocessing.shared.memory_layout,
                 )
             })
             .max()
             .unwrap_or(0)
             .max(
                 crate::zkvm::ram::remap_address(
-                    preprocessing.ram.min_bytecode_address,
-                    &preprocessing.memory_layout,
+                    preprocessing.shared.ram.min_bytecode_address,
+                    &preprocessing.shared.memory_layout,
                 )
                 .unwrap_or(0)
-                    + preprocessing.ram.bytecode_words.len() as u64
+                    + preprocessing.shared.ram.bytecode_words.len() as u64
                     + 1,
             )
             .next_power_of_two() as usize;
@@ -226,8 +267,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let spartan_key = UniformSpartanKey::new(trace.len());
 
-        let (initial_ram_state, final_ram_state) =
-            gen_ram_memory_states::<F>(ram_K, &preprocessing.ram, &program_io, &final_memory_state);
+        let (initial_ram_state, final_ram_state) = gen_ram_memory_states::<F>(
+            ram_K,
+            &preprocessing.shared.ram,
+            &program_io,
+            &final_memory_state,
+        );
+
+        let log_T = trace.len().log_2();
+        let ram_log_K = ram_K.log_2();
+        let rw_config = ReadWriteConfig::new(log_T, ram_log_K);
+        let one_hot_params =
+            OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
 
         Self {
             preprocessing,
@@ -246,11 +297,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             spartan_key,
             initial_ram_state,
             final_ram_state,
-            one_hot_params: OneHotParams::new(
-                padded_trace_len.log_2(),
-                preprocessing.bytecode.code_size,
-                ram_K,
-            ),
+            one_hot_params,
+            rw_config,
         }
     }
 
@@ -272,7 +320,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        tracing::info!("bytecode size: {}", self.preprocessing.bytecode.code_size);
+        tracing::info!(
+            "bytecode size: {}",
+            self.preprocessing.shared.bytecode.code_size
+        );
 
         let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
@@ -283,10 +334,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage4_sumcheck_proof = self.prove_stage4();
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
-        tracing::info!("Stage 7 proving");
-        let trusted_advice_proof = self.prove_trusted_advice();
-        let untrusted_advice_proof = self.prove_untrusted_advice();
-        let reduced_opening_proof = self.prove_stage7(opening_proof_hints);
+        let (trusted_advice_val_evaluation_proof, trusted_advice_val_final_proof) =
+            self.prove_trusted_advice();
+        let (untrusted_advice_val_evaluation_proof, untrusted_advice_val_final_proof) =
+            self.prove_untrusted_advice();
+        let stage7_sumcheck_proof = self.prove_stage7();
+        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
         assert!(
@@ -319,13 +372,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
             stage6_sumcheck_proof,
-            trusted_advice_proof,
-            untrusted_advice_proof,
-            reduced_opening_proof,
+            trusted_advice_val_evaluation_proof,
+            trusted_advice_val_final_proof,
+            untrusted_advice_val_evaluation_proof,
+            untrusted_advice_val_final_proof,
+            stage7_sumcheck_proof,
+            joint_opening_proof,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
-            log_k_chunk: self.one_hot_params.log_k_chunk,
+            rw_config: self.rw_config.clone(),
+            one_hot_config: self.one_hot_params.to_config(),
         };
 
         let prove_duration = start.elapsed();
@@ -347,14 +404,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         Vec<PCS::Commitment>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) {
-        let _guard = (
-            DoryGlobals::initialize(1 << self.one_hot_params.log_k_chunk, self.padded_trace_len),
-            AllCommittedPolynomials::initialize(&self.one_hot_params),
-        );
-
+        let _guard =
+            DoryGlobals::initialize(1 << self.one_hot_params.log_k_chunk, self.padded_trace_len);
         // Generate and commit to all witness polynomials using streaming tier1/tier2 pattern
         let T = DoryGlobals::get_T();
-        let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
+        let polys = all_committed_polynomials(&self.one_hot_params);
         let row_len = DoryGlobals::get_num_columns();
         let num_rows = T / DoryGlobals::get_max_num_rows();
 
@@ -381,7 +435,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                     .map(|poly| {
                         poly.stream_witness_and_commit_rows::<_, PCS>(
                             &self.preprocessing.generators,
-                            self.preprocessing,
+                            &self.preprocessing.shared,
                             &chunk,
                             &self.one_hot_params,
                         )
@@ -404,17 +458,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Tier 2: Compute final commitments from tier1 commitments
         let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
             .into_par_iter()
-            .zip(polys)
+            .zip(&polys)
             .map(|(tier1_commitments, poly)| {
                 let onehot_k = poly.get_onehot_k(&self.one_hot_params);
                 PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
             })
             .unzip();
 
-        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
-        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
-            hint_map.insert(*poly, hint);
-        }
+        let hint_map = HashMap::from_iter(zip_eq(polys, hints));
 
         // Append commitments to transcript
         for commitment in &commitments {
@@ -486,18 +537,32 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 1 baseline");
 
         tracing::info!("Stage 1 proving");
-        let (uni_skip_state, first_round_proof) = prove_stage1_uni_skip(
+        let uni_skip_params = OuterUniSkipParams::new(&self.spartan_key, &mut self.transcript);
+        let mut uni_skip = OuterUniSkipProver::initialize(
+            uni_skip_params.clone(),
             &self.trace,
-            &self.preprocessing.bytecode,
-            &self.spartan_key,
+            &self.preprocessing.shared.bytecode,
+        );
+        let first_round_proof = prove_uniskip_round(
+            &mut uni_skip,
+            &mut self.opening_accumulator,
             &mut self.transcript,
         );
 
-        let mut spartan_outer_remaining = OuterRemainingSumcheckProver::gen(
+        // Every sum-check with num_rounds > 1 requires a schedule
+        // which dictates the compute_message and bind methods.
+        // Using LinearOnlySchedule to benchmark linear-only mode (no streaming).
+        // Outer remaining sumcheck has degree 3 (multiquadratic)
+        // Number of rounds = tau.len() - 1 (cycle variables only)
+        let schedule = LinearOnlySchedule::new(uni_skip_params.tau.len() - 1);
+        let shared = OuterSharedState::new(
             Arc::clone(&self.trace),
-            &self.preprocessing.bytecode,
-            &uni_skip_state,
+            &self.preprocessing.shared.bytecode,
+            &uni_skip_params,
+            &self.opening_accumulator,
         );
+        let mut spartan_outer_remaining: OuterRemainingStreamingSumcheck<_, _> =
+            OuterRemainingStreamingSumcheck::new(shared, schedule);
 
         let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
             vec![&mut spartan_outer_remaining],
@@ -519,42 +584,74 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_current_memory_usage("Stage 2 baseline");
 
         // Stage 2a: Prove univariate-skip first round for product virtualization
-        let (uni_skip_state, first_round_proof) = prove_stage2_uni_skip(
-            &self.trace,
-            &self.opening_accumulator,
-            &self.spartan_key,
+        let uni_skip_params =
+            ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript);
+        let mut uni_skip =
+            ProductVirtualUniSkipProver::initialize(uni_skip_params.clone(), &self.trace);
+        let first_round_proof = prove_uniskip_round(
+            &mut uni_skip,
+            &mut self.opening_accumulator,
             &mut self.transcript,
         );
 
-        let spartan_product_virtual_remainder =
-            ProductVirtualRemainderProver::gen(Arc::clone(&self.trace), &uni_skip_state);
-        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::gen(
-            &self.trace,
-            &self.one_hot_params,
-            &self.program_io.memory_layout,
+        // Initialization params
+        let spartan_product_virtual_remainder_params = ProductVirtualRemainderParams::new(
+            self.trace.len(),
+            uni_skip_params,
             &self.opening_accumulator,
         );
-        let ram_read_write_checking = RamReadWriteCheckingProver::gen(
-            &self.initial_ram_state,
-            &self.preprocessing.bytecode,
+        let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
-            &self.trace,
             &self.one_hot_params,
+            &self.opening_accumulator,
+        );
+        let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.one_hot_params,
+            self.trace.len(),
+            &self.rw_config,
         );
-        let ram_output_check = OutputSumcheckProver::gen(
+        let ram_output_check_params = OutputSumcheckParams::new(
+            self.one_hot_params.ram_k,
+            &self.program_io,
+            &mut self.transcript,
+        );
+        let instruction_claim_reduction_params =
+            InstructionLookupsClaimReductionSumcheckParams::new(
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+
+        // Initialization
+        let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
+            spartan_product_virtual_remainder_params,
+            Arc::clone(&self.trace),
+        );
+        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::initialize(
+            ram_raf_evaluation_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+        );
+        let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
+            ram_read_write_checking_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
+            &self.initial_ram_state,
+        );
+        let ram_output_check = OutputSumcheckProver::initialize(
+            ram_output_check_params,
             &self.initial_ram_state,
             &self.final_ram_state,
-            &self.program_io,
-            &self.one_hot_params,
-            &mut self.transcript,
+            &self.program_io.memory_layout,
         );
-        let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckProver::gen(
-            Arc::clone(&self.trace),
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        let instruction_claim_reduction =
+            InstructionLookupsClaimReductionSumcheckProver::initialize(
+                instruction_claim_reduction_params,
+                Arc::clone(&self.trace),
+            );
 
         #[cfg(feature = "allocative")]
         {
@@ -599,16 +696,34 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
 
-        let spartan_shift = ShiftSumcheckProver::gen(
-            Arc::clone(&self.trace),
-            &self.preprocessing.bytecode,
+        // Initialization params
+        let spartan_shift_params = ShiftSumcheckParams::new(
+            self.trace.len().log_2(),
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let spartan_instruction_input = InstructionInputSumcheckProver::gen(
-            &self.trace,
+        let spartan_instruction_input_params =
+            InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript);
+        let spartan_registers_claim_reduction_params = RegistersClaimReductionSumcheckParams::new(
+            self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
+        );
+
+        // Initialize
+        let spartan_shift = ShiftSumcheckProver::initialize(
+            spartan_shift_params,
+            Arc::clone(&self.trace),
+            &self.preprocessing.shared.bytecode,
+        );
+        let spartan_instruction_input = InstructionInputSumcheckProver::initialize(
+            spartan_instruction_input_params,
+            &self.trace,
+            &self.opening_accumulator,
+        );
+        let spartan_registers_claim_reduction = RegistersClaimReductionSumcheckProver::initialize(
+            spartan_registers_claim_reduction_params,
+            Arc::clone(&self.trace),
         );
 
         #[cfg(feature = "allocative")]
@@ -618,10 +733,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "InstructionInputSumcheckProver",
                 &spartan_instruction_input,
             );
+            print_data_structure_heap_usage(
+                "RegistersClaimReductionSumcheckProver",
+                &spartan_registers_claim_reduction,
+            );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> =
-            vec![Box::new(spartan_shift), Box::new(spartan_instruction_input)];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+            Box::new(spartan_shift),
+            Box::new(spartan_instruction_input),
+            Box::new(spartan_registers_claim_reduction),
+        ];
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
@@ -643,12 +765,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        let registers_read_write_checking = RegistersReadWriteCheckingProver::gen(
-            &self.trace,
-            &self.preprocessing.bytecode,
-            &self.program_io.memory_layout,
+        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
+            self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
+            &self.rw_config,
         );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
@@ -657,26 +778,35 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.opening_accumulator,
             &mut self.transcript,
+            self.rw_config
+                .needs_single_advice_opening(self.trace.len().log_2()),
         );
-        let ram_ra_booleanity = ram::gen_ra_booleanity_prover(
-            &self.trace,
-            &self.program_io.memory_layout,
+        let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
-            &mut self.transcript,
-        );
-        let ram_val_evaluation = RamValEvaluationSumcheckProver::gen(
-            &self.trace,
-            &self.preprocessing.bytecode,
-            &self.program_io.memory_layout,
+            &self.opening_accumulator,
             &self.initial_ram_state,
-            &self.one_hot_params,
-            &self.opening_accumulator,
+            self.trace.len(),
         );
-        let ram_val_final = ValFinalSumcheckProver::gen(
-            &self.trace,
-            &self.preprocessing.bytecode,
+        let ram_val_final_params =
+            ValFinalSumcheckParams::new_from_prover(self.trace.len(), &self.opening_accumulator);
+
+        let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
+            registers_read_write_checking_params,
+            self.trace.clone(),
+            &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
-            &self.opening_accumulator,
+        );
+        let ram_val_evaluation = RamValEvaluationSumcheckProver::initialize(
+            ram_val_evaluation_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
+        );
+        let ram_val_final = ValFinalSumcheckProver::initialize(
+            ram_val_final_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
         );
 
         #[cfg(feature = "allocative")]
@@ -685,14 +815,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "RegistersReadWriteCheckingProver",
                 &registers_read_write_checking,
             );
-            print_data_structure_heap_usage("ram BooleanitySumcheckProver", &ram_ra_booleanity);
             print_data_structure_heap_usage("RamValEvaluationSumcheckProver", &ram_val_evaluation);
             print_data_structure_heap_usage("ValFinalSumcheckProver", &ram_val_final);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_read_write_checking),
-            Box::new(ram_ra_booleanity),
             Box::new(ram_val_evaluation),
             Box::new(ram_val_final),
         ];
@@ -716,27 +844,35 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     fn prove_stage5(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
-
-        let registers_val_evaluation = RegistersValEvaluationSumcheckProver::gen(
-            &self.trace,
-            &self.preprocessing.bytecode,
-            &self.program_io.memory_layout,
-            &self.opening_accumulator,
-        );
-        let ram_hamming_booleanity =
-            HammingBooleanitySumcheckProver::gen(&self.trace, &self.opening_accumulator);
-        let ram_ra_virtual = RamRaSumcheckProver::gen(
-            &self.trace,
-            &self.program_io.memory_layout,
+        let registers_val_evaluation_params =
+            RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
+        let ram_ra_reduction_params = RaReductionParams::new(
+            self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_read_raf = LookupsReadRafSumcheckProver::gen(
-            &self.trace,
+        let lookups_read_raf_params = InstructionReadRafParams::new(
+            self.trace.len().log_2(),
+            &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+
+        let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
+            registers_val_evaluation_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
+        );
+        let ram_ra_reduction = RamRaClaimReductionSumcheckProver::initialize(
+            ram_ra_reduction_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
+        );
+        let lookups_read_raf =
+            LookupsReadRafSumcheckProver::initialize(lookups_read_raf_params, &self.trace);
 
         #[cfg(feature = "allocative")]
         {
@@ -744,18 +880,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "RegistersValEvaluationSumcheckProver",
                 &registers_val_evaluation,
             );
-            print_data_structure_heap_usage(
-                "ram HammingBooleanitySumcheckProver",
-                &ram_hamming_booleanity,
-            );
-            print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
+            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
             print_data_structure_heap_usage("LookupsReadRafSumcheckProver", &lookups_read_raf);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_val_evaluation),
-            Box::new(ram_hamming_booleanity),
-            Box::new(ram_ra_virtual),
+            Box::new(ram_ra_reduction),
             Box::new(lookups_read_raf),
         ];
 
@@ -779,71 +910,86 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6 baseline");
 
-        let bytecode_read_raf = BytecodeReadRafSumcheckProver::gen(
-            &self.trace,
-            &self.preprocessing.bytecode,
+        let bytecode_read_raf_params = BytecodeReadRafParams::gen(
+            &self.preprocessing.shared.bytecode,
+            self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::gen_ra_one_hot_provers(
-            &self.trace,
-            &self.preprocessing.bytecode,
+
+        let ram_hamming_booleanity_params =
+            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
+
+        let booleanity_params = BooleanitySumcheckParams::new(
+            self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_hamming_weight = ram::gen_ra_hamming_weight_prover(
+
+        let ram_ra_virtual_params = RamRaVirtualParams::new(
+            self.trace.len(),
+            &self.one_hot_params,
+            &self.opening_accumulator,
+        );
+        let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let inc_reduction_params = IncClaimReductionSumcheckParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+
+        let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
+            bytecode_read_raf_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+        );
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
+
+        let booleanity = BooleanitySumcheckProver::initialize(
+            booleanity_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
+        );
+
+        let ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
+            ram_ra_virtual_params,
             &self.trace,
             &self.program_io.memory_layout,
             &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
         );
-        let lookups_ra_virtual = LookupsRaSumcheckProver::gen(
-            &self.trace,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-        );
-        let (lookups_ra_booleanity, lookups_ra_hamming_weight) =
-            instruction_lookups::gen_ra_one_hot_provers(
-                &self.trace,
-                &self.one_hot_params,
-                &self.opening_accumulator,
-                &mut self.transcript,
-            );
+        let lookups_ra_virtual =
+            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
+        let inc_reduction =
+            IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("BytecodeReadRafSumcheckProver", &bytecode_read_raf);
             print_data_structure_heap_usage(
-                "bytecode HammingWeightSumcheckProver",
-                &bytecode_hamming_weight,
+                "ram HammingBooleanitySumcheckProver",
+                &ram_hamming_booleanity,
             );
-            print_data_structure_heap_usage(
-                "bytecode BooleanitySumcheckProver",
-                &bytecode_booleanity,
-            );
-            print_data_structure_heap_usage("ram HammingWeightSumcheckProver", &ram_hamming_weight);
+            print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
+            print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
-            print_data_structure_heap_usage(
-                "lookups BooleanitySumcheckProver",
-                &lookups_ra_booleanity,
-            );
-            print_data_structure_heap_usage(
-                "lookups HammingWeightSumcheckProver",
-                &lookups_ra_hamming_weight,
-            );
+            print_data_structure_heap_usage("IncClaimReductionSumcheckProver", &inc_reduction);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(bytecode_read_raf),
-            Box::new(bytecode_hamming_weight),
-            Box::new(bytecode_booleanity),
-            Box::new(ram_hamming_weight),
+            Box::new(ram_hamming_booleanity),
+            Box::new(booleanity),
+            Box::new(ram_ra_virtual),
             Box::new(lookups_ra_virtual),
-            Box::new(lookups_ra_booleanity),
-            Box::new(lookups_ra_hamming_weight),
+            Box::new(inc_reduction),
         ];
 
         #[cfg(feature = "allocative")]
@@ -862,84 +1008,252 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_trusted_advice(&mut self) -> Option<PCS::Proof> {
-        self.advice
-            .trusted_advice_polynomial
-            .as_ref()
-            .map(|trusted_advice_poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-                let (point, _) = self
-                    .opening_accumulator
-                    .get_trusted_advice_opening()
-                    .unwrap();
-                PCS::prove(
-                    &self.preprocessing.generators,
-                    trusted_advice_poly,
-                    &point.r,
-                    None,
-                    &mut self.transcript,
-                )
-            })
-    }
+    fn prove_trusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
+        use crate::poly::opening_proof::SumcheckId;
+        let poly = match &self.advice.trusted_advice_polynomial {
+            Some(p) => p,
+            None => return (None, None),
+        };
+        let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
 
-    #[tracing::instrument(skip_all)]
-    fn prove_untrusted_advice(&mut self) -> Option<PCS::Proof> {
-        self.advice
-            .untrusted_advice_polynomial
-            .as_ref()
-            .map(|untrusted_advice_poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
-                let (point, _) = self
-                    .opening_accumulator
-                    .get_untrusted_advice_opening()
-                    .unwrap();
-                PCS::prove(
-                    &self.preprocessing.generators,
-                    untrusted_advice_poly,
-                    &point.r,
-                    None,
-                    &mut self.transcript,
-                )
-            })
-    }
-
-    #[tracing::instrument(skip_all)]
-    fn prove_stage7(
-        &mut self,
-        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
-        let _guard = (
-            DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len),
-            AllCommittedPolynomials::initialize(&self.one_hot_params),
+        // Prove at RamValEvaluation point
+        let (point_val, _) = self
+            .opening_accumulator
+            .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
+            .unwrap();
+        let proof_val = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val.r,
+            None,
+            &mut self.transcript,
         );
 
-        let all_polys: Vec<CommittedPolynomial> =
-            AllCommittedPolynomials::iter().copied().collect();
-        let polynomials_map = CommittedPolynomial::generate_witness_batch(
-            &all_polys,
-            self.preprocessing,
+        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
+        let proof_val_final = if self
+            .rw_config
+            .needs_single_advice_opening(self.trace.len().log_2())
+        {
+            None
+        } else {
+            let (point_val_final, _) = self
+                .opening_accumulator
+                .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                .unwrap();
+            Some(PCS::prove(
+                &self.preprocessing.generators,
+                poly,
+                &point_val_final.r,
+                None,
+                &mut self.transcript,
+            ))
+        };
+
+        (Some(proof_val), proof_val_final)
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prove_untrusted_advice(&mut self) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
+        use crate::poly::opening_proof::SumcheckId;
+        let poly = match &self.advice.untrusted_advice_polynomial {
+            Some(p) => p,
+            None => return (None, None),
+        };
+        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
+
+        // Prove at RamValEvaluation point
+        let (point_val, _) = self
+            .opening_accumulator
+            .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
+            .unwrap();
+        let proof_val = PCS::prove(
+            &self.preprocessing.generators,
+            poly,
+            &point_val.r,
+            None,
+            &mut self.transcript,
+        );
+
+        // Prove at RamValFinalEvaluation point - only if different from ValEvaluation
+        let proof_val_final = if self
+            .rw_config
+            .needs_single_advice_opening(self.trace.len().log_2())
+        {
+            None
+        } else {
+            let (point_val_final, _) = self
+                .opening_accumulator
+                .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
+                .unwrap();
+            Some(PCS::prove(
+                &self.preprocessing.generators,
+                poly,
+                &point_val_final.r,
+                None,
+                &mut self.transcript,
+            ))
+        };
+
+        (Some(proof_val), proof_val_final)
+    }
+
+    /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
+    #[tracing::instrument(skip_all)]
+    fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+        // Create params and prover for HammingWeightClaimReduction
+        // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
+        let hw_params = HammingWeightClaimReductionParams::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let hw_prover = HammingWeightClaimReductionProver::initialize(
+            hw_params,
             &self.trace,
+            &self.preprocessing.shared,
             &self.one_hot_params,
         );
 
         #[cfg(feature = "allocative")]
-        print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
+        print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
+
+        // Run sumcheck (only log_k_chunk rounds!)
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
+            vec![Box::new(hw_prover)];
+
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
+        tracing::info!("Stage 7 proving");
+        let (sumcheck_proof, _) = BatchedSumcheck::prove(
+            instances.iter_mut().map(|v| &mut **v as _).collect(),
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        );
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
+        drop_in_background_thread(instances);
+
+        sumcheck_proof
+    }
+
+    /// Stage 8: Dory batch opening proof.
+    /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
+    #[tracing::instrument(skip_all)]
+    fn prove_stage8(
+        &mut self,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> PCS::Proof {
+        tracing::info!("Stage 8 proving (Dory batch opening)");
+
+        let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
+
+        // Get the unified opening point from HammingWeightClaimReduction
+        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
+        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::HammingWeightClaimReduction,
+        );
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+
+        // 1. Collect all (polynomial, claim) pairs
+        let mut polynomial_claims = Vec::new();
+
+        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
+        // These are at r_cycle_stage6 only (length log_T)
+        let (_ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let (_rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
+
+        #[cfg(test)]
+        {
+            // Verify that Inc openings are at the same point as r_cycle from HammingWeightClaimReduction
+            let r_cycle_stage6 = &opening_point.r[log_k_chunk..];
+
+            debug_assert_eq!(
+                _ram_inc_point.r.as_slice(),
+                r_cycle_stage6,
+                "RamInc opening point should match r_cycle from HammingWeightClaimReduction"
+            );
+            debug_assert_eq!(
+                _rd_inc_point.r.as_slice(),
+                r_cycle_stage6,
+                "RdInc opening point should match r_cycle from HammingWeightClaimReduction"
+            );
+        }
+
+        // Apply Lagrange factor for dense polys: ∏_{i<log_k_chunk} (1 - r_address[i])
+        // Because dense polys have fewer variables, we need to account for this
+        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
+        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+
+        // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
+        // These are at (r_address_stage7, r_cycle_stage6)
+        for i in 0..self.one_hot_params.instruction_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.bytecode_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.ram_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
+        }
+
+        // 2. Sample gamma and compute powers for RLC
+        let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
+        self.transcript.append_scalars(&claims);
+        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+
+        // Build DoryOpeningState
+        let state = DoryOpeningState {
+            opening_point: opening_point.r.clone(),
+            gamma_powers,
+            polynomial_claims,
+        };
 
         let streaming_data = Arc::new(RLCStreamingData {
-            bytecode: self.preprocessing.bytecode.clone(),
-            memory_layout: self.preprocessing.memory_layout.clone(),
+            bytecode: self.preprocessing.shared.bytecode.clone(),
+            memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 
-        self.opening_accumulator.reduce_and_prove(
-            polynomials_map,
+        // Build streaming RLC polynomial directly (no witness poly regeneration!)
+        // Use materialized trace (default, single pass) instead of lazy trace
+        let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
+            self.one_hot_params.clone(),
+            TraceSource::Materialized(Arc::clone(&self.trace)),
+            streaming_data,
             opening_proof_hints,
+        );
+
+        // Dory opening proof at the unified point
+        PCS::prove(
             &self.preprocessing.generators,
+            &joint_poly,
+            &opening_point.r,
+            Some(hint),
             &mut self.transcript,
-            Some((
-                self.lazy_trace.clone(),
-                streaming_data,
-                self.one_hot_params.clone(),
-            )),
         )
     }
 }
@@ -950,12 +1264,22 @@ pub struct JoltAdvice<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub trusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
+#[cfg(feature = "allocative")]
+fn write_instance_flamegraph_svg(
+    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
+    path: impl AsRef<Path>,
+) {
+    let mut flamegraph = FlameGraphBuilder::default();
+    for instance in instances {
+        instance.update_flamegraph(&mut flamegraph)
+    }
+    write_flamegraph_svg(flamegraph, path);
+}
+
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub generators: PCS::ProverSetup,
-    pub bytecode: BytecodePreprocessing,
-    pub ram: RAMPreprocessing,
-    pub memory_layout: MemoryLayout,
+    pub shared: JoltSharedPreprocessing,
 }
 
 impl<F, PCS> JoltProverPreprocessing<F, PCS>
@@ -964,26 +1288,21 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
-    pub fn gen(
-        bytecode: Vec<Instruction>,
-        memory_layout: MemoryLayout,
-        memory_init: Vec<(u64, u8)>,
+    pub fn new(
+        shared: JoltSharedPreprocessing,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
+        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = max_trace_length.next_power_of_two();
-        let log_chunk = get_log_k_chunk(max_T);
-
-        let bytecode = BytecodePreprocessing::preprocess(bytecode);
-        let ram = RAMPreprocessing::preprocess(memory_init);
-
-        let generators = PCS::setup_prover(log_chunk + max_T.log_2());
-
-        JoltProverPreprocessing {
-            generators,
-            bytecode,
-            ram,
-            memory_layout,
-        }
+        let max_log_T = max_T.log_2();
+        // Use the maximum possible log_k_chunk for generator setup
+        let max_log_k_chunk = if max_log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
+        let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
+        JoltProverPreprocessing { generators, shared }
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -1004,45 +1323,17 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessing<F, PCS>>
-    for JoltVerifierPreprocessing<F, PCS>
-{
-    fn from(preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
-        let generators = PCS::setup_verifier(&preprocessing.generators);
-        Self {
-            generators,
-            bytecode: preprocessing.bytecode.clone(),
-            ram: preprocessing.ram.clone(),
-            memory_layout: preprocessing.memory_layout.clone(),
-        }
-    }
-}
-
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Serializable
     for JoltProverPreprocessing<F, PCS>
 {
 }
 
-#[cfg(feature = "allocative")]
-fn write_instance_flamegraph_svg(
-    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
-    path: impl AsRef<Path>,
-) {
-    let mut flamegraph = FlameGraphBuilder::default();
-    for instance in instances {
-        instance.update_flamegraph(&mut flamegraph)
-    }
-    write_flamegraph_svg(flamegraph, path);
-}
-
 #[cfg(test)]
 mod tests {
     use crate::host;
-    use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::zkvm::prover::JoltProverPreprocessing;
-    use crate::zkvm::verifier::{JoltVerifier, JoltVerifierPreprocessing};
+    use crate::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
     use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
-    use ark_bn254::Fr;
     use serial_test::serial;
 
     #[test]
@@ -1052,21 +1343,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1086,17 +1387,24 @@ mod tests {
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
         );
+
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone(), 256);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let log_chunk = 8; // Use default log_chunk for tests
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
 
         assert!(
             prover.padded_trace_len <= (1 << log_chunk),
@@ -1108,7 +1416,10 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1134,20 +1445,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1183,20 +1505,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1240,16 +1573,21 @@ mod tests {
 
         let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
-        let max_trusted_advice_size = preprocessing.memory_layout.max_trusted_advice_size;
+        let max_trusted_advice_size = prover_preprocessing
+            .shared
+            .memory_layout
+            .max_trusted_advice_size;
         let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
         populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
         let trusted_advice_commitment = {
@@ -1264,13 +1602,13 @@ mod tests {
             let (trusted_advice_commitment, _hint) =
                 <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
                     &poly,
-                    &preprocessing.generators,
+                    &prover_preprocessing.generators,
                 );
             trusted_advice_commitment
         };
 
         let prover = RV64IMACProver::gen_from_elf(
-            &preprocessing,
+            &prover_preprocessing,
             elf_contents,
             &inputs,
             &untrusted_advice,
@@ -1280,7 +1618,10 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1319,20 +1660,25 @@ mod tests {
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[], &[], &[], None);
+            RV64IMACProver::gen_from_elf(&prover_preprocessing, elf_contents, &[], &[], &[], None);
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1352,20 +1698,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &inputs, &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1385,20 +1742,31 @@ mod tests {
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[50], &[], &[], None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &[50],
+            &[],
+            &[],
+            None,
+        );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -1422,15 +1790,17 @@ mod tests {
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
 
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
 
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+
         let prover = RV64IMACProver::gen_from_trace(
-            &preprocessing,
+            &prover_preprocessing,
             lazy_trace,
             trace,
             program_io.clone(),
@@ -1440,8 +1810,10 @@ mod tests {
 
         let (proof, _) = prover.prove();
 
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
@@ -1458,12 +1830,13 @@ mod tests {
             program.trace(&inputs, &[], &[]);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let preprocessing = JoltProverPreprocessing::gen(
+        let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
-            1 << 16,
         );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
 
         // change memory address of output & termination bit to the same address as input
         // changes here should not be able to spoof the verifier result
@@ -1472,7 +1845,7 @@ mod tests {
         program_io.memory_layout.termination = program_io.memory_layout.input_start;
 
         let prover = RV64IMACProver::gen_from_trace(
-            &preprocessing,
+            &prover_preprocessing,
             lazy_trace,
             trace,
             program_io.clone(),
@@ -1481,8 +1854,10 @@ mod tests {
         );
         let (proof, _) = prover.prove();
 
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
         let verifier =
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();

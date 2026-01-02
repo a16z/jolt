@@ -22,7 +22,8 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
@@ -41,6 +42,60 @@ use crate::{
 /// Degree bound of the sumcheck round polynomials in [`RafEvaluationSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
 
+#[derive(Allocative, Clone)]
+pub struct RafEvaluationSumcheckParams<F: JoltField> {
+    /// log K (number of rounds)
+    pub log_K: usize,
+    /// Start address for unmap polynomial
+    pub start_address: u64,
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+impl<F: JoltField> RafEvaluationSumcheckParams<F> {
+    pub fn new(
+        memory_layout: &MemoryLayout,
+        one_hot_params: &OneHotParams,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Self {
+        let start_address = memory_layout.get_lowest_address();
+        let log_K = one_hot_params.ram_k.log_2();
+        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamAddress,
+            SumcheckId::SpartanOuter,
+        );
+        Self {
+            log_K,
+            start_address,
+            r_cycle,
+        }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.log_K
+    }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, raf_input_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamAddress,
+            SumcheckId::SpartanOuter,
+        );
+        raf_input_claim
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
 /// Sumcheck prover for [`RafEvaluationSumcheckVerifier`].
 #[derive(Allocative)]
 pub struct RafEvaluationSumcheckProver<F: JoltField> {
@@ -48,80 +103,89 @@ pub struct RafEvaluationSumcheckProver<F: JoltField> {
     ra: MultilinearPolynomial<F>,
     /// The unmap polynomial
     unmap: UnmapRamAddressPolynomial<F>,
-    #[allocative(skip)]
-    params: RafEvaluationSumcheckParams<F>,
+    pub params: RafEvaluationSumcheckParams<F>,
 }
 
 impl<F: JoltField> RafEvaluationSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::gen")]
-    pub fn gen(
+    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::initialize")]
+    pub fn initialize(
+        params: RafEvaluationSumcheckParams<F>,
         trace: &[Cycle],
-        one_hot_params: &OneHotParams,
         memory_layout: &MemoryLayout,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let T = trace.len();
+        let K = 1 << params.log_K;
 
-        let params =
-            RafEvaluationSumcheckParams::new(memory_layout, one_hot_params, opening_accumulator);
+        // Two-table split-eq:
+        // EqPolynomial::evals uses big-endian bit order: r_cycle[0] is MSB, r_cycle[last] is LSB.
+        // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
+        let r_cycle = &params.r_cycle.r;
+        let log_T = r_cycle.len();
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+        let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
 
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = (T / num_chunks).max(1);
-
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamAddress,
-            SumcheckId::SpartanOuter,
+        let (E_hi, E_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
         );
 
-        // TODO(moodlezoup): reuse
-        let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle.r);
+        let in_len = E_lo.len(); // 2^lo_bits
 
-        let ra_evals: Vec<F> = trace
+        // Split E_hi into chunks for parallel processing
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = E_hi.len().div_ceil(num_threads);
+
+        // Each thread computes partial ra_evals using split-eq optimization
+        let ra_evals: Vec<F> = E_hi
             .par_chunks(chunk_size)
             .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
-                let mut result = unsafe_allocate_zero_vec(one_hot_params.ram_k);
-                let mut j = chunk_index * chunk_size;
-                for cycle in trace_chunk {
-                    if let Some(k) =
-                        remap_address(cycle.ram_access().address() as u64, memory_layout)
-                    {
-                        result[k as usize] += eq_r_cycle[j];
+            .map(|(chunk_idx, chunk)| {
+                let mut partial: Vec<F> = unsafe_allocate_zero_vec(K);
+
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, &e_hi) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
+                    let c_hi_base = c_hi * in_len;
+
+                    for c_lo in 0..in_len {
+                        let j = c_hi_base + c_lo;
+                        if j >= T {
+                            break;
+                        }
+
+                        if let Some(k) =
+                            remap_address(trace[j].ram_access().address() as u64, memory_layout)
+                        {
+                            partial[k as usize] += e_hi * E_lo[c_lo];
+                        }
                     }
-                    j += 1;
                 }
-                result
+
+                partial
             })
             .reduce(
-                || unsafe_allocate_zero_vec(one_hot_params.ram_k),
+                || unsafe_allocate_zero_vec(K),
                 |mut running, new| {
                     running
                         .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
+                        .zip(new.par_iter())
+                        .for_each(|(x, y)| *x += *y);
                     running
                 },
             );
+
         let ra = MultilinearPolynomial::from(ra_evals);
         let lowest_memory_address = memory_layout.get_lowest_address();
-        let unmap =
-            UnmapRamAddressPolynomial::new(one_hot_params.ram_k.log_2(), lowest_memory_address);
+        let unmap = UnmapRamAddressPolynomial::new(K.log_2(), lowest_memory_address);
 
         Self { ra, unmap, params }
     }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluationSumcheckProver<F> {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::compute_message")]
@@ -163,7 +227,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_address = get_opening_point::<F>(sumcheck_challenges);
+        let r_address = self.params.normalize_opening_point(sumcheck_challenges);
         let r_cycle = &self.params.r_cycle;
         let ra_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle.r].concat());
         accumulator.append_virtual(
@@ -200,16 +264,8 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RafEvaluationSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim(accumulator)
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -217,7 +273,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r = get_opening_point::<F>(sumcheck_challenges);
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
         // Compute unmap evaluation at r
         let unmap_eval =
             UnmapRamAddressPolynomial::<F>::new(self.params.log_K, self.params.start_address)
@@ -236,7 +292,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_address = get_opening_point::<F>(sumcheck_challenges);
+        let r_address = self.params.normalize_opening_point(sumcheck_challenges);
         let r_cycle = &self.params.r_cycle;
         let ra_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle.r].concat());
         accumulator.append_virtual(
@@ -247,101 +303,3 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
     }
 }
-pub struct RafEvaluationSumcheckParams<F: JoltField> {
-    /// log K (number of rounds)
-    log_K: usize,
-    /// Start address for unmap polynomial
-    start_address: u64,
-    r_cycle: OpeningPoint<BIG_ENDIAN, F>,
-}
-
-impl<F: JoltField> RafEvaluationSumcheckParams<F> {
-    pub fn new(
-        memory_layout: &MemoryLayout,
-        one_hot_params: &OneHotParams,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Self {
-        let start_address = memory_layout.get_lowest_address();
-        let log_K = one_hot_params.ram_k.log_2();
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamAddress,
-            SumcheckId::SpartanOuter,
-        );
-        Self {
-            log_K,
-            start_address,
-            r_cycle,
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.log_K
-    }
-
-    pub fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, raf_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamAddress,
-            SumcheckId::SpartanOuter,
-        );
-        raf_input_claim
-    }
-}
-
-fn get_opening_point<F: JoltField>(
-    sumcheck_challenges: &[F::Challenge],
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
-}
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::transcripts::Blake2bTranscript;
-//     use ark_bn254::Fr;
-
-//     #[test]
-//     fn test_raf_evaluation_no_ops() {
-//         const K: usize = 1 << 16;
-//         const T: usize = 1 << 8;
-
-//         let memory_layout = MemoryLayout {
-//             max_input_size: 256,
-//             max_output_size: 256,
-//             input_start: 0x80000000,
-//             input_end: 0x80000100,
-//             output_start: 0x80001000,
-//             output_end: 0x80001100,
-//             stack_size: 1024,
-//             stack_end: 0x7FFFFF00,
-//             memory_size: 0x10000,
-//             memory_end: 0x80010000,
-//             panic: 0x80002000,
-//             termination: 0x80002001,
-//             io_end: 0x80002002,
-//         };
-
-//         // Create trace with only no-ops (address = 0)
-//         let mut trace = Vec::new();
-//         for i in 0..T {
-//             trace.push(Cycle::NoOp(i));
-//         }
-
-//         let mut prover_transcript = Blake2bTranscript::new(b"test_no_ops");
-//         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-//         // Prove
-//         let proof =
-//             RafEvaluationProof::prove(&trace, &memory_layout, r_cycle, K, &mut prover_transcript);
-
-//         // Verify
-//         let mut verifier_transcript = Blake2bTranscript::new(b"test_no_ops");
-//         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-
-//         let r_address_result = proof.verify(K, &mut verifier_transcript, &memory_layout);
-
-//         assert!(
-//             r_address_result.is_ok(),
-//             "No-op RAF evaluation verification failed"
-//         );
-//     }
-// }
