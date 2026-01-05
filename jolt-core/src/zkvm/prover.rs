@@ -946,8 +946,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
             bytecode_read_raf_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
+            Arc::clone(&self.trace),
+            Arc::new(self.preprocessing.shared.bytecode.clone()),
         );
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
