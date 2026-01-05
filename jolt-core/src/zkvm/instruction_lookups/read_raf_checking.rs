@@ -592,9 +592,12 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         {
             let span = tracing::span!(tracing::Level::INFO, "Materialize combined_val_poly");
             let _guard = span.enter();
-            let left_prefix = self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
-            let right_prefix = self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
-            let identity_prefix = self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
+            let gamma_left_prefix =
+                gamma * self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
+            let gamma_sqr_right_prefix =
+                gamma_sqr * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
+            let gamma_sqr_identity_prefix =
+                gamma_sqr * self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
             combined_val_poly
                 .par_iter_mut()
                 .zip(std::mem::take(&mut self.lookup_tables))
@@ -613,9 +616,9 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
                     }
                     // Add RAF operand contribution (γ·RafVal_j(k))
                     if is_interleaved_operands {
-                        *val += gamma * left_prefix + gamma_sqr * right_prefix;
+                        *val += gamma_left_prefix + gamma_sqr_right_prefix;
                     } else {
-                        *val += gamma_sqr * identity_prefix;
+                        *val += gamma_sqr_identity_prefix;
                     }
                 });
         }
