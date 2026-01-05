@@ -135,89 +135,59 @@ fn bench_mul(c: &mut Criterion) {
     });
 }
 
+// Polynomial binding benchmarks use F::Challenge which is controlled by feature flags.
+// Default: MontU128Challenge (optimized)
+// With --features challenge-254-bit: Mont254BitChallenge (baseline)
 fn bench_poly_binding(c: &mut Criterion) {
     let mut group = c.benchmark_group("poly_binding");
 
-    // Test with different polynomial sizes
-    for num_vars in [16, 18, 20] {
-        let poly_size = 1 << num_vars;
+    // Only test 2^20 for stable measurements
+    let num_vars = 20;
+    let poly_size = 1 << num_vars;
 
-        // Benchmark HighToLow binding (bound_poly_var_top_zero_optimized)
-        group.bench_with_input(
-            BenchmarkId::new("bind_parallel_high_to_low", format!("2^{num_vars}")),
-            &poly_size,
-            |b, &size| {
-                let mut rng = StdRng::seed_from_u64(42);
-                b.iter_batched(
-                    || {
-                        // Create a polynomial with random coefficients
-                        let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
-                        let poly = DensePolynomial::new(coeffs);
-                        let challenge = MontU128Challenge::<Fr>::random(&mut rng);
-                        (poly, challenge)
-                    },
-                    |(mut poly, challenge)| {
-                        poly.bind_parallel(challenge, BindingOrder::HighToLow);
-                        poly
-                    },
-                    BatchSize::LargeInput,
-                )
-            },
-        );
+    // Benchmark HighToLow binding
+    group.bench_with_input(
+        BenchmarkId::new("high_to_low", format!("2^{num_vars}")),
+        &poly_size,
+        |b, &size| {
+            let mut rng = StdRng::seed_from_u64(42);
+            b.iter_batched(
+                || {
+                    let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
+                    let poly = DensePolynomial::new(coeffs);
+                    let challenge = <Fr as JoltField>::Challenge::random(&mut rng);
+                    (poly, challenge)
+                },
+                |(mut poly, challenge)| {
+                    poly.bind_parallel(challenge, BindingOrder::HighToLow);
+                    poly
+                },
+                BatchSize::LargeInput,
+            )
+        },
+    );
 
-        // Benchmark LowToHigh binding (bound_poly_var_bot_01_optimized)
-        group.bench_with_input(
-            BenchmarkId::new("bind_parallel_low_to_high", format!("2^{num_vars}")),
-            &poly_size,
-            |b, &size| {
-                let mut rng = StdRng::seed_from_u64(42);
-                b.iter_batched(
-                    || {
-                        let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
-                        let poly = DensePolynomial::new(coeffs);
-                        let challenge = MontU128Challenge::<Fr>::random(&mut rng);
-                        (poly, challenge)
-                    },
-                    |(mut poly, challenge)| {
-                        poly.bind_parallel(challenge, BindingOrder::LowToHigh);
-                        poly
-                    },
-                    BatchSize::LargeInput,
-                )
-            },
-        );
-
-        // Also benchmark with sparse polynomials (many zeros) - common in Jolt
-        group.bench_with_input(
-            BenchmarkId::new("bind_parallel_high_to_low_sparse", format!("2^{num_vars}")),
-            &poly_size,
-            |b, &size| {
-                let mut rng = StdRng::seed_from_u64(42);
-                b.iter_batched(
-                    || {
-                        // Create a sparse polynomial (90% zeros)
-                        let coeffs: Vec<Fr> = (0..size)
-                            .map(|i| {
-                                if i % 10 == 0 {
-                                    Fr::random(&mut rng)
-                                } else {
-                                    Fr::zero()
-                                }
-                            })
-                            .collect();
-                        let poly = DensePolynomial::new(coeffs);
-                        let challenge = MontU128Challenge::<Fr>::random(&mut rng);
-                        (poly, challenge)
-                    },
-                    |(mut poly, challenge)| {
-                        poly.bind_parallel(challenge, BindingOrder::HighToLow);
-                        poly
-                    },
-                    BatchSize::LargeInput,
-                )
-            },
-        );
-    }
+    // Benchmark LowToHigh binding
+    group.bench_with_input(
+        BenchmarkId::new("low_to_high", format!("2^{num_vars}")),
+        &poly_size,
+        |b, &size| {
+            let mut rng = StdRng::seed_from_u64(42);
+            b.iter_batched(
+                || {
+                    let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
+                    let poly = DensePolynomial::new(coeffs);
+                    let challenge = <Fr as JoltField>::Challenge::random(&mut rng);
+                    (poly, challenge)
+                },
+                |(mut poly, challenge)| {
+                    poly.bind_parallel(challenge, BindingOrder::LowToHigh);
+                    poly
+                },
+                BatchSize::LargeInput,
+            )
+        },
+    );
 
     group.finish();
 }
