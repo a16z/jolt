@@ -689,6 +689,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 name = "common"
 version = "0.2.0"
 dependencies = [
+ "allocative",
  "ark-serialize",
  "derive_more 2.0.1",
  "serde",
@@ -1973,13 +1974,11 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "jolt-platform",
- "lazy_static",
  "memory-stats",
  "num",
  "num-derive",
  "num-integer",
  "num-traits",
- "once_cell",
  "paste",
  "postcard",
  "pprof",
@@ -4179,7 +4178,6 @@ dependencies = [
  "fnv",
  "itertools 0.10.5",
  "jolt-platform",
- "lazy_static",
  "object 0.36.7",
  "paste",
  "postcard",

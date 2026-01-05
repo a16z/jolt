@@ -85,10 +85,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheck
 
 /// Sumcheck prover for [`RegistersClaimReductionSumcheckVerifier`].
 #[derive(Allocative)]
-#[allow(clippy::large_enum_variant, private_interfaces)]
-pub enum RegistersClaimReductionSumcheckProver<F: JoltField> {
-    Phase1(RegistersPhase1Prover<F>), // 1st half of sumcheck rounds (prefix-suffix sumcheck)
-    Phase2(RegistersPhase2Prover<F>), // 2nd half of sumcheck rounds (regular sumcheck)
+pub struct RegistersClaimReductionSumcheckProver<F: JoltField> {
+    phase: RegistersClaimReductionPhase<F>,
+    pub params: RegistersClaimReductionSumcheckParams<F>,
+}
+
+#[derive(Allocative)]
+#[allow(clippy::large_enum_variant)]
+enum RegistersClaimReductionPhase<F: JoltField> {
+    Phase1(RegistersPhase1State<F>), // 1st half of sumcheck rounds (prefix-suffix sumcheck)
+    Phase2(RegistersPhase2State<F>), // 2nd half of sumcheck rounds (regular sumcheck)
 }
 
 impl<F: JoltField> RegistersClaimReductionSumcheckProver<F> {
@@ -97,7 +103,9 @@ impl<F: JoltField> RegistersClaimReductionSumcheckProver<F> {
         params: RegistersClaimReductionSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
     ) -> Self {
-        Self::Phase1(RegistersPhase1Prover::initialize(trace, params))
+        let phase =
+            RegistersClaimReductionPhase::Phase1(RegistersPhase1State::initialize(trace, &params));
+        Self { phase, params }
     }
 }
 
@@ -105,10 +113,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for RegistersClaimReductionSumcheckProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        match self {
-            RegistersClaimReductionSumcheckProver::Phase1(prover) => &prover.params,
-            RegistersClaimReductionSumcheckProver::Phase2(prover) => &prover.params,
-        }
+        &self.params
     }
 
     #[tracing::instrument(
@@ -116,9 +121,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         name = "RegistersClaimReductionSumcheckProver::compute_message"
     )]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        match self {
-            Self::Phase1(prover) => prover.compute_message(previous_claim),
-            Self::Phase2(prover) => prover.compute_message(previous_claim),
+        match &self.phase {
+            RegistersClaimReductionPhase::Phase1(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
+            RegistersClaimReductionPhase::Phase2(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
         }
     }
 
@@ -127,22 +136,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         name = "RegistersClaimReductionSumcheckProver::ingest_challenge"
     )]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        match self {
-            Self::Phase1(prover) => {
-                if prover.should_transition_to_phase2() {
-                    let params = prover.params.clone();
-                    let mut sumcheck_challenges = prover.sumcheck_challenges.clone();
+        match &mut self.phase {
+            RegistersClaimReductionPhase::Phase1(state) => {
+                if state.should_transition_to_phase2() {
+                    let mut sumcheck_challenges = state.sumcheck_challenges.clone();
                     sumcheck_challenges.push(r_j);
-                    *self = Self::Phase2(RegistersPhase2Prover::gen(
-                        &prover.trace,
+                    self.phase = RegistersClaimReductionPhase::Phase2(RegistersPhase2State::gen(
+                        &state.trace,
                         &sumcheck_challenges,
-                        params,
+                        &self.params,
                     ));
                     return;
                 }
-                prover.bind(r_j);
+                state.bind(r_j);
             }
-            Self::Phase2(prover) => prover.bind(r_j),
+            RegistersClaimReductionPhase::Phase2(state) => state.bind(r_j),
         }
     }
 
@@ -152,16 +160,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let Self::Phase2(prover) = &self else {
+        let RegistersClaimReductionPhase::Phase2(state) = &self.phase else {
             panic!("Should finish sumcheck on phase 2");
         };
 
         let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
-        let rd_write_value_claim = prover.rd_write_value_poly.final_sumcheck_claim();
-        let rs1_read_value_claim = prover.rs1_read_value_poly.final_sumcheck_claim();
-        let rs2_read_value_claim = prover.rs2_read_value_poly.final_sumcheck_claim();
+        let rd_write_value_claim = state.rd_write_value_poly.final_sumcheck_claim();
+        let rs1_read_value_claim = state.rs1_read_value_poly.final_sumcheck_claim();
+        let rs2_read_value_claim = state.rs2_read_value_poly.final_sumcheck_claim();
 
         accumulator.append_virtual(
             transcript,
@@ -188,15 +196,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
-        match self {
-            Self::Phase1(prover) => flamegraph.visit_root(prover),
-            Self::Phase2(prover) => flamegraph.visit_root(prover),
-        }
+        flamegraph.visit_root(self);
     }
 }
 
 #[derive(Allocative)]
-pub struct RegistersPhase1Prover<F: JoltField> {
+struct RegistersPhase1State<F: JoltField> {
     // Prefix-suffix P and Q buffers.
     // See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
     P: MultilinearPolynomial<F>,
@@ -204,13 +209,12 @@ pub struct RegistersPhase1Prover<F: JoltField> {
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     sumcheck_challenges: Vec<F::Challenge>,
-    params: RegistersClaimReductionSumcheckParams<F>,
 }
 
-impl<F: JoltField> RegistersPhase1Prover<F> {
+impl<F: JoltField> RegistersPhase1State<F> {
     fn initialize(
         trace: Arc<Vec<Cycle>>,
-        params: RegistersClaimReductionSumcheckParams<F>,
+        params: &RegistersClaimReductionSumcheckParams<F>,
     ) -> Self {
         let (r_hi, r_lo) = params.r_spartan.split_at(params.r_spartan.len() / 2);
         let eq_prefix_evals = EqPolynomial::evals(&r_lo.r);
@@ -222,6 +226,9 @@ impl<F: JoltField> RegistersPhase1Prover<F> {
         // See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
         let P = eq_prefix_evals;
         let mut Q = unsafe_allocate_zero_vec(1 << prefix_n_vars);
+
+        let gamma = params.gamma;
+        let gamma_sqr = params.gamma_sqr;
 
         const BLOCK_SIZE: usize = 32;
         Q.par_chunks_mut(BLOCK_SIZE)
@@ -251,8 +258,8 @@ impl<F: JoltField> RegistersPhase1Prover<F> {
 
                 for (i, q) in q_chunk.iter_mut().enumerate() {
                     *q = F::from_barrett_reduce(q_rd_write_value[i])
-                        + params.gamma * F::from_barrett_reduce(q_rs1_read_value[i])
-                        + params.gamma_sqr * F::from_barrett_reduce(q_rs2_read_value[i]);
+                        + gamma * F::from_barrett_reduce(q_rs1_read_value[i])
+                        + gamma_sqr * F::from_barrett_reduce(q_rs2_read_value[i]);
                 }
             });
 
@@ -261,11 +268,14 @@ impl<F: JoltField> RegistersPhase1Prover<F> {
             Q: Q.into(),
             trace,
             sumcheck_challenges: Vec::new(),
-            params,
         }
     }
 
-    fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(
+        &self,
+        _params: &RegistersClaimReductionSumcheckParams<F>,
+        previous_claim: F,
+    ) -> UniPoly<F> {
         let Self { P, Q, .. } = self;
         let mut evals = [F::zero(); DEGREE_BOUND];
 
@@ -291,19 +301,18 @@ impl<F: JoltField> RegistersPhase1Prover<F> {
 }
 
 #[derive(Allocative)]
-pub struct RegistersPhase2Prover<F: JoltField> {
+struct RegistersPhase2State<F: JoltField> {
     rd_write_value_poly: MultilinearPolynomial<F>,
     rs1_read_value_poly: MultilinearPolynomial<F>,
     rs2_read_value_poly: MultilinearPolynomial<F>,
     eq_poly: MultilinearPolynomial<F>,
-    params: RegistersClaimReductionSumcheckParams<F>,
 }
 
-impl<F: JoltField> RegistersPhase2Prover<F> {
+impl<F: JoltField> RegistersPhase2State<F> {
     fn gen(
         trace: &[Cycle],
         sumcheck_challenges: &[F::Challenge],
-        params: RegistersClaimReductionSumcheckParams<F>,
+        params: &RegistersClaimReductionSumcheckParams<F>,
     ) -> Self {
         let n_remaining_rounds = params.r_spartan.len() - sumcheck_challenges.len();
         let r_prefix: OpeningPoint<BIG_ENDIAN, F> =
@@ -353,11 +362,14 @@ impl<F: JoltField> RegistersPhase2Prover<F> {
             rs1_read_value_poly: rs1_read_value_poly.into(),
             rs2_read_value_poly: rs2_read_value_poly.into(),
             eq_poly: eq_suffix_evals.into(),
-            params,
         }
     }
 
-    fn compute_message(&mut self, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(
+        &self,
+        params: &RegistersClaimReductionSumcheckParams<F>,
+        previous_claim: F,
+    ) -> UniPoly<F> {
         let half_n = self.rd_write_value_poly.len() / 2;
         let mut evals = [F::zero(); DEGREE_BOUND];
         for j in 0..half_n {
@@ -377,8 +389,8 @@ impl<F: JoltField> RegistersPhase2Prover<F> {
                 evals[i]
                     + eq_evals[i]
                         * (rd_write_value_evals[i]
-                            + self.params.gamma * rs1_read_value_evals[i]
-                            + self.params.gamma_sqr * rs2_read_value_evals[i])
+                            + params.gamma * rs1_read_value_evals[i]
+                            + params.gamma_sqr * rs2_read_value_evals[i])
             });
         }
         UniPoly::from_evals_and_hint(previous_claim, &evals)

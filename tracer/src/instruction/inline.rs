@@ -18,10 +18,9 @@ use crate::{
     instruction::NormalizedInstruction,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
 // Type alias for the inline_sequence functions signature
 pub type InlineSequenceFunction =
@@ -31,10 +30,8 @@ pub type InlineSequenceFunction =
 type InlineKey = (u32, u32, u32);
 
 // Global registry that maps (opcode, funct3, funct7) tuples to inline implementations
-lazy_static! {
-    static ref INLINE_REGISTRY: RwLock<HashMap<InlineKey, (String, InlineSequenceFunction)>> =
-        RwLock::new(HashMap::new());
-}
+static INLINE_REGISTRY: LazyLock<RwLock<HashMap<InlineKey, (String, InlineSequenceFunction)>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Registers a new inline instruction handler.
 ///
