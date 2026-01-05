@@ -120,7 +120,7 @@ impl ReplayableMemory {
 /// the initial value of each memory access, which can then be retrieved as a [`ReplayableMemory`]
 #[derive(Clone, Debug)]
 pub struct CheckpointingMemory {
-    memory: MemoryBackend<Vec<u64>>,
+    memory: Vec<u64>,
     // NOTE: This is just the length of `self.memory`, under normal circumstances. We store it
     // separately because we sometimes call [`std::mem::take`] on `self.memory`, but we still need
     // the length in that case.
@@ -132,7 +132,7 @@ pub struct CheckpointingMemory {
 impl MemoryData for CheckpointingMemory {
     fn empty() -> Self {
         Self {
-            memory: MemoryBackend::empty(),
+            memory: vec![],
             num_doublewords: 0,
             checkpoint: HashMap::default(),
             saving_checkpoints: false,
@@ -140,18 +140,20 @@ impl MemoryData for CheckpointingMemory {
     }
 
     fn init_with_capacity(&mut self, capacity: u64) {
-        self.memory.init(capacity);
-        self.num_doublewords = self.memory.data.get_num_doublewords();
+        let num_doublewords = capacity.div_ceil(8) as usize;
+
+        self.memory = vec![0; num_doublewords];
+        self.num_doublewords = num_doublewords;
         self.checkpoint = HashMap::new();
         self.saving_checkpoints = false;
     }
 
     fn get_num_doublewords(&self) -> usize {
-        self.memory.data.get_num_doublewords()
+        self.num_doublewords
     }
 
     fn access_u64(&mut self, index: usize) -> &mut u64 {
-        let res = &mut self.memory.data[index];
+        let res = &mut self.memory[index];
         // We store only the initial value of each index accessed (read or written) over the course
         // of a chunk. If the access is a read, the value is the value read. If the access is a
         // write, the value is the value stored *prior* to the write. If the index has already been
@@ -164,11 +166,11 @@ impl MemoryData for CheckpointingMemory {
     }
 
     fn get_u64(&self, index: usize) -> u64 {
-        self.memory.data[index]
+        self.memory[index]
     }
 
     fn take_as_vec_memory(&mut self) -> Vec<u64> {
-        self.memory.data.take_as_vec_memory()
+        std::mem::take(&mut self.memory)
     }
 }
 

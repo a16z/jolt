@@ -15,7 +15,6 @@ use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
-    get_mut_emulator, EmulatorState,
 };
 
 use instruction::{Cycle, Instruction};
@@ -82,21 +81,15 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> (
-    GeneralizedLazyTraceIter<SimpleTracer>,
-    Vec<Cycle>,
-    Memory,
-    JoltDevice,
-) {
-    let mut lazy_trace_iter =
-        GeneralizedLazyTraceIter::new(SimpleTracer::new(setup_emulator_with_backtraces(
-            elf_contents,
-            elf_path,
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            memory_config,
-        )));
+) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    let mut lazy_trace_iter = trace_lazy(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+    );
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = lazy_trace_iter
@@ -129,15 +122,14 @@ pub fn trace_to_file(
     let writer =
         TraceWriter::<Cycle>::new(out_path, config).expect("Failed to create trace writer");
     let mut collector = TraceBatchCollector::new(writer);
-    let mut lazy =
-        GeneralizedLazyTraceIter::new(SimpleTracer::new(setup_emulator_with_backtraces(
-            elf_contents,
-            elf_path,
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            memory_config,
-        )));
+    let mut lazy = trace_lazy(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+    );
 
     for cycle in &mut lazy {
         collector.push(cycle);
@@ -161,15 +153,15 @@ pub fn trace_lazy(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> SimpleTracer {
-    SimpleTracer::new(setup_emulator_with_backtraces(
+) -> LazyTraceIterator {
+    LazyTraceIterator::new(CheckpointingTracer::new(setup_emulator_with_backtraces(
         elf_contents,
         elf_path,
         inputs,
         untrusted_advice,
         trusted_advice,
         memory_config,
-    ))
+    )))
 }
 
 #[tracing::instrument(skip_all)]
@@ -302,7 +294,7 @@ pub struct GeneralizedLazyTraceIter<T> {
     pub lazy_tracer: T,
 }
 
-pub type LazyTraceIterator = GeneralizedLazyTraceIter<SimpleTracer>;
+pub type LazyTraceIterator = GeneralizedLazyTraceIter<CheckpointingTracer>;
 
 unsafe impl<T: Send> Send for GeneralizedLazyTraceIter<T> {}
 
@@ -474,6 +466,26 @@ impl CheckpointingTracer {
         }
     }
 
+    pub fn new_for_test() -> Self {
+        let minimal_elf = vec![
+            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        use crate::MemoryConfig;
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+
+        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
+
+        Self::new(emulator_state)
+    }
+
     /// Start recording memory accesses so that checkpoints can be saved using
     /// [`CheckpointingTracer::save_checkpoint`].
     pub fn start_saving_checkpoints(&mut self) {
@@ -590,130 +602,6 @@ impl LazyTracer for CheckpointingTracer {
 
     fn get_jolt_device(mut self) -> JoltDevice {
         self.emulator_state
-            .get_mut_cpu()
-            .get_mut_mmu()
-            .jolt_device
-            .take()
-            .expect("JoltDevice was not initialized")
-    }
-}
-
-/// A tracer that uses a `Vec<u64>` memory backend.
-#[derive(Clone, Debug)]
-pub struct SimpleTracer {
-    emulator_state: EmulatorState,
-    prev_pc: u64,
-    current_traces: Vec<Cycle>,
-    count: usize, // number of cycles completed
-    finished: bool,
-    pub(crate) final_memory_state: Option<Memory>,
-}
-
-// SAFETY: LazyTraceIterator contains only owned data and can be safely sent between threads
-unsafe impl Send for SimpleTracer {}
-
-impl SimpleTracer {
-    pub fn new(emulator_state: EmulatorState) -> Self {
-        SimpleTracer {
-            emulator_state,
-            prev_pc: 0,
-            current_traces: vec![],
-            count: 0,
-            finished: false,
-            final_memory_state: None,
-        }
-    }
-
-    pub fn new_for_test() -> Self {
-        let minimal_elf = vec![
-            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
-
-        use crate::MemoryConfig;
-        let memory_config = MemoryConfig {
-            program_size: Some(1024),
-            ..Default::default()
-        };
-
-        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
-
-        SimpleTracer {
-            emulator_state,
-            prev_pc: 0,
-            current_traces: vec![],
-            count: 0,
-            finished: true,
-            final_memory_state: Some(emulator::memory::Memory::empty()),
-        }
-    }
-
-    pub fn get_emulator_state(self) -> EmulatorState {
-        self.emulator_state
-    }
-
-    pub fn clone_emulator_state(&self) -> EmulatorState {
-        self.emulator_state.clone()
-    }
-}
-
-impl LazyTracer for SimpleTracer {
-    fn has_terminated(&self) -> bool {
-        self.finished
-    }
-
-    fn has_panicked(&self) -> bool {
-        self.emulator_state
-            .get_cpu()
-            .mmu
-            .jolt_device
-            .as_ref()
-            .unwrap()
-            .panic
-    }
-
-    fn at_tick_boundary(&self) -> bool {
-        self.current_traces.is_empty()
-    }
-
-    fn print_panic_log(&self) {
-        error!(
-            "Guest program terminated due to panic after {} cycles.",
-            self.emulator_state.get_cpu().trace_len
-        );
-        utils::panic::display_panic_backtrace(&self.emulator_state);
-    }
-
-    fn lazy_step_cycle(&mut self) -> Option<Cycle> {
-        if !self.current_traces.is_empty() {
-            return self.current_traces.pop();
-        }
-
-        self.count += 1;
-        assert!(self.current_traces.is_empty());
-        step_emulator(
-            get_mut_emulator(&mut self.emulator_state),
-            &mut self.prev_pc,
-            Some(&mut self.current_traces),
-        );
-        if self.current_traces.is_empty() {
-            self.finished = true;
-            let emulator = get_mut_emulator(&mut self.emulator_state);
-            let cpu = emulator.get_mut_cpu();
-            self.final_memory_state = Some(cpu.mmu.memory.memory.take_as_vec_memory_backend());
-            None
-        } else {
-            self.current_traces.reverse();
-            self.current_traces.pop()
-        }
-    }
-
-    fn get_jolt_device(self) -> JoltDevice {
-        let mut final_emulator_state = self.get_emulator_state();
-        final_emulator_state
             .get_mut_cpu()
             .get_mut_mmu()
             .jolt_device
