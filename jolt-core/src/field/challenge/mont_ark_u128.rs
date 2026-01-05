@@ -27,9 +27,9 @@ use std::ops::{Add, Mul, Sub};
 #[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Allocative)]
 pub struct MontU128Challenge<F: JoltField> {
     /// Low 64 bits of the 125-bit value
-    low: u64,
+    pub low: u64,
     /// High 61 bits of the 125-bit value (top 3 bits always zero)
-    high: u64,
+    pub high: u64,
     _marker: PhantomData<F>,
 }
 
@@ -113,6 +113,12 @@ impl<F: JoltField> MontU128Challenge<F> {
     #[inline(always)]
     pub fn limbs(&self) -> (u64, u64) {
         (self.low, self.high)
+    }
+
+    /// Returns the value as a u128 for use with mul_hi_u128.
+    #[inline(always)]
+    pub fn as_u128(&self) -> u128 {
+        (self.low as u128) | ((self.high as u128) << 64)
     }
 
     /// Returns the value as a [u64; 4] BigInt array for field conversion.

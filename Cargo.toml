@@ -122,10 +122,10 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup" }
+ark-ff = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup" }
+ark-ec = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup" }
+ark-serialize = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
@@ -133,11 +133,11 @@ ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
 # Cryptography and Math
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
+ark-bn254 = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup", default-features = false }
+ark-grumpkin = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup", default-features = false }
+ark-ec = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup", default-features = false }
+ark-ff = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup", default-features = false }
+ark-serialize = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup", default-features = false, features = [
     "derive",
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
@@ -146,7 +146,7 @@ sha2 = "0.10"
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+jolt-optimizations = { git = "https://github.com/quangvdao/arkworks-algebra", branch = "quang/biginteger-cleanup" }
 dory = { package = "dory-pcs", version = "0.1.0", features = ["backends", "cache", "disk-persistence"] }
 
 # Core Utilities
