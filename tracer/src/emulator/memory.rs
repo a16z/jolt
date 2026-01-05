@@ -92,7 +92,7 @@ impl MemoryData for ReplayableMemory {
             );
         }
         // Return the value at the given index if it's been set. If it hasn't been set, the
-        // executing program should never access it withing the current chunk, so we error out.
+        // executing program should never access it within the current chunk, so we error out.
         self.memory
             .get_mut(&index)
             .expect("Invalid memory access for chunk")

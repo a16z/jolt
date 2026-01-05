@@ -492,7 +492,7 @@ impl CheckpointingTracer {
             .start_saving_checkpoints();
     }
 
-    /// Save the recoreded memory traces to a new [`Checkpoint`] and reset the hashmap to which
+    /// Save the recorded memory traces to a new [`Checkpoint`] and reset the hashmap to which
     /// they're recorded. The chunk of the trace that has been executed since the last call to
     /// [`CheckpointingTracer::save_checkpoint`] or
     /// [`CheckpointingTracer::start_saving_checkpoints`] can be replayed from the resulting
