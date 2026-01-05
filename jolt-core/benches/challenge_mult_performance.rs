@@ -189,10 +189,7 @@ fn bench_poly_binding(c: &mut Criterion) {
 
         // Also benchmark with sparse polynomials (many zeros) - common in Jolt
         group.bench_with_input(
-            BenchmarkId::new(
-                "bind_parallel_high_to_low_sparse",
-                format!("2^{num_vars}"),
-            ),
+            BenchmarkId::new("bind_parallel_high_to_low_sparse", format!("2^{num_vars}")),
             &poly_size,
             |b, &size| {
                 let mut rng = StdRng::seed_from_u64(42);
