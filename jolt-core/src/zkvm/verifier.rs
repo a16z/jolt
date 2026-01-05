@@ -737,9 +737,12 @@ impl CanonicalSerialize for JoltSharedPreprocessing {
         compress: ark_serialize::Compress,
     ) -> Result<(), ark_serialize::SerializationError> {
         // Serialize the inner BytecodePreprocessing (not the Arc wrapper)
-        self.bytecode.as_ref().serialize_with_mode(&mut writer, compress)?;
+        self.bytecode
+            .as_ref()
+            .serialize_with_mode(&mut writer, compress)?;
         self.ram.serialize_with_mode(&mut writer, compress)?;
-        self.memory_layout.serialize_with_mode(&mut writer, compress)?;
+        self.memory_layout
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -759,8 +762,7 @@ impl CanonicalDeserialize for JoltSharedPreprocessing {
         let bytecode =
             BytecodePreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
         let ram = RAMPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
-        let memory_layout =
-            MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
+        let memory_layout = MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self {
             bytecode: Arc::new(bytecode),
             ram,
