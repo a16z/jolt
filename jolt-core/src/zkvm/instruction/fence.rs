@@ -20,8 +20,7 @@ impl Flags for FENCE {
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-        let flags = [false; NUM_INSTRUCTION_FLAGS];
-        flags
+        [false; NUM_INSTRUCTION_FLAGS]
     }
 }
 
