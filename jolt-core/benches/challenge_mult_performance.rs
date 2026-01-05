@@ -144,15 +144,14 @@ fn bench_poly_binding(c: &mut Criterion) {
 
         // Benchmark HighToLow binding (bound_poly_var_top_zero_optimized)
         group.bench_with_input(
-            BenchmarkId::new("bind_parallel_high_to_low", format!("2^{}", num_vars)),
+            BenchmarkId::new("bind_parallel_high_to_low", format!("2^{num_vars}")),
             &poly_size,
             |b, &size| {
                 let mut rng = StdRng::seed_from_u64(42);
                 b.iter_batched(
                     || {
                         // Create a polynomial with random coefficients
-                        let coeffs: Vec<Fr> =
-                            (0..size).map(|_| Fr::random(&mut rng)).collect();
+                        let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
                         let poly = DensePolynomial::new(coeffs);
                         let challenge = MontU128Challenge::<Fr>::random(&mut rng);
                         (poly, challenge)
@@ -168,14 +167,13 @@ fn bench_poly_binding(c: &mut Criterion) {
 
         // Benchmark LowToHigh binding (bound_poly_var_bot_01_optimized)
         group.bench_with_input(
-            BenchmarkId::new("bind_parallel_low_to_high", format!("2^{}", num_vars)),
+            BenchmarkId::new("bind_parallel_low_to_high", format!("2^{num_vars}")),
             &poly_size,
             |b, &size| {
                 let mut rng = StdRng::seed_from_u64(42);
                 b.iter_batched(
                     || {
-                        let coeffs: Vec<Fr> =
-                            (0..size).map(|_| Fr::random(&mut rng)).collect();
+                        let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
                         let poly = DensePolynomial::new(coeffs);
                         let challenge = MontU128Challenge::<Fr>::random(&mut rng);
                         (poly, challenge)
@@ -191,7 +189,10 @@ fn bench_poly_binding(c: &mut Criterion) {
 
         // Also benchmark with sparse polynomials (many zeros) - common in Jolt
         group.bench_with_input(
-            BenchmarkId::new("bind_parallel_high_to_low_sparse", format!("2^{}", num_vars)),
+            BenchmarkId::new(
+                "bind_parallel_high_to_low_sparse",
+                format!("2^{num_vars}"),
+            ),
             &poly_size,
             |b, &size| {
                 let mut rng = StdRng::seed_from_u64(42);
