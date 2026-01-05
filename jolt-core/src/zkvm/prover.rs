@@ -947,7 +947,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
-            Arc::new(self.preprocessing.shared.bytecode.clone()),
+            Arc::clone(&self.preprocessing.shared.bytecode),
         );
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
@@ -1234,7 +1234,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         };
 
         let streaming_data = Arc::new(RLCStreamingData {
-            bytecode: self.preprocessing.shared.bytecode.clone(),
+            bytecode: Arc::clone(&self.preprocessing.shared.bytecode),
             memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 

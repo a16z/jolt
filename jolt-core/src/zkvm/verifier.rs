@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -722,11 +723,58 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 }
 
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone)]
 pub struct JoltSharedPreprocessing {
-    pub bytecode: BytecodePreprocessing,
+    pub bytecode: Arc<BytecodePreprocessing>,
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
+}
+
+impl CanonicalSerialize for JoltSharedPreprocessing {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        // Serialize the inner BytecodePreprocessing (not the Arc wrapper)
+        self.bytecode.as_ref().serialize_with_mode(&mut writer, compress)?;
+        self.ram.serialize_with_mode(&mut writer, compress)?;
+        self.memory_layout.serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.bytecode.serialized_size(compress)
+            + self.ram.serialized_size(compress)
+            + self.memory_layout.serialized_size(compress)
+    }
+}
+
+impl CanonicalDeserialize for JoltSharedPreprocessing {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let bytecode =
+            BytecodePreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
+        let ram = RAMPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
+        let memory_layout =
+            MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(Self {
+            bytecode: Arc::new(bytecode),
+            ram,
+            memory_layout,
+        })
+    }
+}
+
+impl ark_serialize::Valid for JoltSharedPreprocessing {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.bytecode.check()?;
+        self.ram.check()?;
+        self.memory_layout.check()
+    }
 }
 
 impl JoltSharedPreprocessing {
@@ -736,7 +784,7 @@ impl JoltSharedPreprocessing {
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
     ) -> JoltSharedPreprocessing {
-        let bytecode = BytecodePreprocessing::preprocess(bytecode);
+        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode));
         let ram = RAMPreprocessing::preprocess(memory_init);
         Self {
             bytecode,
