@@ -82,18 +82,25 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-    let mut lazy_trace_iter = LazyTraceIterator::new(setup_emulator_with_backtraces(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-    ));
+) -> (
+    GeneralizedLazyTraceIter<SimpleTracer>,
+    Vec<Cycle>,
+    Memory,
+    JoltDevice,
+) {
+    let mut lazy_trace_iter =
+        GeneralizedLazyTraceIter::new(SimpleTracer::new(setup_emulator_with_backtraces(
+            elf_contents,
+            elf_path,
+            inputs,
+            untrusted_advice,
+            trusted_advice,
+            memory_config,
+        )));
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = lazy_trace_iter
+        .lazy_tracer
         .final_memory_state
         .as_mut()
         .unwrap()
@@ -102,7 +109,7 @@ pub fn trace(
         lazy_trace_iter_,
         trace,
         final_memory_state,
-        lazy_trace_iter.get_jolt_device(),
+        lazy_trace_iter.lazy_tracer.get_jolt_device(),
     )
 }
 
@@ -122,14 +129,15 @@ pub fn trace_to_file(
     let writer =
         TraceWriter::<Cycle>::new(out_path, config).expect("Failed to create trace writer");
     let mut collector = TraceBatchCollector::new(writer);
-    let mut lazy = LazyTraceIterator::new(setup_emulator_with_backtraces(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-    ));
+    let mut lazy =
+        GeneralizedLazyTraceIter::new(SimpleTracer::new(setup_emulator_with_backtraces(
+            elf_contents,
+            elf_path,
+            inputs,
+            untrusted_advice,
+            trusted_advice,
+            memory_config,
+        )));
 
     for cycle in &mut lazy {
         collector.push(cycle);
@@ -141,8 +149,8 @@ pub fn trace_to_file(
 
     info!("trace length: {total} cycles");
 
-    let final_mem = lazy.final_memory_state.take().unwrap();
-    (final_mem, lazy.get_jolt_device())
+    let final_mem = lazy.lazy_tracer.final_memory_state.take().unwrap();
+    (final_mem, lazy.lazy_tracer.get_jolt_device())
 }
 
 #[tracing::instrument(skip_all)]
@@ -153,8 +161,8 @@ pub fn trace_lazy(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> LazyTraceIterator {
-    LazyTraceIterator::new(setup_emulator_with_backtraces(
+) -> SimpleTracer {
+    SimpleTracer::new(setup_emulator_with_backtraces(
         elf_contents,
         elf_path,
         inputs,
@@ -173,25 +181,29 @@ pub fn trace_checkpoints(
     memory_config: &MemoryConfig,
     checkpoint_interval: usize,
 ) -> (Vec<Checkpoint>, JoltDevice) {
-    let mut emulator_trace_iter = CheckpointingTraceIter::new(setup_emulator(
-        elf_contents,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-    ));
-    emulator_trace_iter.start_saving_checkpoints();
+    let mut emulator_trace_iter =
+        GeneralizedLazyTraceIter::new(CheckpointingTracer::new(setup_emulator(
+            elf_contents,
+            inputs,
+            untrusted_advice,
+            trusted_advice,
+            memory_config,
+        )));
+    emulator_trace_iter.lazy_tracer.start_saving_checkpoints();
     let mut checkpoints = Vec::new();
 
     loop {
         emulator_trace_iter = emulator_trace_iter.dropping(checkpoint_interval);
-        let chkpt = emulator_trace_iter.save_checkpoint();
+        let chkpt = emulator_trace_iter.lazy_tracer.save_checkpoint();
         checkpoints.push(chkpt);
-        if emulator_trace_iter.is_empty() {
+        if emulator_trace_iter.lazy_tracer.has_terminated() {
             break;
         }
     }
-    (checkpoints, emulator_trace_iter.get_jolt_device())
+    (
+        checkpoints,
+        emulator_trace_iter.lazy_tracer.get_jolt_device(),
+    )
 }
 
 fn step_emulator<D: MemoryData>(
@@ -254,7 +266,87 @@ fn setup_emulator_with_backtraces<D: MemoryData>(
     emulator
 }
 
-#[derive(Debug)]
+/// A type that can be used to lazily generate a trace, one [`Cycle`] at a time.
+pub trait LazyTracer {
+    /// Check if the program execution has terminated.
+    fn has_terminated(&self) -> bool;
+
+    /// Check if the program execution has panicked.
+    fn has_panicked(&self) -> bool;
+
+    /// Returns whether the next execution of [`LazyTracer::lazy_step_cycle`] will emulate a new
+    /// instruction or return the next [`Cycle`] in the last executed instruction.
+    fn at_tick_boundary(&self) -> bool;
+
+    /// Print a backtrace, assuming the program has panicked.
+    fn print_panic_log(&self);
+
+    /// Get the next [`Cycle`] in the program execution. If the program is at a tick boundary, this
+    /// emulates the next instruction. Otherwise, it returns the next cycle within the last
+    /// executed instruction.
+    fn lazy_step_cycle(&mut self) -> Option<Cycle>;
+
+    /// Take the [`JoltDevice`] from this tracer, consuming the tracer.
+    fn get_jolt_device(self) -> JoltDevice;
+}
+
+/// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
+///
+/// This iterator produces instruction traces one at a time, executing the emulator
+/// as needed rather than generating the entire trace upfront. It buffers traces
+/// in `current_traces` since some instructions generate multiple trace entries.
+/// When the `current_traces` buffer is exhausted, it executes another emulator tick
+/// to generate more.
+#[derive(Clone, Debug)]
+pub struct GeneralizedLazyTraceIter<T> {
+    pub lazy_tracer: T,
+}
+
+pub type LazyTraceIterator = GeneralizedLazyTraceIter<SimpleTracer>;
+
+unsafe impl<T: Send> Send for GeneralizedLazyTraceIter<T> {}
+
+impl<T: LazyTracer> Iterator for GeneralizedLazyTraceIter<T> {
+    type Item = Cycle;
+
+    /// Advances the iterator and returns the next trace entry.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Cycle)` - The next instruction trace in the execution sequence
+    /// * `None` - If program execution has completed.
+    ///
+    /// # Details
+    ///
+    /// The function follows this sequence:
+    /// 1. Returns any remaining traces from the previous emulator tick
+    /// 2. If buffer `current_traces` is empty, and the number of ticks
+    ///    is not reached, executes another emulator tick``
+    /// 3. Checks for program termination using the heuristic of PC not changing
+    /// 4. Buffers new traces in FIFO order
+    /// 5. Returns the next trace or None if execution is complete
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.lazy_tracer.has_terminated() {
+            return None;
+        }
+
+        let res = self.lazy_tracer.lazy_step_cycle();
+
+        if res.is_none() && self.lazy_tracer.has_panicked() {
+            self.lazy_tracer.print_panic_log();
+        }
+
+        res
+    }
+}
+
+impl<T> GeneralizedLazyTraceIter<T> {
+    pub fn new(lazy_tracer: T) -> Self {
+        Self { lazy_tracer }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Checkpoint {
     emulator_state: GeneralizedEmulator<ReplayableMemory>,
     prev_pc: u64,
@@ -295,19 +387,38 @@ impl Checkpoint {
     }
 }
 
-impl Iterator for Checkpoint {
-    type Item = Cycle;
+impl LazyTracer for Checkpoint {
+    fn has_terminated(&self) -> bool {
+        self.trace_steps_remaining == 0
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.trace_steps_remaining == 0 {
-            return None;
-        }
+    fn has_panicked(&self) -> bool {
+        self.emulator_state
+            .get_cpu()
+            .mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .panic
+    }
 
+    fn at_tick_boundary(&self) -> bool {
+        self.current_traces.is_empty()
+    }
+
+    fn print_panic_log(&self) {
+        error!(
+            "Guest program terminated due to panic after {} cycles.",
+            self.emulator_state.get_cpu().trace_len
+        );
+        utils::panic::display_panic_backtrace(&self.emulator_state);
+    }
+
+    fn lazy_step_cycle(&mut self) -> Option<Cycle> {
         if !self.current_traces.is_empty() {
             self.trace_steps_remaining -= 1;
             return self.current_traces.pop();
         }
-        debug_assert!(self.current_traces.is_empty());
 
         self.cycle_count += 1;
 
@@ -317,14 +428,6 @@ impl Iterator for Checkpoint {
             Some(&mut self.current_traces),
         );
         if self.current_traces.is_empty() {
-            let cpu = self.emulator_state.get_mut_cpu();
-            if cpu.mmu.jolt_device.as_ref().unwrap().panic {
-                error!(
-                    "Guest program terminated due to panic after {} cycles.",
-                    cpu.trace_len
-                );
-                utils::panic::display_panic_backtrace(&self.emulator_state);
-            }
             None
         } else {
             self.trace_steps_remaining -= 1;
@@ -332,9 +435,21 @@ impl Iterator for Checkpoint {
             self.current_traces.pop()
         }
     }
+
+    fn get_jolt_device(mut self) -> JoltDevice {
+        self.emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .unwrap()
+    }
 }
 
-pub struct CheckpointingTraceIter {
+/// A tracer that uses a `Vec<u64>` memory backend but additionally stores the initial value of
+/// each memory access to a [`Checkpoint`], which can be saved and replayed from.
+#[derive(Clone, Debug)]
+pub struct CheckpointingTracer {
     emulator_state: GeneralizedEmulator<CheckpointingMemory>,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
@@ -345,7 +460,7 @@ pub struct CheckpointingTraceIter {
     pub(crate) final_memory_state: Option<Memory>,
 }
 
-impl CheckpointingTraceIter {
+impl CheckpointingTracer {
     pub fn new(emulator_state: GeneralizedEmulator<CheckpointingMemory>) -> Self {
         Self {
             emulator_state,
@@ -359,30 +474,8 @@ impl CheckpointingTraceIter {
         }
     }
 
-    pub fn new_for_test() -> Self {
-        let minimal_elf = vec![
-            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
-
-        use crate::MemoryConfig;
-        let memory_config = MemoryConfig {
-            program_size: Some(1024),
-            ..Default::default()
-        };
-
-        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
-
-        Self::new(emulator_state)
-    }
-
-    pub fn at_tick_boundary(&self) -> bool {
-        self.current_traces.is_empty()
-    }
-
+    /// Start recording memory accesses so that checkpoints can be saved using
+    /// [`CheckpointingTracer::save_checkpoint`].
     pub fn start_saving_checkpoints(&mut self) {
         self.saved_processor_state = Some(Checkpoint::new_with_empty_memory(
             &self.emulator_state,
@@ -399,7 +492,21 @@ impl CheckpointingTraceIter {
             .start_saving_checkpoints();
     }
 
+    /// Save the recoreded memory traces to a new [`Checkpoint`] and reset the hashmap to which
+    /// they're recorded. The chunk of the trace that has been executed since the last call to
+    /// [`CheckpointingTracer::save_checkpoint`] or
+    /// [`CheckpointingTracer::start_saving_checkpoints`] can be replayed from the resulting
+    /// [`Checkpoint`].
     pub fn save_checkpoint(&mut self) -> Checkpoint {
+        assert!(self
+            .emulator_state
+            .get_cpu()
+            .mmu
+            .memory
+            .memory
+            .data
+            .is_saving_checkpoints());
+
         // Save the processor state at the start of the current chunk
         let mut new_processor_state = Checkpoint::new_with_empty_memory(
             &self.emulator_state,
@@ -426,46 +533,40 @@ impl CheckpointingTraceIter {
 
         new_processor_state
     }
-
-    pub fn get_jolt_device(mut self) -> JoltDevice {
-        self.emulator_state
-            .get_mut_cpu()
-            .get_mut_mmu()
-            .jolt_device
-            .take()
-            .expect("JoltDevice was not initialized")
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.finished
-    }
 }
 
-impl Iterator for CheckpointingTraceIter {
-    type Item = Cycle;
+impl LazyTracer for CheckpointingTracer {
+    fn has_terminated(&self) -> bool {
+        self.finished
+    }
 
-    /// Advances the iterator and returns the next trace entry.
-    ///
-    /// # Returns
-    ///
-    /// * `Some(Cycle)` - The next instruction trace in the execution sequence
-    /// * `None` - If program execution has completed.
-    ///
-    /// # Details
-    ///
-    /// The function follows this sequence:
-    /// 1. Returns any remaining traces from the previous emulator tick
-    /// 2. If buffer `current_traces` is empty, and the number of ticks
-    ///    is not reached, executes another emulator tick``
-    /// 3. Checks for program termination using the heuristic of PC not changing
-    /// 4. Buffers new traces in FIFO order
-    /// 5. Returns the next trace or None if execution is complete
-    fn next(&mut self) -> Option<Self::Item> {
+    fn has_panicked(&self) -> bool {
+        self.emulator_state
+            .get_cpu()
+            .mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .panic
+    }
+
+    fn at_tick_boundary(&self) -> bool {
+        self.current_traces.is_empty()
+    }
+
+    fn print_panic_log(&self) {
+        error!(
+            "Guest program terminated due to panic after {} cycles.",
+            self.emulator_state.get_cpu().trace_len
+        );
+        utils::panic::display_panic_backtrace(&self.emulator_state);
+    }
+
+    fn lazy_step_cycle(&mut self) -> Option<Cycle> {
         if !self.current_traces.is_empty() {
             self.trace_steps_since_last_checkpoint += 1;
             return self.current_traces.pop();
         }
-        debug_assert!(self.current_traces.is_empty());
 
         self.cycle_count += 1;
 
@@ -479,14 +580,6 @@ impl Iterator for CheckpointingTraceIter {
             let emulator = &mut self.emulator_state;
             let cpu = emulator.get_mut_cpu();
             self.final_memory_state = Some(cpu.mmu.memory.memory.take_as_vec_memory_backend());
-
-            if cpu.mmu.jolt_device.as_ref().unwrap().panic {
-                error!(
-                    "Guest program terminated due to panic after {} cycles.",
-                    cpu.trace_len
-                );
-                utils::panic::display_panic_backtrace(&self.emulator_state);
-            }
             None
         } else {
             self.trace_steps_since_last_checkpoint += 1;
@@ -494,23 +587,20 @@ impl Iterator for CheckpointingTraceIter {
             self.current_traces.pop()
         }
     }
+
+    fn get_jolt_device(mut self) -> JoltDevice {
+        self.emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .expect("JoltDevice was not initialized")
+    }
 }
 
-/// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
-///
-/// This iterator produces instruction traces one at a time, executing the emulator
-/// as needed rather than generating the entire trace upfront. It buffers traces
-/// in `current_traces` since some instructions generate multiple trace entries.
-/// When the `current_traces` buffer is exhausted, it executes another emulator tick
-/// to generate more.
-///
-/// # Fields
-///
-/// * `emulator` - Clone of the checkpoint emulator state to execute from
-/// * `prev_pc` - Previous program counter value, used for termination detection
-/// * `current_traces` - Buffer of trace entries from the most recent emulator tick
+/// A tracer that uses a `Vec<u64>` memory backend.
 #[derive(Clone, Debug)]
-pub struct LazyTraceIterator {
+pub struct SimpleTracer {
     emulator_state: EmulatorState,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
@@ -520,11 +610,11 @@ pub struct LazyTraceIterator {
 }
 
 // SAFETY: LazyTraceIterator contains only owned data and can be safely sent between threads
-unsafe impl Send for LazyTraceIterator {}
+unsafe impl Send for SimpleTracer {}
 
-impl LazyTraceIterator {
+impl SimpleTracer {
     pub fn new(emulator_state: EmulatorState) -> Self {
-        LazyTraceIterator {
+        SimpleTracer {
             emulator_state,
             prev_pc: 0,
             current_traces: vec![],
@@ -551,7 +641,7 @@ impl LazyTraceIterator {
 
         let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
 
-        LazyTraceIterator {
+        SimpleTracer {
             emulator_state,
             prev_pc: 0,
             current_traces: vec![],
@@ -561,10 +651,6 @@ impl LazyTraceIterator {
         }
     }
 
-    pub fn at_tick_boundary(&self) -> bool {
-        self.current_traces.is_empty()
-    }
-
     pub fn get_emulator_state(self) -> EmulatorState {
         self.emulator_state
     }
@@ -572,41 +658,36 @@ impl LazyTraceIterator {
     pub fn clone_emulator_state(&self) -> EmulatorState {
         self.emulator_state.clone()
     }
-
-    pub fn get_jolt_device(self) -> JoltDevice {
-        let mut final_emulator_state = self.get_emulator_state();
-        final_emulator_state
-            .get_mut_cpu()
-            .get_mut_mmu()
-            .jolt_device
-            .take()
-            .expect("JoltDevice was not initialized")
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.finished
-    }
 }
 
-impl Iterator for LazyTraceIterator {
-    type Item = Cycle;
-    /// Advances the iterator and returns the next trace entry.
-    ///
-    /// # Returns
-    ///
-    /// * `Some(Cycle)` - The next instruction trace in the execution sequence
-    /// * `None` - If program execution has completed.
-    ///
-    /// # Details
-    ///
-    /// The function follows this sequence:
-    /// 1. Returns any remaining traces from the previous emulator tick
-    /// 2. If buffer `current_traces` is empty, and the number of ticks
-    ///    is not reached, executes another emulator tick``
-    /// 3. Checks for program termination using the heuristic of PC not changing
-    /// 4. Buffers new traces in FIFO order
-    /// 5. Returns the next trace or None if execution is complete
-    fn next(&mut self) -> Option<Self::Item> {
+impl LazyTracer for SimpleTracer {
+    fn has_terminated(&self) -> bool {
+        self.finished
+    }
+
+    fn has_panicked(&self) -> bool {
+        self.emulator_state
+            .get_cpu()
+            .mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .panic
+    }
+
+    fn at_tick_boundary(&self) -> bool {
+        self.current_traces.is_empty()
+    }
+
+    fn print_panic_log(&self) {
+        error!(
+            "Guest program terminated due to panic after {} cycles.",
+            self.emulator_state.get_cpu().trace_len
+        );
+        utils::panic::display_panic_backtrace(&self.emulator_state);
+    }
+
+    fn lazy_step_cycle(&mut self) -> Option<Cycle> {
         if !self.current_traces.is_empty() {
             return self.current_traces.pop();
         }
@@ -623,19 +704,21 @@ impl Iterator for LazyTraceIterator {
             let emulator = get_mut_emulator(&mut self.emulator_state);
             let cpu = emulator.get_mut_cpu();
             self.final_memory_state = Some(cpu.mmu.memory.memory.take_as_vec_memory_backend());
-
-            if cpu.mmu.jolt_device.as_ref().unwrap().panic {
-                error!(
-                    "Guest program terminated due to panic after {} cycles.",
-                    cpu.trace_len
-                );
-                utils::panic::display_panic_backtrace(&self.emulator_state);
-            }
             None
         } else {
             self.current_traces.reverse();
             self.current_traces.pop()
         }
+    }
+
+    fn get_jolt_device(self) -> JoltDevice {
+        let mut final_emulator_state = self.get_emulator_state();
+        final_emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .expect("JoltDevice was not initialized")
     }
 }
 
@@ -799,7 +882,7 @@ mod test {
             .map(|x| x.to_vec())
             .collect::<Vec<_>>();
         for (i, checkpoint) in checkpoints.into_iter().enumerate() {
-            let ti: Vec<Cycle> = checkpoint.collect();
+            let ti: Vec<Cycle> = GeneralizedLazyTraceIter::new(checkpoint).collect();
             assert_eq!(trace_chunk[i], ti);
         }
     }

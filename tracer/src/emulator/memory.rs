@@ -183,6 +183,10 @@ impl CheckpointingMemory {
         }
     }
 
+    pub fn is_saving_checkpoints(&self) -> bool {
+        self.saving_checkpoints
+    }
+
     /// Enable checkpoint saving for this memory. If this is true, all memory accesses will have
     /// their initial values stored to `self.checkpoint`.
     /// NOTE: This is necessary because memory accesses used to store the bytecode in memory should
