@@ -362,7 +362,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeReadRafSumcheckProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for BytecodeReadRafSumcheckProver<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -595,7 +597,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BytecodeReadRafSumcheckVerifier<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for BytecodeReadRafSumcheckVerifier<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
