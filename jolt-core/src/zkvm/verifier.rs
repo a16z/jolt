@@ -16,7 +16,7 @@ use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
 use crate::zkvm::{
-    bytecode::read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
+    bytecode::read_raf_checking::BytecodeReadRafSumcheckVerifier,
     claim_reductions::{
         HammingWeightClaimReductionVerifier, IncClaimReductionSumcheckVerifier,
         InstructionLookupsClaimReductionSumcheckVerifier, RamRaClaimReductionSumcheckVerifier,
@@ -24,7 +24,7 @@ use crate::zkvm::{
     fiat_shamir_preamble,
     instruction_lookups::{
         ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
-        read_raf_checking::ReadRafSumcheckVerifier as LookupsReadRafSumcheckVerifier,
+        read_raf_checking::InstructionReadRafSumcheckVerifier,
     },
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
@@ -374,7 +374,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(
+        let lookups_read_raf = InstructionReadRafSumcheckVerifier::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,

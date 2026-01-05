@@ -40,6 +40,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
+use fixedbitset::FixedBitSet;
 use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -98,7 +99,7 @@ const N_STAGES: usize = 5;
 /// First log(K) rounds bind address variables in chunks, aggregating per-stage address-only
 /// contributions; last log(T) rounds bind cycle variables via per-stage `GruenSplitEqPolynomial`s.
 #[derive(Allocative)]
-pub struct ReadRafSumcheckProver<F: JoltField> {
+pub struct BytecodeReadRafSumcheckProver<F: JoltField> {
     /// Per-stage address MLEs F_i(k) built from eq(r_cycle_stage_i, (chunk_index, j)),
     /// bound high-to-low during the address-binding phase.
     F: [MultilinearPolynomial<F>; N_STAGES],
@@ -121,13 +122,13 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     /// Bytecode preprocessing for computing PCs.
     #[allocative(skip)]
     bytecode_preprocessing: Arc<BytecodePreprocessing>,
-    pub params: ReadRafSumcheckParams<F>,
+    pub params: BytecodeReadRafSumcheckParams<F>,
 }
 
-impl<F: JoltField> ReadRafSumcheckProver<F> {
+impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::initialize")]
     pub fn initialize(
-        params: ReadRafSumcheckParams<F>,
+        params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: Arc<BytecodePreprocessing>,
     ) -> Self {
@@ -139,59 +140,110 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             params.rv_claims[4],
         ];
 
-        // Split-eq optimization: pre-compute E_prefix and E_suffix tables once.
-        // Instead of calling evals_serial (O(2^suffix_n_vars)) 5 times per chunk,
-        // we use lookups: eq(r_cycle, c) = E_prefix[chunk_idx] * E_suffix[j].
+        // Iterated sum optimization for computing F[stage][k] = Σ_{c: PC(c)=k} eq(r_cycle, c).
         //
-        // Chunk size ~2x bytecode length to minimize allocations per thread.
-        let chunk_n_vars = params.log_K + 1;
-        let chunk_size = 1 << chunk_n_vars;
-        let prefix_n_vars = params.r_cycles[0].len().saturating_sub(chunk_n_vars);
+        // Split r_cycle into hi/lo halves for balanced eq tables (sqrt(T) each).
+        // Within each c_hi block, accumulate sums using only additions, then scale
+        // by E_hi[c_hi] once per block. This reduces multiplications from O(T × N_STAGES)
+        // to O(touched_PCs × num_c_hi × N_STAGES).
+        //
+        // Uses sparse tracking (FixedBitSet) to skip zero entries and deferred
+        // reduction (unreduced accumulators) for fewer field reductions.
+        let T = trace.len();
+        let K = params.K;
+        let log_T = params.log_T;
 
-        // Pre-compute E_prefix[stage][chunk_idx] = eq(r_cycle[..prefix_n_vars], chunk_idx)
-        // and E_suffix[stage][j] = eq(r_cycle[prefix_n_vars..], j) for all stages in parallel
-        let (E_prefix, E_suffix): ([Vec<F>; N_STAGES], [Vec<F>; N_STAGES]) = rayon::join(
+        // Optimal split: sqrt(T) for balanced tables
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+        let in_len: usize = 1 << lo_bits; // E_lo size (suffix)
+        let out_len: usize = 1 << hi_bits; // E_hi size (prefix)
+
+        // Pre-compute E_hi[stage][c_hi] = eq(r_cycle[..hi_bits], c_hi)
+        // and E_lo[stage][c_lo] = eq(r_cycle[hi_bits..], c_lo) for all stages in parallel
+        let (E_hi, E_lo): ([Vec<F>; N_STAGES], [Vec<F>; N_STAGES]) = rayon::join(
             || {
                 params
                     .r_cycles
                     .each_ref()
-                    .map(|r_cycle| EqPolynomial::evals(&r_cycle[..prefix_n_vars]))
+                    .map(|r_cycle| EqPolynomial::evals(&r_cycle[..hi_bits]))
             },
             || {
                 params
                     .r_cycles
                     .each_ref()
-                    .map(|r_cycle| EqPolynomial::evals(&r_cycle[prefix_n_vars..]))
+                    .map(|r_cycle| EqPolynomial::evals(&r_cycle[hi_bits..]))
             },
         );
 
-        // Process trace chunks using .fold() to reuse allocations within each thread.
-        // Each thread maintains its own [Vec<F>; N_STAGES] accumulator.
-        let F = trace
-            .as_slice()
+        // Process by c_hi blocks, distributing work evenly among threads
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = out_len.div_ceil(num_threads);
+
+        // Use par_chunks pattern over the range of c_hi values
+        let F = (0..out_len)
+            .collect::<Vec<_>>()
             .par_chunks(chunk_size)
-            .enumerate()
-            .fold(
-                || array::from_fn(|_| unsafe_allocate_zero_vec::<F>(params.K)),
-                |mut acc, (chunk_index, trace_chunk)| {
-                    for (j, cycle) in trace_chunk.iter().enumerate() {
-                        let pc = bytecode_preprocessing.get_pc(cycle);
+            .map(|c_hi_chunk| {
+                // Per-thread accumulators
+                let mut partial: [Vec<F>; N_STAGES] =
+                    array::from_fn(|_| unsafe_allocate_zero_vec(K));
+
+                // Local unreduced accumulators for current c_hi block
+                let mut local: [Vec<F::Unreduced<5>>; N_STAGES] =
+                    array::from_fn(|_| unsafe_allocate_zero_vec(K));
+
+                // Touched flags for sparse tracking (single set since all stages share PC)
+                let mut touched = FixedBitSet::with_capacity(K);
+
+                for &c_hi in c_hi_chunk {
+                    let c_hi_base = c_hi * in_len;
+
+                    // Clear touched flags and local accumulators for this c_hi
+                    for k in touched.ones() {
                         for stage in 0..N_STAGES {
-                            // eq(r_cycle, (chunk_index, j)) = E_prefix[chunk_idx] * E_suffix[j]
-                            let eq_eval = E_prefix[stage][chunk_index] * E_suffix[stage][j];
-                            acc[stage][pc] += eq_eval;
+                            local[stage][k] = Default::default();
                         }
                     }
-                    acc
-                },
-            )
+                    touched.clear();
+
+                    // Accumulate within c_hi block (ADDITIONS ONLY, no multiplications)
+                    for c_lo in 0..in_len {
+                        let c = c_hi_base + c_lo;
+                        if c >= T {
+                            break;
+                        }
+
+                        let pc = bytecode_preprocessing.get_pc(&trace[c]);
+                        touched.insert(pc);
+
+                        // All stages share the same PC, accumulate contributions
+                        for stage in 0..N_STAGES {
+                            // E_lo tables differ per stage, get the correct unreduced value
+                            let stage_add = *E_lo[stage][c_lo].as_unreduced_ref();
+                            local[stage][pc] += stage_add;
+                        }
+                    }
+
+                    // Scale by E_hi[c_hi] and add to partial (SPARSE MULTIPLICATIONS)
+                    for k in touched.ones() {
+                        for stage in 0..N_STAGES {
+                            let reduced = F::from_barrett_reduce::<5>(local[stage][k]);
+                            partial[stage][k] += E_hi[stage][c_hi] * reduced;
+                        }
+                    }
+                }
+
+                partial
+            })
             .reduce(
-                || array::from_fn(|_| unsafe_allocate_zero_vec(params.K)),
+                || array::from_fn(|_| unsafe_allocate_zero_vec(K)),
                 |mut a, b| {
                     for stage in 0..N_STAGES {
-                        (&mut a[stage], &b[stage])
-                            .into_par_iter()
-                            .for_each(|(a, b)| *a += *b)
+                        a[stage]
+                            .par_iter_mut()
+                            .zip(b[stage].par_iter())
+                            .for_each(|(a, b)| *a += *b);
                     }
                     a
                 },
@@ -310,7 +362,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumcheckProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeReadRafSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -519,11 +571,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
     }
 }
 
-pub struct ReadRafSumcheckVerifier<F: JoltField> {
-    params: ReadRafSumcheckParams<F>,
+pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
+    params: BytecodeReadRafSumcheckParams<F>,
 }
 
-impl<F: JoltField> ReadRafSumcheckVerifier<F> {
+impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     pub fn gen(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
@@ -532,7 +584,7 @@ impl<F: JoltField> ReadRafSumcheckVerifier<F> {
         transcript: &mut impl Transcript,
     ) -> Self {
         Self {
-            params: ReadRafSumcheckParams::gen(
+            params: BytecodeReadRafSumcheckParams::gen(
                 bytecode_preprocessing,
                 n_cycle_vars,
                 one_hot_params,
@@ -543,7 +595,7 @@ impl<F: JoltField> ReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumcheckVerifier<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BytecodeReadRafSumcheckVerifier<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -629,7 +681,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumc
 }
 
 #[derive(Allocative, Clone)]
-pub struct ReadRafSumcheckParams<F: JoltField> {
+pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
     /// Index `i` stores `gamma^i`.
     pub gamma_powers: Vec<F>,
     /// RLC of stage rv_claims and RAF claims (per Stage1/Stage3) used as the sumcheck LHS.
@@ -654,7 +706,7 @@ pub struct ReadRafSumcheckParams<F: JoltField> {
     pub r_cycles: [Vec<F::Challenge>; N_STAGES],
 }
 
-impl<F: JoltField> ReadRafSumcheckParams<F> {
+impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     pub fn gen(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
@@ -1126,7 +1178,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
