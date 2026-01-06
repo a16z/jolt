@@ -189,9 +189,6 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
 
-    /// Materialized `ra_i(k_i, j)` polynomials.
-    /// Present only in the last log(T) rounds.
-    ra_polys: Option<Vec<MultilinearPolynomial<F>>>,
     /// Running list of sumcheck challenges r_j (address then cycle) in binding order.
     r: Vec<F::Challenge>,
 
@@ -211,9 +208,6 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     /// u_evals for read-checking and RAF: eq(r_reduction,j).
     u_evals: Vec<F>,
 
-    /// Gruen-split equality polynomial over cycle vars.
-    eq_r_reduction: GruenSplitEqPolynomial<F>,
-
     /// Registry holding prefix checkpoint values for `PrefixSuffixDecomposition` instances.
     prefix_registry: PrefixRegistry<F>,
     /// Prefix-suffix decomposition for right operand identity polynomial family.
@@ -222,6 +216,12 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     left_operand_ps: PrefixSuffixDecomposition<F, 2>,
     /// Prefix-suffix decomposition for the instruction-identity path (RAF flag path).
     identity_ps: PrefixSuffixDecomposition<F, 2>,
+
+    /// Gruen-split equality polynomial over cycle vars. Present only in the last log(T) rounds.
+    eq_r_reduction: GruenSplitEqPolynomial<F>,
+
+    /// Materialized `ra_i(k_i, j)` polynomials. Present only in the last log(T) rounds.
+    ra_polys: Option<Vec<MultilinearPolynomial<F>>>,
 
     /// Materialized Val_j(k) + γ · RafVal_j(k) over (address, cycle) for final log T rounds.
     /// Combines lookup table values with γ-weighted RAF operand contributions.
