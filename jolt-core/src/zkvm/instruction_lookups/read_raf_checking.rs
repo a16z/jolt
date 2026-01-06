@@ -199,15 +199,8 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     lookup_indices: Vec<LookupBits>,
     /// Indices of cycles grouped by selected lookup table; used to form per-table flags.
     lookup_indices_by_table: Vec<Vec<usize>>,
-    /// Cycle indices with interleaved operands (used for left/right operand prefix-suffix Q).
-    lookup_indices_uninterleave: Vec<usize>,
-    /// Cycle indices with identity path (non-interleaved) used as the RAF flag source.
-    lookup_indices_identity: Vec<usize>,
     /// Per-cycle flag: instruction uses interleaved operands.
     is_interleaved_operands: Vec<bool>,
-    #[allocative(skip)]
-    /// Per-cycle optional lookup table chosen by the instruction; None if no lookup.
-    lookup_tables: Vec<Option<LookupTables<XLEN>>>,
 
     /// Prefix checkpoints for each registered `Prefix` variant, updated every two rounds.
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
@@ -302,7 +295,6 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         // Extract all vectors in parallel using par_extend
         let mut lookup_indices = Vec::with_capacity(cycle_data.len());
         let mut is_interleaved_operands = Vec::with_capacity(cycle_data.len());
-        let mut lookup_tables = Vec::with_capacity(cycle_data.len());
 
         {
             let span = tracing::span!(tracing::Level::INFO, "par_extend basic vectors");
@@ -310,21 +302,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             lookup_indices.par_extend(cycle_data.par_iter().map(|data| data.lookup_index));
             is_interleaved_operands
                 .par_extend(cycle_data.par_iter().map(|data| data.is_interleaved));
-            lookup_tables.par_extend(cycle_data.par_iter().map(|data| data.table));
         }
-
-        // Collect interleaved and identity indices
-        let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) = {
-            let span = tracing::span!(tracing::Level::INFO, "partition_map interleaved/identity");
-            let _guard = span.enter();
-            cycle_data.par_iter().partition_map(|data| {
-                if data.is_interleaved {
-                    rayon::iter::Either::Left(data.idx)
-                } else {
-                    rayon::iter::Either::Right(data.idx)
-                }
-            })
-        };
 
         // Build lookup_indices_by_table fully in parallel
         // Create a vector for each table in parallel
@@ -374,13 +352,10 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let mut res = Self {
             trace,
             r: Vec::with_capacity(log_T + LOG_K),
-            lookup_tables,
             lookup_indices,
 
             // Prefix-suffix state (first log(K) rounds)
             lookup_indices_by_table,
-            lookup_indices_uninterleave,
-            lookup_indices_identity,
             is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
@@ -607,10 +582,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         let m_mask = m - 1;
         let num_cycles = self.lookup_indices.len();
         // Drop stuff that's no longer needed
-        drop_in_background_thread((
-            std::mem::take(&mut self.u_evals),
-            std::mem::take(&mut self.lookup_indices_uninterleave),
-        ));
+        drop_in_background_thread(std::mem::take(&mut self.u_evals));
 
         let ra_polys: Vec<MultilinearPolynomial<F>> = {
             let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomials");
@@ -701,11 +673,11 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 
             combined_val_poly
                 .par_iter_mut()
-                .zip(std::mem::take(&mut self.lookup_tables))
+                .zip(self.trace.par_iter())
                 .zip(std::mem::take(&mut self.is_interleaved_operands))
-                .for_each(|((val, table), is_interleaved_operands)| {
-                    // Add lookup table value (Val_j(k))
-                    if let Some(table) = table {
+                .for_each(|((val, cycle), is_interleaved_operands)| {
+                    // Add lookup table value (Val_j(k)) - derive table from trace
+                    if let Some(table) = cycle.lookup_table() {
                         let t_idx = LookupTables::<XLEN>::enum_index(&table);
                         *val += table_values_at_r_addr[t_idx];
                     }
@@ -886,7 +858,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         // Compute flag claims using split-eq + unreduced accumulation for efficiency.
         // This avoids materializing the full eq table (size T) and instead uses
         // E_hi (size √T) and E_lo (size √T), iterating contiguously for cache locality.
-        let (flag_claims, raf_flag_claim) = self.compute_flag_claims_split_eq(&r_cycle);
+        let (flag_claims, raf_flag_claim) = self.compute_flag_claims(&r_cycle);
 
         for (i, claim) in flag_claims.into_iter().enumerate() {
             accumulator.append_virtual(
@@ -1093,8 +1065,8 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Parallelize over E_hi chunks (c_hi)
     /// - For each c_hi, iterate sequentially over c_lo for cache locality
     /// - Use unreduced 5-limb accumulation within each c_hi block
-    #[tracing::instrument(skip_all, name = "ReadRafSumcheckProver::compute_flag_claims_split_eq")]
-    fn compute_flag_claims_split_eq(&self, r_cycle: &OpeningPoint<BIG_ENDIAN, F>) -> (Vec<F>, F) {
+    #[tracing::instrument(skip_all, name = "ReadRafSumcheckProver::compute_flag_claims")]
+    fn compute_flag_claims(&self, r_cycle: &OpeningPoint<BIG_ENDIAN, F>) -> (Vec<F>, F) {
         let T = self.trace.len();
         let num_tables = LookupTables::<XLEN>::COUNT;
 
