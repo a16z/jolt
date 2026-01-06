@@ -40,7 +40,6 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
-use fixedbitset::FixedBitSet;
 use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -140,15 +139,11 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             params.rv_claims[4],
         ];
 
-        // Iterated sum optimization for computing F[stage][k] = Σ_{c: PC(c)=k} eq(r_cycle, c).
+        // Two-table split-eq optimization for computing F[stage][k] = Σ_{c: PC(c)=k} eq(r_cycle, c).
         //
         // Split r_cycle into hi/lo halves for balanced eq tables (sqrt(T) each).
-        // Within each c_hi block, accumulate sums using only additions, then scale
-        // by E_hi[c_hi] once per block. This reduces multiplications from O(T × N_STAGES)
-        // to O(touched_PCs × num_c_hi × N_STAGES).
-        //
-        // Uses sparse tracking (FixedBitSet) to skip zero entries and deferred
-        // reduction (unreduced accumulators) for fewer field reductions.
+        // eq(r_cycle, c) = E_hi[c_hi] * E_lo[c_lo] where c = c_hi * in_len + c_lo.
+        // Process cycles in c_hi blocks for cache-friendly sequential trace access.
         let T = trace.len();
         let K = params.K;
         let log_T = params.log_T;
@@ -180,34 +175,20 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         let num_threads = rayon::current_num_threads();
         let chunk_size = out_len.div_ceil(num_threads);
 
-        // Use par_chunks pattern over the range of c_hi values
-        let F = (0..out_len)
-            .collect::<Vec<_>>()
+        // Simple split-eq pattern (matching ram_ra.rs): do multiplications inline
+        let F: [Vec<F>; N_STAGES] = E_hi[0]
             .par_chunks(chunk_size)
-            .map(|c_hi_chunk| {
-                // Per-thread accumulators
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                // Per-thread accumulators for all stages
                 let mut partial: [Vec<F>; N_STAGES] =
                     array::from_fn(|_| unsafe_allocate_zero_vec(K));
 
-                // Local unreduced accumulators for current c_hi block
-                let mut local: [Vec<F::Unreduced<5>>; N_STAGES] =
-                    array::from_fn(|_| unsafe_allocate_zero_vec(K));
-
-                // Touched flags for sparse tracking (single set since all stages share PC)
-                let mut touched = FixedBitSet::with_capacity(K);
-
-                for &c_hi in c_hi_chunk {
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, _) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
                     let c_hi_base = c_hi * in_len;
 
-                    // Clear touched flags and local accumulators for this c_hi
-                    for k in touched.ones() {
-                        for stage in 0..N_STAGES {
-                            local[stage][k] = Default::default();
-                        }
-                    }
-                    touched.clear();
-
-                    // Accumulate within c_hi block (ADDITIONS ONLY, no multiplications)
                     for c_lo in 0..in_len {
                         let c = c_hi_base + c_lo;
                         if c >= T {
@@ -215,21 +196,11 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                         }
 
                         let pc = bytecode_preprocessing.get_pc(&trace[c]);
-                        touched.insert(pc);
 
-                        // All stages share the same PC, accumulate contributions
+                        // Compute eq products inline for each stage
                         for stage in 0..N_STAGES {
-                            // E_lo tables differ per stage, get the correct unreduced value
-                            let stage_add = *E_lo[stage][c_lo].as_unreduced_ref();
-                            local[stage][pc] += stage_add;
-                        }
-                    }
-
-                    // Scale by E_hi[c_hi] and add to partial (SPARSE MULTIPLICATIONS)
-                    for k in touched.ones() {
-                        for stage in 0..N_STAGES {
-                            let reduced = F::from_barrett_reduce::<5>(local[stage][k]);
-                            partial[stage][k] += E_hi[stage][c_hi] * reduced;
+                            let eq_eval = E_hi[stage][c_hi] * E_lo[stage][c_lo];
+                            partial[stage][pc] += eq_eval;
                         }
                     }
                 }
