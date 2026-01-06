@@ -1094,10 +1094,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - For each c_hi, iterate sequentially over c_lo for cache locality
     /// - Use unreduced 5-limb accumulation within each c_hi block
     #[tracing::instrument(skip_all, name = "ReadRafSumcheckProver::compute_flag_claims_split_eq")]
-    fn compute_flag_claims_split_eq(
-        &self,
-        r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
-    ) -> (Vec<F>, F) {
+    fn compute_flag_claims_split_eq(&self, r_cycle: &OpeningPoint<BIG_ENDIAN, F>) -> (Vec<F>, F) {
         let T = self.trace.len();
         let num_tables = LookupTables::<XLEN>::COUNT;
 
