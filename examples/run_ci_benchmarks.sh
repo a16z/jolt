@@ -13,6 +13,9 @@
 
 set -e # Exit on error
 
+# Enable tracing output at INFO level so that "Prover runtime:" logs are visible
+export RUST_LOG=info
+
 # Define the exclude list
 exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench")
 # JSON file to store results
@@ -95,8 +98,10 @@ for i in "${!test_directories[@]}"; do
     echo "Error running benchmark for $file. Skipping..."
     continue
   fi
-  # Extract 'real' time value using awk
-  exec_time=$(awk '/Prover runtime:/ {print $3}' "$temp_output") # in seconds
+  # Extract 'Prover runtime:' value using awk
+  # The tracing format outputs: "TIMESTAMP  INFO target: Prover runtime: X.XX s"
+  # We need to extract the numeric value after "runtime:"
+  exec_time=$(awk '/Prover runtime:/ { for(i=1; i<=NF; i++) if($i=="runtime:") print $(i+1) }' "$temp_output") # in seconds
   # Extract 'MRS' value using awk
   mem_used=$(awk '/MRS:/ {print $2}' "$temp_output") # in KB
   echo "$output" # Print the output for debugging
