@@ -239,7 +239,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(
         skip_all,
-        name = "InstructionInstructionReadRafSumcheckProver::initialize"
+        name = "InstructionReadRafSumcheckProver::initialize"
     )]
     pub fn initialize(params: InstructionReadRafSumcheckParams<F>, trace: &[Cycle]) -> Self {
         let phases = get_instruction_sumcheck_phases(params.log_T);
@@ -640,7 +640,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(
         skip_all,
-        name = "InstructionInstructionReadRafSumcheckProver::compute_message"
+        name = "InstructionReadRafSumcheckProver::compute_message"
     )]
     /// Produces the prover's degree-≤3 univariate for the current round.
     ///
@@ -706,7 +706,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(
         skip_all,
-        name = "InstructionInstructionReadRafSumcheckProver::ingest_challenge"
+        name = "InstructionReadRafSumcheckProver::ingest_challenge"
     )]
     /// Binds the next variable (address or cycle) and advances state.
     ///
