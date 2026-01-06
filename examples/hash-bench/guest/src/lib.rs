@@ -1,121 +1,195 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-use core::hint::black_box;
-
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
-use blake2 as blake2_reference;
-use blake3 as blake3_reference;
+// Reference implementations
+#[allow(unused_imports)]
+use blake2::Digest as _;
+#[allow(unused_imports)]
+use sha2::Digest as _;
+#[allow(unused_imports)]
+use sha3::Digest as _;
+
+// Inline implementations
 use jolt_inlines_blake2 as blake2_inline;
 use jolt_inlines_blake3 as blake3_inline;
 use jolt_inlines_keccak256 as keccak_inline;
 use jolt_inlines_sha2 as sha2_inline;
-use sha2::{self as sha2_reference, Digest};
-use sha3 as keccak_reference;
 
-const INPUT_SIZE: usize = 32_768;
-const BLAKE3_INPUT_SIZE: usize = 64;
+/// Test sizes for SHA256, Keccak256, Blake2b (up to 2049B)
+const SIZES: &[usize] = &[
+    32, // baseline
+    55, 56, // SHA256: max 1 block (55) / min 2 blocks (56), 9-byte padding
+    63, 64, 65, // block boundary (64B)
+    127, 128, 129, // Blake2b block boundary (128B)
+    135, 136, 137, // Keccak rate boundary (136B)
+    255, 256, 257, // 256B boundary
+    511, 512, 513, // 512B boundary
+    1023, 1024, 1025, 2047, 2048, 2049,
+];
+
+/// Blake3 sizes (limited to 64B, single block only)
+const BLAKE3_SIZES: &[usize] = &[
+    32, // baseline
+    55, 56, // near block boundary
+    63, 64, // max supported (64B block)
+];
 
 #[jolt::provable(
     max_output_size = 4096,
     memory_size = 33554432,
     stack_size = 10485760,
-    max_trace_length = 20553600
+    max_trace_length = 50000000
 )]
 fn hashbench() -> [u8; 32] {
-    benchmark_sha2_reference();
-    benchmark_sha2_inline();
-    benchmark_keccak_reference();
-    benchmark_keccak_inline();
-    benchmark_blake2_reference();
-    benchmark_blake2_inline();
-    benchmark_blake3_reference();
-    benchmark_blake3_inline();
-
-    return [0; 32];
+    bench_sha256();
+    bench_keccak();
+    bench_blake2b();
+    bench_blake3();
+    bench_blake3_keyed64();
+    [0; 32]
 }
 
-/// Assigns deterministic random-looking values to array
-/// Uses a simple Linear Congruential Generator (LCG) algorithm to fill the array
-fn assign_random_looking_values(array: &mut [u8], seed: u32) {
-    const A: u32 = 1664525;
-    const C: u32 = 1013904223;
-    let mut state = seed;
-    for item in array {
-        state = state.wrapping_mul(A).wrapping_add(C);
-        let value = (state ^ (state >> 16)) as u8;
-        *item = value;
+fn fill(buf: &mut [u8], seed: u32) {
+    let (mut s, a, c) = (seed, 1664525u32, 1013904223u32);
+    for b in buf {
+        s = s.wrapping_mul(a).wrapping_add(c);
+        *b = (s ^ (s >> 16)) as u8;
     }
 }
 
-fn benchmark_sha2_reference() {
-    let mut input = [5u8; INPUT_SIZE];
-    assign_random_looking_values(&mut input, 40);
-    start_cycle_tracking("sha2_reference");
-    let result = black_box(sha2_reference::Sha256::digest(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("sha2_reference");
+macro_rules! bench {
+    ($name:expr, $code:expr) => {{
+        start_cycle_tracking($name);
+        let r = $code;
+        end_cycle_tracking($name);
+        r
+    }};
 }
 
-fn benchmark_sha2_inline() {
-    let mut input = [5u8; INPUT_SIZE];
-    assign_random_looking_values(&mut input, 40); // Same seed for fair comparison
-    start_cycle_tracking("sha2_inline");
-    let result = black_box(sha2_inline::Sha256::digest(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("sha2_inline");
+/// Verify: ref == aligned_digest == stream == unaligned_digest
+macro_rules! verify_all {
+    ($name:expr, $ref_r:expr, $aligned:expr, $stream:expr, $unaligned:expr) => {
+        assert_eq!($ref_r, $aligned, concat!($name, " ref!=aligned"));
+        assert_eq!($aligned, $stream, concat!($name, " aligned!=stream"));
+        assert_eq!($stream, $unaligned, concat!($name, " stream!=unaligned"));
+    };
 }
 
-fn benchmark_keccak_reference() {
-    let mut input = [5u8; INPUT_SIZE];
-    assign_random_looking_values(&mut input, 30);
-    start_cycle_tracking("keccak_reference");
-    let result = black_box(keccak_reference::Keccak256::digest(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("keccak_reference");
+// ============ SHA256 ============
+fn bench_sha256() {
+    let mut buf = [0u8; 2049];
+    let mut ubuf = [0u8; 2050];
+
+    for (i, &sz) in SIZES.iter().enumerate() {
+        fill(&mut buf[..sz], i as u32);
+        ubuf[1..sz + 1].copy_from_slice(&buf[..sz]);
+
+        let ref_r: [u8; 32] = bench!("sha256_ref", sha2::Sha256::digest(&buf[..sz]).into());
+        let aligned = bench!("sha256_a", sha2_inline::Sha256::digest(&buf[..sz]));
+        let stream = bench!("sha256_s", {
+            let mut h = sha2_inline::Sha256::new();
+            h.update(&buf[..sz]);
+            h.finalize()
+        });
+        let unaligned = bench!("sha256_u", sha2_inline::Sha256::digest(&ubuf[1..sz + 1]));
+
+        verify_all!("SHA256", ref_r, aligned, stream, unaligned);
+    }
 }
 
-fn benchmark_keccak_inline() {
-    let mut input = [5u8; INPUT_SIZE];
-    assign_random_looking_values(&mut input, 30); // Same seed for fair comparison
-    start_cycle_tracking("keccak_inline");
-    let result = black_box(keccak_inline::Keccak256::digest(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("keccak_inline");
+// ============ Keccak256 ============
+fn bench_keccak() {
+    let mut buf = [0u8; 2049];
+    let mut ubuf = [0u8; 2050];
+
+    for (i, &sz) in SIZES.iter().enumerate() {
+        fill(&mut buf[..sz], 100 + i as u32);
+        ubuf[1..sz + 1].copy_from_slice(&buf[..sz]);
+
+        let ref_r: [u8; 32] = bench!("keccak_ref", sha3::Keccak256::digest(&buf[..sz]).into());
+        let aligned = bench!("keccak_a", keccak_inline::Keccak256::digest(&buf[..sz]));
+        let stream = bench!("keccak_s", {
+            let mut h = keccak_inline::Keccak256::new();
+            h.update(&buf[..sz]);
+            h.finalize()
+        });
+        let unaligned = bench!(
+            "keccak_u",
+            keccak_inline::Keccak256::digest(&ubuf[1..sz + 1])
+        );
+
+        verify_all!("Keccak", ref_r, aligned, stream, unaligned);
+    }
 }
 
-fn benchmark_blake2_reference() {
-    let mut input = [5u8; INPUT_SIZE];
-    assign_random_looking_values(&mut input, 20);
-    start_cycle_tracking("blake2_reference");
-    let result = black_box(blake2_reference::Blake2b512::digest(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("blake2_reference");
+// ============ Blake2b ============
+fn bench_blake2b() {
+    let mut buf = [0u8; 2049];
+    let mut ubuf = [0u8; 2050];
+
+    for (i, &sz) in SIZES.iter().enumerate() {
+        fill(&mut buf[..sz], 200 + i as u32);
+        ubuf[1..sz + 1].copy_from_slice(&buf[..sz]);
+
+        let ref_r: [u8; 64] = bench!("blake2b_ref", blake2::Blake2b512::digest(&buf[..sz]).into());
+        let aligned = bench!("blake2b_a", blake2_inline::Blake2b::digest(&buf[..sz]));
+        let stream = bench!("blake2b_s", {
+            let mut h = blake2_inline::Blake2b::new();
+            h.update(&buf[..sz]);
+            h.finalize()
+        });
+        let unaligned = bench!(
+            "blake2b_u",
+            blake2_inline::Blake2b::digest(&ubuf[1..sz + 1])
+        );
+
+        verify_all!("Blake2b", ref_r, aligned, stream, unaligned);
+    }
 }
 
-fn benchmark_blake2_inline() {
-    let mut input = [5u8; INPUT_SIZE];
-    assign_random_looking_values(&mut input, 20);
-    start_cycle_tracking("blake2_inline");
-    let result = black_box(blake2_inline::Blake2b::digest(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("blake2_inline");
+// ============ Blake3 ============
+fn bench_blake3() {
+    let mut buf = [0u8; 64];
+    let mut ubuf = [0u8; 65];
+
+    for (i, &sz) in BLAKE3_SIZES.iter().enumerate() {
+        fill(&mut buf[..sz], 300 + i as u32);
+        ubuf[1..sz + 1].copy_from_slice(&buf[..sz]);
+
+        let ref_r: [u8; 32] = bench!("blake3_ref", *blake3::hash(&buf[..sz]).as_bytes());
+        let aligned = bench!("blake3_a", blake3_inline::Blake3::digest(&buf[..sz]));
+        let stream = bench!("blake3_s", {
+            let mut h = blake3_inline::Blake3::new();
+            h.update(&buf[..sz]);
+            h.finalize()
+        });
+        let unaligned = bench!("blake3_u", blake3_inline::Blake3::digest(&ubuf[1..sz + 1]));
+
+        verify_all!("Blake3", ref_r, aligned, stream, unaligned);
+    }
 }
 
-fn benchmark_blake3_reference() {
-    let mut input = [5u8; BLAKE3_INPUT_SIZE];
-    assign_random_looking_values(&mut input, 10);
-    start_cycle_tracking("blake3_reference");
-    let result = black_box(blake3_reference::hash(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("blake3_reference");
-}
+// ============ Blake3 keyed64 ============
+fn bench_blake3_keyed64() {
+    use blake3_inline::{blake3_keyed64, AlignedHash32, BLAKE3_IV};
 
-fn benchmark_blake3_inline() {
-    let mut input = [5u8; BLAKE3_INPUT_SIZE];
-    assign_random_looking_values(&mut input, 10);
-    start_cycle_tracking("blake3_inline");
-    let result: [u8; 32] = black_box(blake3_inline::Blake3::digest(black_box(&input)));
-    black_box(result);
-    end_cycle_tracking("blake3_inline");
+    let mut left = AlignedHash32::new([0u8; 32]);
+    let mut right = AlignedHash32::new([0u8; 32]);
+    fill(&mut left.0, 401);
+    fill(&mut right.0, 402);
+
+    // Reference input: left || right
+    let mut input = [0u8; 64];
+    input[..32].copy_from_slice(&left.0);
+    input[32..].copy_from_slice(&right.0);
+
+    let ref_r: [u8; 32] = bench!("blake3_k64_ref", {
+        *blake3::keyed_hash(&BLAKE3_IV.0, &input).as_bytes()
+    });
+
+    let mut iv = BLAKE3_IV;
+    bench!("blake3_k64", blake3_keyed64(&left, &right, &mut iv));
+
+    assert_eq!(ref_r, iv.0, "Blake3 keyed64 mismatch");
 }

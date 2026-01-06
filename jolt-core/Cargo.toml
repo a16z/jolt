@@ -92,13 +92,11 @@ common.workspace = true
 tracer = { workspace = true, default-features = false, features = ["std"] }
 bincode.workspace = true
 tokio = { workspace = true, optional = true }
-once_cell.workspace = true
 rand_distr.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
 paste.workspace = true
 dory.workspace = true
-lazy_static.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
 jolt-platform = { workspace = true, features = ["std"] }

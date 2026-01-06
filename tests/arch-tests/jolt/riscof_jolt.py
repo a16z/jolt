@@ -63,6 +63,9 @@ class jolt(pluginTemplate):
             self.target_run = True
 
     def initialise(self, suite, work_dir, archtest_env):
+       if shutil.which(self.dut_exe) is None:
+            logger.error(f'Executable not found: {self.dut_exe}. Please build it or check your PATH to proceed further.')
+            raise SystemExit(1)
 
        # capture the working directory. Any artifacts that the DUT creates should be placed in this
        # directory. Other artifacts from the framework and the Reference plugin will also be placed

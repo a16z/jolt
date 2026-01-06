@@ -57,6 +57,87 @@ impl R1CSConstraint {
     pub const fn new(a: LC, b: LC) -> Self {
         Self { a, b }
     }
+
+    #[cfg(test)]
+    pub fn pretty_fmt<F: crate::field::JoltField>(
+        &self,
+        f: &mut String,
+        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        step_index: usize,
+    ) -> std::fmt::Result {
+        use std::fmt::Write as _;
+
+        self.a.pretty_fmt(f)?;
+        write!(f, " ⋅ ")?;
+        self.b.pretty_fmt(f)?;
+        write!(f, " == 0")?;
+        writeln!(f)?;
+
+        let mut input_indices = Vec::new();
+        for i in 0..self.a.num_terms() {
+            if let Some(term) = self.a.term(i) {
+                if !input_indices.contains(&term.input_index) {
+                    input_indices.push(term.input_index);
+                }
+            }
+        }
+        for i in 0..self.b.num_terms() {
+            if let Some(term) = self.b.term(i) {
+                if !input_indices.contains(&term.input_index) {
+                    input_indices.push(term.input_index);
+                }
+            }
+        }
+
+        for input_index in input_indices {
+            writeln!(
+                f,
+                "    {:?} = {}",
+                JoltR1CSInputs::from_index(input_index),
+                flattened_polynomials[input_index].get_coeff(step_index)
+            )?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn pretty_fmt_with_row(
+        &self,
+        f: &mut String,
+        row: &super::inputs::R1CSCycleInputs,
+    ) -> std::fmt::Result {
+        use std::fmt::Write as _;
+
+        self.a.pretty_fmt(f)?;
+        write!(f, " ⋅ ")?;
+        self.b.pretty_fmt(f)?;
+        write!(f, " == 0")?;
+        writeln!(f)?;
+
+        let mut input_indices = Vec::new();
+        for i in 0..self.a.num_terms() {
+            if let Some(term) = self.a.term(i) {
+                if !input_indices.contains(&term.input_index) {
+                    input_indices.push(term.input_index);
+                }
+            }
+        }
+        for i in 0..self.b.num_terms() {
+            if let Some(term) = self.b.term(i) {
+                if !input_indices.contains(&term.input_index) {
+                    input_indices.push(term.input_index);
+                }
+            }
+        }
+
+        for input_index in input_indices {
+            let input = JoltR1CSInputs::from_index(input_index);
+            writeln!(f, "    {:?} = {}", input, row.get_input_value(input))?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Creates: condition * (left - right) == 0
@@ -97,6 +178,33 @@ pub enum R1CSConstraintLabel {
 pub struct NamedR1CSConstraint {
     pub label: R1CSConstraintLabel,
     pub cons: R1CSConstraint,
+}
+
+impl NamedR1CSConstraint {
+    #[cfg(test)]
+    pub fn pretty_fmt<F: crate::field::JoltField>(
+        &self,
+        f: &mut String,
+        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        step_index: usize,
+    ) -> std::fmt::Result {
+        use std::fmt::Write as _;
+
+        writeln!(f, "[{:?}]", self.label)?;
+        self.cons.pretty_fmt(f, flattened_polynomials, step_index)
+    }
+
+    #[cfg(test)]
+    pub fn pretty_fmt_with_row(
+        &self,
+        f: &mut String,
+        row: &super::inputs::R1CSCycleInputs,
+    ) -> std::fmt::Result {
+        use std::fmt::Write as _;
+
+        writeln!(f, "[{:?}]", self.label)?;
+        self.cons.pretty_fmt_with_row(f, row)
+    }
 }
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
@@ -416,6 +524,9 @@ pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
     2 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
 pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS: usize =
     3 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
+/// Degree of the first-round polynomial.
+pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_DEGREE_BOUND: usize =
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum ProductConstraintLabel {

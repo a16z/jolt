@@ -40,7 +40,7 @@ class spike(pluginTemplate):
     def initialise(self, suite, work_dir, archtest_env):
         self.suite = suite
         if shutil.which(self.ref_exe) is None:
-            logger.error('Please install Executable for DUTNAME to proceed further')
+            logger.error(f'Executable not found: {self.ref_exe}. Please install it or check your PATH to proceed further.')
             raise SystemExit(1)
         self.work_dir = work_dir
 

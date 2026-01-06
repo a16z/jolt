@@ -24,6 +24,10 @@ pub enum ProofVerifyError {
     InvalidKeyLength(usize),
     #[error("Invalid opening proof -- the proof failed to verify")]
     InvalidOpeningProof,
+    #[error("Invalid read-write checking configuration: {0}")]
+    InvalidReadWriteConfig(String),
+    #[error("Invalid one-hot configuration: {0}")]
+    InvalidOneHotConfig(String),
     #[error("Dory proof verification failed: {0}")]
     DoryError(String),
     #[error("Sumcheck verification failed")]

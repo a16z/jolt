@@ -23,11 +23,15 @@ impl InstructionRegisterState for RegisterStateFormatB {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
-        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+        let rs1_value = if operands.rs1.unwrap() == 0 {
+            0
+        } else {
+            rng.next_u64()
+        };
 
         Self {
             rs1: rs1_value,
-            rs2: if operands.rs2 == 0 {
+            rs2: if operands.rs2.unwrap() == 0 {
                 0
             } else if operands.rs2 == operands.rs1 {
                 rs1_value
@@ -37,12 +41,12 @@ impl InstructionRegisterState for RegisterStateFormatB {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rs2_value(&self) -> u64 {
-        self.rs2
+    fn rs2_value(&self) -> Option<u64> {
+        Some(self.rs2)
     }
 }
 
@@ -90,8 +94,8 @@ impl InstructionFormat for FormatB {
 impl From<NormalizedOperands> for FormatB {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rs1: operands.rs1,
-            rs2: operands.rs2,
+            rs1: operands.rs1.unwrap(),
+            rs2: operands.rs2.unwrap(),
             imm: operands.imm,
         }
     }
@@ -100,9 +104,9 @@ impl From<NormalizedOperands> for FormatB {
 impl From<FormatB> for NormalizedOperands {
     fn from(format: FormatB) -> Self {
         Self {
-            rs1: format.rs1,
-            rs2: format.rs2,
-            rd: 0,
+            rs1: Some(format.rs1),
+            rs2: Some(format.rs2),
+            rd: None,
             imm: format.imm,
         }
     }

@@ -23,7 +23,11 @@ impl InstructionRegisterState for RegisterStateFormatI {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
-        let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
+        let rs1_value = if operands.rs1.unwrap() == 0 {
+            0
+        } else {
+            rng.next_u64()
+        };
 
         Self {
             rd: (
@@ -38,12 +42,12 @@ impl InstructionRegisterState for RegisterStateFormatI {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rd_values(&self) -> (u64, u64) {
-        self.rd
+    fn rd_values(&self) -> Option<(u64, u64)> {
+        Some(self.rd)
     }
 }
 
@@ -89,8 +93,8 @@ impl InstructionFormat for FormatI {
 impl From<NormalizedOperands> for FormatI {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
+            rd: operands.rd.unwrap(),
+            rs1: operands.rs1.unwrap(),
             imm: operands.imm as u64,
         }
     }
@@ -99,9 +103,9 @@ impl From<NormalizedOperands> for FormatI {
 impl From<FormatI> for NormalizedOperands {
     fn from(format: FormatI) -> Self {
         Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: 0,
+            rd: Some(format.rd),
+            rs1: Some(format.rs1),
+            rs2: None,
             imm: format.imm as i128,
         }
     }

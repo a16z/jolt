@@ -26,7 +26,7 @@ impl InstructionRegisterState for RegisterStateFormatS {
         use rand::RngCore;
         // Use a smaller range to avoid issues with boundaries
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
-        let rs1_value = if operands.rs1 == 0 {
+        let rs1_value = if operands.rs1.unwrap() == 0 {
             unreachable!()
         } else {
             DRAM_BASE + (rng.next_u64() % max_offset)
@@ -34,7 +34,7 @@ impl InstructionRegisterState for RegisterStateFormatS {
 
         Self {
             rs1: rs1_value,
-            rs2: if operands.rs2 == 0 {
+            rs2: if operands.rs2.unwrap() == 0 {
                 0
             } else if operands.rs2 == operands.rs1 {
                 rs1_value
@@ -44,12 +44,12 @@ impl InstructionRegisterState for RegisterStateFormatS {
         }
     }
 
-    fn rs1_value(&self) -> u64 {
-        self.rs1
+    fn rs1_value(&self) -> Option<u64> {
+        Some(self.rs1)
     }
 
-    fn rs2_value(&self) -> u64 {
-        self.rs2
+    fn rs2_value(&self) -> Option<u64> {
+        Some(self.rs2)
     }
 }
 
@@ -98,8 +98,8 @@ impl InstructionFormat for FormatS {
 impl From<NormalizedOperands> for FormatS {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rs1: operands.rs1,
-            rs2: operands.rs2,
+            rs1: operands.rs1.unwrap(),
+            rs2: operands.rs2.unwrap(),
             imm: operands.imm as i64,
         }
     }
@@ -108,10 +108,10 @@ impl From<NormalizedOperands> for FormatS {
 impl From<FormatS> for NormalizedOperands {
     fn from(format: FormatS) -> Self {
         Self {
-            rs1: format.rs1,
-            rs2: format.rs2,
+            rs1: Some(format.rs1),
+            rs2: Some(format.rs2),
             imm: format.imm as i128,
-            rd: 0,
+            rd: None,
         }
     }
 }
