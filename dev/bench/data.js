@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767637147510,
+  "lastUpdate": 1767719662326,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -43318,6 +43318,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 372260,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2ec93c18251a7dbdbcbf308daa12c51a9690c6f7",
+          "message": "perf: optimize MontU128Challenge storage from 32 to 16 bytes (#1188)\n\n* perf: optimize MontU128Challenge storage from 32 to 16 bytes\n\n- Changed internal storage from [u64; 4] to (low: u64, high: u64)\n- Optimized new() to only mask high limb instead of full u128\n- Added #[inline(always)] to hot path functions\n- Added custom serialization for field element compatibility\n- Changed Into to From (more idiomatic Rust)\n- Added polynomial binding benchmarks for HighToLow and LowToHigh\n\nMemory savings: 50% reduction per challenge (16 bytes saved)\nPerformance: ~3-5% improvement in challenge multiplication\n\n* fix: use inlined format args for clippy\n\n* fmt again\n\n* perf: use mul_by_hi_2limbs for zero-overhead challenge multiplication\n\n- Switch to quangvdao/arkworks-algebra branch with new mul_by_hi_2limbs API\n- Make low/high fields public for direct access in macro\n- Use mul_by_hi_2limbs(challenge.low, challenge.high) for zero overhead\n- Eliminates array construction [0, 0, low, high] in hot path\n\n* change binding bench\n\n* switch back to dev twist shout branch\n\n* update cargo lock\n\n* refactor: remove unused methods from TrackedFr and MontU128Challenge\n\n- Deleted the mul_hi_u128 method from TrackedFr as it was no longer needed.\n- Removed limbs and as_u128 methods from MontU128Challenge to streamline the codebase.",
+          "timestamp": "2026-01-06T11:30:25-05:00",
+          "tree_id": "7cf7bd32b96472372001064daa4bfa858dacff7c",
+          "url": "https://github.com/a16z/jolt/commit/2ec93c18251a7dbdbcbf308daa12c51a9690c6f7"
+        },
+        "date": 1767719660719,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0951,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 384660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 429448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6344,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 385968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.594,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 386100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.3072,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 385488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5299,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 383496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3652,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 386004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.2712,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 383880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 383828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 99.3445,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2708144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5483,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 386008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6286,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 384012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 378560,
             "unit": "KB",
             "extra": ""
           }
