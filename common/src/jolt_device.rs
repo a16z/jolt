@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +19,7 @@ use crate::constants::{
 /// to the reserved memory address space for program outputs.
 /// The inputs and outputs are part of the public inputs to the proof.
 #[derive(
+    Allocative,
     Default,
     Debug,
     Clone,
@@ -175,7 +177,14 @@ impl Default for MemoryConfig {
 }
 
 #[derive(
-    Default, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+    Allocative,
+    Default,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
 )]
 pub struct MemoryLayout {
     /// The total size of the elf's sections, including the .text, .data, .rodata, and .bss sections.

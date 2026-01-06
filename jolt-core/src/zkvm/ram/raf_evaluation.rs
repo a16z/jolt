@@ -42,6 +42,7 @@ use crate::{
 /// Degree bound of the sumcheck round polynomials in [`RafEvaluationSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
 
+#[derive(Allocative, Clone)]
 pub struct RafEvaluationSumcheckParams<F: JoltField> {
     /// log K (number of rounds)
     pub log_K: usize,
@@ -99,10 +100,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
 #[derive(Allocative)]
 pub struct RafEvaluationSumcheckProver<F: JoltField> {
     /// The ra polynomial
-    pub ra: MultilinearPolynomial<F>,
+    ra: MultilinearPolynomial<F>,
     /// The unmap polynomial
-    pub unmap: UnmapRamAddressPolynomial<F>,
-    #[allocative(skip)]
+    unmap: UnmapRamAddressPolynomial<F>,
     pub params: RafEvaluationSumcheckParams<F>,
 }
 

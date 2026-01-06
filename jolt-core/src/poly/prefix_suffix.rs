@@ -1,9 +1,8 @@
 use std::ops::{Index, IndexMut};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use allocative::Allocative;
 use num_traits::Zero;
-use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
@@ -84,7 +83,7 @@ impl<T> IndexMut<Prefix> for [T; Prefix::COUNT] {
 pub struct CachedPolynomial<F: JoltField> {
     pub inner: MultilinearPolynomial<F>,
     #[allocative(skip)]
-    pub sumcheck_evals_cache: Vec<OnceCell<(F, F)>>,
+    pub sumcheck_evals_cache: Vec<OnceLock<(F, F)>>,
     pub bound_this_round: bool,
 }
 
@@ -138,7 +137,7 @@ impl<F: JoltField> CachedPolynomial<F> {
     pub fn new(inner: MultilinearPolynomial<F>, cache_capacity: usize) -> Self {
         Self {
             inner,
-            sumcheck_evals_cache: vec![OnceCell::new(); cache_capacity],
+            sumcheck_evals_cache: vec![OnceLock::new(); cache_capacity],
             bound_this_round: false,
         }
     }
