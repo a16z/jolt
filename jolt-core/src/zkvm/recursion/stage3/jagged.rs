@@ -26,9 +26,6 @@
 //! - f_jagged is an indicator function implementing the sparse-to-dense bijection
 //! - r_s_final, r_x_prev are the evaluation points from Stage 2
 //! - r_dense is the final sumcheck challenge point
-//!
-//! This stage enables ~71% commitment size reduction by excluding zero entries
-//! from the constraint matrix commitment.
 
 use crate::{
     field::JoltField,
@@ -48,13 +45,15 @@ use crate::{
     utils::errors::ProofVerifyError,
     zkvm::witness::CommittedPolynomial,
 };
-use ark_ff::Zero;
 use rayon::prelude::*;
 
 use crate::zkvm::recursion::bijection::{
     ConstraintMapping, JaggedTransform, VarCountJaggedBijection,
 };
 use ark_bn254::Fq;
+use ark_ff::Zero;
+
+use super::branching_program::{JaggedBranchingProgram, Point};
 
 /// Parameters for Stage 3 jagged sumcheck
 #[derive(Clone)]
@@ -204,14 +203,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for JaggedSumchec
         const DEGREE: usize = 2;
         let num_vars_remaining = self.dense_poly.get_num_vars();
 
-        #[cfg(test)]
-        {
-            println!("\n=== PROVER COMPUTE_MESSAGE ===");
-            println!("Round: {}", self.round);
-            println!("Previous claim: {:?}", previous_claim);
-            println!("Num vars remaining: {}", num_vars_remaining);
-        }
-
         if num_vars_remaining == 0 {
             return UniPoly::from_coeff(vec![self.dense_poly.get_bound_coeff(0)]);
         }
@@ -268,14 +259,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for JaggedSumchec
                         let eq_x = EqPolynomial::mle(&x_binary, &self.sparse_opening_point_x);
 
                         #[cfg(test)]
-                        if self.round == self.params.num_dense_vars - 1 && suffix_idx == 0 && t < 3 {
+                        if self.round == self.params.num_dense_vars - 1 && suffix_idx == 0 && t < 3
+                        {
                             println!("\n  PROVER: Computing for dense_idx {}:", dense_idx);
                             println!("    poly_idx: {}, eval_idx: {}", poly_idx, col);
                             println!("    matrix_row: {}", matrix_row);
                             println!("    q_evals[{}]: {:?}", t, q_evals[t]);
                             println!("    eq_s: {:?}", eq_s);
                             println!("    eq_x: {:?}", eq_x);
-                            println!("    f_jagged = q * eq_s * eq_x = {:?}", q_evals[t] * eq_s * eq_x);
+                            println!(
+                                "    f_jagged = q * eq_s * eq_x = {:?}",
+                                q_evals[t] * eq_s * eq_x
+                            );
                         }
 
                         // f_jagged(r_s, r_x, i) = eq(row(i), r_s) * eq(col(i), r_x)
@@ -468,37 +463,59 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
             // - c = t_{y-1} (cumulative size before this row)
             // - d = t_y (cumulative size including this row)
 
-            // For the multilinear extension, we need to sum over all valid (x_idx, dense_idx) pairs
-            // where dense_idx ∈ [t_prev, t_curr) and dense_idx = x_idx + t_prev
+            // Use the branching program optimization
+            // The branching program computes g(a,b,c,d) = 1[b < d ∧ b = a + c]
+            //
+            // We need: Σ_{a,b} g(a,b,t_prev,t_curr) * eq(a, sparse_x) * eq(b, r_dense)
+            //
+            // But note that g(a,b,t_prev,t_curr) = 1 only when:
+            // 1) b < t_curr
+            // 2) b = a + t_prev
+            //
+            // So this sum equals: Σ_{a} 1[a + t_prev < t_curr] * eq(a, sparse_x) * eq(a + t_prev, r_dense)
+            // Which is exactly what the original code computed!
 
-            for x_idx in 0..(t_curr - t_prev) {
-                let dense_idx = t_prev + x_idx;
+            let num_bits =
+                std::cmp::max(self.params.num_constraint_vars, self.params.num_dense_vars);
 
-                // Convert x_idx to binary for eq(a, zc) = eq(x_idx, sparse_opening_point_x)
-                // (Remember: in our adaptation, a corresponds to the column index)
-                let x_binary = index_to_binary_vec::<F>(x_idx, self.params.num_constraint_vars);
-                let eq_a_zc = EqPolynomial::mle(&x_binary, &self.sparse_opening_point_x);
+            // Create the branching program
+            let prog = JaggedBranchingProgram::new(num_bits);
 
-                // Convert dense_idx to binary for eq(b, i) = eq(dense_idx, r_dense)
-                let dense_idx_binary =
-                    index_to_binary_vec::<F>(dense_idx, self.params.num_dense_vars);
-                let eq_b_i = EqPolynomial::mle(&dense_idx_binary, &r_dense);
+            // Compute ĝ(sparse_x, r_dense, t_prev, t_curr) directly
+            // This gives us the MLE of g evaluated at our challenge points
+            let za = Point::from_slice(&self.sparse_opening_point_x);
+            let zb = Point::from_slice(&r_dense);
+            let zc = Point::from_usize(t_prev, num_bits);
+            let zd = Point::from_usize(t_curr, num_bits);
 
-                // The contribution of g is eq(a, zc) * eq(b, i) when the constraints are satisfied
-                // This effectively evaluates ĝ(zc, i, t_{y-1}, t_y) in our adapted formula
-                let g_contribution = eq_a_zc * eq_b_i;
+            let g_mle = prog.eval_multilinear(&za, &zb, &zc, &zd);
 
-                #[cfg(test)]
-                if poly_idx < 3 && x_idx < 3 {
-                    println!("      x_idx: {}, dense_idx: {}", x_idx, dense_idx);
-                    println!("        eq_a_zc: {:?}", eq_a_zc);
-                    println!("        eq_b_i: {:?}", eq_b_i);
-                    println!("        contribution: {:?}", eq_zr_y * g_contribution);
+            #[cfg(test)]
+            if poly_idx < 3 {
+                println!("      Using branching program optimization:");
+                println!("        sparse_x: {:?}", self.sparse_opening_point_x);
+                println!("        r_dense: {:?}", r_dense);
+                println!("        t_prev: {}, t_curr: {}", t_prev, t_curr);
+                println!("        g_mle from branching program: {:?}", g_mle);
+
+                // Let's also compute it the old way to compare
+                let mut old_g_sum = F::zero();
+                for x_idx in 0..(t_curr - t_prev) {
+                    let dense_idx = t_prev + x_idx;
+                    let x_binary = index_to_binary_vec::<F>(x_idx, self.params.num_constraint_vars);
+                    let eq_a_zc = EqPolynomial::mle(&x_binary, &self.sparse_opening_point_x);
+                    let dense_idx_binary =
+                        index_to_binary_vec::<F>(dense_idx, self.params.num_dense_vars);
+                    let eq_b_i = EqPolynomial::mle(&dense_idx_binary, &r_dense);
+                    old_g_sum += eq_a_zc * eq_b_i;
                 }
-
-                // Add eq(zr, y) * ĝ contribution (adapted for row-based jaggedness)
-                f_jagged_at_r_dense += eq_zr_y * g_contribution;
+                println!("        g_sum from old method: {:?}", old_g_sum);
+                println!("        Match: {}", g_mle == old_g_sum);
+                println!("        total contribution: {:?}", eq_zr_y * g_mle);
             }
+
+            // Add eq(zr, y) * ĝ contribution
+            f_jagged_at_r_dense += eq_zr_y * g_mle;
         }
 
         #[cfg(test)]

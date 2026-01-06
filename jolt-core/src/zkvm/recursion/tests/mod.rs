@@ -18,3 +18,9 @@ mod fixed_jagged_test;
 mod manual_jagged_debug;
 #[cfg(test)]
 mod sumcheck_relation_test;
+#[cfg(test)]
+mod debug_dense_sparse;
+#[cfg(test)]
+mod debug_bijection_mapping;
+#[cfg(test)]
+mod fixed_dense_evaluation;

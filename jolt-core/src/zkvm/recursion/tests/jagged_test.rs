@@ -132,7 +132,6 @@ fn test_jagged_relation_small() {
         }
     }
 
-    // Now compute using the dense representation with the bijection
     let mut dense_sum = Fq::zero();
     for (i, &val) in dense_q.iter().enumerate() {
         let row = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, i);
@@ -156,12 +155,20 @@ fn test_jagged_relation_small() {
             sparse_non_zero_values.push(*val);
         }
     }
-    assert_eq!(sparse_non_zero_values, dense_q,
-        "Dense polynomial should contain exactly the non-zero values from sparse");
+    assert_eq!(
+        sparse_non_zero_values, dense_q,
+        "Dense polynomial should contain exactly the non-zero values from sparse"
+    );
 
     // Verify the evaluations match
-    assert_eq!(sparse_sum, dense_eval, "Sparse and dense evaluations should match");
-    assert_eq!(sparse_eval, sparse_sum, "MultilinearPolynomial evaluation should match manual sum");
+    assert_eq!(
+        sparse_sum, dense_eval,
+        "Sparse and dense evaluations should match"
+    );
+    assert_eq!(
+        sparse_eval, sparse_sum,
+        "MultilinearPolynomial evaluation should match manual sum"
+    );
 }
 
 #[test]
@@ -269,14 +276,18 @@ fn test_jagged_relation_dory_witness() {
         .into_par_iter()
         .map(|dense_idx| {
             // Get polynomial index and evaluation index from bijection
-            let poly_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, dense_idx);
-            let eval_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, dense_idx);
+            let poly_idx =
+                <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, dense_idx);
+            let eval_idx =
+                <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, dense_idx);
 
             // Decode to get constraint index and polynomial type
             let (constraint_idx, poly_type) = mapping.decode(poly_idx);
 
             // Get the matrix row index
-            let matrix_row = constraint_system.matrix.row_index(poly_type, constraint_idx);
+            let matrix_row = constraint_system
+                .matrix
+                .row_index(poly_type, constraint_idx);
 
             // Get eq evaluations using the correct indices
             let eq_s = eq_row_evals[matrix_row];
@@ -288,5 +299,8 @@ fn test_jagged_relation_dory_witness() {
         .sum();
 
     // Verify that sparse and dense evaluations match
-    assert_eq!(sparse_eval, dense_eval, "Sparse and dense evaluations should match");
+    assert_eq!(
+        sparse_eval, dense_eval,
+        "Sparse and dense evaluations should match"
+    );
 }
