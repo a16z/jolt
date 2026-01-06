@@ -587,16 +587,17 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     /// - rs2 is NOT read by: FormatI (ADDI, etc.), FormatLoad (LB, LW, etc.), FormatU, FormatJ
     /// - rs1 is NOT read by: only FormatU, FormatJ
     ///
-    /// Uses a 2-way split-eq optimization over the joint (address, cycle) space:
-    /// - Total bits: n = 7 (address) + log_T (cycle)
-    /// - Split in half: hi_bits = n/2, lo_bits = n - hi_bits
-    /// - E_hi has size 2^hi_bits, E_lo has size 2^lo_bits
+    /// Uses a 2-way split-eq optimization over the joint (cycle, address) space:
+    /// - Order: r_joint = [r_cycle..., r_address...] so cycle vars are MSB
+    /// - Total bits: n = log_T + 7 (address)
+    /// - hi_bits = min(log_T, (n+1)/2) ensures hi part contains only cycle bits
+    /// - This enables clean double outer/inner sum: outer over cycle blocks, inner sums E_lo
     ///
     /// EqPolynomial bit ordering: bit i of index → r[n-1-i] (reverse order, r[0] is MSB)
-    /// - For r_joint = [r_address, r_cycle], we need:
-    ///   - bits 0..(log_T-1) of joint_index → r_cycle (LSB part)
-    ///   - bits log_T..(n-1) of joint_index → r_address (MSB part)
-    /// - So joint_index = (rs2 << log_T) | j
+    /// - For r_joint = [r_cycle, r_address]:
+    ///   - bits 0..(addr_bits-1) of joint_index → r_address (LSB part)
+    ///   - bits addr_bits..(n-1) of joint_index → r_cycle (MSB part)
+    /// - So joint_index = (j << addr_bits) | rs2
     #[tracing::instrument(
         skip_all,
         name = "RegistersReadWriteCheckingProver::compute_rs2_ra_claim"
@@ -606,20 +607,19 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         r_address: &[F::Challenge],
         r_cycle: &[F::Challenge],
     ) -> F {
-        let T = trace.len();
         let log_T = r_cycle.len();
         let addr_bits = r_address.len(); // = 7 for 128 registers
 
-        // 2-way split over joint (address, cycle) space
-        let n = addr_bits + log_T;
-        let lo_bits = n / 2;
-        let hi_bits = n - lo_bits;
+        // 2-way split over joint (cycle, address) space
+        // Order: r_joint = [r_cycle..., r_address...] so cycle vars are MSB
+        let n = log_T + addr_bits;
 
-        // r_joint = [r_address..., r_cycle...]
-        // EqPolynomial uses bit i of index → r_joint[n-1-i], so:
-        // - r_joint[0..hi_bits] (MSB part) corresponds to bits (lo_bits)..(n-1) of index
-        // - r_joint[hi_bits..n] (LSB part) corresponds to bits 0..(lo_bits-1) of index
-        let r_joint: Vec<F::Challenge> = r_address.iter().chain(r_cycle.iter()).copied().collect();
+        // hi_bits contains only cycle vars, lo_bits contains remaining cycle + all address vars
+        let hi_bits = std::cmp::min(log_T, n.div_ceil(2));
+        let lo_bits = n - hi_bits;
+
+        // r_joint = [r_cycle..., r_address...]
+        let r_joint: Vec<F::Challenge> = r_cycle.iter().chain(r_address.iter()).copied().collect();
         let (r_hi, r_lo) = r_joint.split_at(hi_bits);
 
         let (E_hi, E_lo) = rayon::join(
@@ -627,27 +627,40 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             || EqPolynomial::<F>::evals(r_lo),
         );
 
-        let lo_mask = (1usize << lo_bits) - 1;
+        // joint_index = (j << addr_bits) | rs2
+        // idx_hi = joint_index >> lo_bits = j >> (lo_bits - addr_bits)
+        // idx_lo = joint_index & lo_mask = ((j & cycle_lo_mask) << addr_bits) | rs2
+        let cycle_bits_in_lo = lo_bits - addr_bits; // number of cycle bits in the lo part
+        let cycles_per_block = 1usize << cycle_bits_in_lo;
+        let cycle_lo_mask = cycles_per_block - 1;
 
-        // joint_index = (rs2 << log_T) | j
-        // Split:
-        // - idx_lo = joint_index & lo_mask (lower lo_bits → E_lo)
-        // - idx_hi = joint_index >> lo_bits (upper hi_bits → E_hi)
-
-        // Parallel over the trace - sum reduced field elements
-        (0..T)
+        // Double outer/inner sum:
+        // - Outer: parallel over E_hi indices (each corresponds to a block of cycles)
+        // - Inner: sequential sum over cycles in that block
+        (0..E_hi.len())
             .into_par_iter()
-            .filter_map(|j| {
-                // Only accumulate if this cycle has an rs2 read
-                trace[j].rs2_read().map(|(rs2, _)| {
-                    // joint_index = (rs2 << log_T) | j
-                    let joint_index = ((rs2 as usize) << log_T) | j;
-                    let idx_lo = joint_index & lo_mask; // lower lo_bits → E_lo
-                    let idx_hi = joint_index >> lo_bits; // upper hi_bits → E_hi
+            .map(|idx_hi| {
+                let e_hi_val = E_hi[idx_hi];
+                let block_start = idx_hi << cycle_bits_in_lo;
+                let block_end = std::cmp::min(block_start + cycles_per_block, trace.len());
 
-                    // eq(r_joint, joint_index) = E_hi[idx_hi] * E_lo[idx_lo]
-                    E_hi[idx_hi] * E_lo[idx_lo]
-                })
+                if block_start >= trace.len() {
+                    return F::zero();
+                }
+
+                // Inner sum: iterate over cycles in this block
+                let inner_sum: F = (block_start..block_end)
+                    .filter_map(|j| {
+                        trace[j].rs2_read().map(|(rs2, _)| {
+                            // idx_lo = ((j & cycle_lo_mask) << addr_bits) | rs2
+                            let j_in_block = j & cycle_lo_mask;
+                            let idx_lo = (j_in_block << addr_bits) | (rs2 as usize);
+                            E_lo[idx_lo]
+                        })
+                    })
+                    .sum();
+
+                e_hi_val * inner_sum
             })
             .sum()
     }
