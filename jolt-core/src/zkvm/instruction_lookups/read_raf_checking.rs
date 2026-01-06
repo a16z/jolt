@@ -96,7 +96,7 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
 
 #[derive(Allocative, Clone)]
-pub struct ReadRafSumcheckParams<F: JoltField> {
+pub struct InstructionReadRafSumcheckParams<F: JoltField> {
     /// γ and its square (γ^2) used for batching rv/branch/raf components.
     pub gamma: F,
     pub gamma_sqr: F,
@@ -107,7 +107,7 @@ pub struct ReadRafSumcheckParams<F: JoltField> {
     pub r_reduction: OpeningPoint<BIG_ENDIAN, F>,
 }
 
-impl<F: JoltField> ReadRafSumcheckParams<F> {
+impl<F: JoltField> InstructionReadRafSumcheckParams<F> {
     pub fn new(
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
@@ -131,7 +131,7 @@ impl<F: JoltField> ReadRafSumcheckParams<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParams<F> {
     fn num_rounds(&self) -> usize {
         LOG_K + self.log_T
     }
@@ -174,12 +174,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
     }
 }
 
-/// Sumcheck prover for [`ReadRafSumcheckVerifier`].
+/// Sumcheck prover for [`InstructionReadRafSumcheckVerifier`].
 ///
 /// Binds address variables first using prefix/suffix decomposition to aggregate, per cycle j,
 ///   Σ_k ra(k, j)·Val_j(k) and Σ_k ra(k, j)·RafVal_j(k),
 #[derive(Allocative)]
-pub struct ReadRafSumcheckProver<F: JoltField> {
+pub struct InstructionReadRafSumcheckProver<F: JoltField> {
     /// Materialized `ra_i(k_i, j)` polynomials.
     /// Present only in the last log(T) rounds.
     ra_polys: Option<Vec<MultilinearPolynomial<F>>>,
@@ -226,10 +226,10 @@ pub struct ReadRafSumcheckProver<F: JoltField> {
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
 
     phases: usize,
-    pub params: ReadRafSumcheckParams<F>,
+    pub params: InstructionReadRafSumcheckParams<F>,
 }
 
-impl<F: JoltField> ReadRafSumcheckProver<F> {
+impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     /// Creates a prover-side instance for the Read+RAF batched sumcheck.
     ///
     /// Builds prover-side working state:
@@ -238,7 +238,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Allocates per-table suffix accumulators and u-evals for rv/raf parts
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::initialize")]
-    pub fn initialize(params: ReadRafSumcheckParams<F>, trace: &[Cycle]) -> Self {
+    pub fn initialize(params: InstructionReadRafSumcheckParams<F>, trace: &[Cycle]) -> Self {
         let phases = get_instruction_sumcheck_phases(params.log_T);
         let log_m = LOG_K / phases;
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
@@ -628,7 +628,9 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumcheckProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for InstructionReadRafSumcheckProver<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -832,7 +834,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
     }
 }
 
-impl<F: JoltField> ReadRafSumcheckProver<F> {
+impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     /// Address-round prover message: sum of read-checking and RAF components.
     ///
     /// Each component is a degree-2 univariate evaluated at X∈{0,2} using
@@ -997,18 +999,18 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
 ///   Σ_j Σ_k [ eq(j; r_reduction) · ra(k, j) · (Val_j(k) + γ·RafVal_j(k)) ].
 /// It is implemented as: first log(K) address-binding rounds (prefix/suffix condensation), then
 /// last log(T) cycle-binding rounds driven by [`GruenSplitEqPolynomial`].
-pub struct ReadRafSumcheckVerifier<F: JoltField> {
-    params: ReadRafSumcheckParams<F>,
+pub struct InstructionReadRafSumcheckVerifier<F: JoltField> {
+    params: InstructionReadRafSumcheckParams<F>,
 }
 
-impl<F: JoltField> ReadRafSumcheckVerifier<F> {
+impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
     pub fn new(
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let params = ReadRafSumcheckParams::new(
+        let params = InstructionReadRafSumcheckParams::new(
             n_cycle_vars,
             one_hot_params,
             opening_accumulator,
@@ -1018,7 +1020,9 @@ impl<F: JoltField> ReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ReadRafSumcheckVerifier<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for InstructionReadRafSumcheckVerifier<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -1293,13 +1297,13 @@ mod tests {
 
         let one_hot_params = OneHotParams::new(trace.len().log_2(), 100, 100);
 
-        let params = ReadRafSumcheckParams::new(
+        let params = InstructionReadRafSumcheckParams::new(
             trace.len().log_2(),
             &one_hot_params,
             &prover_opening_accumulator,
             prover_transcript,
         );
-        let mut prover_sumcheck = ReadRafSumcheckProver::initialize(params, &trace);
+        let mut prover_sumcheck = InstructionReadRafSumcheckProver::initialize(params, &trace);
 
         let (proof, r_sumcheck) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],
@@ -1340,7 +1344,7 @@ mod tests {
             OpeningPoint::new(r_cycle.clone()),
         );
 
-        let mut verifier_sumcheck = ReadRafSumcheckVerifier::new(
+        let mut verifier_sumcheck = InstructionReadRafSumcheckVerifier::new(
             trace.len().log_2(),
             &one_hot_params,
             &verifier_opening_accumulator,
