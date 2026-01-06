@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767719662326,
+  "lastUpdate": 1767730667072,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -43498,6 +43498,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 378560,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4f21f7c8e6701f5da5a43ff6b21b7f8a5f193b2e",
+          "message": "perf: optimize BytecodeReadRafSumcheck init phase (#1190)\n\n* Optimize ReadRafSumcheck init phase\n\n- Add split-eq optimization: pre-compute E_prefix and E_suffix tables once,\n  use lookups instead of calling evals_serial per chunk\n- Replace pc: Vec<usize> with on-the-fly PC computation from trace\n- Use .fold() instead of .map() to reuse allocations within threads\n- Move compute_round_poly to split_eq_poly.rs as gruen_poly_from_evals\n- Fuse all val polynomial computations into single pass (compute_val_polys)\n- Drop unused data after log_K rounds to reduce memory footprint\n\n* Use Arc<BytecodePreprocessing> to avoid cloning bytecode\n\n- Change JoltSharedPreprocessing.bytecode to Arc<BytecodePreprocessing>\n- Implement custom CanonicalSerialize/CanonicalDeserialize for JoltSharedPreprocessing\n- Update RLCStreamingData to use Arc<BytecodePreprocessing>\n- Update all access sites in prover.rs to use Arc::clone\n\n* fmt\n\n* Rename ReadRafSumcheck types to BytecodeReadRaf and InstructionReadRaf prefixes\n\nClarifies distinction between bytecode and instruction lookup sumchecks:\n- BytecodeReadRafSumcheckProver/Verifier/Params in bytecode/read_raf_checking.rs\n- InstructionReadRafSumcheckProver/Verifier/Params in instruction_lookups/read_raf_checking.rs\n\n* fmt\n\n* Fix typo: InstructionInstructionReadRafSumcheckProver -> InstructionReadRafSumcheckProver\n\n* Simplify BytecodeReadRafSumcheckProver::initialize\n\nRemove FixedBitSet sparse tracking and unreduced accumulator overhead.\nUse simpler inline multiplication pattern matching ram_ra.rs.\nThis should fix the 84% regression in initialize time.\n\n* Use double summation pattern for F computation\n\nFactor out E_hi multiplication to outer loop:\n  F[k] = Σ_{c_hi} E_hi[c_hi] × ( Σ_{c_lo : PC(c)=k} E_lo[c_lo] )\n\nInner loop: additions only (cheap)\nOuter loop: one mult per touched PC per c_hi block (sparse)\n\nReduces multiplications from O(T × N_STAGES) to O(touched × out_len × N_STAGES)\n\n* fmt",
+          "timestamp": "2026-01-06T14:37:04-05:00",
+          "tree_id": "8c3884343a5c92d84fa7a8410fa956dd09ddc028",
+          "url": "https://github.com/a16z/jolt/commit/4f21f7c8e6701f5da5a43ff6b21b7f8a5f193b2e"
+        },
+        "date": 1767730666214,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0126,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 385760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 426736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5893,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 383712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5773,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 385800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.916,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 383668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5009,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 383480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3517,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 385752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7937,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 387588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 383532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 86.9163,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2694708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4364,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 387508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4917,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 387676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 373432,
             "unit": "KB",
             "extra": ""
           }
