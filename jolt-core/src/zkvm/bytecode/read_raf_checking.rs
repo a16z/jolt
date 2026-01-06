@@ -141,9 +141,13 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
 
         // Two-table split-eq optimization for computing F[stage][k] = Σ_{c: PC(c)=k} eq(r_cycle, c).
         //
-        // Split r_cycle into hi/lo halves for balanced eq tables (sqrt(T) each).
-        // eq(r_cycle, c) = E_hi[c_hi] * E_lo[c_lo] where c = c_hi * in_len + c_lo.
-        // Process cycles in c_hi blocks for cache-friendly sequential trace access.
+        // Double summation pattern:
+        //   F[stage][k] = Σ_{c_hi} E_hi[c_hi] × ( Σ_{c_lo : PC(c)=k} E_lo[c_lo] )
+        //
+        // Inner sum (over c_lo): ADDITIONS ONLY - accumulate E_lo contributions by PC
+        // Outer sum (over c_hi): ONE multiplication per touched PC, not per cycle
+        //
+        // This reduces multiplications from O(T × N_STAGES) to O(touched_PCs × out_len × N_STAGES)
         let T = trace.len();
         let K = params.K;
         let log_T = params.log_T;
@@ -151,11 +155,10 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         // Optimal split: sqrt(T) for balanced tables
         let lo_bits = log_T / 2;
         let hi_bits = log_T - lo_bits;
-        let in_len: usize = 1 << lo_bits; // E_lo size (suffix)
-        let out_len: usize = 1 << hi_bits; // E_hi size (prefix)
+        let in_len: usize = 1 << lo_bits; // E_lo size (inner loop)
+        let out_len: usize = 1 << hi_bits; // E_hi size (outer loop)
 
-        // Pre-compute E_hi[stage][c_hi] = eq(r_cycle[..hi_bits], c_hi)
-        // and E_lo[stage][c_lo] = eq(r_cycle[hi_bits..], c_lo) for all stages in parallel
+        // Pre-compute E_hi[stage][c_hi] and E_lo[stage][c_lo] for all stages in parallel
         let (E_hi, E_lo): ([Vec<F>; N_STAGES], [Vec<F>; N_STAGES]) = rayon::join(
             || {
                 params
@@ -175,20 +178,35 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         let num_threads = rayon::current_num_threads();
         let chunk_size = out_len.div_ceil(num_threads);
 
-        // Simple split-eq pattern (matching ram_ra.rs): do multiplications inline
+        // Double summation: outer sum over c_hi, inner sum over c_lo
         let F: [Vec<F>; N_STAGES] = E_hi[0]
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_idx, chunk)| {
-                // Per-thread accumulators for all stages
+                // Per-thread accumulators for final F
                 let mut partial: [Vec<F>; N_STAGES] =
                     array::from_fn(|_| unsafe_allocate_zero_vec(K));
+
+                // Per-c_hi inner accumulators (reused across c_hi iterations)
+                let mut inner: [Vec<F>; N_STAGES] = array::from_fn(|_| unsafe_allocate_zero_vec(K));
+
+                // Track which PCs were touched in this c_hi block
+                let mut touched = Vec::with_capacity(in_len);
 
                 let chunk_start = chunk_idx * chunk_size;
                 for (local_idx, _) in chunk.iter().enumerate() {
                     let c_hi = chunk_start + local_idx;
                     let c_hi_base = c_hi * in_len;
 
+                    // Clear inner accumulators for touched PCs only
+                    for &k in &touched {
+                        for stage in 0..N_STAGES {
+                            inner[stage][k] = F::zero();
+                        }
+                    }
+                    touched.clear();
+
+                    // INNER SUM: accumulate E_lo by PC (ADDITIONS ONLY, no multiplications)
                     for c_lo in 0..in_len {
                         let c = c_hi_base + c_lo;
                         if c >= T {
@@ -197,10 +215,21 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
 
                         let pc = bytecode_preprocessing.get_pc(&trace[c]);
 
-                        // Compute eq products inline for each stage
+                        // Track touched PCs (avoid duplicates with a simple check)
+                        if inner[0][pc].is_zero() {
+                            touched.push(pc);
+                        }
+
+                        // Accumulate E_lo contributions (addition only!)
                         for stage in 0..N_STAGES {
-                            let eq_eval = E_hi[stage][c_hi] * E_lo[stage][c_lo];
-                            partial[stage][pc] += eq_eval;
+                            inner[stage][pc] += E_lo[stage][c_lo];
+                        }
+                    }
+
+                    // OUTER SUM: multiply by E_hi and add to partial (sparse)
+                    for &k in &touched {
+                        for stage in 0..N_STAGES {
+                            partial[stage][k] += E_hi[stage][c_hi] * inner[stage][k];
                         }
                     }
                 }
@@ -682,6 +711,7 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
