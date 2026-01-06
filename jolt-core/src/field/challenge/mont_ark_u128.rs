@@ -109,18 +109,6 @@ impl<F: JoltField> MontU128Challenge<F> {
         }
     }
 
-    /// Returns the two limbs as (low, high) matching arkworks' internal format.
-    #[inline(always)]
-    pub fn limbs(&self) -> (u64, u64) {
-        (self.low, self.high)
-    }
-
-    /// Returns the value as a u128 for use with mul_hi_u128.
-    #[inline(always)]
-    pub fn as_u128(&self) -> u128 {
-        (self.low as u128) | ((self.high as u128) << 64)
-    }
-
     /// Returns the value as a [u64; 4] BigInt array for field conversion.
     /// Format: [0, 0, low, high] - zeros in lower limbs, value in upper limbs.
     #[inline(always)]

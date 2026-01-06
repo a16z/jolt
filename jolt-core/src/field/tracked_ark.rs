@@ -457,12 +457,6 @@ impl TrackedFr {
         MUL_U128_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_by_hi_2limbs(limb_lo, limb_hi))
     }
-
-    #[inline(always)]
-    pub fn mul_hi_u128(&self, hi: u128) -> Self {
-        MUL_U128_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_hi_u128(hi))
-    }
 }
 
 #[cfg(test)]
