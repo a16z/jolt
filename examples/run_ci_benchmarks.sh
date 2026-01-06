@@ -2,14 +2,14 @@
 
 # This script runs all the benchmarks in the current directory except the ones in the exclusion list.
 # It uses GNU time to measure peak memory (maximum resident size) and wall time for each benchmark.
-# The benchmarks in the exclusion list are not run since they require a large amount of memory and result 
+# The benchmarks in the exclusion list are not run since they require a large amount of memory and result
 # in the github runners getting killed.
 # The results are stored in a JSON file $output_file.
 #
 # Nuances:
 # - Measures wall time, but CPU time might be desired in some cases.
 # - Build time is excluded by building the benchmarks before running them.
-# - Maximum resident size is being used as a surrogate to peak memory usage. 
+# - Maximum resident size is being used as a surrogate to peak memory usage.
 
 set -e # Exit on error
 
@@ -31,7 +31,6 @@ function write_to_json() {
   # Append execution time to JSON file
   printf "  {\n" >>"$output_file"
   printf "        \"name\": \"%s\",\n" "$1" >>"$output_file"
-  # printf "        \"unit\": \"s\",\n" >>"$output_file"
   printf "        \"unit\": \"%s\",\n" "$3" >>"$output_file"
   printf "        \"value\": %.4f,\n" "$2" >>"$output_file"
   printf "        \"extra\": \"\"\n" >>"$output_file"
@@ -91,10 +90,10 @@ for i in "${!test_directories[@]}"; do
   # Output the information in the below custom format:
   # wall: 0:02.00 (HH:MM:SS)
   # real: 2.00 s
-  # MRS: 1964 KB
+  # MRS: 1964123 B
   # Capture timing and output into a temp file
   temp_output=$(mktemp)
-  if ! $TIME_CMD -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1 | tee "$temp_output"; then
+  if ! $TIME_CMD -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M B" cargo run --release -p "$file" 2>&1 | tee "$temp_output"; then
     echo "Error running benchmark for $file. Skipping..."
     continue
   fi
@@ -103,14 +102,14 @@ for i in "${!test_directories[@]}"; do
   # We need to extract the numeric value after "runtime:"
   exec_time=$(awk '/Prover runtime:/ { for(i=1; i<=NF; i++) if($i=="runtime:") print $(i+1) }' "$temp_output") # in seconds
   # Extract 'MRS' value using awk
-  mem_used=$(awk '/MRS:/ {print $2}' "$temp_output") # in KB
+  mem_used=$(awk '/MRS:/ {print $2}' "$temp_output") # in B
   echo "$output" # Print the output for debugging
   # Append execution time to JSON file
   write_to_json "${file}-time" "$exec_time" "s" false
   # Add a comma if it's not the last entry
   is_last=$([ "$i" -lt $((${#test_directories[@]} - 1)) ] && echo false || echo true)
   # Append memory usage to JSON file
-  write_to_json "${file}-mem" "$mem_used" "KB" $is_last
+  write_to_json "${file}-mem" "$mem_used" "B" $is_last
   # Clean up
   rm "$temp_output"
 done
