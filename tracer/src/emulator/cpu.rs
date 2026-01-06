@@ -708,7 +708,7 @@ impl<D: MemoryData> GeneralizedCpu<D> {
         // So, this trap should be taken
 
         self.privilege_mode = new_privilege_mode;
-        self.mmu.update_privilege_mode(self.privilege_mode.clone());
+        self.mmu.update_privilege_mode(self.privilege_mode);
         let csr_epc_address = match self.privilege_mode {
             PrivilegeMode::Machine => CSR_MEPC_ADDRESS,
             PrivilegeMode::Supervisor => CSR_SEPC_ADDRESS,

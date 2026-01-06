@@ -31,7 +31,7 @@ pub struct Mmu<D> {
     mstatus: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum AddressingMode {
     None,
     SV32,
@@ -906,7 +906,7 @@ impl<D: MemoryData> Mmu<D> {
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
-                                    let current_privilege_mode = self.privilege_mode.clone();
+                                    let current_privilege_mode = self.privilege_mode;
                                     self.update_privilege_mode(privilege_mode);
                                     let result = self.translate_address(v_address, access_type);
                                     self.update_privilege_mode(current_privilege_mode);
@@ -935,7 +935,7 @@ impl<D: MemoryData> Mmu<D> {
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
-                                    let current_privilege_mode = self.privilege_mode.clone();
+                                    let current_privilege_mode = self.privilege_mode;
                                     self.update_privilege_mode(privilege_mode);
                                     let result = self.translate_address(v_address, access_type);
                                     self.update_privilege_mode(current_privilege_mode);
@@ -1094,8 +1094,8 @@ impl<D: MemoryData> Mmu<D> {
             clock: self.clock,
             xlen: self.xlen,
             ppn: self.ppn,
-            addressing_mode: self.addressing_mode.clone(),
-            privilege_mode: self.privilege_mode.clone(),
+            addressing_mode: self.addressing_mode,
+            privilege_mode: self.privilege_mode,
             memory: self.memory.take_as_vec_memory_wrapper(),
             jolt_device: std::mem::take(&mut self.jolt_device),
             mstatus: self.mstatus,
@@ -1109,8 +1109,8 @@ impl<D: MemoryData> Mmu<D> {
             clock: self.clock,
             xlen: self.xlen,
             ppn: self.ppn,
-            addressing_mode: self.addressing_mode.clone(),
-            privilege_mode: self.privilege_mode.clone(),
+            addressing_mode: self.addressing_mode,
+            privilege_mode: self.privilege_mode,
             memory: MemoryWrapper {
                 memory: MemoryBackend {
                     data: ReplayableMemory::empty(),
