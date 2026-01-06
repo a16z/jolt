@@ -124,7 +124,7 @@ pub enum Xlen {
     Bit64, // @TODO: Support Bit128
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum PrivilegeMode {
     User,
     Supervisor,
@@ -1078,15 +1078,11 @@ impl<D: MemoryData> GeneralizedCpu<D> {
         &self.call_stack
     }
 
-    // NOTE: It's an issue here that Cpu implements Drop. The Drop impl doesn't actually do
-    // anything besides warning if the cycle tracing is in the middle of a sequence, but it
-    // prevents us from taking the values out of the Cpu for typing reasons.
     pub fn into_vec_memory_cpu(mut self) -> Cpu {
         Cpu {
             clock: self.clock,
             xlen: self.xlen,
-            // XXX Clone required due to Drop impl
-            privilege_mode: self.privilege_mode.clone(),
+            privilege_mode: self.privilege_mode,
             wfi: self.wfi,
             x: self.x,
             f: self.f,
@@ -1099,10 +1095,9 @@ impl<D: MemoryData> GeneralizedCpu<D> {
             unsigned_data_mask: self.unsigned_data_mask,
             trace_len: self.trace_len,
             executed_instrs: self.executed_instrs,
-            // XXX Clones required due to Drop impl
-            active_markers: self.active_markers.clone(),
-            vr_allocator: self.vr_allocator.clone(),
-            call_stack: self.call_stack.clone(),
+            active_markers: std::mem::take(&mut self.active_markers),
+            vr_allocator: std::mem::take(&mut self.vr_allocator),
+            call_stack: std::mem::take(&mut self.call_stack),
         }
     }
 }
@@ -1112,7 +1107,7 @@ impl<D: MemoryData> GeneralizedCpu<D> {
         GeneralizedCpu::<ReplayableMemory> {
             clock: self.clock,
             xlen: self.xlen,
-            privilege_mode: self.privilege_mode.clone(),
+            privilege_mode: self.privilege_mode,
             wfi: self.wfi,
             x: self.x,
             f: self.f,
