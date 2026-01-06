@@ -221,10 +221,9 @@ pub struct InstructionReadRafSumcheckProver<F: JoltField> {
     /// Prefix-suffix decomposition for the instruction-identity path (RAF flag path).
     identity_ps: PrefixSuffixDecomposition<F, 2>,
 
-    /// Materialized Val_j(k) over (address, cycle) after phase transitions.
+    /// Materialized Val_j(k) + γ · RafVal_j(k) over (address, cycle) for final log T rounds.
+    /// Combines lookup table values with γ-weighted RAF operand contributions.
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
-    /// Materialized RafVal_j(k) (with γ-weights folded into prefixes) over (address, cycle).
-    combined_raf_val_polynomial: Option<MultilinearPolynomial<F>>,
 
     phases: usize,
     pub params: InstructionReadRafSumcheckParams<F>,
@@ -390,7 +389,6 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             eq_r_reduction: eq_poly_r_reduction,
             prefix_registry: PrefixRegistry::new(),
             combined_val_polynomial: None,
-            combined_raf_val_polynomial: None,
             params,
             phases,
         };
@@ -591,14 +589,24 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             .into_iter()
             .map(|checkpoint| checkpoint.unwrap())
             .collect();
+        // Materialize combined_val_poly = Val_j(k) + γ·RafVal_j(k)
+        // combining lookup table values with RAF operand contributions in a single pass.
         let mut combined_val_poly: Vec<F> = unsafe_allocate_zero_vec(self.lookup_indices.len());
         {
             let span = tracing::span!(tracing::Level::INFO, "Materialize combined_val_poly");
             let _guard = span.enter();
+            let gamma_left_prefix =
+                gamma * self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
+            let gamma_sqr_right_prefix =
+                gamma_sqr * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
+            let gamma_sqr_identity_prefix =
+                gamma_sqr * self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
             combined_val_poly
                 .par_iter_mut()
                 .zip(std::mem::take(&mut self.lookup_tables))
-                .for_each(|(val, table)| {
+                .zip(std::mem::take(&mut self.is_interleaved_operands))
+                .for_each(|((val, table), is_interleaved_operands)| {
+                    // Add lookup table value (Val_j(k))
                     if let Some(table) = table {
                         let suffixes: Vec<_> = table
                             .suffixes()
@@ -609,31 +617,16 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                             .collect();
                         *val += table.combine(&prefixes, &suffixes);
                     }
-                });
-        }
-
-        let mut combined_raf_val_poly: Vec<F> = unsafe_allocate_zero_vec(self.lookup_indices.len());
-        {
-            let span = tracing::span!(tracing::Level::INFO, "Materialize combined_raf_val_poly");
-            let _guard = span.enter();
-            combined_raf_val_poly
-                .par_iter_mut()
-                .zip(std::mem::take(&mut self.is_interleaved_operands))
-                .for_each(|(val, is_interleaved_operands)| {
+                    // Add RAF operand contribution (γ·RafVal_j(k))
                     if is_interleaved_operands {
-                        *val += gamma
-                            * self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
-                            + gamma_sqr
-                                * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
+                        *val += gamma_left_prefix + gamma_sqr_right_prefix;
                     } else {
-                        *val +=
-                            gamma_sqr * self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
+                        *val += gamma_sqr_identity_prefix;
                     }
                 });
         }
 
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
-        self.combined_raf_val_polynomial = Some(MultilinearPolynomial::from(combined_raf_val_poly));
         self.ra_polys = Some(ra_polys);
     }
 }
@@ -660,8 +653,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             self.compute_prefix_suffix_prover_message(round, previous_claim)
         } else {
             let ra_polys = self.ra_polys.as_ref().unwrap();
-            let val = self.combined_val_polynomial.as_ref().unwrap();
-            let raf_val = self.combined_raf_val_polynomial.as_ref().unwrap();
+            let combined_val = self.combined_val_polynomial.as_ref().unwrap();
             let n_evals = ra_polys.len() + 1;
 
             let mut sum_evals = self
@@ -681,14 +673,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                             unreachable!()
                         };
 
-                        let val_at_j_0 = val.get_bound_coeff(2 * j);
-                        let val_at_j_1 = val.get_bound_coeff(2 * j + 1);
-                        let raf_val_at_j_0 = raf_val.get_bound_coeff(2 * j);
-                        let raf_val_at_j_1 = raf_val.get_bound_coeff(2 * j + 1);
-                        // v = val + raf_val
-                        let v_at_0 = val_at_j_0 + raf_val_at_j_0;
-                        let v_at_1 = val_at_j_1 + raf_val_at_j_1;
-                        // Load linear poly: eq * (val + raf_val).
+                        let v_at_0 = combined_val.get_bound_coeff(2 * j);
+                        let v_at_1 = combined_val.get_bound_coeff(2 * j + 1);
+                        // Load linear poly: eq * combined_val.
                         *val_pair = (*e_in * v_at_0, *e_in * v_at_1);
                         // Load ra polys.
                         zip(ra_pairs, ra_polys).for_each(|(pair, ra_poly)| {
@@ -775,14 +762,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             // log(T) rounds
 
             self.eq_r_reduction.bind(r_j);
-            [
-                self.combined_val_polynomial.as_mut().unwrap(),
-                self.combined_raf_val_polynomial.as_mut().unwrap(),
-            ]
-            .iter_mut()
-            .for_each(|poly| {
-                poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-            });
+            self.combined_val_polynomial
+                .as_mut()
+                .unwrap()
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
 
             self.ra_polys
                 .as_mut()
