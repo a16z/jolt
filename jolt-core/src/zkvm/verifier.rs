@@ -17,7 +17,7 @@ use crate::zkvm::Serializable;
 use crate::zkvm::{
     bytecode::read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
     claim_reductions::{
-        AdviceClaimReductionPhase1Verifier, AdviceClaimReductionPhase2Verifier,
+        AdviceClaimReductionPhase1Verifier, AdviceClaimReductionPhase2Verifier, AdviceKind,
         HammingWeightClaimReductionVerifier, IncClaimReductionSumcheckVerifier,
         InstructionLookupsClaimReductionSumcheckVerifier, RamRaClaimReductionSumcheckVerifier,
     },
@@ -503,7 +503,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // 3. Verify Stage 7 batched sumcheck (address rounds only).
         // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
         let trusted_advice_phase2 = self.advice_reduction_gamma_trusted.and_then(|gamma| {
-            AdviceClaimReductionPhase2Verifier::new_trusted(
+            AdviceClaimReductionPhase2Verifier::new(
+                AdviceKind::Trusted,
                 &self.program_io.memory_layout,
                 self.proof.trace_length,
                 gamma,
@@ -514,7 +515,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             )
         });
         let untrusted_advice_phase2 = self.advice_reduction_gamma_untrusted.and_then(|gamma| {
-            AdviceClaimReductionPhase2Verifier::new_untrusted(
+            AdviceClaimReductionPhase2Verifier::new(
+                AdviceKind::Untrusted,
                 &self.program_io.memory_layout,
                 self.proof.trace_length,
                 gamma,

@@ -252,45 +252,6 @@ fn setup_emulator_with_backtraces(
     emulator
 }
 
-#[cfg(test)]
-mod advice_len_tests {
-    use super::*;
-
-    fn minimal_elf() -> Vec<u8> {
-        vec![
-            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
-            0x38, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]
-    }
-
-    #[test]
-    #[should_panic(expected = "Trusted advice too long")]
-    fn panics_when_trusted_advice_exceeds_max() {
-        let elf = minimal_elf();
-        let memory_config = MemoryConfig {
-            program_size: Some(1024),
-            max_trusted_advice_size: 2048,
-            ..Default::default()
-        };
-        let _ = setup_emulator(&elf, b"[]", &[], &[0u8; 4096], &memory_config);
-    }
-
-    #[test]
-    #[should_panic(expected = "Untrusted advice too long")]
-    fn panics_when_untrusted_advice_exceeds_max() {
-        let elf = minimal_elf();
-        let memory_config = MemoryConfig {
-            program_size: Some(1024),
-            max_untrusted_advice_size: 128,
-            ..Default::default()
-        };
-        let _ = setup_emulator(&elf, b"[]", &[0u8; 256], &[], &memory_config);
-    }
-}
-
 /// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
 ///
 /// This iterator produces instruction traces one at a time, executing the emulator
@@ -565,8 +526,42 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
+
+    fn minimal_elf() -> Vec<u8> {
+        vec![
+            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+            0x38, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]
+    }
+
+    #[test]
+    #[should_panic(expected = "Trusted advice too long")]
+    fn panics_when_trusted_advice_exceeds_max() {
+        let elf = minimal_elf();
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 2048,
+            ..Default::default()
+        };
+        let _ = setup_emulator(&elf, b"[]", &[], &[0u8; 4096], &memory_config);
+    }
+
+    #[test]
+    #[should_panic(expected = "Untrusted advice too long")]
+    fn panics_when_untrusted_advice_exceeds_max() {
+        let elf = minimal_elf();
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            max_untrusted_advice_size: 128,
+            ..Default::default()
+        };
+        let _ = setup_emulator(&elf, b"[]", &[0u8; 256], &[], &memory_config);
+    }
     const ELF_CONTENTS: [u8; 6404] = [
         0x7f, 0x45, 0x4c, 0x46, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x34, 0x00,

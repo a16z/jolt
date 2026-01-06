@@ -410,8 +410,8 @@ impl<F: JoltField> RLCPolynomial<F> {
             }
 
             let advice_vars = advice_len.next_power_of_two().log_2();
-            let sigma_a = advice_vars.div_ceil(2);
-            let nu_a = advice_vars - sigma_a;
+            let (sigma_a, nu_a) =
+                crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(advice_vars);
             let advice_cols = 1usize << sigma_a;
             let advice_rows = 1usize << nu_a;
 

@@ -58,6 +58,43 @@ impl Drop for DoryContextGuard {
 pub struct DoryGlobals;
 
 impl DoryGlobals {
+    /// Split `total_vars` into a *balanced* pair `(sigma, nu)` where:
+    /// - **sigma** is the number of **column** variables
+    /// - **nu** is the number of **row** variables
+    ///
+    /// Dory matrices are conceptually shaped as `2^nu` rows × `2^sigma` columns (row-major).
+    /// We use the balanced policy `sigma = ceil(total_vars / 2)` and `nu = total_vars - sigma`.
+    #[inline]
+    pub fn balanced_sigma_nu(total_vars: usize) -> (usize, usize) {
+        let sigma = total_vars.div_ceil(2);
+        let nu = total_vars - sigma;
+        (sigma, nu)
+    }
+
+    /// Convenience helper for the main Dory matrix where `total_vars = log_k_chunk + log_t`.
+    #[inline]
+    pub fn main_sigma_nu(log_k_chunk: usize, log_t: usize) -> (usize, usize) {
+        Self::balanced_sigma_nu(log_k_chunk + log_t)
+    }
+
+    /// Computes `advice_vars = log2(advice_len_words_rounded)` from a max advice byte budget.
+    ///
+    /// - `max_advice_size_bytes` is interpreted as bytes of 64-bit words.
+    /// - We round `words` up to the next power of two (minimum 1) and take `log2`.
+    #[inline]
+    pub fn advice_vars_from_max_bytes(max_advice_size_bytes: usize) -> usize {
+        let words = max_advice_size_bytes / 8;
+        let len = words.next_power_of_two().max(1);
+        len.log_2()
+    }
+
+    /// How many row variables of the *cycle* segment exist in the unified point:
+    /// `row_cycle_len = max(0, log_t - sigma_main)`.
+    #[inline]
+    pub fn cycle_row_len(log_t: usize, sigma_main: usize) -> usize {
+        log_t.saturating_sub(sigma_main)
+    }
+
     /// Get the current Dory context
     pub fn current_context() -> DoryContext {
         CURRENT_CONTEXT.load(Ordering::SeqCst).into()
@@ -182,8 +219,7 @@ impl DoryGlobals {
             (side, side)
         } else {
             // Odd total vars: almost square (columns = 2*rows)
-            let sigma = total_vars.div_ceil(2);
-            let nu = total_vars - sigma;
+            let (sigma, nu) = Self::balanced_sigma_nu(total_vars);
             (1 << sigma, 1 << nu)
         };
 

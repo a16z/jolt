@@ -711,12 +711,13 @@ pub fn compute_advice_lagrange_factor<F: JoltField>(
 
     // Derive main matrix dimensions from the unified point length
     let total_vars = r_le.len();
-    let sigma_main = total_vars.div_ceil(2);
+    let (sigma_main, _nu_main) =
+        crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(total_vars);
     let (r_cols, r_rows) = r_le.split_at(sigma_main);
 
     // Advice dimensions (balanced policy)
-    let sigma_a = advice_vars.div_ceil(2);
-    let nu_a = advice_vars - sigma_a;
+    let (sigma_a, nu_a) =
+        crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(advice_vars);
 
     // Row selector: ∏_{i=nu_a..nu_main} (1 - r_rows[i])
     let row_factor: F = r_rows

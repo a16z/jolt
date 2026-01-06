@@ -39,6 +39,7 @@
 //!
 
 use crate::field::JoltField;
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
@@ -64,33 +65,6 @@ pub enum AdviceKind {
     Untrusted,
 }
 
-fn balanced_sigma_nu(advice_vars: usize) -> (usize, usize) {
-    let sigma_a = advice_vars.div_ceil(2);
-    let nu_a = advice_vars - sigma_a;
-    (sigma_a, nu_a)
-}
-
-fn advice_vars_from_max_bytes(max_advice_size_bytes: usize) -> usize {
-    let words = max_advice_size_bytes / 8;
-    let len = words.next_power_of_two().max(1);
-    len.log_2()
-}
-
-fn main_sigma_nu(log_k_chunk: usize, log_t: usize) -> (usize, usize) {
-    let total_vars = log_k_chunk + log_t;
-    let sigma_main = total_vars.div_ceil(2);
-    let nu_main = total_vars - sigma_main;
-    (sigma_main, nu_main)
-}
-
-fn cycle_row_len(log_t: usize, sigma_main: usize) -> usize {
-    log_t.saturating_sub(sigma_main)
-}
-
-// ================================================================================================
-// PHASE 1 (STAGE 6): bind cycle-derived advice coords → produce intermediate claim
-// ================================================================================================
-
 #[derive(Clone, Allocative)]
 pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub kind: AdviceKind,
@@ -112,16 +86,21 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
 }
 
 impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
-    pub fn new_trusted(
+    pub fn new(
+        kind: AdviceKind,
         memory_layout: &MemoryLayout,
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
         single_opening: bool,
     ) -> Option<Self> {
-        Self::new(
-            AdviceKind::Trusted,
-            memory_layout.max_trusted_advice_size as usize,
+        let max_advice_size_bytes = match kind {
+            AdviceKind::Trusted => memory_layout.max_trusted_advice_size as usize,
+            AdviceKind::Untrusted => memory_layout.max_untrusted_advice_size as usize,
+        };
+        Self::new_with_max_bytes(
+            kind,
+            max_advice_size_bytes,
             trace_len,
             accumulator,
             transcript,
@@ -129,24 +108,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
         )
     }
 
-    pub fn new_untrusted(
-        memory_layout: &MemoryLayout,
-        trace_len: usize,
-        accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-        single_opening: bool,
-    ) -> Option<Self> {
-        Self::new(
-            AdviceKind::Untrusted,
-            memory_layout.max_untrusted_advice_size as usize,
-            trace_len,
-            accumulator,
-            transcript,
-            single_opening,
-        )
-    }
-
-    fn new(
+    fn new_with_max_bytes(
         kind: AdviceKind,
         max_advice_size_bytes: usize,
         trace_len: usize,
@@ -156,7 +118,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
     ) -> Option<Self> {
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (sigma_main, _nu_main) = main_sigma_nu(log_k_chunk, log_t);
+        let (sigma_main, _nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
         let (r_val_eval, r_val_final) = match kind {
             AdviceKind::Trusted => {
@@ -189,10 +151,10 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 
         let gamma: F = transcript.challenge_scalar();
 
-        let advice_vars = advice_vars_from_max_bytes(max_advice_size_bytes);
-        let (sigma_a, nu_a) = balanced_sigma_nu(advice_vars);
+        let advice_vars = DoryGlobals::advice_vars_from_max_bytes(max_advice_size_bytes);
+        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
 
-        let row_cycle = cycle_row_len(log_t, sigma_main);
+        let row_cycle = DoryGlobals::cycle_row_len(log_t, sigma_main);
         let nu_a_cycle = std::cmp::min(nu_a, row_cycle);
         let nu_a_addr = nu_a - nu_a_cycle;
 
@@ -512,7 +474,8 @@ impl<F: JoltField> AdviceClaimReductionPhase1Verifier<F> {
         transcript: &mut impl Transcript,
         single_opening: bool,
     ) -> Option<Self> {
-        let params = AdviceClaimReductionPhase1Params::new_trusted(
+        let params = AdviceClaimReductionPhase1Params::new(
+            AdviceKind::Trusted,
             memory_layout,
             trace_len,
             accumulator,
@@ -529,7 +492,8 @@ impl<F: JoltField> AdviceClaimReductionPhase1Verifier<F> {
         transcript: &mut impl Transcript,
         single_opening: bool,
     ) -> Option<Self> {
-        let params = AdviceClaimReductionPhase1Params::new_untrusted(
+        let params = AdviceClaimReductionPhase1Params::new(
+            AdviceKind::Untrusted,
             memory_layout,
             trace_len,
             accumulator,
@@ -713,7 +677,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
     ) -> Option<Self> {
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (sigma_main, _nu_main) = main_sigma_nu(log_k_chunk, log_t);
+        let (sigma_main, _nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
         let (r_val_eval, r_val_final) = match kind {
             AdviceKind::Trusted => {
@@ -744,10 +708,10 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
             }
         };
 
-        let advice_vars = advice_vars_from_max_bytes(max_advice_size_bytes);
-        let (sigma_a, nu_a) = balanced_sigma_nu(advice_vars);
+        let advice_vars = DoryGlobals::advice_vars_from_max_bytes(max_advice_size_bytes);
+        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
 
-        let row_cycle = cycle_row_len(log_t, sigma_main);
+        let row_cycle = DoryGlobals::cycle_row_len(log_t, sigma_main);
         let nu_a_cycle = std::cmp::min(nu_a, row_cycle);
         let nu_a_addr = nu_a - nu_a_cycle;
 
@@ -1022,37 +986,30 @@ pub struct AdviceClaimReductionPhase2Verifier<F: JoltField> {
 }
 
 impl<F: JoltField> AdviceClaimReductionPhase2Verifier<F> {
-    pub fn new_trusted(
+    pub fn new(
+        kind: AdviceKind,
         memory_layout: &MemoryLayout,
         trace_len: usize,
         gamma: F,
         accumulator: &VerifierOpeningAccumulator<F>,
         single_opening: bool,
     ) -> Option<Self> {
-        let params = AdviceClaimReductionPhase2Params::new_trusted(
-            memory_layout,
-            trace_len,
-            gamma,
-            accumulator,
-            single_opening,
-        )?;
-        Some(Self { params })
-    }
-
-    pub fn new_untrusted(
-        memory_layout: &MemoryLayout,
-        trace_len: usize,
-        gamma: F,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        single_opening: bool,
-    ) -> Option<Self> {
-        let params = AdviceClaimReductionPhase2Params::new_untrusted(
-            memory_layout,
-            trace_len,
-            gamma,
-            accumulator,
-            single_opening,
-        )?;
+        let params = match kind {
+            AdviceKind::Trusted => AdviceClaimReductionPhase2Params::new_trusted(
+                memory_layout,
+                trace_len,
+                gamma,
+                accumulator,
+                single_opening,
+            ),
+            AdviceKind::Untrusted => AdviceClaimReductionPhase2Params::new_untrusted(
+                memory_layout,
+                trace_len,
+                gamma,
+                accumulator,
+                single_opening,
+            ),
+        }?;
         Some(Self { params })
     }
 }
