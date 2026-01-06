@@ -1,8 +1,10 @@
 use ark_bn254::Fr;
 use ark_ff::Zero;
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_core::field::challenge::{Mont254BitChallenge, MontU128Challenge};
 use jolt_core::field::JoltField;
+use jolt_core::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -133,5 +135,62 @@ fn bench_mul(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_mul, bench_add);
+// Polynomial binding benchmarks use F::Challenge which is controlled by feature flags.
+// Default: MontU128Challenge (optimized)
+// With --features challenge-254-bit: Mont254BitChallenge (baseline)
+fn bench_poly_binding(c: &mut Criterion) {
+    let mut group = c.benchmark_group("poly_binding");
+
+    // Only test 2^20 for stable measurements
+    let num_vars = 20;
+    let poly_size = 1 << num_vars;
+
+    // Benchmark HighToLow binding
+    group.bench_with_input(
+        BenchmarkId::new("high_to_low", format!("2^{num_vars}")),
+        &poly_size,
+        |b, &size| {
+            let mut rng = StdRng::seed_from_u64(42);
+            b.iter_batched(
+                || {
+                    let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
+                    let poly = DensePolynomial::new(coeffs);
+                    let challenge = <Fr as JoltField>::Challenge::random(&mut rng);
+                    (poly, challenge)
+                },
+                |(mut poly, challenge)| {
+                    poly.bind_parallel(challenge, BindingOrder::HighToLow);
+                    poly
+                },
+                BatchSize::LargeInput,
+            )
+        },
+    );
+
+    // Benchmark LowToHigh binding
+    group.bench_with_input(
+        BenchmarkId::new("low_to_high", format!("2^{num_vars}")),
+        &poly_size,
+        |b, &size| {
+            let mut rng = StdRng::seed_from_u64(42);
+            b.iter_batched(
+                || {
+                    let coeffs: Vec<Fr> = (0..size).map(|_| Fr::random(&mut rng)).collect();
+                    let poly = DensePolynomial::new(coeffs);
+                    let challenge = <Fr as JoltField>::Challenge::random(&mut rng);
+                    (poly, challenge)
+                },
+                |(mut poly, challenge)| {
+                    poly.bind_parallel(challenge, BindingOrder::LowToHigh);
+                    poly
+                },
+                BatchSize::LargeInput,
+            )
+        },
+    );
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_mul, bench_add, bench_poly_binding);
 criterion_main!(benches);
