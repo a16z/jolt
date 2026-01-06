@@ -36,10 +36,8 @@ pub enum CommittedPolynomial {
     /// there is at most one load or store per cycle.
     RamRa(usize),
     /// Trusted advice polynomial - committed before proving, verifier has commitment.
-    /// Has fewer variables than main polynomials (typically 7-9 vars).
     TrustedAdvice,
     /// Untrusted advice polynomial - committed during proving, commitment in proof.
-    /// Has fewer variables than main polynomials (typically 7-9 vars).
     UntrustedAdvice,
 }
 
