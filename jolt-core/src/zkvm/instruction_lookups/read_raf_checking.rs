@@ -1,4 +1,5 @@
 use std::iter::zip;
+use std::sync::Arc;
 
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -184,6 +185,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ReadRafSumcheckParams<F> {
 ///   Σ_k ra(k, j)·Val_j(k) and Σ_k ra(k, j)·RafVal_j(k),
 #[derive(Allocative)]
 pub struct ReadRafSumcheckProver<F: JoltField> {
+    /// The execution trace, shared via Arc for efficient access in cache_openings.
+    #[allocative(skip)]
+    trace: Arc<Vec<Cycle>>,
+
     /// Materialized `ra_i(k_i, j)` polynomials.
     /// Present only in the last log(T) rounds.
     ra_polys: Option<Vec<MultilinearPolynomial<F>>>,
@@ -242,7 +247,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
     /// - Allocates per-table suffix accumulators and u-evals for rv/raf parts
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::initialize")]
-    pub fn initialize(params: ReadRafSumcheckParams<F>, trace: &[Cycle]) -> Self {
+    pub fn initialize(params: ReadRafSumcheckParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
         let log_T = trace.len().log_2();
 
         let log_m = LOG_K / params.phases;
@@ -367,6 +372,7 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
         drop(span);
 
         let mut res = Self {
+            trace,
             r: Vec::with_capacity(log_T + LOG_K),
             lookup_tables,
             lookup_indices,
@@ -863,6 +869,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         }
     }
 
+    #[tracing::instrument(skip_all, name = "ReadRafSumcheckProver::cache_openings")]
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
@@ -875,19 +882,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
         // - InstructionRa at r_sumcheck (ra MLE's final claim)
         // - InstructionRafFlag at r_cycle
         let (r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
-        let eq_r_cycle_prime = EqPolynomial::<F>::evals(&r_cycle.r);
 
-        let flag_claims = self
-            .lookup_indices_by_table
-            .par_iter()
-            .map(|table_lookups| {
-                table_lookups
-                    .par_iter()
-                    .map(|j| eq_r_cycle_prime[*j])
-                    .sum::<F>()
-            })
-            .collect::<Vec<F>>();
-        flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
+        // Compute flag claims using split-eq + unreduced accumulation for efficiency.
+        // This avoids materializing the full eq table (size T) and instead uses
+        // E_hi (size √T) and E_lo (size √T), iterating contiguously for cache locality.
+        let (flag_claims, raf_flag_claim) = self.compute_flag_claims_split_eq(&r_cycle);
+
+        for (i, claim) in flag_claims.into_iter().enumerate() {
             accumulator.append_virtual(
                 transcript,
                 VirtualPolynomial::LookupTableFlag(i),
@@ -895,7 +896,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                 r_cycle.clone(),
                 claim,
             );
-        });
+        }
 
         let ra_polys = self.ra_polys.as_ref().unwrap();
         let mut r_address_chunks = r_address.r.chunks(LOG_K / ra_polys.len());
@@ -911,11 +912,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ReadRafSumche
                 ra_poly.final_sumcheck_claim(),
             );
         }
-        let raf_flag_claim = self
-            .lookup_indices_identity
-            .par_iter()
-            .map(|j| eq_r_cycle_prime[*j])
-            .sum::<F>();
+
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::InstructionRafFlag,
@@ -1084,6 +1081,107 @@ impl<F: JoltField> ReadRafSumcheckProver<F> {
             )
             .map(F::from_barrett_reduce);
         [eval_0, eval_2_right + eval_2_right - eval_2_left]
+    }
+
+    /// Compute per-table flag claims and RAF flag claim using split-eq + unreduced accumulation.
+    ///
+    /// For each lookup table i, computes: flag_claim[i] = Σ_{j: table[j] == i} eq(r_cycle, j)
+    /// For RAF flag: raf_flag_claim = Σ_{j: identity path} eq(r_cycle, j)
+    ///
+    /// Uses split-eq optimization:
+    /// - Split r_cycle into hi/lo halves, compute E_hi and E_lo (each size √T)
+    /// - Parallelize over E_hi chunks (c_hi)
+    /// - For each c_hi, iterate sequentially over c_lo for cache locality
+    /// - Use unreduced 5-limb accumulation within each c_hi block
+    #[tracing::instrument(skip_all, name = "ReadRafSumcheckProver::compute_flag_claims_split_eq")]
+    fn compute_flag_claims_split_eq(
+        &self,
+        r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
+    ) -> (Vec<F>, F) {
+        let T = self.trace.len();
+        let num_tables = LookupTables::<XLEN>::COUNT;
+
+        // Split-eq: divide r_cycle into MSB (hi) and LSB (lo) halves
+        let log_T = r_cycle.len();
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+        let (r_hi, r_lo) = r_cycle.r.split_at(hi_bits);
+
+        let (E_hi, E_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
+        );
+
+        let in_len = E_lo.len();
+
+        // Parallel over E_hi chunks
+        let num_threads = rayon::current_num_threads();
+        let out_len = E_hi.len();
+        let chunk_size = out_len.div_ceil(num_threads).max(1);
+
+        E_hi.par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                // Partial accumulators for this thread (field elements)
+                let mut partial_flags: Vec<F> = vec![F::zero(); num_tables];
+                let mut partial_raf: F = F::zero();
+
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, &e_hi) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
+                    let c_hi_base = c_hi * in_len;
+
+                    // Local unreduced accumulators for this c_hi (5-limb)
+                    let mut local_flags: Vec<F::Unreduced<5>> =
+                        vec![F::Unreduced::<5>::zero(); num_tables];
+                    let mut local_raf: F::Unreduced<5> = F::Unreduced::<5>::zero();
+
+                    // Sequential over c_lo (contiguous cycles for this c_hi)
+                    for c_lo in 0..in_len {
+                        let j = c_hi_base + c_lo;
+                        if j >= T {
+                            break;
+                        }
+
+                        let cycle = &self.trace[j];
+                        let e_lo_unreduced = *E_lo[c_lo].as_unreduced_ref();
+
+                        // Accumulate table flag
+                        if let Some(table) = cycle.lookup_table() {
+                            let t_idx = LookupTables::<XLEN>::enum_index(&table);
+                            local_flags[t_idx] += e_lo_unreduced;
+                        }
+
+                        // Accumulate RAF flag (identity = not interleaved)
+                        if !cycle
+                            .instruction()
+                            .circuit_flags()
+                            .is_interleaved_operands()
+                        {
+                            local_raf += e_lo_unreduced;
+                        }
+                    }
+
+                    // Reduce and scale by e_hi
+                    for t_idx in 0..num_tables {
+                        let reduced = F::from_barrett_reduce::<5>(local_flags[t_idx]);
+                        partial_flags[t_idx] += e_hi * reduced;
+                    }
+                    let raf_reduced = F::from_barrett_reduce::<5>(local_raf);
+                    partial_raf += e_hi * raf_reduced;
+                }
+
+                (partial_flags, partial_raf)
+            })
+            .reduce(
+                || (vec![F::zero(); num_tables], F::zero()),
+                |(mut a_flags, a_raf), (b_flags, b_raf)| {
+                    for (a, b) in a_flags.iter_mut().zip(b_flags.iter()) {
+                        *a += *b;
+                    }
+                    (a_flags, a_raf + b_raf)
+                },
+            )
     }
 }
 
@@ -1328,9 +1426,11 @@ mod tests {
     fn test_read_raf_sumcheck(instruction: Option<Cycle>) {
         let mut rng = StdRng::seed_from_u64(12345);
 
-        let trace: Vec<_> = (0..T)
-            .map(|_| random_instruction(&mut rng, &instruction))
-            .collect();
+        let trace: Arc<Vec<_>> = Arc::new(
+            (0..T)
+                .map(|_| random_instruction(&mut rng, &instruction))
+                .collect(),
+        );
 
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
@@ -1398,7 +1498,7 @@ mod tests {
             &prover_opening_accumulator,
             prover_transcript,
         );
-        let mut prover_sumcheck = ReadRafSumcheckProver::initialize(params, &trace);
+        let mut prover_sumcheck = ReadRafSumcheckProver::initialize(params, Arc::clone(&trace));
 
         let (proof, r_sumcheck) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],
