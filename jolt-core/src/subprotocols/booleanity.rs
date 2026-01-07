@@ -64,19 +64,10 @@ pub struct BooleanitySumcheckParams<F: JoltField> {
     /// Log of trace length
     pub log_t: usize,
     /// Single batching challenge γ.
-    ///
     /// We derive per-polynomial batching coefficients as \( \gamma^{2i} \) for i = 0, 1, ...
     pub gamma: F::Challenge,
-    /// Per-polynomial powers \( \gamma^i \) (in the base field).
-    ///
-    /// Used to pre-scale the address eq tables for phase 2.
-    pub gamma_powers: Vec<F>,
     /// Per-polynomial batching coefficients \( \gamma^{2i} \) (in the base field).
     pub gamma_powers_square: Vec<F>,
-    /// Per-polynomial inverse powers \( \gamma^{-i} \) (in the base field).
-    ///
-    /// Used to unscale cached committed-polynomial openings.
-    pub gamma_powers_inv: Vec<F>,
     /// Address binding point (shared across all families)
     pub r_address: Vec<F::Challenge>,
     /// Cycle binding point (shared across all families)
@@ -184,9 +175,6 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         }
 
         // Sample a single batching challenge γ, and derive per-polynomial weights γ^{2i}.
-        //
-        // We also derive rho_i = γ^i so we can pre-scale the eq tables by rho_i and use the
-        // optimized phase-2 arithmetic (no per-term gamma multiplies).
         let mut gamma = transcript.challenge_scalar_optimized::<F>();
         let mut gamma_f: F = gamma.into();
         // Avoid the degenerate gamma=0 case (vanishing weights + non-invertible scaling).
@@ -195,20 +183,12 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             gamma_f = gamma.into();
         }
 
-        let mut gamma_powers = Vec::with_capacity(total_d);
-        let mut gamma_powers_inv = Vec::with_capacity(total_d);
-        let mut gamma_powers_square = Vec::with_capacity(total_d);
-
-        // rho_0 = 1, gamma^{2*0} = 1
-        let mut rho_i = F::one();
-        let mut gamma2_i = F::one();
+        // Compute gamma_powers_square (verifier needs these for expected_output_claim)
         let gamma_sq = gamma_f.square();
-
-        for _i in 0..total_d {
-            gamma_powers.push(rho_i);
-            gamma_powers_inv.push(rho_i.inverse().expect("gamma_powers[i] is nonzero (gamma != 0)"));
+        let mut gamma_powers_square = Vec::with_capacity(total_d);
+        let mut gamma2_i = F::one();
+        for _ in 0..total_d {
             gamma_powers_square.push(gamma2_i);
-            rho_i *= gamma_f;
             gamma2_i *= gamma_sq;
         }
 
@@ -216,9 +196,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             log_k_chunk,
             log_t,
             gamma,
-            gamma_powers,
             gamma_powers_square,
-            gamma_powers_inv,
             r_address,
             r_cycle,
             polynomial_types,
@@ -230,6 +208,12 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
 /// Booleanity Sumcheck Prover.
 #[derive(Allocative)]
 pub struct BooleanitySumcheckProver<F: JoltField> {
+    /// Per-polynomial powers γ^i (in the base field).
+    /// Used to pre-scale the address eq tables for phase 2.
+    gamma_powers: Vec<F>,
+    /// Per-polynomial inverse powers γ^{-i} (in the base field).
+    /// Used to unscale cached committed-polynomial openings.
+    gamma_powers_inv: Vec<F>,
     /// B: split-eq over address-chunk variables (phase 1, LowToHigh).
     B: GruenSplitEqPolynomial<F>,
     /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
@@ -279,7 +263,25 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
         F_table.reset(F::one());
 
+        // Compute prover-only fields: gamma_powers (γ^i) and gamma_powers_inv (γ^{-i})
+        let num_polys = params.polynomial_types.len();
+        let gamma_f: F = params.gamma.into();
+        let mut gamma_powers = Vec::with_capacity(num_polys);
+        let mut gamma_powers_inv = Vec::with_capacity(num_polys);
+        let mut rho_i = F::one();
+        for _ in 0..num_polys {
+            gamma_powers.push(rho_i);
+            gamma_powers_inv.push(
+                rho_i
+                    .inverse()
+                    .expect("gamma_powers[i] is nonzero (gamma != 0)"),
+            );
+            rho_i *= gamma_f;
+        }
+
         Self {
+            gamma_powers,
+            gamma_powers_inv,
             B,
             D,
             G,
@@ -369,7 +371,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                     // factors are already accounted for:
                     //   gamma^{2i}*h0*(h0-1) = (rho*h0) * (rho*h0 - rho)
                     //   gamma^{2i}*b*b       = (rho*b) * (rho*b)
-                    let rho = self.params.gamma_powers[i];
+                    let rho = self.gamma_powers[i];
                     acc_c += h_0.mul_unreduced::<9>(h_0 - rho);
                     acc_e += b.mul_unreduced::<9>(b);
                 }
@@ -419,15 +421,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
                 let base_eq = F_table.clone_values();
                 let num_polys = self.params.polynomial_types.len();
                 debug_assert!(
-                    num_polys == self.params.gamma_powers.len(),
+                    num_polys == self.gamma_powers.len(),
                     "gamma_powers length mismatch: got {}, expected {}",
-                    self.params.gamma_powers.len(),
+                    self.gamma_powers.len(),
                     num_polys
                 );
                 let tables: Vec<Vec<F>> = (0..num_polys)
                     .into_par_iter()
                     .map(|i| {
-                        let rho = self.params.gamma_powers[i];
+                        let rho = self.gamma_powers[i];
                         base_eq.iter().map(|v| rho * *v).collect()
                     })
                     .collect();
@@ -460,7 +462,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         let H = self.H.as_ref().expect("H should be initialized");
         // H is scaled by rho_i; unscale so cached openings match the committed polynomials.
         let claims: Vec<F> = (0..H.num_polys())
-            .map(|i| H.final_sumcheck_claim(i) * self.params.gamma_powers_inv[i])
+            .map(|i| H.final_sumcheck_claim(i) * self.gamma_powers_inv[i])
             .collect();
 
         // All polynomials share the same opening point (r_address, r_cycle)
