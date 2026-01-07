@@ -871,8 +871,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
-        let lookups_read_raf =
-            InstructionReadRafSumcheckProver::initialize(lookups_read_raf_params, &self.trace);
+        let lookups_read_raf = InstructionReadRafSumcheckProver::initialize(
+            lookups_read_raf_params,
+            Arc::clone(&self.trace),
+        );
 
         #[cfg(feature = "allocative")]
         {
