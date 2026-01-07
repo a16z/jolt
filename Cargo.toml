@@ -149,7 +149,7 @@ blake3 = { version = "1.5.0" }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 # dory = { package = "dory-pcs", version = "0.1.0", features = ["backends", "cache", "disk-persistence"] }
 # dory = { package = "dory-pcs", path = "/Users/mgeorghiades/a16z/final-dory", features = ["backends", "cache", "disk-persistence", "recursion"] }
-dory = { package = "dory-pcs", git = "https://github.com/a16z/dory", branch = "feat/recursion", features = ["backends", "cache", "disk-persistence", "recursion"] }
+dory = { package = "dory-pcs", git = "https://github.com/quangvdao/dory", branch = "quang/feat/recursion", features = ["backends", "cache", "disk-persistence", "recursion"] }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }
