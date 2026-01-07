@@ -29,7 +29,6 @@ use dory::backends::arkworks::ArkGT;
 use std::collections::HashMap;
 
 use super::{
-    bijection::VarCountJaggedBijection,
     constraints_sys::ConstraintSystem,
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
@@ -61,9 +60,6 @@ pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Fie
 }
 
 /// Type alias for readability
-type BatchedSumcheckProof<F> =
-    crate::subprotocols::sumcheck::SumcheckInstanceProof<F, crate::transcripts::Blake2bTranscript>;
-
 /// Unified prover for the recursion SNARK
 pub struct RecursionProver<F: JoltField = Fq> {
     /// The constraint system containing all constraints and witness data
@@ -95,8 +91,7 @@ impl RecursionProver<Fq> {
             evaluation,
             commitment,
         )?;
-
-        println!(
+        tracing::debug!(
             "Witness collection: GT exp count = {}, GT mul count = {}",
             witness_collection.gt_exp.len(),
             witness_collection.gt_mul.len()
@@ -126,7 +121,7 @@ impl RecursionProver<Fq> {
     ) -> Result<DoryRecursionWitness, Box<dyn std::error::Error>> {
         use crate::zkvm::recursion::witness::{GTExpWitness, GTMulWitness};
 
-        println!(
+        tracing::debug!(
             "Converting witnesses: GT exp count = {}, GT mul count = {}, G1 scalar mul count = {}",
             witnesses.gt_exp.len(),
             witnesses.gt_mul.len(),
@@ -240,7 +235,7 @@ impl RecursionProver<Fq> {
             y_a_next_mles.extend(scalar_mul_witness.y_a_next_mles.clone());
 
             // Generate t_is_infinity MLEs based on the bits
-            for (i, bit) in scalar_mul_witness.bits.iter().enumerate() {
+            for (_i, bit) in scalar_mul_witness.bits.iter().enumerate() {
                 // T is infinity when bit is 0 (we don't add)
                 let is_infinity = if !bit { Fq::one() } else { Fq::zero() };
                 t_is_infinity_mles.push(vec![is_infinity]);
@@ -328,7 +323,7 @@ impl<F: JoltField> RecursionProver<F> {
             self.prove_stage2(transcript, &mut accumulator, &r_stage1)?;
 
         // ============ STAGE 3: Jagged Transform Sumcheck ============
-        let (stage3_proof, r_stage3) =
+        let (stage3_proof, _r_stage3) =
             self.prove_stage3(transcript, &mut accumulator, &r_stage1, &r_stage2)?;
 
         // ============ PCS OPENING PROOF ============

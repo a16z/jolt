@@ -13,7 +13,7 @@ use crate::{
     },
     zkvm::recursion::{
         bijection::{JaggedTransform, VarCountJaggedBijection},
-        constraints_sys::{ConstraintSystem, ConstraintType},
+        constraints_sys::ConstraintSystem,
     },
 };
 use ark_bn254::{Fq, Fr};

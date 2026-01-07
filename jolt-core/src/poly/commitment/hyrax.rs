@@ -11,7 +11,7 @@ use crate::utils::math::Math;
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{UniformRand, vec::Vec};
+use ark_std::vec::Vec;
 use num_integer::Roots;
 use rand::SeedableRng;
 use rayon::prelude::*;

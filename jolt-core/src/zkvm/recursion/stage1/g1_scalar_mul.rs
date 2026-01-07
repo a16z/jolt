@@ -25,7 +25,7 @@ use crate::{
     zkvm::witness::VirtualPolynomial,
 };
 use ark_bn254::Fq;
-use ark_ff::{One, Zero};
+use ark_ff::One;
 use rayon::prelude::*;
 
 /// Helper to append all virtual claims for a G1 scalar mul constraint

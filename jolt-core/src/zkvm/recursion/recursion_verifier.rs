@@ -13,13 +13,13 @@ use crate::{
         opening_proof::{OpeningAccumulator, VerifierOpeningAccumulator, SumcheckId},
     },
     transcripts::Transcript,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::witness::VirtualPolynomial,
 };
 use ark_bn254::Fq;
 
 use super::{
     bijection::{ConstraintMapping, VarCountJaggedBijection},
-    constraints_sys::{ConstraintSystem, ConstraintType},
+    constraints_sys::ConstraintType,
     recursion_prover::RecursionProof,
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier},
@@ -144,8 +144,8 @@ impl<F: JoltField> RecursionVerifier<F> {
         proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        gamma: F,
-        delta: F,
+        _gamma: F,
+        _delta: F,
     ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
         use std::any::TypeId;
 

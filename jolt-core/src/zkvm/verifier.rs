@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, RecursionExt};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -201,6 +201,56 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_untrusted_advice_opening_proofs()?;
         self.verify_stage7()?;
         self.verify_stage8()?;
+
+        Ok(())
+    }
+
+    /// Verify the proof, but verify the Stage 8 PCS opening using a recursion hint (when supported by the PCS).
+    ///
+    /// This is primarily intended for "hint-based verification" flows (e.g. recursive composition),
+    /// where the verifier wants to avoid performing expensive PCS verification work directly.
+    #[tracing::instrument(skip_all)]
+    pub fn verify_with_stage8_pcs_hint(
+        mut self,
+        stage8_hint: &<PCS as RecursionExt<F>>::Hint,
+    ) -> Result<(), anyhow::Error>
+    where
+        PCS: RecursionExt<F>,
+    {
+        let _pprof_verify = pprof_scope!("verify");
+
+        fiat_shamir_preamble(
+            &self.program_io,
+            self.proof.ram_K,
+            self.proof.trace_length,
+            &mut self.transcript,
+        );
+
+        // Append commitments to transcript
+        for commitment in &self.proof.commitments {
+            self.transcript.append_serializable(commitment);
+        }
+        // Append untrusted advice commitment to transcript
+        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
+            self.transcript
+                .append_serializable(untrusted_advice_commitment);
+        }
+        // Append trusted advice commitment to transcript
+        if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
+            self.transcript
+                .append_serializable(trusted_advice_commitment);
+        }
+
+        self.verify_stage1()?;
+        self.verify_stage2()?;
+        self.verify_stage3()?;
+        self.verify_stage4()?;
+        self.verify_stage5()?;
+        self.verify_stage6()?;
+        self.verify_trusted_advice_opening_proofs()?;
+        self.verify_untrusted_advice_opening_proofs()?;
+        self.verify_stage7()?;
+        self.verify_stage8_with_pcs_hint(stage8_hint)?;
 
         Ok(())
     }
@@ -569,6 +619,110 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &joint_commitment,
         )
         .context("Stage 8")
+    }
+
+    /// Stage 8: PCS batch opening verification using a recursion hint (when supported by the PCS).
+    fn verify_stage8_with_pcs_hint(
+        &mut self,
+        stage8_hint: &<PCS as RecursionExt<F>>::Hint,
+    ) -> Result<(), anyhow::Error>
+    where
+        PCS: RecursionExt<F>,
+    {
+        // Get the unified opening point from HammingWeightClaimReduction
+        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
+        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::HammingWeightClaimReduction,
+        );
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+
+        // 1. Collect all (polynomial, claim) pairs
+        let mut polynomial_claims = Vec::new();
+
+        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
+        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RamInc,
+            SumcheckId::IncClaimReduction,
+        );
+        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::IncClaimReduction,
+        );
+
+        // Apply Lagrange factor for dense polys
+        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
+        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+
+        // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
+        for i in 0..self.one_hot_params.instruction_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.bytecode_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.ram_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
+        }
+
+        // 2. Sample gamma and compute powers for RLC
+        let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
+        self.transcript.append_scalars(&claims);
+        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+
+        // Build state for computing joint commitment/claim
+        let state = DoryOpeningState {
+            opening_point: opening_point.r.clone(),
+            gamma_powers: gamma_powers.clone(),
+            polynomial_claims,
+        };
+
+        // Build commitments map
+        let mut commitments_map = HashMap::new();
+        for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
+            .into_iter()
+            .zip_eq(&self.proof.commitments)
+        {
+            commitments_map.insert(polynomial, commitment.clone());
+        }
+
+        // Compute joint commitment: Σ γ_i · C_i
+        let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state);
+
+        // Compute joint claim: Σ γ_i · claim_i
+        let joint_claim: F = gamma_powers
+            .iter()
+            .zip(claims.iter())
+            .map(|(gamma, claim)| *gamma * claim)
+            .sum();
+
+        // Verify opening using the hint-based PCS verifier
+        PCS::verify_with_hint(
+            &self.proof.joint_opening_proof,
+            &self.preprocessing.generators,
+            &mut self.transcript,
+            &opening_point.r,
+            &joint_claim,
+            &joint_commitment,
+            stage8_hint,
+        )
+        .context("Stage 8 (hint)")
     }
 
     /// Compute joint commitment for the batch opening.

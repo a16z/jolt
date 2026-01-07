@@ -18,7 +18,7 @@ use crate::{
     },
 };
 use ark_bn254::{Fq, Fr};
-use ark_ff::{One, UniformRand, Zero};
+use ark_ff::{UniformRand, Zero};
 use ark_std::test_rng;
 use rayon::prelude::*;
 use serial_test::serial;
@@ -239,7 +239,7 @@ fn test_jagged_relation_dory_witness() {
     // Test with random field element evaluation points
     let num_s_vars = constraint_system.num_s_vars();
     let num_x_vars = constraint_system.matrix.num_constraint_vars;
-    let num_dense_vars = dense_poly.get_num_vars();
+    let _num_dense_vars = dense_poly.get_num_vars();
 
     let zr: Vec<Fq> = (0..num_s_vars).map(|_| Fq::rand(&mut rng)).collect();
     let zc: Vec<Fq> = (0..num_x_vars).map(|_| Fq::rand(&mut rng)).collect();

@@ -14,7 +14,6 @@ use crate::{
     transcripts::{Blake2bTranscript, Transcript},
     zkvm::{
         recursion::{
-            bijection::{JaggedTransform, VarCountJaggedBijection},
             ConstraintType, RecursionProver, RecursionVerifier, RecursionVerifierInput,
         },
     },
@@ -38,8 +37,6 @@ fn test_recursion_snark_e2e_with_dory() {
     let mut rng = test_rng();
 
     // ============ CREATE A DORY PROOF TO VERIFY ============
-    println!("Creating a test Dory proof...");
-
     // Create test polynomial
     let num_vars = 4;
     let poly_coefficients: Vec<Fr> = (0..(1 << num_vars)).map(|_| Fr::rand(&mut rng)).collect();
@@ -77,8 +74,6 @@ fn test_recursion_snark_e2e_with_dory() {
     let ark_commitment = ArkGT::from(commitment);
 
     // ============ CREATE RECURSION PROVER FROM DORY PROOF ============
-    println!("\nCreating recursion prover from Dory proof...");
-
     // Generate gamma and delta for batching
     let gamma = Fq::rand(&mut rng);
     let delta = Fq::rand(&mut rng);
@@ -98,13 +93,11 @@ fn test_recursion_snark_e2e_with_dory() {
     )
     .expect("Failed to create recursion prover");
 
-    println!("Successfully created RecursionProver from Dory proof!");
-
     // Extract constraint information before moving prover
     let num_constraints = prover.constraint_system.num_constraints();
     let num_vars = prover.constraint_system.num_vars();
     let num_s_vars = prover.constraint_system.num_s_vars();
-    let matrix_num_vars = prover.constraint_system.matrix.num_vars;
+    let _matrix_num_vars = prover.constraint_system.matrix.num_vars;
     let num_constraint_vars = prover.constraint_system.matrix.num_constraint_vars;
     let num_constraints_padded = prover.constraint_system.matrix.num_constraints_padded;
 
@@ -130,30 +123,7 @@ fn test_recursion_snark_e2e_with_dory() {
         .map(|c| c.constraint_type.clone())
         .collect();
 
-    // Count constraint types
-    let mut gt_exp_count = 0;
-    let mut gt_mul_count = 0;
-    let mut g1_scalar_mul_count = 0;
-
-    for constraint in &constraint_types {
-        match constraint {
-            ConstraintType::GtExp { .. } => gt_exp_count += 1,
-            ConstraintType::GtMul => gt_mul_count += 1,
-            ConstraintType::G1ScalarMul { .. } => g1_scalar_mul_count += 1,
-        }
-    }
-
-    println!("\nConstraint system details:");
-    println!("  - Number of constraints: {}", num_constraints);
-    println!("  - Number of variables: {}", num_vars);
-    println!("  - Number of s-variables: {}", num_s_vars);
-    println!("  - GT exp constraints: {}", gt_exp_count);
-    println!("  - GT mul constraints: {}", gt_mul_count);
-    println!("  - G1 scalar mul constraints: {}", g1_scalar_mul_count);
-
-
-    // ============ RUN THREE-STAGE RECURSION PROTOCOL ============
-    println!("\nStarting three-stage recursion protocol...");
+    let _ = (num_constraints, num_vars, num_s_vars);
 
     // Create transcript for proving
     let mut prover_transcript = Blake2bTranscript::new(b"recursion_snark");
@@ -162,27 +132,19 @@ fn test_recursion_snark_e2e_with_dory() {
     const RATIO: usize = 1;
     type HyraxPCS = Hyrax<RATIO, GrumpkinProjective>;
 
-    println!("\nSetting up Hyrax PCS...");
     let hyrax_prover_setup = <HyraxPCS as CommitmentScheme>::setup_prover(dense_num_vars);
 
     // Commit to the dense polynomial using Hyrax (after jagged transform)
-    println!("Dense polynomial evaluations length: {}", dense_poly.Z.len());
-    println!("Dense num_vars: {}", dense_num_vars);
     let dense_mlpoly = MultilinearPolynomial::from(dense_poly.Z);
     let (dense_commitment, _) =
         <HyraxPCS as CommitmentScheme>::commit(&dense_mlpoly, &hyrax_prover_setup);
-
-    println!("Dense polynomial commitment created");
 
     // Run the unified prover
     let recursion_proof = prover
         .prove_with_pcs::<Blake2bTranscript, HyraxPCS>(&mut prover_transcript, &hyrax_prover_setup)
         .expect("Failed to generate recursion proof");
 
-    println!("\nRecursion proof generated successfully!");
-
     // ============ VERIFY THE RECURSION PROOF ============
-    println!("\nVerifying recursion proof...");
 
     // Create verifier input
     let verifier_input = RecursionVerifierInput {
@@ -217,7 +179,4 @@ fn test_recursion_snark_e2e_with_dory() {
         .expect("Verification should not fail");
 
     assert!(verification_result, "Recursion proof verification failed!");
-
-    println!("Recursion proof verified successfully!");
-    println!("\nTest completed successfully!");
 }

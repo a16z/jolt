@@ -30,7 +30,7 @@ use crate::{
     },
     zkvm::recursion::constraints_sys::{ConstraintSystem, ConstraintType, PolyType},
     transcripts::Transcript,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::witness::VirtualPolynomial,
 };
 use ark_bn254::Fq;
 use rayon::prelude::*;

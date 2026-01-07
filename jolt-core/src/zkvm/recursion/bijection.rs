@@ -309,7 +309,8 @@ impl ConstraintSystem {
             let (constraint_idx, poly_type) = mapping.decode(poly_idx);
 
             // Get the number of variables for this polynomial
-            let num_vars = <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(&bijection, poly_idx);
+            let _num_vars =
+                <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(&bijection, poly_idx);
 
             // Get the row in the matrix
             let matrix_row = self.matrix.row_index(poly_type, constraint_idx);

@@ -649,7 +649,7 @@ impl ConstraintSystem {
         g_poly: DensePolynomial<Fq>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // For now, create a simple matrix with padding
-        let num_constraints = constraint_types.len();
+        let _num_constraints = constraint_types.len();
         let num_constraint_vars = 8; // Using 8 for G1 scalar mul compatibility
 
         let mut builder = DoryMatrixBuilder::new(num_constraint_vars);
@@ -1191,8 +1191,7 @@ mod tests {
         let evaluation = PolynomialEvaluation::evaluate(&poly, &point);
         let mut extract_transcript = crate::transcripts::Blake2bTranscript::new(b"test");
 
-        eprintln!("Starting ConstraintSystem::new...");
-        let start = std::time::Instant::now();
+        let _start = std::time::Instant::now();
 
         let (system, hints) = ConstraintSystem::new(
             &proof,
@@ -1204,7 +1203,7 @@ mod tests {
         )
         .expect("System creation should succeed");
 
-        eprintln!("ConstraintSystem::new took: {:?}", start.elapsed());
+        let _elapsed = _start.elapsed();
         // Count constraints by type
         let mut gt_exp_count = 0;
         let mut gt_mul_count = 0;
@@ -1218,10 +1217,7 @@ mod tests {
             }
         }
 
-        eprintln!("Number of constraints: {}", system.constraints.len());
-        eprintln!("  GT exp: {}", gt_exp_count);
-        eprintln!("  GT mul: {}", gt_mul_count);
-        eprintln!("  G1 scalar mul: {}", g1_scalar_mul_count);
+        let _ = (gt_exp_count, gt_mul_count, g1_scalar_mul_count);
         // Instead of evaluating the full system, just evaluate constraints at random points
         use rand::{rngs::StdRng, Rng, SeedableRng};
 

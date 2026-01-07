@@ -312,13 +312,13 @@ fn test_jagged_bijection_with_real_dory_proof() {
 
     let mut gt_exp_count = 0;
     let mut gt_mul_count = 0;
-    let mut g1_scalar_mul_count = 0;
+    let mut _g1_scalar_mul_count = 0;
 
     for constraint in &system.constraints {
         match &constraint.constraint_type {
             ConstraintType::GtExp { .. } => gt_exp_count += 1,
             ConstraintType::GtMul => gt_mul_count += 1,
-            ConstraintType::G1ScalarMul { .. } => g1_scalar_mul_count += 1,
+            ConstraintType::G1ScalarMul { .. } => _g1_scalar_mul_count += 1,
         }
     }
 
@@ -637,7 +637,7 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
         );
     }
 
-    let mut verified_sparse_to_dense = 0;
+    let mut _verified_sparse_to_dense = 0;
 
     for constraint_idx in 0..10.min(constraint_system.constraints.len()) {
         let constraint_type = &constraint_system.constraints[constraint_idx].constraint_type;
@@ -699,7 +699,7 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
                     sparse_pos, dense_idx
                 );
 
-                verified_sparse_to_dense += 1;
+                _verified_sparse_to_dense += 1;
             }
         }
     }

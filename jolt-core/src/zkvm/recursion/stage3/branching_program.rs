@@ -10,7 +10,6 @@
 //! This optimization reduces the verifier's computation from O(2^n) to O(n) for n-bit inputs.
 
 use crate::field::JoltField;
-use ark_ff::{One, Zero};
 use std::cmp::max;
 
 /// Memory state of the branching program (2 bits = 4 possible states)
@@ -291,6 +290,7 @@ impl JaggedBranchingProgram {
 mod tests {
     use super::*;
     use ark_bn254::Fq;
+    use ark_ff::{One, Zero};
     use ark_ff::UniformRand;
 
     fn bool_vec(val: usize, len: usize) -> Vec<bool> {

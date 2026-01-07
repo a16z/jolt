@@ -86,7 +86,7 @@ use crate::{
     },
 };
 use crate::{
-    poly::commitment::commitment_scheme::CommitmentScheme,
+    poly::commitment::commitment_scheme::{CommitmentScheme, RecursionExt},
     zkvm::{
         bytecode::read_raf_checking::BytecodeReadRafSumcheckProver,
         fiat_shamir_preamble,
@@ -395,6 +395,110 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         (proof, debug_info)
+    }
+
+    /// Like [`Self::prove`], but also returns a PCS recursion hint for Stage 8 verification
+    /// (when supported by the PCS via [`RecursionExt`]).
+    ///
+    /// This is useful for "hint-based verification" flows where the verifier wants to avoid
+    /// performing expensive PCS verification work directly.
+    #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all)]
+    pub fn prove_with_stage8_pcs_hint(
+        mut self,
+    ) -> (
+        JoltProof<F, PCS, ProofTranscript>,
+        <PCS as RecursionExt<F>>::Hint,
+        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+    )
+    where
+        PCS: RecursionExt<F>,
+    {
+        let _pprof_prove = pprof_scope!("prove");
+
+        let start = Instant::now();
+        fiat_shamir_preamble(
+            &self.program_io,
+            self.one_hot_params.ram_k,
+            self.trace.len(),
+            &mut self.transcript,
+        );
+
+        tracing::info!(
+            "bytecode size: {}",
+            self.preprocessing.shared.bytecode.code_size
+        );
+
+        let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
+        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
+        self.generate_and_commit_trusted_advice();
+        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
+        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof) = self.prove_stage2();
+        let stage3_sumcheck_proof = self.prove_stage3();
+        let stage4_sumcheck_proof = self.prove_stage4();
+        let stage5_sumcheck_proof = self.prove_stage5();
+        let stage6_sumcheck_proof = self.prove_stage6();
+        let (trusted_advice_val_evaluation_proof, trusted_advice_val_final_proof) =
+            self.prove_trusted_advice();
+        let (untrusted_advice_val_evaluation_proof, untrusted_advice_val_final_proof) =
+            self.prove_untrusted_advice();
+        let stage7_sumcheck_proof = self.prove_stage7();
+        let (joint_opening_proof, stage8_hint) =
+            self.prove_stage8_with_pcs_hint(opening_proof_hints, &commitments);
+
+        #[cfg(test)]
+        assert!(
+            self.opening_accumulator
+                .appended_virtual_openings
+                .borrow()
+                .is_empty(),
+            "Not all virtual openings have been proven, missing: {:?}",
+            self.opening_accumulator.appended_virtual_openings.borrow()
+        );
+
+        #[cfg(test)]
+        let debug_info = Some(ProverDebugInfo {
+            transcript: self.transcript.clone(),
+            opening_accumulator: self.opening_accumulator.clone(),
+            prover_setup: self.preprocessing.generators.clone(),
+        });
+        #[cfg(not(test))]
+        let debug_info = None;
+
+        let proof = JoltProof {
+            opening_claims: Claims(self.opening_accumulator.openings.clone()),
+            commitments,
+            untrusted_advice_commitment,
+            stage1_uni_skip_first_round_proof,
+            stage1_sumcheck_proof,
+            stage2_uni_skip_first_round_proof,
+            stage2_sumcheck_proof,
+            stage3_sumcheck_proof,
+            stage4_sumcheck_proof,
+            stage5_sumcheck_proof,
+            stage6_sumcheck_proof,
+            trusted_advice_val_evaluation_proof,
+            trusted_advice_val_final_proof,
+            untrusted_advice_val_evaluation_proof,
+            untrusted_advice_val_final_proof,
+            stage7_sumcheck_proof,
+            joint_opening_proof,
+            trace_length: self.trace.len(),
+            ram_K: self.one_hot_params.ram_k,
+            bytecode_K: self.one_hot_params.bytecode_k,
+            rw_config: self.rw_config.clone(),
+            one_hot_config: self.one_hot_params.to_config(),
+        };
+
+        let prove_duration = start.elapsed();
+        tracing::info!(
+            "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
+            prove_duration.as_secs_f64(),
+            self.unpadded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+            self.padded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+        );
+
+        (proof, stage8_hint, debug_info)
     }
 
     #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials")]
@@ -1255,6 +1359,168 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             Some(hint),
             &mut self.transcript,
         )
+    }
+
+    /// Stage 8: Dory batch opening proof, plus a PCS recursion hint for verifying this opening.
+    ///
+    /// Important: the hint is generated using a transcript fork taken *right before* calling
+    /// `PCS::prove`, so that the hint corresponds to the verifier transcript state at the start
+    /// of Stage 8 PCS verification.
+    #[tracing::instrument(skip_all)]
+    fn prove_stage8_with_pcs_hint(
+        &mut self,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        commitments: &[PCS::Commitment],
+    ) -> (PCS::Proof, <PCS as RecursionExt<F>>::Hint)
+    where
+        PCS: RecursionExt<F>,
+    {
+        tracing::info!("Stage 8 proving (Dory batch opening) + hint");
+
+        let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
+
+        // Get the unified opening point from HammingWeightClaimReduction
+        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
+        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::HammingWeightClaimReduction,
+        );
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+
+        // 1. Collect all (polynomial, claim) pairs
+        let mut polynomial_claims = Vec::new();
+
+        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
+        // These are at r_cycle_stage6 only (length log_T)
+        let (_ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let (_rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
+
+        // Apply Lagrange factor for dense polys: ∏_{i<log_k_chunk} (1 - r_address[i])
+        // Because dense polys have fewer variables, we need to account for this
+        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
+        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+
+        // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
+        // These are at (r_address_stage7, r_cycle_stage6)
+        for i in 0..self.one_hot_params.instruction_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.bytecode_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
+        }
+        for i in 0..self.one_hot_params.ram_d {
+            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamRa(i),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
+        }
+
+        // 2. Sample gamma and compute powers for RLC
+        let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
+        self.transcript.append_scalars(&claims);
+        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+
+        // Build DoryOpeningState
+        let state = DoryOpeningState {
+            opening_point: opening_point.r.clone(),
+            gamma_powers: gamma_powers.clone(),
+            polynomial_claims,
+        };
+
+        let streaming_data = Arc::new(RLCStreamingData {
+            bytecode: Arc::clone(&self.preprocessing.shared.bytecode),
+            memory_layout: self.preprocessing.shared.memory_layout.clone(),
+        });
+
+        // Build streaming RLC polynomial directly (no witness poly regeneration!)
+        // Use materialized trace (default, single pass) instead of lazy trace
+        let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
+            self.one_hot_params.clone(),
+            TraceSource::Materialized(Arc::clone(&self.trace)),
+            streaming_data,
+            opening_proof_hints,
+        );
+
+        // Fork the transcript state as it will be at the start of PCS verification
+        // (i.e. after sampling gamma powers, but before absorbing the opening proof).
+        let mut witness_gen_transcript = self.transcript.clone();
+
+        // Dory opening proof at the unified point
+        let opening_proof = PCS::prove(
+            &self.preprocessing.generators,
+            &joint_poly,
+            &opening_point.r,
+            Some(hint),
+            &mut self.transcript,
+        );
+
+        // Compute joint claim: Σ γ_i · claim_i
+        let joint_claim: F = gamma_powers
+            .iter()
+            .zip(claims.iter())
+            .map(|(gamma, claim)| *gamma * claim)
+            .sum();
+
+        // Compute joint commitment: Σ γ_i · C_i
+        let mut commitments_map = HashMap::new();
+        let all_polys = all_committed_polynomials(&self.one_hot_params);
+        debug_assert_eq!(
+            all_polys.len(),
+            commitments.len(),
+            "commitment vector length mismatch"
+        );
+        for (poly, commitment) in all_polys.into_iter().zip(commitments.iter()) {
+            commitments_map.insert(poly, commitment.clone());
+        }
+
+        let mut rlc_map = HashMap::new();
+        for (gamma, (poly, _claim)) in state
+            .gamma_powers
+            .iter()
+            .zip(state.polynomial_claims.iter())
+        {
+            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
+        }
+        let (coeffs, comms): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
+            .into_iter()
+            .map(|(poly, coeff)| (coeff, commitments_map.remove(&poly).unwrap()))
+            .unzip();
+        let joint_commitment = PCS::combine_commitments(&comms, &coeffs);
+
+        // Generate a hint for verifying the opening proof (via the PCS's recursion extension).
+        let verifier_setup = PCS::setup_verifier(&self.preprocessing.generators);
+        let (_witnesses, stage8_hint) = PCS::witness_gen(
+            &opening_proof,
+            &verifier_setup,
+            &mut witness_gen_transcript,
+            &opening_point.r,
+            &joint_claim,
+            &joint_commitment,
+        )
+        .expect("PCS::witness_gen failed for Stage 8 opening proof");
+
+        (opening_proof, stage8_hint)
     }
 }
 

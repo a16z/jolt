@@ -83,7 +83,7 @@ impl ScalarMultiplicationSteps {
         // Perform double-and-add algorithm and collect values
         // For each bit b_i (i = 1 to 256), compute:
         // T_i = [2]A_{i-1} and A_i = T_i + b_i * P
-        for (i, &bit) in bits_msb.iter().enumerate() {
+        for (_i, &bit) in bits_msb.iter().enumerate() {
             // Double: T_{i+1} = [2]A_i
             let doubled = accumulator + accumulator;
             let t_affine: G1Affine = doubled.into();
@@ -247,89 +247,18 @@ mod tests {
     fn test_scalar_multiplication_witness() {
         let mut rng = ark_std::test_rng();
 
-        // First test with a simple scalar to debug
         let point = G1Affine::rand(&mut rng);
-        let scalar = Fr::from(55743u64); // Binary: 101 (MSB first)
+        let scalar = Fr::from(55743u64);
 
         // Generate witness
         let witness = ScalarMultiplicationSteps::new(point, scalar);
 
-        // Debug output
-        println!("Testing scalar = 5, bits = {:?}", witness.bits);
-        println!("Base point: ({:?}, {:?})", point.x, point.y);
-
         // Verify result
         assert!(witness.verify_result(), "Result verification failed");
 
-        // Verify constraints at each step with detailed logging
+        // Verify constraints at each step
         for i in 0..witness.num_steps() {
-            println!("\nStep {} (bit = {}):", i, witness.bits[i]);
-            println!(
-                "  A_{}: ({:?}, {:?})",
-                i, witness.x_a_mles[0][i], witness.y_a_mles[0][i]
-            );
-            println!(
-                "  T_{}: ({:?}, {:?})",
-                i, witness.x_t_mles[0][i], witness.y_t_mles[0][i]
-            );
-            if i < 255 {
-                println!(
-                    "  A_{}: ({:?}, {:?})",
-                    i + 1,
-                    witness.x_a_mles[0][i + 1],
-                    witness.y_a_mles[0][i + 1]
-                );
-            }
-
             let result = witness.verify_constraint_at_step(i);
-            if !result {
-                println!("  CONSTRAINT VERIFICATION FAILED!");
-                // Let's check each constraint individually
-                let bit = witness.bits[i];
-                let x_a = witness.x_a_mles[0][i];
-                let y_a = witness.y_a_mles[0][i];
-                let x_t = witness.x_t_mles[0][i];
-                let y_t = witness.y_t_mles[0][i];
-                let x_a_next = if i < 255 {
-                    witness.x_a_mles[0][i + 1]
-                } else {
-                    Fq::zero()
-                };
-                let y_a_next = if i < 255 {
-                    witness.y_a_mles[0][i + 1]
-                } else {
-                    Fq::zero()
-                };
-                let x_p = witness.point_base.x;
-                let y_p = witness.point_base.y;
-
-                // Check if A_i is point at infinity
-                if x_a.is_zero() && y_a.is_zero() {
-                    println!("  A_{} is point at infinity", i);
-                } else {
-                    // C1: Doubling x-coordinate constraint
-                    let four = Fq::from(4u64);
-                    let two = Fq::from(2u64);
-                    let nine = Fq::from(9u64);
-                    let y_a_sq = y_a * y_a;
-                    let x_a_sq = x_a * x_a;
-                    let x_a_fourth = x_a_sq * x_a_sq;
-                    let c1 = four * y_a_sq * (x_t + two * x_a) - nine * x_a_fourth;
-                    println!("  C1 (doubling x): {:?} (should be 0)", c1);
-
-                    // C2: Doubling y-coordinate constraint
-                    let three = Fq::from(3u64);
-                    let c2 = three * x_a_sq * (x_t - x_a) + two * y_a * (y_t + y_a);
-                    println!("  C2 (doubling y): {:?} (should be 0)", c2);
-                }
-
-                // C3 and C4: Conditional addition constraints
-                if bit {
-                    println!("  Adding base point");
-                } else {
-                    println!("  Not adding base point");
-                }
-            }
             assert!(result, "Constraint verification failed at step {}", i);
         }
     }
@@ -384,15 +313,6 @@ mod tests {
 
         // Verify the result
         assert!(witness.verify_result());
-
-        // Debug: print first few values
-        println!("First A_i values:");
-        for i in 0..4 {
-            println!(
-                "  A_{}: ({:?}, {:?})",
-                i, witness.x_a_mles[0][i], witness.y_a_mles[0][i]
-            );
-        }
     }
 
     #[test]

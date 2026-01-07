@@ -1,7 +1,7 @@
 //! GT multiplication witness generation for Dory recursion
 
 use ark_bn254::{Fq, Fq12};
-use ark_ff::{Zero, One};
+use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_optimizations::{fq12_to_multilinear_evals, get_g_mle};
 
@@ -105,6 +105,7 @@ fn eval_mle_at_boolean_point(mle: &[Fq], point: &[Fq]) -> Fq {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_ff::One;
     use ark_ff::UniformRand;
     use rand::thread_rng;
 

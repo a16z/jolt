@@ -293,10 +293,7 @@ impl RecursionExt<Fr> for DoryCommitmentScheme {
             &mut dory_transcript,
             ctx.clone(),
         )
-        .map_err(|e| {
-            eprintln!("verify_recursive failed: {:?}", e);
-            ProofVerifyError::default()
-        })?;
+        .map_err(|_e| ProofVerifyError::default())?;
 
         // Extract witness collection
         let witnesses = Rc::try_unwrap(ctx)
