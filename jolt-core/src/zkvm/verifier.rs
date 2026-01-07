@@ -736,6 +736,8 @@ impl CanonicalSerialize for JoltSharedPreprocessing {
         self.ram.serialize_with_mode(&mut writer, compress)?;
         self.memory_layout
             .serialize_with_mode(&mut writer, compress)?;
+        self.max_padded_trace_length
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -743,6 +745,7 @@ impl CanonicalSerialize for JoltSharedPreprocessing {
         self.bytecode.serialized_size(compress)
             + self.ram.serialized_size(compress)
             + self.memory_layout.serialized_size(compress)
+            + self.max_padded_trace_length.serialized_size(compress)
     }
 }
 
@@ -756,10 +759,13 @@ impl CanonicalDeserialize for JoltSharedPreprocessing {
             BytecodePreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
         let ram = RAMPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
         let memory_layout = MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
+        let max_padded_trace_length =
+            usize::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self {
             bytecode: Arc::new(bytecode),
             ram,
             memory_layout,
+            max_padded_trace_length,
         })
     }
 }
