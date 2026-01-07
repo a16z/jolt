@@ -105,10 +105,6 @@ pub struct BytecodeReadRafSumcheckProver<F: JoltField> {
     ra: Vec<RaPolynomial<u8, F>>,
     /// Binding challenges for the first log_K variables of the sumcheck
     r_address_prime: Vec<F::Challenge>,
-    /// Previous-round claims s_i(0)+s_i(1) per stage, needed for degree-3 univariate recovery.
-    prev_round_claims: [F; N_STAGES],
-    /// Round polynomials per stage for advancing to the next claim at r_j.
-    prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
     /// Cycle-only weights for the last log(T) rounds:
     ///   W(j) = Σ_{stage} gamma_powers[stage] * bound_val_eval[stage] * eq_stage(j)
     /// where `bound_val_eval[stage]` is `Val_stage(r_address)` with RAF Int folded in
@@ -130,14 +126,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: Arc<BytecodePreprocessing>,
     ) -> Self {
-        let claim_per_stage = [
-            params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
-            params.rv_claims[1],
-            params.rv_claims[2] + params.gamma_powers[4] * params.raf_shift_claim,
-            params.rv_claims[3],
-            params.rv_claims[4],
-        ];
-
         // Two-table split-eq optimization for computing F[stage][k] = Σ_{c: PC(c)=k} eq(r_cycle, c).
         //
         // Double summation pattern:
@@ -277,8 +265,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             F,
             ra: Vec::with_capacity(params.d),
             r_address_prime: Vec::with_capacity(params.log_K),
-            prev_round_claims: claim_per_stage,
-            prev_round_polys: None,
             combined_cycle_weight_poly: None,
             trace,
             bytecode_preprocessing,
@@ -428,8 +414,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         if round < self.params.log_K {
             const DEGREE: usize = 2;
 
-            // Evaluation at [0, 2] for each stage.
-            let eval_per_stage: [[F; DEGREE]; N_STAGES] = (0..self.params.val_polys[0].len() / 2)
+            // Compute the γ-weighted aggregate evaluations at X∈{0,2} directly and
+            // interpolate the (degree-2) round polynomial using the aggregate hint
+            // `previous_claim = s(0) + s(1)`.
+            //
+            // This avoids building per-stage univariates and therefore eliminates the
+            // need to track per-stage previous-round claims/polynomials.
+            let evals: [F; DEGREE] = (0..self.params.val_polys[0].len() / 2)
                 .into_par_iter()
                 .map(|i| {
                     let ra_evals = self.F.each_ref().map(|poly| {
@@ -467,31 +458,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                             })
                         });
 
-                    array::from_fn(|stage| {
+                    let mut acc = [F::zero(); DEGREE];
+                    for stage in 0..N_STAGES {
                         let [ra_at_0, ra_at_2] = ra_evals[stage];
                         let [val_at_0, val_at_2] = val_evals.next().unwrap();
-                        [ra_at_0 * val_at_0, ra_at_2 * val_at_2]
-                    })
+                        let gamma = self.params.gamma_powers[stage];
+                        acc[0] += gamma * (ra_at_0 * val_at_0);
+                        acc[1] += gamma * (ra_at_2 * val_at_2);
+                    }
+                    acc
                 })
                 .reduce(
-                    || [[F::zero(); DEGREE]; N_STAGES],
-                    |a, b| array::from_fn(|i| array::from_fn(|j| a[i][j] + b[i][j])),
+                    || [F::zero(); DEGREE],
+                    |a, b| [a[0] + b[0], a[1] + b[1]],
                 );
 
-            let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
-            let mut agg_round_poly = UniPoly::zero();
-
-            for (stage, evals) in eval_per_stage.into_iter().enumerate() {
-                let [eval_at_0, eval_at_2] = evals;
-                let eval_at_1 = self.prev_round_claims[stage] - eval_at_0;
-                let round_poly = UniPoly::from_evals(&[eval_at_0, eval_at_1, eval_at_2]);
-                agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
-                round_polys[stage] = round_poly;
-            }
-
-            self.prev_round_polys = Some(round_polys);
-
-            agg_round_poly
+            UniPoly::from_evals_and_hint(previous_claim, &evals)
         } else {
             // Last log(T) rounds:
             // We have already absorbed the stage-specific eq polynomials and the stage RLC
@@ -564,10 +546,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        if let Some(prev_round_polys) = self.prev_round_polys.take() {
-            self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
-        }
-
         if round < self.params.log_K {
             self.params
                 .val_polys
