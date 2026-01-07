@@ -284,15 +284,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
                 panic!(
                     "Configuration error: trace too small to embed advice into Dory batch opening.\n\
-                    Current: (sigma_main={}, nu_main={}) from total_vars={} (log_t={}, log_k_chunk={})\n\
-                    Required: (sigma_a={}, nu_a={}) for advice embedding\n\
+                    Current: (sigma_main={sigma_main}, nu_main={nu_main}) from total_vars={total_vars} (log_t={log_t}, log_k_chunk={log_k_chunk})\n\
+                    Required: (sigma_a={max_sigma_a}, nu_a={max_nu_a}) for advice embedding\n\
                     Solutions:\n\
-                    1. Increase max_trace_length in preprocessing (currently {})\n\
+                    1. Increase max_trace_length in preprocessing (currently {max_padded_trace_length})\n\
                     2. Reduce max_trusted_advice_size or max_untrusted_advice_size\n\
-                    3. Run a program with more cycles",
-                    sigma_main, nu_main, total_vars, log_t, log_k_chunk,
-                    max_sigma_a, max_nu_a,
-                    max_padded_trace_length
+                    3. Run a program with more cycles"
                 );
             }
             padded_trace_len = (padded_trace_len * 2).min(max_padded_trace_length);
