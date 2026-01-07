@@ -22,7 +22,6 @@ use super::{
 use crate::{
     field::JoltField,
     transcripts::Transcript,
-    utils::errors::ProofVerifyError,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
