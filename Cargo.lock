@@ -978,6 +978,7 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.1.0"
+source = "git+https://github.com/a16z/dory?branch=feat%2Frecursion#a735c99016b1f8b301c1866f3181545db8fe6566"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -987,6 +988,7 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.1.0"
+source = "git+https://github.com/a16z/dory?branch=feat%2Frecursion#a735c99016b1f8b301c1866f3181545db8fe6566"
 dependencies = [
  "ark-bn254",
  "ark-ec",

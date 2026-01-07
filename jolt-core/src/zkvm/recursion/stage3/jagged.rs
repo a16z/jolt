@@ -42,16 +42,11 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    utils::errors::ProofVerifyError,
     zkvm::witness::CommittedPolynomial,
 };
 use rayon::prelude::*;
 
-use crate::zkvm::recursion::bijection::{
-    ConstraintMapping, JaggedTransform, VarCountJaggedBijection,
-};
-use ark_bn254::Fq;
-use ark_ff::Zero;
+use crate::zkvm::recursion::bijection::{ConstraintMapping, VarCountJaggedBijection};
 
 use super::branching_program::{JaggedBranchingProgram, Point};
 
@@ -100,6 +95,12 @@ pub struct JaggedSumcheckProver<F: JoltField, T: Transcript> {
     /// Dense polynomial q(i) containing only non-zero entries
     pub dense_poly: MultilinearPolynomial<F>,
 
+    /// Jagged indicator polynomial \hat f_jagged(r_s, r_x, i) as an MLE over the dense index `i`.
+    ///
+    /// This is the multilinear extension of the boolean function:
+    /// `f(i) = eq(row(i), r_s) * eq(col(i), r_x)` for `i < dense_size`, and `0` for padded indices.
+    pub jagged_indicator_poly: MultilinearPolynomial<F>,
+
     /// Equality polynomial eq(r_s, s) where s comes from i_sparse(i)
     pub eq_r_s: MultilinearPolynomial<F>,
 
@@ -130,12 +131,52 @@ impl<F: JoltField, T: Transcript> JaggedSumcheckProver<F, T> {
         bijection: VarCountJaggedBijection,
         mapping: ConstraintMapping,
         matrix_rows: Vec<usize>,
-        transcript: &mut T,
+        _transcript: &mut T,
         num_s_vars: usize,
         num_constraint_vars: usize,
     ) -> Self {
         let (r_s_final, r_x_prev) = sparse_opening_point;
         let num_dense_vars = dense_poly.get_num_vars();
+
+        // --------------------------------------------------------------------
+        // Build the jagged indicator polynomial over the dense index `i`.
+        //
+        // IMPORTANT: The Stage 3 sumcheck operates over the multilinear extension of this
+        // indicator, so the prover must be able to evaluate it at non-boolean points as the
+        // verifier challenges are absorbed. We accomplish this by materializing the boolean
+        // evaluation table once and then binding it in `ingest_challenge` (just like `dense_poly`).
+        // --------------------------------------------------------------------
+
+        // We intentionally compute `eq` values using `EqPolynomial::mle` with LSB-first bit vectors,
+        // matching the conventions used elsewhere in Stage 3 (and in the verifier's "old method"
+        // checks). This avoids subtle endianness issues with `EqPolynomial::evals`.
+
+        let num_polynomials = bijection.num_polynomials();
+        let mut eq_s_cache = vec![F::zero(); num_polynomials];
+        for poly_idx in 0..num_polynomials {
+            let matrix_row = matrix_rows[poly_idx];
+            let row_bits = index_to_binary_vec::<F>(matrix_row, num_s_vars);
+            eq_s_cache[poly_idx] = EqPolynomial::mle(&row_bits, &r_s_final);
+        }
+
+        let max_cols = 1usize << num_constraint_vars;
+        let mut eq_x_cache = vec![F::zero(); max_cols];
+        for x_idx in 0..max_cols {
+            let x_bits = index_to_binary_vec::<F>(x_idx, num_constraint_vars);
+            eq_x_cache[x_idx] = EqPolynomial::mle(&x_bits, &r_x_prev);
+        }
+
+        let padded_dense_size = 1usize << num_dense_vars;
+        let mut jagged_indicator_evals = vec![F::zero(); padded_dense_size];
+        for poly_idx in 0..num_polynomials {
+            let t_prev = bijection.cumulative_size_before(poly_idx);
+            let t_curr = bijection.cumulative_size(poly_idx);
+            let native_size = t_curr - t_prev;
+            let eq_s = eq_s_cache[poly_idx];
+            for col in 0..native_size {
+                jagged_indicator_evals[t_prev + col] = eq_s * eq_x_cache[col];
+            }
+        }
 
         // Initialize eq(r_s, s) polynomial - starts as delta function at r_s
         let eq_r_s = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_s_final));
@@ -149,6 +190,7 @@ impl<F: JoltField, T: Transcript> JaggedSumcheckProver<F, T> {
             sparse_opening_point_x: r_x_prev,
             sparse_claim_value,
             dense_poly: MultilinearPolynomial::from(dense_poly.Z),
+            jagged_indicator_poly: MultilinearPolynomial::from(jagged_indicator_evals),
             eq_r_s,
             eq_r_x,
             bijection,
@@ -159,17 +201,6 @@ impl<F: JoltField, T: Transcript> JaggedSumcheckProver<F, T> {
         }
     }
 
-    fn index_to_binary(index: usize, num_vars: usize) -> Vec<F> {
-        let mut binary = Vec::with_capacity(num_vars);
-        let mut idx = index;
-
-        for _ in 0..num_vars {
-            binary.push(if idx & 1 == 1 { F::one() } else { F::zero() });
-            idx >>= 1;
-        }
-
-        binary
-    }
 }
 
 /// Helper function to convert index to binary representation
@@ -209,76 +240,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for JaggedSumchec
 
         let half = 1 << (num_vars_remaining - 1);
 
-        // Following the paper: for boolean i, we use ft(zr, zc, i) = eq(rowt(i), zr) · eq(colt(i), zc)
-        // This is equation (4) from the paper
-
-        // Compute the sumcheck polynomial:
-        // g(X) = Σ_{b ∈ {0,1}^{m-round-1}} q(X, b) * f_jagged(r_s, r_x, (X, b))
+        // Compute the Stage 3 sumcheck message for:
+        //   g(i) = q(i) * \hat f_jagged(r_s, r_x, i)
+        //
+        // Both `q` and `\hat f_jagged` are multilinear in `i`, so we can obtain their
+        // needed univariate evaluations via `sumcheck_evals_array` and multiply pointwise.
         let total_evals = (0..half)
             .into_par_iter()
             .map(|suffix_idx| {
-                // Get q(X, suffix) evaluations
                 let q_evals = self
                     .dense_poly
                     .sumcheck_evals_array::<DEGREE>(suffix_idx, BindingOrder::LowToHigh);
+                let f_evals = self
+                    .jagged_indicator_poly
+                    .sumcheck_evals_array::<DEGREE>(suffix_idx, BindingOrder::LowToHigh);
 
                 let mut evals = [F::zero(); DEGREE];
-
                 for t in 0..DEGREE {
-                    // Compute the dense index for (t, suffix)
-                    let dense_idx = (t << (num_vars_remaining - 1)) | suffix_idx;
-
-                    // Check if this dense index is within the actual dense size
-                    if dense_idx
-                        < <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(
-                            &self.bijection,
-                        )
-                    {
-                        // For boolean i, use the direct formula from equation (4)
-                        // ft(zr, zc, i) = eq(rowt(i), zr) · eq(colt(i), zc)
-
-                        // Get the polynomial index and col (evaluation index)
-                        let poly_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(
-                            &self.bijection,
-                            dense_idx,
-                        );
-                        let col = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(
-                            &self.bijection,
-                            dense_idx,
-                        );
-
-                        // Get the actual matrix row from precomputed values
-                        let matrix_row = self.matrix_rows[poly_idx];
-
-                        // Convert matrix_row to binary representation (this is the s-index)
-                        let s_binary = Self::index_to_binary(matrix_row, self.params.num_s_vars);
-                        let eq_s = EqPolynomial::mle(&s_binary, &self.sparse_opening_point_s);
-
-                        // Convert col to binary representation (this is the x-index)
-                        let x_binary = Self::index_to_binary(col, self.params.num_constraint_vars);
-                        let eq_x = EqPolynomial::mle(&x_binary, &self.sparse_opening_point_x);
-
-                        #[cfg(test)]
-                        if self.round == self.params.num_dense_vars - 1 && suffix_idx == 0 && t < 3
-                        {
-                            println!("\n  PROVER: Computing for dense_idx {}:", dense_idx);
-                            println!("    poly_idx: {}, eval_idx: {}", poly_idx, col);
-                            println!("    matrix_row: {}", matrix_row);
-                            println!("    q_evals[{}]: {:?}", t, q_evals[t]);
-                            println!("    eq_s: {:?}", eq_s);
-                            println!("    eq_x: {:?}", eq_x);
-                            println!(
-                                "    f_jagged = q * eq_s * eq_x = {:?}",
-                                q_evals[t] * eq_s * eq_x
-                            );
-                        }
-
-                        // f_jagged(r_s, r_x, i) = eq(row(i), r_s) * eq(col(i), r_x)
-                        evals[t] = q_evals[t] * eq_s * eq_x;
-                    }
-                    // If dense_idx >= dense_size, contribution is 0 (padding in dense polynomial)
+                    evals[t] = q_evals[t] * f_evals[t];
                 }
-
                 evals
             })
             .reduce(
@@ -297,6 +277,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for JaggedSumchec
     #[tracing::instrument(skip_all, name = "Jagged::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         self.dense_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.jagged_indicator_poly
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
         self.round = round + 1;
     }
 
@@ -309,12 +291,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for JaggedSumchec
         // After all sumcheck rounds, we have the opening claim on the dense polynomial
         let dense_claim = self.dense_poly.get_bound_coeff(0);
 
-        // The opening point is r_dense (the sumcheck challenges)
+        // The opening point must be in BIG_ENDIAN order for PCS verification.
+        // Sumcheck challenges arrive low-to-high (LSB-first), so reverse before storing.
         accumulator.append_dense(
             transcript,
             self.params.polynomial,
             self.params.sumcheck_id,
-            sumcheck_challenges.to_vec(),
+            sumcheck_challenges.iter().rev().cloned().collect(),
             dense_claim,
         );
     }
@@ -541,7 +524,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
             transcript,
             self.params.polynomial,
             self.params.sumcheck_id,
-            sumcheck_challenges.to_vec(),
+            // Stored in BIG_ENDIAN order for PCS verification.
+            sumcheck_challenges.iter().rev().cloned().collect(),
         );
     }
 }
