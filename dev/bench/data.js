@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767731741513,
+  "lastUpdate": 1767816844715,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -43858,6 +43858,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 373352,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1889740166c05d7d3a0b0300628bf660df25bf1e",
+          "message": "perf: optimize RAF and suffix polynomial initialization (#1183)\n\n* refactor: combine val and raf_val into single polynomial\n\nPreviously, combined_val_polynomial and combined_raf_val_polynomial were\nstored separately but only ever used as their sum. This change:\n- Combines them during materialization in init_log_t_rounds\n- Removes the separate combined_raf_val_polynomial field\n- Simplifies compute_message by reading from single combined polynomial\n- Reduces memory usage and eliminates redundant additions per cycle\n\n* perf: fuse RAF init_Q and fast-path 0/1 suffixes\n\n- Add PrefixSuffixDecomposition::init_Q_raf to initialize left/right operand\n  and identity Q polynomials in a single scan, avoiding duplicate uninterleave\n  and dynamic-dispatch overhead.\n- Add unit test ensuring init_Q_raf matches legacy init_Q_dual + init_Q.\n- Add Suffixes::is_01_valued and use it to apply a mul-by-1 fast path only for\n  {0,1}-valued lookup-table suffixes during suffix polynomial initialization.\n\n* remove init_Q_dual and legacy comparison test\n\n- Remove init_Q_dual (now replaced by init_Q_raf)\n- Remove init_q_raf_matches_legacy_init_q test\n- Clean up unused imports in test module\n- Keep init_Q for generic prefix_suffix_decomposition_test\n\n* skip suffix init for unused lookup tables\n\nEarly exit in init_suffix_polys when lookup_indices_by_table[t] is empty.\nAvoids allocating and reducing zero accumulators for tables not used in trace.\n\n* more changes\n\n* perf: optimize RAF init_Q suffix handling\n\n- Avoid per-cycle mul for constant ShiftHalf/Shift suffixes by accumulating u and scaling once per bucket\n- Use mul_u64_unreduced for operand suffix values (lo/ro) and identity suffix when it fits in u64\n- Keep correctness via post-reduction scaling by 2^{suffix_len/2} and 2^{suffix_len}\n\n* tracing: add span for init_Q_raf reduction\n\n* perf: right-size Rayon chunking in RAF init paths\n\n* refactor: improve docstrings, imports, and parallelize reduce operations\n\n- Add Suffixes to imports and use short form instead of full path\n- Improve docstrings for init_suffix_polys and init_Q_raf\n- Parallelize reduce closure in init_Q_raf (sequential par_iter_mut)\n- Parallelize field reduction in init_Q_raf using array pattern\n- Parallelize reduce closure in init_suffix_polys\n\n* perf: precompute per-table Val constants in combined_val_poly\n\n* tracing: add INFO spans for RAF init hot paths\n\n* perf: speed up materialize ra polynomials inner loop\n\n* perf: drop unused RAF buffers after address rounds\n\n* tracing: instrument fold/reduce init allocations in RAF init\n\n* perf: single allocation for init_Q_raf accumulators\n\n* perf: single allocation in init_suffix_polys accumulators\n\n* Remove in-function tracing spans from init_Q_raf and init_suffix_polys\n\n* clippy\n\n* fix\n\n* Optimize cache_openings with split-eq + unreduced accumulation\n\n- Add Arc<Vec<Cycle>> trace field to ReadRafSumcheckProver\n- Change initialize signature to accept Arc<Vec<Cycle>>\n- Implement compute_flag_claims_split_eq helper using:\n  - Split-eq: E_hi and E_lo (each size √T instead of full T)\n  - Parallelize over c_hi chunks\n  - Sequential c_lo iteration for cache locality\n  - 5-limb unreduced accumulation within each c_hi block\n  - Contiguous trace iteration (not sparse index lists)\n- Update prover.rs caller to pass Arc::clone(&self.trace)\n\n* fmt\n\n* Remove redundant storage fields from ReadRafSumcheckProver\n\n- Remove lookup_tables field: derive from trace via cycle.lookup_table()\n- Remove lookup_indices_uninterleave field: dead code after init_Q_raf refactor\n- Remove lookup_indices_identity field: dead code (never used after init)\n\nThis reduces per-cycle storage by avoiding:\n- Vec<Option<LookupTables<XLEN>>> (lookup_tables)\n- Two Vec<usize> sparse index lists (uninterleave, identity)\n\n* reorder ra and split eq fields\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-01-07T14:33:53-05:00",
+          "tree_id": "06b473a543fb8a558d1b0b1e4c4c93e3a3735cf4",
+          "url": "https://github.com/a16z/jolt/commit/1889740166c05d7d3a0b0300628bf660df25bf1e"
+        },
+        "date": 1767816843449,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0357,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 383700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 426732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5833,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 383700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 383560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8459,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 385736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4919,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 387480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3453,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 385764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5829,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 381852,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 385508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 84.3638,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2716992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4179,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 383480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4898,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 387292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 372872,
             "unit": "KB",
             "extra": ""
           }
