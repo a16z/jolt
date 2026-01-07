@@ -415,7 +415,8 @@ pub struct AdviceClaimReductionPhase1Verifier<F: JoltField> {
 }
 
 impl<F: JoltField> AdviceClaimReductionPhase1Verifier<F> {
-    pub fn new_trusted(
+    pub fn new(
+        kind: AdviceKind,
         memory_layout: &MemoryLayout,
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
@@ -423,25 +424,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Verifier<F> {
         single_opening: bool,
     ) -> Option<Self> {
         let params = AdviceClaimReductionPhase1Params::new(
-            AdviceKind::Trusted,
-            memory_layout,
-            trace_len,
-            accumulator,
-            transcript,
-            single_opening,
-        )?;
-        Some(Self { params })
-    }
-
-    pub fn new_untrusted(
-        memory_layout: &MemoryLayout,
-        trace_len: usize,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-        single_opening: bool,
-    ) -> Option<Self> {
-        let params = AdviceClaimReductionPhase1Params::new(
-            AdviceKind::Untrusted,
+            kind,
             memory_layout,
             trace_len,
             accumulator,
@@ -567,48 +550,18 @@ pub struct AdviceClaimReductionPhase2Params<F: JoltField> {
 }
 
 impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
-    pub fn new_trusted(
-        memory_layout: &MemoryLayout,
-        trace_len: usize,
-        gamma: F,
-        accumulator: &dyn OpeningAccumulator<F>,
-        single_opening: bool,
-    ) -> Option<Self> {
-        Self::new(
-            AdviceKind::Trusted,
-            memory_layout.max_trusted_advice_size as usize,
-            trace_len,
-            gamma,
-            accumulator,
-            single_opening,
-        )
-    }
-
-    pub fn new_untrusted(
-        memory_layout: &MemoryLayout,
-        trace_len: usize,
-        gamma: F,
-        accumulator: &dyn OpeningAccumulator<F>,
-        single_opening: bool,
-    ) -> Option<Self> {
-        Self::new(
-            AdviceKind::Untrusted,
-            memory_layout.max_untrusted_advice_size as usize,
-            trace_len,
-            gamma,
-            accumulator,
-            single_opening,
-        )
-    }
-
-    fn new(
+    pub fn new(
         kind: AdviceKind,
-        max_advice_size_bytes: usize,
+        memory_layout: &MemoryLayout,
         trace_len: usize,
         gamma: F,
         accumulator: &dyn OpeningAccumulator<F>,
         single_opening: bool,
     ) -> Option<Self> {
+        let max_advice_size_bytes = match kind {
+            AdviceKind::Trusted => memory_layout.max_trusted_advice_size as usize,
+            AdviceKind::Untrusted => memory_layout.max_untrusted_advice_size as usize,
+        };
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
         let (sigma_main, _nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
@@ -889,22 +842,14 @@ impl<F: JoltField> AdviceClaimReductionPhase2Verifier<F> {
         accumulator: &VerifierOpeningAccumulator<F>,
         single_opening: bool,
     ) -> Option<Self> {
-        let params = match kind {
-            AdviceKind::Trusted => AdviceClaimReductionPhase2Params::new_trusted(
-                memory_layout,
-                trace_len,
-                gamma,
-                accumulator,
-                single_opening,
-            ),
-            AdviceKind::Untrusted => AdviceClaimReductionPhase2Params::new_untrusted(
-                memory_layout,
-                trace_len,
-                gamma,
-                accumulator,
-                single_opening,
-            ),
-        }?;
+        let params = AdviceClaimReductionPhase2Params::new(
+            kind,
+            memory_layout,
+            trace_len,
+            gamma,
+            accumulator,
+            single_opening,
+        )?;
         Some(Self { params })
     }
 }

@@ -439,7 +439,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
 
         // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
-        let trusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new_trusted(
+        let trusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new(
+            AdviceKind::Trusted,
             &self.program_io.memory_layout,
             self.proof.trace_length,
             &self.opening_accumulator,
@@ -451,7 +452,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         if let Some(ref v) = trusted_advice_phase1 {
             self.advice_reduction_gamma_trusted = Some(v.gamma());
         }
-        let untrusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new_untrusted(
+        let untrusted_advice_phase1 = AdviceClaimReductionPhase1Verifier::new(
+            AdviceKind::Untrusted,
             &self.program_io.memory_layout,
             self.proof.trace_length,
             &self.opening_accumulator,

@@ -1215,7 +1215,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             vec![Box::new(hw_prover)];
 
         if let Some(gamma) = self.advice_reduction_gamma_trusted {
-            if let Some(params) = AdviceClaimReductionPhase2Params::new_trusted(
+            if let Some(params) = AdviceClaimReductionPhase2Params::new(
+                AdviceKind::Trusted,
                 &self.program_io.memory_layout,
                 self.trace.len(),
                 gamma,
@@ -1234,7 +1235,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             }
         }
         if let Some(gamma) = self.advice_reduction_gamma_untrusted {
-            if let Some(params) = AdviceClaimReductionPhase2Params::new_untrusted(
+            if let Some(params) = AdviceClaimReductionPhase2Params::new(
+                AdviceKind::Untrusted,
                 &self.program_io.memory_layout,
                 self.trace.len(),
                 gamma,
