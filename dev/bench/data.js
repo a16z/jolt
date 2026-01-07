@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767816844715,
+  "lastUpdate": 1767824866906,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -44038,6 +44038,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 372872,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "khajepour.amirhossein@gmail.com",
+            "name": "Amirhossein Khajehpour",
+            "username": "RadNi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "101c119f36163f06bee26c969a45bb0b40be97b1",
+          "message": "perf: batching advice polynomials (#1172)\n\n* first draft\n\n* fmt\n\n* clippy\n\n* WIP\n\n* fmt\n\n* wired in new sumchecks\n\n* more progress\n\n* refactor: move RamHammingBooleanity to Stage 6 for unified r_cycle\n\n- Move RamHammingBooleanity sumcheck from Stage 5 to Stage 6\n  This ensures RAM HW claims use r_cycle_stage6, matching HammingWeightClaimReduction\n\n- Remove ram_hw_claims from JoltProof struct\n  RAM HW claims now flow through accumulator like all other claims\n\n- Simplify HammingWeightClaimReduction params\n  - Fetch RAM HW claims from accumulator (VirtualPolynomial::RamHammingWeight)\n  - Remove separate ram_hw_claims handling in prover/verifier\n\n- Update tracking document with new stage layout\n\nAll e2e tests pass when run individually.\n\n* refactor(sumcheck): unify booleanity, consolidate claim reductions, remove opening reduction\n\nThis is a major refactoring of the sumcheck infrastructure for Jolt Stage 6-7.\n\n1. Unified Booleanity Sumcheck\n   - Add unified_booleanity.rs to batch booleanity checks across all ra polynomials\n     (instruction, bytecode, ram) into a single sumcheck\n   - Replaces separate booleanity sumchecks per polynomial family\n\n2. Claim Reductions Consolidation\n   - Move all claim reduction sumchecks into zkvm/claim_reductions/:\n     - hamming_weight.rs - fused HammingWeight + RA address reduction\n     - increments.rs - increment counter claim reduction\n     - instruction_lookups.rs - instruction lookups claim reduction\n     - ram_ra.rs - RAM RA claim reduction\n   - Remove scattered implementations from subprotocols/, zkvm/ram/, zkvm/spartan/\n\n3. Remove Deprecated Opening Reduction (Old Stage 7)\n   - Delete subprotocols/opening_reduction.rs\n   - Delete subprotocols/hamming_weight.rs (replaced by fused version)\n   - Delete subprotocols/hamming_weight_claim_reduction.rs\n   - Delete subprotocols/inc_reduction.rs\n   - Delete zkvm/ram/ra_reduction.rs\n   - Delete zkvm/spartan/claim_reductions.rs\n   - Clean up deprecated Stage 7 methods from opening_proof.rs\n\nThe new architecture reduces the number of sumcheck instances and aligns all\nra polynomials to a common opening point for efficient batch opening proofs.\n\n* Refactor: SharedRaPolynomials with shared eq table and non-transposed indices\n\n- Add SharedRaPolynomials type that stores ONE shared eq table instead of N copies\n- Store Vec<RaIndices> (non-transposed) instead of Vec<Vec<Option<u16>>>\n- Implement Round1/Round2/Round3/RoundN state machine for delayed binding\n- Add compute_all_G and compute_ra_indices for parallel computation\n- Refactor UnifiedBooleanityProver to use SharedRaPolynomials\n- Remove separate compute_instruction_G/bytecode_G/ram_G functions\n- Use rayon::join for parallel G and ra_indices computation\n\n* WIP: Stage 7 debugging - r_cycle source mismatch investigation\n\nDebug state:\n- SharedRaRound3::get_bound_coeff: Fixed LowToHigh offset ordering (F_10 <-> F_01)\n- SharedRaRound3::bind: Fixed to create 8 separate F tables as in RaPolynomialRound3\n- compute_all_G: Optimized to use flat N*K vector with unsafe_allocate_zero_vec\n\nCurrent issue:\n- HammingWeight's G·eq(r_addr) doesn't match UnifiedBooleanity's claims_bool\n- Debug shows ~0.3% difference, suggesting r_cycle mismatch\n- HammingWeight now extracts r_cycle from Stage 5 (same source as UnifiedBooleanity)\n- eq_bool mle vs bound mismatch indicates potential endianness issue\n\nHypothesis:\n- UnifiedBooleanity claims are at (ρ_addr, r_cycle_stage5) where:\n  - ρ_addr = sumcheck challenges for address\n  - r_cycle_stage5 = original r_cycle from Stage 5\n- HammingWeight should use the same r_cycle for G computation\n\n* more opt\n\n* refactoring, still failing\n\n* removing more dead code related to one hot polys\n\n* fixed bug, add streaming VMV from materialized trace\n\n* more fix\n\n* Checkpoint before follow-up message\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* Checkpoint before follow-up message\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* Fix clippy warning: remove debug eprintln from sumcheck\n\nRemove temporary Stage 7 debugging code that was causing clippy\nuninlined_format_args warning.\n\n* Checkpoint before follow-up message\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* Refactor: Rename UnifiedBooleanity to Booleanity\n\nThis commit renames the UnifiedBooleanity subprotocol to Booleanity to better reflect its purpose. The functionality remains the same.\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* Refactor: Improve code formatting and imports\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* feat: Add initial core functionality\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* Refactor: Integrate advice polynomial claim reduction\n\nThis commit refactors the advice polynomial handling by introducing a new claim reduction sumcheck. This sumcheck consolidates multiple advice claims into fewer claims, which are then batched into the Stage 8 opening proof. This change removes the need for separate advice opening proofs and simplifies the overall proof structure.\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* feat: Add trusted advice hint to prover and SDK\n\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\n\n* optimize ra reduction init\n\n* cleaning up\n\n* turn remainder into bitmask in some places\n\n* add documentation to eq poly\n\n* added more inlines\n\n* simpler split eq implementation of compute G\n\n* optimization to streaming vmv\n\n* final small change\n\n* name change booleanity => booleanity sumcheck\n\n* change back threshold\n\n* clippy\n\n* Fix advice claim reduction and Stage 8 batching issues\n\n- Fixed AdviceClaimReductionParams::new to check if advice openings actually exist\n  in the accumulator, not just if memory layout allows advice. This fixes tests\n  like SHA3 that don't use advice.\n\n- Fixed SDK macro typo: <<< -> << in OpeningProofHint type parameter\n\n- Removed advice from Stage 8 batch opening: Advice is committed with different\n  dimensions (max_padded_trace_length) than main polynomials (actual padded_trace_len),\n  so they cannot be batched together. Advice claims are still reduced via\n  AdviceClaimReduction in Stage 6.\n\n- Reverted advice test to use TrustedAdvice Dory context instead of Main context\n\n* delete executable\n\n* remove redundant stuff in booleanity params\n\n* delete redundant split eq poly method\n\n* I think everything is working?\n\n* add advice for streaming rlc as well\n\n* added more tests\n\n* delete executable\n\n* added extra e2e tests for advice\n\n* clippy\n\n* more clippy\n\n* final clippy I swear\n\n* okay final final clippy\n\n* optimize rlc computation\n\n* fmt\n\n* can batch advice with arbitrary dimensions now?\n\n* fmt\n\n* revert to old unmodified batched sumcheck impl\n\n* fmt\n\n* append C_mid claim to transcript\n\n* addressing comments (part 1)\n\n* more cleanups\n\n* more cleanup\n\n* final changes\n\n* small rename\n\n* final removal of chunk ranges\n\n* final changes\n\n* reorganize sumcheck ids: remove old ones, rename some, and reorder according to appearance in stages\n\n* no fixedbitset for ram sumcheck inits\n\n* tidy up comments in prover & verifier\n\n* final removal of chunk ranges & fixed bit set for compute G\n\n* fix padding issue\n\n* have unreduced addition in rlc accumulating ra poly evals\n\n* increase threshold for increasing log_k_chunk (from 23 to 25)\n\n* revert to FixedBitSet impl for compute G\n\n* Fix test code to use new DoryOpeningState pattern\n\n- Remove old test block that used dory_opening_state field\n- Move joint_commitment_for_test computation into prove_stage8_impl\n- Update advice_row_coords test to get opening_point from OpeningAccumulator\n- Add missing imports (OpeningAccumulator, CommittedPolynomial)\n\n* Simplify prove_stage8: remove unnecessary test scaffolding\n\nThe better-opening-reduction branch never actually sets joint_commitment_for_test,\nso the verifier cross-check (if let Some...) never triggers. Match that pattern\nby removing the commitments_map passing and the two-impl split.\n\n* Remove dead joint_commitment_for_test field\n\nThis field was initialized to None and never set, so the verifier\ncross-check never triggered. Remove from prover, verifier, and proof struct.\n\n* fmt + minor refactor\n\n* cleaned up tests\n\n* clippy\n\n* clippy\n\n* Added test for advice polynomials size exceeding maximum and few other minor changes\n\n* failure in building python files\n\n* refactoring\n\n* removed mds\n\n* minor fix in comments\n\n* more small fixes\n\n* added serializer for max_padded_trace_length in shared preprocessing\n\n* clippy\n\n* removed extra advice constructors\n\n* replaced manual eq zero_selector\n\n---------\n\nCo-authored-by: Quang Dao <quang.dao@layerzerolabs.org>\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: qvd <qvd@andrew.cmu.edu>\nCo-authored-by: Quang Dao <>",
+          "timestamp": "2026-01-07T13:43:00-08:00",
+          "tree_id": "39d678a76f4a0aa91176d6e615a149f4609636e3",
+          "url": "https://github.com/a16z/jolt/commit/101c119f36163f06bee26c969a45bb0b40be97b1"
+        },
+        "date": 1767824865747,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0096,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 385496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 426936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5909,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 383868,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5915,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 382328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8049,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 383456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5003,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 383540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3519,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 385820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7795,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 385540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 387860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 85.9268,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2707668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4364,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 382804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4996,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 383904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 372928,
             "unit": "KB",
             "extra": ""
           }
