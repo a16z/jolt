@@ -272,14 +272,14 @@ macro_rules! impl_field_ops_inline {
     };
 
     (@mul_challenge_field optimized, $f:ty, $lhs:expr, $rhs:expr) => {
-        $rhs.mul_hi_bigint_u128($lhs.value())
+        $rhs.mul_by_hi_2limbs($lhs.low, $lhs.high)
     };
     (@mul_challenge_field standard, $f:ty, $lhs:expr, $rhs:expr) => {
         Into::<$f>::into($lhs) * $rhs
     };
 
     (@mul_field_challenge optimized, $f:ty, $lhs:expr, $rhs:expr) => {
-        $lhs.mul_hi_bigint_u128($rhs.value())
+        $lhs.mul_by_hi_2limbs($rhs.low, $rhs.high)
     };
     (@mul_field_challenge standard, $f:ty, $lhs:expr, $rhs:expr) => {
         $lhs * Into::<$f>::into($rhs)
