@@ -1,7 +1,5 @@
 use std::{array, iter::once, sync::Arc};
 
-use num_traits::Zero;
-
 use crate::{
     field::JoltField,
     poly::{
@@ -15,7 +13,6 @@ use crate::{
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
-        split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
     subprotocols::{
@@ -40,7 +37,8 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
-use itertools::{zip_eq, Itertools};
+use itertools::Itertools;
+use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::{Cycle, Instruction};
@@ -107,14 +105,15 @@ pub struct BytecodeReadRafSumcheckProver<F: JoltField> {
     ra: Vec<RaPolynomial<u8, F>>,
     /// Binding challenges for the first log_K variables of the sumcheck
     r_address_prime: Vec<F::Challenge>,
-    /// Per-stage Gruen-split eq polynomials over cycle vars (low-to-high binding order).
-    gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
     /// Previous-round claims s_i(0)+s_i(1) per stage, needed for degree-3 univariate recovery.
     prev_round_claims: [F; N_STAGES],
     /// Round polynomials per stage for advancing to the next claim at r_j.
     prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
-    /// Final sumcheck claims of stage Val polynomials (with RAF Int folded where applicable).
-    bound_val_evals: Option<[F; N_STAGES]>,
+    /// Cycle-only weights for the last log(T) rounds:
+    ///   W(j) = Σ_{stage} gamma_powers[stage] * bound_val_eval[stage] * eq_stage(j)
+    /// where `bound_val_eval[stage]` is `Val_stage(r_address)` with RAF Int folded in
+    /// for stages 1 and 3 (as in the address-round logic).
+    combined_cycle_weight_poly: Option<MultilinearPolynomial<F>>,
     /// Trace for computing PCs on the fly in init_log_t_rounds.
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
@@ -274,19 +273,13 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
 
         let F = F.map(MultilinearPolynomial::from);
 
-        let gruen_eq_polys = params
-            .r_cycles
-            .each_ref()
-            .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
-
         Self {
             F,
             ra: Vec::with_capacity(params.d),
             r_address_prime: Vec::with_capacity(params.log_K),
-            gruen_eq_polys,
             prev_round_claims: claim_per_stage,
             prev_round_polys: None,
-            bound_val_evals: None,
+            combined_cycle_weight_poly: None,
             trace,
             bytecode_preprocessing,
             params,
@@ -306,22 +299,21 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
         // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
-        self.bound_val_evals = Some(
-            self.params
-                .val_polys
-                .iter()
-                .zip([
-                    int_poly * self.params.gamma_powers[5],
-                    F::zero(),
-                    int_poly * self.params.gamma_powers[4],
-                    F::zero(),
-                    F::zero(),
-                ])
-                .map(|(poly, int_poly)| poly.final_sumcheck_claim() + int_poly)
-                .collect::<Vec<F>>()
-                .try_into()
-                .unwrap(),
-        );
+        let bound_val_evals: [F; N_STAGES] = self
+            .params
+            .val_polys
+            .iter()
+            .zip([
+                int_poly * self.params.gamma_powers[5],
+                F::zero(),
+                int_poly * self.params.gamma_powers[4],
+                F::zero(),
+                F::zero(),
+            ])
+            .map(|(poly, int_poly)| poly.final_sumcheck_claim() + int_poly)
+            .collect::<Vec<F>>()
+            .try_into()
+            .unwrap();
 
         // Reverse r_address_prime to get the correct order (it was built low-to-high)
         let mut r_address = std::mem::take(&mut self.r_address_prime);
@@ -357,6 +349,68 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             })
             .collect();
 
+        // Materialize a single cycle-only weight polynomial:
+        //   W(j) = Σ_stage [ weight_stage * eq_stage(j) ],
+        //   weight_stage := gamma_powers[stage] * bound_val_evals[stage].
+        //
+        // Use the common split-eq pattern (see `zkvm/ram/raf_evaluation.rs`):
+        // split each `r_cycle` into high/low halves, compute E_hi and E_lo tables, and
+        // fill W in one parallel sweep over `c_hi` blocks:
+        //   eq_stage(c_hi, c_lo) = E_hi_stage[c_hi] * E_lo_stage[c_lo].
+        //
+        // Additionally, we pre-scale E_hi by `weight_stage`
+        // so the inner loop only does one mul per stage (vs two).
+        let log_T = self.params.log_T;
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+        let in_len: usize = 1 << lo_bits; // E_lo size
+        let t = 1 << log_T;
+
+        let weights: [F; N_STAGES] =
+            array::from_fn(|stage| self.params.gamma_powers[stage] * bound_val_evals[stage]);
+
+        // Precompute split eq tables for all stages.
+        let (E_hi_scaled, E_lo): ([Vec<F>; N_STAGES], [Vec<F>; N_STAGES]) = rayon::join(
+            || {
+                array::from_fn(|stage| {
+                    let r_cycle = &self.params.r_cycles[stage];
+                    debug_assert_eq!(r_cycle.len(), log_T);
+                    let (r_hi, _) = r_cycle.split_at(hi_bits);
+                    let w = weights[stage];
+                    EqPolynomial::<F>::evals_with_scaling(r_hi, Some(w))
+                })
+            },
+            || {
+                array::from_fn(|stage| {
+                    let r_cycle = &self.params.r_cycles[stage];
+                    let (_, r_lo) = r_cycle.split_at(hi_bits);
+                    EqPolynomial::<F>::evals(r_lo)
+                })
+            },
+        );
+
+        // Fill combined_cycle[j] = Σ_stage E_hi_scaled[stage][c_hi] * E_lo[stage][c_lo]
+        // where j = (c_hi << lo_bits) | c_lo.
+        let mut combined_cycle = unsafe_allocate_zero_vec::<F>(t);
+        combined_cycle
+            .par_chunks_mut(in_len)
+            .enumerate()
+            .for_each(|(c_hi, chunk)| {
+                let hi_vals: [F; N_STAGES] = array::from_fn(|stage| E_hi_scaled[stage][c_hi]);
+                for c_lo in 0..in_len {
+                    // Unreduced accumulation: do all mul/add in the wide type, then reduce once.
+                    let mut acc = F::Unreduced::<9>::zero();
+                    for stage in 0..N_STAGES {
+                        acc += hi_vals[stage].mul_unreduced::<9>(E_lo[stage][c_lo]);
+                    }
+                    chunk[c_lo] = F::from_montgomery_reduce::<9>(acc);
+                }
+            });
+
+        self.combined_cycle_weight_poly = Some(MultilinearPolynomial::from(combined_cycle));
+        // Drop r_cycles; their contribution is now absorbed into `combined_cycle_weight_poly`.
+        self.params.r_cycles = array::from_fn(|_| Vec::new());
+
         // Drop trace and preprocessing - no longer needed after this
         self.trace = Arc::new(Vec::new());
     }
@@ -370,7 +424,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::compute_message")]
-    fn compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_K {
             const DEGREE: usize = 2;
 
@@ -439,73 +493,72 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
             agg_round_poly
         } else {
-            let degree = <Self as SumcheckInstanceProver<F, T>>::degree(self);
+            // Last log(T) rounds:
+            // We have already absorbed the stage-specific eq polynomials and the stage RLC
+            // weights into `combined_cycle_weight_poly`, so we prove:
+            //
+            //   s(X) = Σ_j  W(X, j) · ∏_{i=0}^{d-1} ra_i(X, j)
+            //
+            // where `W` is the single combined cycle-weight MLE
 
-            let out_len = self.gruen_eq_polys[0].E_out_current().len();
-            let in_len = self.gruen_eq_polys[0].E_in_current().len();
-            let in_n_vars = in_len.log_2();
+            let combined_w = self.combined_cycle_weight_poly.as_ref().unwrap();
+            let half_len = combined_w.len() / 2;
+            let d = self.ra.len() + 1;
 
-            // Evaluations on [1, ..., degree - 2, inf] (for each stage).
-            let mut evals_per_stage: [Vec<F>; N_STAGES] = (0..out_len)
+            struct InnerAcc<F: JoltField> {
+                lanes: Vec<F>,
+                pairs: Vec<(F, F)>,
+                endpoints: Vec<F>,
+            }
+
+            let sum_evals: Vec<F> = (0..half_len)
                 .into_par_iter()
-                .map(|j_hi| {
-                    let mut ra_eval_pairs = vec![(F::zero(), F::zero()); self.ra.len()];
-                    let mut ra_prod_evals = vec![F::zero(); degree - 1];
-                    let mut evals_per_stage: [_; N_STAGES] =
-                        array::from_fn(|_| vec![F::Unreduced::zero(); degree - 1]);
-
-                    for j_lo in 0..in_len {
-                        let j = j_lo + (j_hi << in_n_vars);
-
+                .fold(
+                    || InnerAcc {
+                        lanes: vec![F::zero(); d],
+                        pairs: vec![(F::zero(), F::zero()); d],
+                        endpoints: vec![F::zero(); d],
+                    },
+                    |mut inner, g| {
+                        // First multiplicand: combined cycle weight W.
+                        inner.pairs[0] = (
+                            combined_w.get_bound_coeff(2 * g),
+                            combined_w.get_bound_coeff(2 * g + 1),
+                        );
+                        // Remaining multiplicands: the `d` RA chunk polynomials.
                         for (i, ra_i) in self.ra.iter().enumerate() {
-                            let ra_i_eval_at_j_0 = ra_i.get_bound_coeff(j * 2);
-                            let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
-                            ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
+                            inner.pairs[i + 1] =
+                                (ra_i.get_bound_coeff(2 * g), ra_i.get_bound_coeff(2 * g + 1));
                         }
-                        // Eval prod_i ra_i(x).
-                        eval_linear_prod_assign(&ra_eval_pairs, &mut ra_prod_evals);
-
-                        for stage in 0..N_STAGES {
-                            let eq_in_eval = self.gruen_eq_polys[stage].E_in_current()[j_lo];
-                            for i in 0..degree - 1 {
-                                evals_per_stage[stage][i] +=
-                                    eq_in_eval.mul_unreduced::<9>(ra_prod_evals[i]);
-                            }
+                        // Evaluate ∏ p_i(x) on U_D = [1, 2, ..., D-1, ∞] for this g.
+                        eval_linear_prod_assign(&inner.pairs, &mut inner.endpoints);
+                        // Accumulate across g.
+                        for k in 0..d {
+                            inner.lanes[k] += inner.endpoints[k];
                         }
-                    }
-
-                    array::from_fn(|stage| {
-                        let eq_out_eval = self.gruen_eq_polys[stage].E_out_current()[j_hi];
-                        evals_per_stage[stage]
-                            .iter()
-                            .map(|v| eq_out_eval * F::from_montgomery_reduce(*v))
-                            .collect()
-                    })
-                })
+                        inner
+                    },
+                )
+                .map(|inner| inner.lanes)
                 .reduce(
-                    || array::from_fn(|_| vec![F::zero(); degree - 1]),
-                    |a, b| array::from_fn(|i| zip_eq(&a[i], &b[i]).map(|(a, b)| *a + *b).collect()),
+                    || vec![F::zero(); d],
+                    |mut a, b| {
+                        for k in 0..d {
+                            a[k] += b[k];
+                        }
+                        a
+                    },
                 );
-            // Multiply by bound values.
-            let bound_val_evals = self.bound_val_evals.as_ref().unwrap();
-            for (stage, evals) in evals_per_stage.iter_mut().enumerate() {
-                evals.iter_mut().for_each(|v| *v *= bound_val_evals[stage]);
-            }
 
-            let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
-            let mut agg_round_poly = UniPoly::zero();
+            // `sum_evals` is [s(1), s(2), ..., s(d-1), s(∞)] on the Toom grid.
+            // Recover s(0) from the hint previous_claim = s(0) + s(1).
+            let s_at_1 = sum_evals[0];
+            let s_at_0 = previous_claim - s_at_1;
+            let mut toom_evals = Vec::with_capacity(sum_evals.len() + 1);
+            toom_evals.push(s_at_0);
+            toom_evals.extend_from_slice(&sum_evals);
 
-            // Obtain round poly for each stage and perform RLC.
-            for (stage, evals) in evals_per_stage.iter().enumerate() {
-                let claim = self.prev_round_claims[stage];
-                let round_poly = self.gruen_eq_polys[stage].gruen_poly_from_evals(evals, claim);
-                agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
-                round_polys[stage] = round_poly;
-            }
-
-            self.prev_round_polys = Some(round_polys);
-
-            agg_round_poly
+            UniPoly::from_evals_toom(&toom_evals)
         }
     }
 
@@ -534,9 +587,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             self.ra
                 .iter_mut()
                 .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
-            self.gruen_eq_polys
-                .iter_mut()
-                .for_each(|poly| poly.bind(r_j));
+            self.combined_cycle_weight_poly
+                .as_mut()
+                .unwrap()
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
 
