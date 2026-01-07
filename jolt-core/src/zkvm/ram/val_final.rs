@@ -21,6 +21,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
+        claim_reductions::AdviceKind,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -87,7 +88,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         };
 
         let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_untrusted_advice_opening(advice_sumcheck_id),
+            opening_accumulator.get_advice_opening(AdviceKind::Untrusted, advice_sumcheck_id),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -98,7 +99,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         );
 
         let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_trusted_advice_opening(advice_sumcheck_id),
+            opening_accumulator.get_advice_opening(AdviceKind::Trusted, advice_sumcheck_id),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),

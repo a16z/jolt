@@ -162,20 +162,21 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_closure = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
         } else {
             quote! {}
         };
 
         let commitment_arg_in_call = if has_trusted_advice {
-            quote! { , trusted_advice_commitment }
+            quote! { , trusted_advice_commitment, trusted_advice_hint }
         } else {
             quote! {}
         };
 
         let return_type = if has_trusted_advice {
             quote! {
-                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>) -> #prove_output_ty + Sync + Send
+                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>) -> #prove_output_ty + Sync + Send
             }
         } else {
             quote! {
@@ -428,6 +429,7 @@ impl MacroBuilder {
 
     fn make_preprocess_shared_func(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let max_untrusted_advice_size =
@@ -464,6 +466,7 @@ impl MacroBuilder {
                     bytecode,
                     memory_layout,
                     memory_init,
+                    #max_trace_length,
                 );
 
                 preprocessing
@@ -472,8 +475,6 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_prover_func(&self) -> TokenStream2 {
-        let attributes = parse_attributes(&self.attr);
-        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
@@ -487,7 +488,6 @@ impl MacroBuilder {
                 #imports
                 let prover_preprocessing = JoltProverPreprocessing::new(
                     shared_preprocessing,
-                    #max_trace_length,
                 );
 
                 prover_preprocessing
@@ -592,8 +592,19 @@ impl MacroBuilder {
                     None,
                 );
 
-                // Initialize Dory globals with specified parameters
-                jolt::DoryGlobals::initialize_trusted_advice(1, max_trusted_advice_size as usize / 8);
+                // Commit trusted advice in its dedicated Dory context, using a preprocessing-only
+                // matrix shape derived *deterministically* from the advice length (balanced dims).
+                //
+                // This makes the commitment independent of the trace length (preprocessing-only),
+                // while still allowing the prover to batch the advice opening into the single
+                // Stage 8 Dory opening proof by interpreting it as a zero-padded submatrix of the
+                // main polynomial matrix.
+                let (sigma_a, nu_a) =
+                    jolt::DoryGlobals::advice_sigma_nu_from_max_bytes(max_trusted_advice_size as usize);
+                let num_rows = 1usize << nu_a;
+                let num_cols = 1usize << sigma_a;
+
+                let _guard = jolt::DoryGlobals::initialize_context(num_rows, num_cols, jolt::DoryContext::TrustedAdvice);
                 let _ctx = jolt::DoryGlobals::with_context(jolt::DoryContext::TrustedAdvice);
 
                 let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);
@@ -644,19 +655,21 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
         } else {
             quote! {}
         };
 
         let commitment_arg = if has_trusted_advice {
-            quote! { trusted_advice_commitment }
+            quote! { trusted_advice_commitment, trusted_advice_hint }
         } else {
-            quote! { None }
+            quote! { None, None }
         };
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            #[allow(clippy::too_many_arguments)]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,

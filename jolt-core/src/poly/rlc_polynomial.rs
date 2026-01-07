@@ -3,7 +3,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::Acc6S;
-use crate::utils::math::s64_from_diff_u64s;
+use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
@@ -16,6 +16,7 @@ use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracer::ChunksIterator;
 use tracer::{instruction::Cycle, LazyTraceIterator};
@@ -59,6 +60,9 @@ impl TraceSource {
 pub struct StreamingRLCContext<F: JoltField> {
     pub dense_polys: Vec<(CommittedPolynomial, F)>,
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
+    /// Advice polynomials with their RLC coefficients.
+    /// These are NOT streamed from trace - they're passed in directly.
+    pub advice_polys: Vec<(F, MultilinearPolynomial<F>)>,
     pub trace_source: TraceSource,
     pub preprocessing: Arc<RLCStreamingData>,
     pub one_hot_params: OneHotParams,
@@ -104,7 +108,6 @@ impl<F: JoltField> RLCPolynomial<F> {
     ///
     /// This is a legacy helper (used by some commitment backends) that eagerly combines dense
     /// polynomials into `dense_rlc` and stores one-hot polynomials lazily in `one_hot_rlc`.
-    #[allow(unused_variables)]
     pub fn linear_combination(
         poly_ids: Vec<CommittedPolynomial>,
         polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
@@ -166,6 +169,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     /// * `trace_source` - Either materialized trace (default) or lazy trace (experimental)
     /// * `poly_ids` - List of polynomial identifiers
     /// * `coefficients` - RLC coefficients for each polynomial
+    /// * `advice_poly_map` - Map of advice polynomial IDs to their actual polynomials
     #[tracing::instrument(skip_all)]
     pub fn new_streaming(
         one_hot_params: OneHotParams,
@@ -173,11 +177,13 @@ impl<F: JoltField> RLCPolynomial<F> {
         trace_source: TraceSource,
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
+        mut advice_poly_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
         let mut dense_polys = Vec::new();
         let mut onehot_polys = Vec::new();
+        let mut advice_polys = Vec::new();
 
         for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
             match poly_id {
@@ -189,6 +195,12 @@ impl<F: JoltField> RLCPolynomial<F> {
                 | CommittedPolynomial::RamRa(_) => {
                     onehot_polys.push((*poly_id, *coeff));
                 }
+                CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+                    // Advice polynomials are passed in directly (not streamed from trace)
+                    if advice_poly_map.contains_key(poly_id) {
+                        advice_polys.push((*coeff, advice_poly_map.remove(poly_id).unwrap()));
+                    }
+                }
             }
         }
 
@@ -198,6 +210,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             streaming_context: Some(Arc::new(StreamingRLCContext {
                 dense_polys,
                 onehot_polys,
+                advice_polys,
                 trace_source,
                 preprocessing,
                 one_hot_params,
@@ -368,6 +381,79 @@ impl<F: JoltField> RLCPolynomial<F> {
         result
     }
 
+    /// Adds the advice polynomial contribution to the vector-matrix-vector product result.
+    ///
+    /// In Dory's batch opening, advice polynomials are embedded as the top-left block of the
+    /// main matrix. This function computes their contribution to the VMV product:
+    /// ```text
+    /// result[col] += left_vec[row] * (coeff * advice[row, col])
+    /// ```
+    /// for rows and columns within the advice block.
+    ///
+    /// The advice block occupies:
+    /// - `sigma_a = ceil(advice_vars/2)`, `nu_a = advice_vars - sigma_a`
+    /// - `advice` occupies rows `[0 .. 2^{nu_a})` and cols `[0 .. 2^{sigma_a})`
+    ///
+    /// # Complexity
+    /// It uses O(m + a) space where m is the number of rows
+    /// and a is the advice size. However, this is small enough in practice (advice is typically
+    /// much smaller than the trace). This function is used in both streaming and
+    /// non-streaming contexts, and mutates `result` in place.
+    fn vmp_advice_contribution(
+        result: &mut [F],
+        left_vec: &[F],
+        num_columns: usize,
+        ctx: &StreamingRLCContext<F>,
+    ) {
+        // For each advice polynomial, compute its contribution to the result
+        ctx.advice_polys
+            .iter()
+            .filter(|(_, advice_poly)| advice_poly.original_len() > 0)
+            .for_each(|(coeff, advice_poly)| {
+                let advice_len = advice_poly.original_len();
+                let advice_vars = advice_len.log_2();
+                let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
+                let advice_cols = 1usize << sigma_a;
+                let advice_rows = 1usize << nu_a;
+
+                debug_assert!(
+                    advice_cols <= num_columns,
+                    "Advice columns (2^{{sigma_a}}={advice_cols}) must fit in main num_columns={num_columns}; \
+guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
+                );
+
+                // Only the top-left block contributes: rows [0..advice_rows), cols [0..advice_cols)
+                let effective_rows = advice_rows.min(left_vec.len());
+
+                // Compute column contributions: for each column, sum contributions from all rows
+                // Note: advice_len is always advice_cols * advice_rows (advice size must be power of 2)
+                let column_contributions: Vec<F> = (0..advice_cols)
+                    .into_par_iter()
+                    .map(|col_idx| {
+                        // For this column, sum contributions from all non-zero rows
+                        left_vec[..effective_rows]
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, &left)| !left.is_zero())
+                            .map(|(row_idx, &left)| {
+                                let coeff_idx = row_idx * advice_cols + col_idx;
+                                let advice_val = advice_poly.get_coeff(coeff_idx);
+                                left * *coeff * advice_val
+                            })
+                            .sum()
+                    })
+                    .collect();
+
+                // Add column contributions to result in parallel
+                result[..advice_cols]
+                    .par_iter_mut()
+                    .zip(column_contributions.par_iter())
+                    .for_each(|(res, &contrib)| {
+                        *res += contrib;
+                    });
+            });
+    }
+
     /// Streaming VMP implementation that generates rows on-demand from trace.
     /// Achieves O(sqrt(n)) space complexity by lazily generating the witness.
     /// Single pass through trace for both dense and one-hot polynomials.
@@ -459,7 +545,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                 VmvSetup::<F>::merge_accumulators,
             );
 
-        VmvSetup::<F>::finalize(dense_accs, onehot_accs, num_columns)
+        let mut result = VmvSetup::<F>::finalize(dense_accs, onehot_accs, num_columns);
+
+        // Advice contribution is small and independent of the trace; add it after the streamed pass.
+        Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
+        result
     }
 
     /// Lazy VMV over lazy trace iterator (experimental, re-runs tracer).
@@ -509,8 +599,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                 || VmvSetup::<F>::create_accumulators(num_columns),
                 VmvSetup::<F>::merge_accumulators,
             );
+        let mut result = VmvSetup::<F>::finalize(dense_accs, onehot_accs, num_columns);
 
-        VmvSetup::<F>::finalize(dense_accs, onehot_accs, num_columns)
+        // Advice contribution is small and independent of the trace; add it after the streamed pass.
+        Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
+        result
     }
 }
 

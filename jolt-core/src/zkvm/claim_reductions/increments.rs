@@ -11,7 +11,7 @@
 //!    - `RamReadWriteChecking` (Stage 2): opened at `r_cycle_stage2`
 //!    - `RamValEvaluation` (Stage 4): opened at `r_cycle_stage4`
 //!    - `RamValFinalEvaluation` (Stage 4): opened at `r_cycle_stage4` (same as RamValEvaluation)
-//!
+//!    
 //!    Note: ValEvaluation and ValFinal share the same opening point because they're
 //!    in the same batched sumcheck and both normalize using the same sumcheck challenges.
 //!    So effectively RamInc has **2 distinct opening points**.
@@ -19,7 +19,7 @@
 //! 2. **RdInc**: Claims are emitted from:
 //!    - `RegistersReadWriteChecking` (Stage 4): opened at `s_cycle_stage4`
 //!    - `RegistersValEvaluation` (Stage 5): opened at `s_cycle_stage5`
-//!
+//!    
 //!    So RdInc has **2 distinct opening points**.
 //!
 //! ## Sumcheck Relation
@@ -27,7 +27,7 @@
 //! Let:
 //!   - v_1 = RamInc(r_cycle_stage2)     from RamReadWriteChecking
 //!   - v_2 = RamInc(r_cycle_stage4)     from RamValEvaluation (and RamValFinal)
-//!   - w_1 = RdInc(s_cycle_stage4)      from RegistersReadWriteChecking
+//!   - w_1 = RdInc(s_cycle_stage4)      from RegistersReadWriteChecking  
 //!   - w_2 = RdInc(s_cycle_stage5)      from RegistersValEvaluation
 //!
 //! Input claim:
