@@ -7,7 +7,7 @@
 
 use crate::{
     poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
-    zkvm::config::OneHotParams,
+    zkvm::{claim_reductions::AdviceKind, config::OneHotParams},
 };
 use allocative::Allocative;
 use num_derive::FromPrimitive;
@@ -154,10 +154,8 @@ pub enum SumcheckId {
     RegistersValEvaluation,
     BytecodeReadRaf,
     Booleanity,
-    /// Stage 6 → Stage 7 bridge for two-phase advice claim reduction.
-    /// Stores the intermediate claim after binding the cycle-derived advice coordinates.
     AdviceClaimReductionPhase1,
-    AdviceClaimReduction,
+    AdviceClaimReductionPhase2,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }
@@ -220,13 +218,9 @@ pub trait OpeningAccumulator<F: JoltField> {
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
 
-    fn get_trusted_advice_opening(
+    fn get_advice_opening(
         &self,
-        sumcheck: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
-
-    fn get_untrusted_advice_opening(
-        &self,
+        kind: AdviceKind,
         sumcheck: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
 }
@@ -330,21 +324,16 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         (point.clone(), *claim)
     }
 
-    fn get_trusted_advice_opening(
+    fn get_advice_opening(
         &self,
+        kind: AdviceKind,
         sumcheck_id: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice(sumcheck_id))?;
-        Some((point.clone(), *claim))
-    }
-
-    fn get_untrusted_advice_opening(
-        &self,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self
-            .openings
-            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
+        let opening_id = match kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
+        };
+        let (point, claim) = self.openings.get(&opening_id)?;
         Some((point.clone(), *claim))
     }
 }
@@ -371,21 +360,16 @@ where
         self.openings.get(&key).unwrap().1
     }
 
-    pub fn get_untrusted_advice_opening(
+    pub fn get_advice_opening(
         &self,
+        kind: AdviceKind,
         sumcheck_id: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self
-            .openings
-            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
-        Some((point.clone(), *claim))
-    }
-
-    pub fn get_trusted_advice_opening(
-        &self,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice(sumcheck_id))?;
+        let opening_id = match kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
+        };
+        let (point, claim) = self.openings.get(&opening_id)?;
         Some((point.clone(), *claim))
     }
 
@@ -525,21 +509,16 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         (point.clone(), *claim)
     }
 
-    fn get_trusted_advice_opening(
+    fn get_advice_opening(
         &self,
+        kind: AdviceKind,
         sumcheck_id: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice(sumcheck_id))?;
-        Some((point.clone(), *claim))
-    }
-
-    fn get_untrusted_advice_opening(
-        &self,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self
-            .openings
-            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
+        let opening_id = match kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
+        };
+        let (point, claim) = self.openings.get(&opening_id)?;
         Some((point.clone(), *claim))
     }
 }
@@ -564,21 +543,16 @@ where
         self.prover_opening_accumulator = Some(prover_openings);
     }
 
-    pub fn get_untrusted_advice_opening(
+    pub fn get_advice_opening(
         &self,
+        kind: AdviceKind,
         sumcheck_id: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self
-            .openings
-            .get(&OpeningId::UntrustedAdvice(sumcheck_id))?;
-        Some((point.clone(), *claim))
-    }
-
-    pub fn get_trusted_advice_opening(
-        &self,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice(sumcheck_id))?;
+        let opening_id = match kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
+        };
+        let (point, claim) = self.openings.get(&opening_id)?;
         Some((point.clone(), *claim))
     }
 

@@ -599,13 +599,12 @@ impl MacroBuilder {
                 // while still allowing the prover to batch the advice opening into the single
                 // Stage 8 Dory opening proof by interpreting it as a zero-padded submatrix of the
                 // main polynomial matrix.
-                let advice_vars =
-                    jolt::DoryGlobals::advice_vars_from_max_bytes(max_trusted_advice_size as usize);
-                let (sigma_a, nu_a) = jolt::DoryGlobals::balanced_sigma_nu(advice_vars);
+                let (sigma_a, nu_a) =
+                    jolt::DoryGlobals::advice_sigma_nu_from_max_bytes(max_trusted_advice_size as usize);
                 let num_rows = 1usize << nu_a;
                 let num_cols = 1usize << sigma_a;
 
-                let _guard = jolt::DoryGlobals::initialize_trusted_advice_matrix(num_rows, num_cols);
+                let _guard = jolt::DoryGlobals::initialize_context(num_rows, num_cols, jolt::DoryContext::TrustedAdvice);
                 let _ctx = jolt::DoryGlobals::with_context(jolt::DoryContext::TrustedAdvice);
 
                 let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);

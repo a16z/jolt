@@ -16,6 +16,7 @@ use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracer::ChunksIterator;
 use tracer::{instruction::Cycle, LazyTraceIterator};
@@ -176,10 +177,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         trace_source: TraceSource,
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
-        mut advice_poly_map: std::collections::HashMap<
-            CommittedPolynomial,
-            MultilinearPolynomial<F>,
-        >,
+        mut advice_poly_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
@@ -383,61 +381,77 @@ impl<F: JoltField> RLCPolynomial<F> {
         result
     }
 
-    /// Add the VMV contribution of advice polynomials for the streaming path.
+    /// Adds the advice polynomial contribution to the vector-matrix-vector product result.
     ///
-    /// Advice polynomials are not streamed from the trace; they are stored directly in the
-    /// streaming context and are embedded into the main matrix as the **top-left block**.
+    /// In Dory's batch opening, advice polynomials are embedded as the top-left block of the
+    /// main matrix. This function computes their contribution to the VMV product:
+    /// ```text
+    /// result[col] += left_vec[row] * (coeff * advice[row, col])
+    /// ```
+    /// for rows and columns within the advice block.
     ///
-    /// Canonical shape policy (balanced):
-    /// - `advice_vars = log2(advice_len)`
+    /// The advice block occupies:
     /// - `sigma_a = ceil(advice_vars/2)`, `nu_a = advice_vars - sigma_a`
     /// - `advice` occupies rows `[0 .. 2^{nu_a})` and cols `[0 .. 2^{sigma_a})`
-    #[inline]
-    fn add_streaming_advice_vmv(
+    ///
+    /// # Complexity
+    /// It uses O(m + a) space where m is the number of rows
+    /// and a is the advice size. However, this is small enough in practice (advice is typically
+    /// much smaller than the trace). This function is used in both streaming and
+    /// non-streaming contexts, and mutates `result` in place.
+    fn vmp_advice_contribution(
         result: &mut [F],
         left_vec: &[F],
         num_columns: usize,
         ctx: &StreamingRLCContext<F>,
     ) {
-        if ctx.advice_polys.is_empty() {
-            return;
-        }
+        // For each advice polynomial, compute its contribution to the result
+        ctx.advice_polys
+            .iter()
+            .filter(|(_, advice_poly)| advice_poly.original_len() > 0)
+            .for_each(|(coeff, advice_poly)| {
+                let advice_len = advice_poly.original_len();
+                let advice_vars = advice_len.log_2();
+                let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
+                let advice_cols = 1usize << sigma_a;
+                let advice_rows = 1usize << nu_a;
 
-        for (coeff, advice_poly) in ctx.advice_polys.iter() {
-            let advice_len = advice_poly.original_len();
-            if advice_len == 0 {
-                continue;
-            }
-
-            let advice_vars = advice_len.next_power_of_two().log_2();
-            let (sigma_a, nu_a) =
-                crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(advice_vars);
-            let advice_cols = 1usize << sigma_a;
-            let advice_rows = 1usize << nu_a;
-
-            debug_assert!(
-                advice_cols <= num_columns,
-                "Advice columns (2^{sigma_a}={advice_cols}) must fit in main num_columns={num_columns}; \
+                debug_assert!(
+                    advice_cols <= num_columns,
+                    "Advice columns (2^{{sigma_a}}={advice_cols}) must fit in main num_columns={num_columns}; \
 guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
-            );
+                );
 
-            // Only the top-left block contributes: rows [0..advice_rows), cols [0..advice_cols)
-            for row_idx in 0..advice_rows.min(left_vec.len()) {
-                let left = left_vec[row_idx];
-                if left.is_zero() {
-                    continue;
-                }
-                let row_base = row_idx * advice_cols;
-                for col_idx in 0..advice_cols {
-                    let coeff_idx = row_base + col_idx;
-                    if coeff_idx >= advice_len {
-                        break;
-                    }
-                    let advice_val = advice_poly.get_coeff(coeff_idx);
-                    result[col_idx] += left * *coeff * advice_val;
-                }
-            }
-        }
+                // Only the top-left block contributes: rows [0..advice_rows), cols [0..advice_cols)
+                let effective_rows = advice_rows.min(left_vec.len());
+
+                // Compute column contributions: for each column, sum contributions from all rows
+                // Note: advice_len is always advice_cols * advice_rows (advice size must be power of 2)
+                let column_contributions: Vec<F> = (0..advice_cols)
+                    .into_par_iter()
+                    .map(|col_idx| {
+                        // For this column, sum contributions from all non-zero rows
+                        left_vec[..effective_rows]
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, &left)| !left.is_zero())
+                            .map(|(row_idx, &left)| {
+                                let coeff_idx = row_idx * advice_cols + col_idx;
+                                let advice_val = advice_poly.get_coeff(coeff_idx);
+                                left * *coeff * advice_val
+                            })
+                            .sum()
+                    })
+                    .collect();
+
+                // Add column contributions to result in parallel
+                result[..advice_cols]
+                    .par_iter_mut()
+                    .zip(column_contributions.par_iter())
+                    .for_each(|(res, &contrib)| {
+                        *res += contrib;
+                    });
+            });
     }
 
     /// Streaming VMP implementation that generates rows on-demand from trace.
@@ -534,7 +548,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         let mut result = VmvSetup::<F>::finalize(dense_accs, onehot_accs, num_columns);
 
         // Advice contribution is small and independent of the trace; add it after the streamed pass.
-        Self::add_streaming_advice_vmv(&mut result, left_vec, num_columns, ctx);
+        Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
         result
     }
 
@@ -588,7 +602,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         let mut result = VmvSetup::<F>::finalize(dense_accs, onehot_accs, num_columns);
 
         // Advice contribution is small and independent of the trace; add it after the streamed pass.
-        Self::add_streaming_advice_vmv(&mut result, left_vec, num_columns, ctx);
+        Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
         result
     }
 }

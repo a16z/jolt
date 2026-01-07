@@ -390,6 +390,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly::commitment::dory::DoryContext;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_core::RngCore;
@@ -399,7 +400,7 @@ mod tests {
         let K: usize = 1 << LOG_K;
         let T: usize = 1 << LOG_T;
         DoryGlobals::reset();
-        let _guard = DoryGlobals::initialize(K, T);
+        let _guard = DoryGlobals::initialize_context(K, T, DoryContext::Main);
 
         let mut rng = test_rng();
 

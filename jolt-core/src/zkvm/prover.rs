@@ -221,6 +221,86 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         )
     }
 
+    /// Adjusts the padded trace length to ensure the main Dory matrix is large enough
+    /// to embed advice polynomials as the top-left block.
+    ///
+    /// Returns the adjusted padded_trace_len that satisfies:
+    /// - `sigma_main >= max_sigma_a`
+    /// - `nu_main >= max_nu_a`
+    ///
+    /// Panics if `max_padded_trace_length` is too small for the configured advice sizes.
+    fn adjust_trace_length_for_advice(
+        mut padded_trace_len: usize,
+        max_padded_trace_length: usize,
+        max_trusted_advice_size: u64,
+        max_untrusted_advice_size: u64,
+        has_trusted_advice: bool,
+        has_untrusted_advice: bool,
+    ) -> usize {
+        // Canonical advice shape policy (balanced):
+        // - advice_vars = log2(advice_len)
+        // - sigma_a = ceil(advice_vars/2)
+        // - nu_a    = advice_vars - sigma_a
+        let mut max_sigma_a = 0usize;
+        let mut max_nu_a = 0usize;
+
+        if has_trusted_advice {
+            let (sigma_a, nu_a) =
+                DoryGlobals::advice_sigma_nu_from_max_bytes(max_trusted_advice_size as usize);
+            max_sigma_a = max_sigma_a.max(sigma_a);
+            max_nu_a = max_nu_a.max(nu_a);
+        }
+        if has_untrusted_advice {
+            let (sigma_a, nu_a) =
+                DoryGlobals::advice_sigma_nu_from_max_bytes(max_untrusted_advice_size as usize);
+            max_sigma_a = max_sigma_a.max(sigma_a);
+            max_nu_a = max_nu_a.max(nu_a);
+        }
+
+        if max_sigma_a == 0 && max_nu_a == 0 {
+            return padded_trace_len;
+        }
+
+        // Require main matrix dimensions to be large enough to embed advice as the top-left
+        // block: sigma_main >= sigma_a and nu_main >= nu_a.
+        //
+        // This loop doubles padded_trace_len until the main Dory matrix is large enough.
+        // Each doubling increases log_t by 1, which increases total_vars by 1 (since
+        // log_k_chunk stays constant for a given log_t range), increasing both sigma_main
+        // and nu_main by roughly 0.5 each iteration.
+        while {
+            let log_t = padded_trace_len.log_2();
+            let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
+            let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+            sigma_main < max_sigma_a || nu_main < max_nu_a
+        } {
+            if padded_trace_len >= max_padded_trace_length {
+                // This is a configuration error: the preprocessing was set up with
+                // max_padded_trace_length too small for the configured advice sizes.
+                // Cannot recover at runtime - user must fix their configuration.
+                let log_t = padded_trace_len.log_2();
+                let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
+                let total_vars = log_k_chunk + log_t;
+                let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+                panic!(
+                    "Configuration error: trace too small to embed advice into Dory batch opening.\n\
+                    Current: (sigma_main={}, nu_main={}) from total_vars={} (log_t={}, log_k_chunk={})\n\
+                    Required: (sigma_a={}, nu_a={}) for advice embedding\n\
+                    Solutions:\n\
+                    1. Increase max_trace_length in preprocessing (currently {})\n\
+                    2. Reduce max_trusted_advice_size or max_untrusted_advice_size\n\
+                    3. Run a program with more cycles",
+                    sigma_main, nu_main, total_vars, log_t, log_k_chunk,
+                    max_sigma_a, max_nu_a,
+                    max_padded_trace_length
+                );
+            }
+            padded_trace_len = (padded_trace_len * 2).min(max_padded_trace_length);
+        }
+
+        padded_trace_len
+    }
+
     pub fn gen_from_trace(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         lazy_trace: LazyTraceIterator,
@@ -253,71 +333,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         };
         // We may need extra padding so the main Dory matrix has enough (row, col) variables
         // to embed advice commitments committed in their own preprocessing-only contexts.
-        let mut padded_trace_len = padded_trace_len;
         let has_trusted_advice = !program_io.trusted_advice.is_empty();
         let has_untrusted_advice = !program_io.untrusted_advice.is_empty();
-        // Canonical advice shape policy (balanced):
-        // - advice_vars = log2(advice_len)
-        // - sigma_a = ceil(advice_vars/2)
-        // - nu_a    = advice_vars - sigma_a
-        let mut max_sigma_a = 0usize;
-        let mut max_nu_a = 0usize;
-        if has_trusted_advice {
-            let advice_vars = DoryGlobals::advice_vars_from_max_bytes(
-                preprocessing.shared.memory_layout.max_trusted_advice_size as usize,
-            );
-            let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
-            max_sigma_a = max_sigma_a.max(sigma_a);
-            max_nu_a = max_nu_a.max(nu_a);
-        }
-        if has_untrusted_advice {
-            let advice_vars = DoryGlobals::advice_vars_from_max_bytes(
-                preprocessing.shared.memory_layout.max_untrusted_advice_size as usize,
-            );
-            let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
-            max_sigma_a = max_sigma_a.max(sigma_a);
-            max_nu_a = max_nu_a.max(nu_a);
-        }
 
-        if max_sigma_a > 0 || max_nu_a > 0 {
-            // Require main matrix dimensions to be large enough to embed advice as the top-left
-            // block: sigma_main >= sigma_a and nu_main >= nu_a.
-            //
-            // This loop doubles padded_trace_len until the main Dory matrix is large enough.
-            // Each doubling increases log_t by 1, which increases total_vars by 1 (since
-            // log_k_chunk stays constant for a given log_t range), increasing both sigma_main
-            // and nu_main by roughly 0.5 each iteration.
-            while {
-                let log_t = padded_trace_len.log_2();
-                let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-                let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
-                sigma_main < max_sigma_a || nu_main < max_nu_a
-            } {
-                if padded_trace_len >= preprocessing.shared.max_padded_trace_length {
-                    // This is a configuration error: the preprocessing was set up with
-                    // max_padded_trace_length too small for the configured advice sizes.
-                    // Cannot recover at runtime - user must fix their configuration.
-                    let log_t = padded_trace_len.log_2();
-                    let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-                    let total_vars = log_k_chunk + log_t;
-                    let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
-                    panic!(
-                        "Configuration error: trace too small to embed advice into Dory batch opening.\n\
-                        Current: (sigma_main={}, nu_main={}) from total_vars={} (log_t={}, log_k_chunk={})\n\
-                        Required: (sigma_a={}, nu_a={}) for advice embedding\n\
-                        Solutions:\n\
-                        1. Increase max_trace_length in preprocessing (currently {})\n\
-                        2. Reduce max_trusted_advice_size or max_untrusted_advice_size\n\
-                        3. Run a program with more cycles",
-                        sigma_main, nu_main, total_vars, log_t, log_k_chunk,
-                        max_sigma_a, max_nu_a,
-                        preprocessing.shared.max_padded_trace_length
-                    );
-                }
-                padded_trace_len =
-                    (padded_trace_len * 2).min(preprocessing.shared.max_padded_trace_length);
-            }
-        }
+        let padded_trace_len = Self::adjust_trace_length_for_advice(
+            padded_trace_len,
+            preprocessing.shared.max_padded_trace_length,
+            preprocessing.shared.memory_layout.max_trusted_advice_size,
+            preprocessing.shared.memory_layout.max_untrusted_advice_size,
+            has_trusted_advice,
+            has_untrusted_advice,
+        );
 
         trace.resize(padded_trace_len, Cycle::NoOp);
 
@@ -493,8 +519,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         Vec<PCS::Commitment>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) {
-        let _guard =
-            DoryGlobals::initialize(1 << self.one_hot_params.log_k_chunk, self.padded_trace_len);
+        let _guard = DoryGlobals::initialize_context(
+            1 << self.one_hot_params.log_k_chunk,
+            self.padded_trace_len,
+            DoryContext::Main,
+        );
         // Generate and commit to all witness polynomials using streaming tier1/tier2 pattern
         let T = DoryGlobals::get_T();
         let polys = all_committed_polynomials(&self.one_hot_params);
@@ -584,12 +613,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
         let advice_len = poly.len().next_power_of_two().max(1);
-        let advice_vars = advice_len.log_2();
-        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
-        let num_rows = 1usize << nu_a;
-        let num_cols = 1usize << sigma_a;
 
-        let _guard = DoryGlobals::initialize_untrusted_advice_matrix(num_rows, num_cols);
+        let _guard = DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript.append_serializable(&commitment);
@@ -1165,10 +1190,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         sumcheck_proof
     }
 
-    // Note: prove_trusted_advice and prove_untrusted_advice have been removed.
-    // Advice claims are now reduced via AdviceClaimReduction in Stage 6 and proven
-    // as part of the batched Stage 8 opening proof.
-
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
     #[tracing::instrument(skip_all)]
     fn prove_stage7(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
@@ -1257,7 +1278,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
-        let _guard = DoryGlobals::initialize(self.one_hot_params.k_chunk, self.padded_trace_len);
+        let _guard = DoryGlobals::initialize_context(
+            self.one_hot_params.k_chunk,
+            self.padded_trace_len,
+            DoryContext::Main,
+        );
 
         // Get the unified opening point from HammingWeightClaimReduction
         // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
@@ -1338,7 +1363,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // them in the top-left block of the main Dory matrix.
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
-            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
         {
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
@@ -1348,10 +1373,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             ));
         }
 
-        if let Some((advice_point, advice_claim)) = self
-            .opening_accumulator
-            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
-        {
+        if let Some((advice_point, advice_claim)) = self.opening_accumulator.get_advice_opening(
+            AdviceKind::Untrusted,
+            SumcheckId::AdviceClaimReductionPhase2,
+        ) {
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((
@@ -1495,7 +1520,7 @@ mod tests {
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningAccumulator, SumcheckId},
     };
-    use crate::utils::math::Math;
+    use crate::zkvm::claim_reductions::AdviceKind;
     use crate::zkvm::verifier::JoltSharedPreprocessing;
     use crate::zkvm::witness::CommittedPolynomial;
     use crate::zkvm::{
@@ -1523,12 +1548,8 @@ mod tests {
 
         let poly = MultilinearPolynomial::<Fr>::from(trusted_advice_words);
         let advice_len = poly.len().next_power_of_two().max(1);
-        let advice_vars = advice_len.log_2();
-        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
-        let num_rows = 1usize << nu_a;
-        let num_cols = 1usize << sigma_a;
 
-        let _guard = DoryGlobals::initialize_trusted_advice_matrix(num_rows, num_cols);
+        let _guard = DoryGlobals::initialize_context(1, advice_len, DoryContext::TrustedAdvice);
         let (commitment, hint) = {
             let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
             DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
@@ -1990,36 +2011,28 @@ mod tests {
 
         let total_vars = point_dory_le.len();
         let (sigma_main, _nu_main) = DoryGlobals::balanced_sigma_nu(total_vars);
-        let advice_vars = DoryGlobals::advice_vars_from_max_bytes(
+        let (sigma_a, nu_a) = DoryGlobals::advice_sigma_nu_from_max_bytes(
             prover_preprocessing
                 .shared
                 .memory_layout
                 .max_trusted_advice_size as usize,
         );
-        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
 
         // Build expected advice point: [col_bits[0..sigma_a] || row_bits[0..nu_a]]
         let mut expected_advice_le: Vec<_> = point_dory_le[0..sigma_a].to_vec();
         expected_advice_le.extend_from_slice(&point_dory_le[sigma_main..sigma_main + nu_a]);
 
         // Verify both advice types derive the same opening point
-        for (name, get_fn) in [
-            (
-                "trusted",
-                debug_info
-                    .opening_accumulator
-                    .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction),
-            ),
-            (
-                "untrusted",
-                debug_info
-                    .opening_accumulator
-                    .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction),
-            ),
+        for (name, kind) in [
+            ("trusted", AdviceKind::Trusted),
+            ("untrusted", AdviceKind::Untrusted),
         ] {
+            let get_fn = debug_info
+                .opening_accumulator
+                .get_advice_opening(kind, SumcheckId::AdviceClaimReductionPhase2);
             assert!(
                 get_fn.is_some(),
-                "{name} advice opening missing for AdviceClaimReduction"
+                "{name} advice opening missing for AdviceClaimReductionPhase2"
             );
             let (point_be, _) = get_fn.unwrap();
             let mut point_le = point_be.r.clone();

@@ -36,8 +36,10 @@ pub enum CommittedPolynomial {
     /// there is at most one load or store per cycle.
     RamRa(usize),
     /// Trusted advice polynomial - committed before proving, verifier has commitment.
+    /// Length cannot exceed max_trace_length.
     TrustedAdvice,
     /// Untrusted advice polynomial - committed during proving, commitment in proof.
+    /// Length cannot exceed max_trace_length.
     UntrustedAdvice,
 }
 

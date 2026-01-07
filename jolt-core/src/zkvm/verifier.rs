@@ -203,7 +203,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_stage4()?;
         self.verify_stage5()?;
         self.verify_stage6()?;
-        // Advice claims are now reduced in Stage 6 and verified in Stage 8 batch opening
         self.verify_stage7()?;
         self.verify_stage8()?;
 
@@ -605,7 +604,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // them in the top-left block of the main Dory matrix.
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
-            .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
         {
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
@@ -615,10 +614,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             ));
         }
 
-        if let Some((advice_point, advice_claim)) = self
-            .opening_accumulator
-            .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
-        {
+        if let Some((advice_point, advice_claim)) = self.opening_accumulator.get_advice_opening(
+            AdviceKind::Untrusted,
+            SumcheckId::AdviceClaimReductionPhase2,
+        ) {
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((

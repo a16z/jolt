@@ -98,61 +98,27 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             AdviceKind::Trusted => memory_layout.max_trusted_advice_size as usize,
             AdviceKind::Untrusted => memory_layout.max_untrusted_advice_size as usize,
         };
-        Self::new_with_max_bytes(
-            kind,
-            max_advice_size_bytes,
-            trace_len,
-            accumulator,
-            transcript,
-            single_opening,
-        )
-    }
 
-    fn new_with_max_bytes(
-        kind: AdviceKind,
-        max_advice_size_bytes: usize,
-        trace_len: usize,
-        accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-        single_opening: bool,
-    ) -> Option<Self> {
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
         let (sigma_main, _nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
-        let (r_val_eval, r_val_final) = match kind {
-            AdviceKind::Trusted => {
-                let r_eval = accumulator
-                    .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
-                    .map(|(p, _)| p)?;
-                let r_final = if single_opening {
-                    None
-                } else {
-                    accumulator
-                        .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                        .map(|(p, _)| p)
-                };
-                (r_eval, r_final)
-            }
-            AdviceKind::Untrusted => {
-                let r_eval = accumulator
-                    .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
-                    .map(|(p, _)| p)?;
-                let r_final = if single_opening {
-                    None
-                } else {
-                    accumulator
-                        .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                        .map(|(p, _)| p)
-                };
-                (r_eval, r_final)
-            }
+        let r_val_eval = accumulator
+            .get_advice_opening(kind, SumcheckId::RamValEvaluation)
+            .map(|(p, _)| p)?;
+        let r_val_final = if single_opening {
+            None
+        } else {
+            accumulator
+                .get_advice_opening(kind, SumcheckId::RamValFinalEvaluation)
+                .map(|(p, _)| p)
         };
+        let (r_val_eval, r_val_final) = (r_val_eval, r_val_final);
 
         let gamma: F = transcript.challenge_scalar();
 
-        let advice_vars = DoryGlobals::advice_vars_from_max_bytes(max_advice_size_bytes);
-        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
+        let (sigma_a, nu_a) = DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
+        let advice_vars = sigma_a + nu_a;
 
         let row_cycle = DoryGlobals::cycle_row_len(log_t, sigma_main);
         let nu_a_cycle = std::cmp::min(nu_a, row_cycle);
@@ -195,34 +161,16 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase1Params<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
         let mut claim = F::zero();
-        match self.kind {
-            AdviceKind::Trusted => {
-                if let Some((_, t1)) =
-                    accumulator.get_trusted_advice_opening(SumcheckId::RamValEvaluation)
-                {
-                    claim += t1;
-                }
-                if !self.single_opening {
-                    if let Some((_, t2)) =
-                        accumulator.get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                    {
-                        claim += self.gamma * t2;
-                    }
-                }
-            }
-            AdviceKind::Untrusted => {
-                if let Some((_, u1)) =
-                    accumulator.get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
-                {
-                    claim += u1;
-                }
-                if !self.single_opening {
-                    if let Some((_, u2)) =
-                        accumulator.get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                    {
-                        claim += self.gamma * u2;
-                    }
-                }
+        if let Some((_, eval)) =
+            accumulator.get_advice_opening(self.kind, SumcheckId::RamValEvaluation)
+        {
+            claim += eval;
+        }
+        if !self.single_opening {
+            if let Some((_, final_eval)) =
+                accumulator.get_advice_opening(self.kind, SumcheckId::RamValFinalEvaluation)
+            {
+                claim += self.gamma * final_eval;
             }
         }
         claim
@@ -434,13 +382,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
-                    SumcheckId::AdviceClaimReduction,
+                    SumcheckId::AdviceClaimReductionPhase2,
                     advice_point,
                     advice_claim,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     transcript,
-                    SumcheckId::AdviceClaimReduction,
+                    SumcheckId::AdviceClaimReductionPhase2,
                     advice_point,
                     advice_claim,
                 ),
@@ -531,20 +479,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             ),
         };
 
-        match self.params.kind {
-            AdviceKind::Trusted => {
-                accumulator
-                    .get_trusted_advice_opening(key)
-                    .unwrap_or_else(|| panic!("{label} not found"))
-                    .1
-            }
-            AdviceKind::Untrusted => {
-                accumulator
-                    .get_untrusted_advice_opening(key)
-                    .unwrap_or_else(|| panic!("{label} not found"))
-                    .1
-            }
-        }
+        accumulator
+            .get_advice_opening(self.params.kind, key)
+            .unwrap_or_else(|| panic!("{label} not found"))
+            .1
     }
 
     fn cache_openings(
@@ -586,12 +524,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
-                    SumcheckId::AdviceClaimReduction,
+                    SumcheckId::AdviceClaimReductionPhase2,
                     advice_point,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     transcript,
-                    SumcheckId::AdviceClaimReduction,
+                    SumcheckId::AdviceClaimReductionPhase2,
                     advice_point,
                 ),
             }
@@ -604,10 +542,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         booleanity_offset + self.params.log_k_chunk
     }
 }
-
-// ================================================================================================
-// PHASE 2 (STAGE 7): consume C_mid, bind address-derived row coords → cache final advice opening
-// ================================================================================================
 
 #[derive(Clone, Allocative)]
 pub struct AdviceClaimReductionPhase2Params<F: JoltField> {
@@ -679,37 +613,20 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
         let (sigma_main, _nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
-        let (r_val_eval, r_val_final) = match kind {
-            AdviceKind::Trusted => {
-                let r_eval = accumulator
-                    .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
-                    .map(|(p, _)| p)?;
-                let r_final = if single_opening {
-                    None
-                } else {
-                    accumulator
-                        .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                        .map(|(p, _)| p)
-                };
-                (r_eval, r_final)
-            }
-            AdviceKind::Untrusted => {
-                let r_eval = accumulator
-                    .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
-                    .map(|(p, _)| p)?;
-                let r_final = if single_opening {
-                    None
-                } else {
-                    accumulator
-                        .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
-                        .map(|(p, _)| p)
-                };
-                (r_eval, r_final)
-            }
+        let r_val_eval = accumulator
+            .get_advice_opening(kind, SumcheckId::RamValEvaluation)
+            .map(|(p, _)| p)?;
+        let r_val_final = if single_opening {
+            None
+        } else {
+            accumulator
+                .get_advice_opening(kind, SumcheckId::RamValFinalEvaluation)
+                .map(|(p, _)| p)
         };
+        let (r_val_eval, r_val_final) = (r_val_eval, r_val_final);
 
-        let advice_vars = DoryGlobals::advice_vars_from_max_bytes(max_advice_size_bytes);
-        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
+        let (sigma_a, nu_a) = DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
+        let advice_vars = sigma_a + nu_a;
 
         let row_cycle = DoryGlobals::cycle_row_len(log_t, sigma_main);
         let nu_a_cycle = std::cmp::min(nu_a, row_cycle);
@@ -772,20 +689,10 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
 impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase2Params<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
         // Phase 2 starts from the Phase 1 intermediate claim.
-        match self.kind {
-            AdviceKind::Trusted => {
-                accumulator
-                    .get_trusted_advice_opening(SumcheckId::AdviceClaimReductionPhase1)
-                    .expect("Trusted Phase1 intermediate claim not found")
-                    .1
-            }
-            AdviceKind::Untrusted => {
-                accumulator
-                    .get_untrusted_advice_opening(SumcheckId::AdviceClaimReductionPhase1)
-                    .expect("Untrusted Phase1 intermediate claim not found")
-                    .1
-            }
-        }
+        accumulator
+            .get_advice_opening(self.kind, SumcheckId::AdviceClaimReductionPhase1)
+            .expect("Phase1 intermediate claim not found")
+            .1
     }
 
     fn degree(&self) -> usize {
@@ -889,18 +796,6 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
                 },
             );
 
-        // let mut evals = [F::zero(); DEGREE_BOUND];
-        // for j in 0..half {
-        //     let a_evals = self
-        //         .advice_poly
-        //         .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-        //     let eq_evals = self
-        //         .eq_poly
-        //         .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-        //     for k in 0..DEGREE_BOUND {
-        //         evals[k] += a_evals[k] * eq_evals[k];
-        //     }
-        // }
         UniPoly::from_evals_and_hint(previous_claim_unscaled, &evals)
     }
 
@@ -956,13 +851,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         match self.params.kind {
             AdviceKind::Trusted => accumulator.append_trusted_advice(
                 transcript,
-                SumcheckId::AdviceClaimReduction,
+                SumcheckId::AdviceClaimReductionPhase2,
                 opening_point,
                 claim,
             ),
             AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                 transcript,
-                SumcheckId::AdviceClaimReduction,
+                SumcheckId::AdviceClaimReductionPhase2,
                 opening_point,
                 claim,
             ),
@@ -1035,20 +930,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
 
-        let advice_claim = match self.params.kind {
-            AdviceKind::Trusted => {
-                accumulator
-                    .get_trusted_advice_opening(SumcheckId::AdviceClaimReduction)
-                    .expect("Trusted final advice claim not found")
-                    .1
-            }
-            AdviceKind::Untrusted => {
-                accumulator
-                    .get_untrusted_advice_opening(SumcheckId::AdviceClaimReduction)
-                    .expect("Untrusted final advice claim not found")
-                    .1
-            }
-        };
+        let advice_claim = accumulator
+            .get_advice_opening(self.params.kind, SumcheckId::AdviceClaimReductionPhase2)
+            .expect("Final advice claim not found")
+            .1;
 
         let eq_eval = EqPolynomial::mle(&opening_point.r, &self.params.r_val_eval.r);
         let eq_combined = if self.params.single_opening {
@@ -1084,12 +969,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         match self.params.kind {
             AdviceKind::Trusted => accumulator.append_trusted_advice(
                 transcript,
-                SumcheckId::AdviceClaimReduction,
+                SumcheckId::AdviceClaimReductionPhase2,
                 opening_point,
             ),
             AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                 transcript,
-                SumcheckId::AdviceClaimReduction,
+                SumcheckId::AdviceClaimReductionPhase2,
                 opening_point,
             ),
         }

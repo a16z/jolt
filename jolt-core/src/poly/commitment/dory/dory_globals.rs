@@ -77,15 +77,17 @@ impl DoryGlobals {
         Self::balanced_sigma_nu(log_k_chunk + log_t)
     }
 
-    /// Computes `advice_vars = log2(advice_len_words_rounded)` from a max advice byte budget.
+    /// Computes balanced `(sigma, nu)` dimensions directly from a max advice byte budget.
     ///
     /// - `max_advice_size_bytes` is interpreted as bytes of 64-bit words.
-    /// - We round `words` up to the next power of two (minimum 1) and take `log2`.
+    /// - Rounds word count up to the next power of two (minimum 1) and computes log2 as `advice_vars`.
+    /// - Returns `(sigma, nu)` where `sigma = ⌈advice_vars/2⌉` and `nu = advice_vars - sigma`.
     #[inline]
-    pub fn advice_vars_from_max_bytes(max_advice_size_bytes: usize) -> usize {
+    pub fn advice_sigma_nu_from_max_bytes(max_advice_size_bytes: usize) -> (usize, usize) {
         let words = max_advice_size_bytes / 8;
         let len = words.next_power_of_two().max(1);
-        len.log_2()
+        let advice_vars = len.log_2();
+        Self::balanced_sigma_nu(advice_vars)
     }
 
     /// How many row variables of the *cycle* segment exist in the unified point:
@@ -226,84 +228,27 @@ impl DoryGlobals {
         (num_columns, num_rows, T)
     }
 
-    /// Initialize the globals for the main Dory matrix
+    /// Initialize the globals for a specific Dory context
     ///
     /// # Arguments
     /// * `K` - Maximum address space size (K in OneHot polynomials)
     /// * `T` - Maximum trace length (cycle count)
+    /// * `context` - The Dory context to initialize (Main, TrustedAdvice, or UntrustedAdvice)
     ///
     /// The matrix dimensions are calculated to minimize padding:
     /// - If log2(K*T) is even: creates a square matrix
     /// - If log2(K*T) is odd: creates an almost-square matrix (columns = 2*rows)
-    pub fn initialize(K: usize, T: usize) -> Option<()> {
+    pub fn initialize_context(K: usize, T: usize, context: DoryContext) -> Option<()> {
         let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
-        Self::set_num_columns_for_context(num_columns, DoryContext::Main);
-        Self::set_T_for_context(t, DoryContext::Main);
-        Self::set_max_num_rows_for_context(num_rows, DoryContext::Main);
-        // Ensure subsequent uses of `get_*` read from the main context by default.
-        CURRENT_CONTEXT.store(DoryContext::Main as u8, Ordering::SeqCst);
-        Some(())
-    }
+        Self::set_num_columns_for_context(num_columns, context);
+        Self::set_T_for_context(t, context);
+        Self::set_max_num_rows_for_context(num_rows, context);
 
-    /// Initialize the globals for trusted advice commitments
-    pub fn initialize_trusted_advice(K: usize, T: usize) -> Option<()> {
-        let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
-        Self::set_num_columns_for_context(num_columns, DoryContext::TrustedAdvice);
-        Self::set_T_for_context(t, DoryContext::TrustedAdvice);
-        Self::set_max_num_rows_for_context(num_rows, DoryContext::TrustedAdvice);
-        Some(())
-    }
+        // For Main context, ensure subsequent uses of `get_*` read from it by default
+        if context == DoryContext::Main {
+            CURRENT_CONTEXT.store(DoryContext::Main as u8, Ordering::SeqCst);
+        }
 
-    /// Initialize the globals for untrusted advice commitments
-    pub fn initialize_untrusted_advice(K: usize, T: usize) -> Option<()> {
-        let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
-        Self::set_num_columns_for_context(num_columns, DoryContext::UntrustedAdvice);
-        Self::set_T_for_context(t, DoryContext::UntrustedAdvice);
-        Self::set_max_num_rows_for_context(num_rows, DoryContext::UntrustedAdvice);
-        Some(())
-    }
-
-    /// Initialize the globals for trusted advice commitments with an arbitrary matrix shape.
-    ///
-    /// The committed matrix is `num_rows x num_columns` where both dimensions must be powers of two.
-    /// This supports preprocessing-only trusted advice commitments that are independent of the
-    /// execution trace length `T`.
-    ///
-    /// Notes:
-    /// - `T` for this context is set to `num_rows * num_columns` (the polynomial length).
-    /// - Callers are responsible for ensuring the committed polynomial length matches `T`.
-    pub fn initialize_trusted_advice_matrix(num_rows: usize, num_columns: usize) -> Option<()> {
-        assert!(
-            num_rows.is_power_of_two() && num_rows > 0,
-            "trusted advice num_rows must be a non-zero power of two (got {num_rows})"
-        );
-        assert!(
-            num_columns.is_power_of_two() && num_columns > 0,
-            "trusted advice num_columns must be a non-zero power of two (got {num_columns})"
-        );
-        let t = num_rows * num_columns;
-        Self::set_num_columns_for_context(num_columns, DoryContext::TrustedAdvice);
-        Self::set_T_for_context(t, DoryContext::TrustedAdvice);
-        Self::set_max_num_rows_for_context(num_rows, DoryContext::TrustedAdvice);
-        Some(())
-    }
-
-    /// Initialize the globals for untrusted advice commitments with an arbitrary matrix shape.
-    ///
-    /// See [`Self::initialize_trusted_advice_matrix`] for details.
-    pub fn initialize_untrusted_advice_matrix(num_rows: usize, num_columns: usize) -> Option<()> {
-        assert!(
-            num_rows.is_power_of_two() && num_rows > 0,
-            "untrusted advice num_rows must be a non-zero power of two (got {num_rows})"
-        );
-        assert!(
-            num_columns.is_power_of_two() && num_columns > 0,
-            "untrusted advice num_columns must be a non-zero power of two (got {num_columns})"
-        );
-        let t = num_rows * num_columns;
-        Self::set_num_columns_for_context(num_columns, DoryContext::UntrustedAdvice);
-        Self::set_T_for_context(t, DoryContext::UntrustedAdvice);
-        Self::set_max_num_rows_for_context(num_rows, DoryContext::UntrustedAdvice);
         Some(())
     }
 
