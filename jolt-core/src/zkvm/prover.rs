@@ -28,7 +28,7 @@ use crate::{
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            DoryOpeningState, OpeningAccumulator, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningState, ProverOpeningAccumulator, SumcheckId,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
     },
@@ -1017,7 +1017,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
 
         // Prove at RamValEvaluation point
-        let (point_val, _) = self
+        let (point_val, eval_val) = self
             .opening_accumulator
             .get_trusted_advice_opening(SumcheckId::RamValEvaluation)
             .unwrap();
@@ -1025,6 +1025,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.preprocessing.generators,
             poly,
             &point_val.r,
+            &eval_val,
             None,
             &mut self.transcript,
         );
@@ -1036,7 +1037,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         {
             None
         } else {
-            let (point_val_final, _) = self
+            let (point_val_final, eval_val_final) = self
                 .opening_accumulator
                 .get_trusted_advice_opening(SumcheckId::RamValFinalEvaluation)
                 .unwrap();
@@ -1044,6 +1045,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &self.preprocessing.generators,
                 poly,
                 &point_val_final.r,
+                &eval_val_final,
                 None,
                 &mut self.transcript,
             ))
@@ -1062,7 +1064,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
 
         // Prove at RamValEvaluation point
-        let (point_val, _) = self
+        let (point_val, eval_val) = self
             .opening_accumulator
             .get_untrusted_advice_opening(SumcheckId::RamValEvaluation)
             .unwrap();
@@ -1070,6 +1072,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.preprocessing.generators,
             poly,
             &point_val.r,
+            &eval_val,
             None,
             &mut self.transcript,
         );
@@ -1081,7 +1084,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         {
             None
         } else {
-            let (point_val_final, _) = self
+            let (point_val_final, eval_val_final) = self
                 .opening_accumulator
                 .get_untrusted_advice_opening(SumcheckId::RamValFinalEvaluation)
                 .unwrap();
@@ -1089,6 +1092,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &self.preprocessing.generators,
                 poly,
                 &point_val_final.r,
+                &eval_val_final,
                 None,
                 &mut self.transcript,
             ))
@@ -1226,32 +1230,48 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         self.transcript.append_scalars(&claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
-        // Build DoryOpeningState
-        let state = DoryOpeningState {
+        // Compute joint evaluation homomorphically: Σ γ_i * claim_i
+        let joint_eval: F = gamma_powers
+            .iter()
+            .zip(claims.iter())
+            .map(|(gamma, claim)| *gamma * *claim)
+            .sum();
+
+        // Build OpeningState
+        let state = OpeningState {
             opening_point: opening_point.r.clone(),
             gamma_powers,
             polynomial_claims,
         };
 
-        let streaming_data = Arc::new(RLCStreamingData {
-            bytecode: Arc::clone(&self.preprocessing.shared.bytecode),
-            memory_layout: self.preprocessing.shared.memory_layout.clone(),
-        });
+        // Build joint polynomial - use materialized for HyperKZG, streaming for Dory
+        let (joint_poly, hint) = if PCS::REQUIRES_MATERIALIZED_POLYS {
+            state.build_materialized_rlc::<PCS>(
+                &self.one_hot_params,
+                &self.trace,
+                &self.preprocessing.shared.bytecode,
+                &self.preprocessing.shared.memory_layout,
+                opening_proof_hints,
+            )
+        } else {
+            let streaming_data = Arc::new(RLCStreamingData {
+                bytecode: Arc::clone(&self.preprocessing.shared.bytecode),
+                memory_layout: self.preprocessing.shared.memory_layout.clone(),
+            });
+            state.build_streaming_rlc::<PCS>(
+                self.one_hot_params.clone(),
+                TraceSource::Materialized(Arc::clone(&self.trace)),
+                streaming_data,
+                opening_proof_hints,
+            )
+        };
 
-        // Build streaming RLC polynomial directly (no witness poly regeneration!)
-        // Use materialized trace (default, single pass) instead of lazy trace
-        let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
-            self.one_hot_params.clone(),
-            TraceSource::Materialized(Arc::clone(&self.trace)),
-            streaming_data,
-            opening_proof_hints,
-        );
-
-        // Dory opening proof at the unified point
+        // Opening proof at the unified point
         PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
             &opening_point.r,
+            &joint_eval,
             Some(hint),
             &mut self.transcript,
         )
@@ -1331,14 +1351,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Serializable
 #[cfg(test)]
 mod tests {
     use crate::host;
-    use crate::zkvm::prover::JoltProverPreprocessing;
-    use crate::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
-    use crate::zkvm::{RV64IMACProver, RV64IMACVerifier};
+    use crate::zkvm::verifier::JoltSharedPreprocessing;
+    use crate::zkvm::{RV64IMACPreprocessing, RV64IMACProof, RV64IMACVerifierPreprocessing};
     use serial_test::serial;
 
     #[test]
     #[serial]
-    fn fib_e2e_dory() {
+    fn fib_e2e() {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
@@ -1349,96 +1368,52 @@ mod tests {
             init_memory_state,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        // Use 2^21 to force Dory
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, 1 << 21);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            shared_preprocessing,
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        let (proof, program_io) = preprocessing.prove(elf_contents, &inputs, &[], &[]);
+        assert!(matches!(proof, RV64IMACProof::Dory(_)));
+
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(proof, program_io)
+            .expect("Failed to verify proof");
     }
 
     #[test]
     #[serial]
-    fn small_trace_e2e_dory() {
+    fn fib_e2e_hyperkzg() {
         let mut program = host::Program::new("fibonacci-guest");
-        let inputs = postcard::to_stdvec(&5u32).unwrap();
+        let inputs = postcard::to_stdvec(&10u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
         );
 
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone(), 256);
+        // Use 2^16 to trigger HyperKZG
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, 1 << 16);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let log_chunk = 8; // Use default log_chunk for tests
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-        );
 
-        assert!(
-            prover.padded_trace_len <= (1 << log_chunk),
-            "Test requires T <= chunk_size ({}), got T = {}",
-            1 << log_chunk,
-            prover.padded_trace_len
-        );
+        let (proof, program_io) = preprocessing.prove(elf_contents, &inputs, &[], &[]);
+        assert!(matches!(proof, RV64IMACProof::HyperKZG(_)));
 
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(proof, program_io)
+            .expect("Failed to verify HyperKZG proof");
     }
 
     #[test]
     #[serial]
-    fn sha3_e2e_dory() {
-        // Ensure SHA3 inline library is linked and auto-registered
+    fn sha3_e2e() {
         #[cfg(feature = "host")]
         use jolt_inlines_keccak256 as _;
-        // SHA3 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-keccak256 crate is linked (see lib.rs)
 
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _) = program.decode();
@@ -1451,55 +1426,36 @@ mod tests {
             init_memory_state,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, 1 << 21);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        let (proof, program_io) = preprocessing.prove(elf_contents, &inputs, &[], &[]);
+
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(proof, program_io.clone())
+            .expect("Failed to verify proof");
+
         assert_eq!(
-            io_device.inputs, inputs,
+            program_io.inputs, inputs,
             "Inputs mismatch: expected {:?}, got {:?}",
-            inputs, io_device.inputs
+            inputs, program_io.inputs
         );
         let expected_output = &[
             0xd0, 0x3, 0x5c, 0x96, 0x86, 0x6e, 0xe2, 0x2e, 0x81, 0xf5, 0xc4, 0xef, 0xbd, 0x88,
             0x33, 0xc1, 0x7e, 0xa1, 0x61, 0x10, 0x81, 0xfc, 0xd7, 0xa3, 0xdd, 0xce, 0xce, 0x7f,
             0x44, 0x72, 0x4, 0x66,
         ];
-        assert_eq!(io_device.outputs, expected_output, "Outputs mismatch",);
+        assert_eq!(program_io.outputs, expected_output, "Outputs mismatch");
     }
 
     #[test]
     #[serial]
-    fn sha2_e2e_dory() {
-        // Ensure SHA2 inline library is linked and auto-registered
+    fn sha2_e2e() {
         #[cfg(feature = "host")]
         use jolt_inlines_sha2 as _;
-        // SHA2 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-sha2 crate is linked (see lib.rs)
+
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -1511,151 +1467,32 @@ mod tests {
             init_memory_state,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, 1 << 21);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        let (proof, program_io) = preprocessing.prove(elf_contents, &inputs, &[], &[]);
+
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(proof, program_io.clone())
+            .expect("Failed to verify proof");
+
         let expected_output = &[
             0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
             0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
             0x3b, 0x50, 0xd2, 0x57,
         ];
         assert_eq!(
-            io_device.outputs, expected_output,
+            program_io.outputs, expected_output,
             "Outputs mismatch: expected {:?}, got {:?}",
-            expected_output, io_device.outputs
+            expected_output, program_io.outputs
         );
     }
 
     #[test]
     #[serial]
-    fn advice_e2e_dory() {
-        use crate::poly::{
-            commitment::commitment_scheme::CommitmentScheme,
-            multilinear_polynomial::MultilinearPolynomial,
-        };
-        use crate::zkvm::ram::populate_memory_states;
-
-        let mut program = host::Program::new("merkle-tree-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
-        let leaf1: [u8; 32] = [5u8; 32];
-        let leaf2: [u8; 32] = [6u8; 32];
-        let leaf3: [u8; 32] = [7u8; 32];
-        let leaf4: [u8; 32] = [8u8; 32];
-        let inputs = postcard::to_stdvec(&leaf1.as_slice()).unwrap();
-        let untrusted_advice = postcard::to_stdvec(&leaf4).unwrap();
-        let mut trusted_advice = postcard::to_stdvec(&leaf2).unwrap();
-        trusted_advice.extend(postcard::to_stdvec(&leaf3).unwrap());
-
-        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
-
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            init_memory_state,
-        );
-
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-
-        let max_trusted_advice_size = prover_preprocessing
-            .shared
-            .memory_layout
-            .max_trusted_advice_size;
-        let mut trusted_advice_words = vec![0u64; (max_trusted_advice_size as usize) / 8];
-        populate_memory_states(0, &trusted_advice, Some(&mut trusted_advice_words), None);
-        let trusted_advice_commitment = {
-            crate::poly::commitment::dory::DoryGlobals::initialize_trusted_advice(
-                1,
-                (max_trusted_advice_size as usize) / 8,
-            );
-            let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
-                crate::poly::commitment::dory::DoryContext::TrustedAdvice,
-            );
-            let poly = MultilinearPolynomial::<ark_bn254::Fr>::from(trusted_advice_words);
-            let (trusted_advice_commitment, _hint) =
-                <crate::poly::commitment::dory::DoryCommitmentScheme as CommitmentScheme>::commit(
-                    &poly,
-                    &prover_preprocessing.generators,
-                );
-            trusted_advice_commitment
-        };
-
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &untrusted_advice,
-            &trusted_advice,
-            Some(trusted_advice_commitment),
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            Some(trusted_advice_commitment),
-            debug_info,
-        )
-        .unwrap();
-        let verification_result = verifier.verify();
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-        assert_eq!(
-            io_device.inputs, inputs,
-            "Inputs mismatch: expected {:?}, got {:?}",
-            inputs, io_device.inputs
-        );
-        let expected_output = &[
-            0xb4, 0x37, 0x0f, 0x3a, 0xb, 0x3d, 0x38, 0xa8, 0x7a, 0x6c, 0x4c, 0x46, 0x9, 0xe7, 0x83,
-            0xb3, 0xcc, 0xb7, 0x1c, 0x30, 0x1f, 0xf8, 0x54, 0xd, 0xf7, 0xdd, 0xc8, 0x42, 0x32,
-            0xbb, 0x16, 0xd7,
-        ];
-        assert_eq!(
-            io_device.outputs, expected_output,
-            "Outputs mismatch: expected {:?}, got {:?}",
-            expected_output, io_device.outputs
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn memory_ops_e2e_dory() {
+    fn memory_ops_e2e() {
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
@@ -1666,33 +1503,21 @@ mod tests {
             init_memory_state,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, 1 << 21);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&prover_preprocessing, elf_contents, &[], &[], &[], None);
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        let (proof, program_io) = preprocessing.prove(elf_contents, &[], &[], &[]);
+
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(proof, program_io)
+            .expect("Failed to verify proof");
     }
 
     #[test]
     #[serial]
-    fn btreemap_e2e_dory() {
+    fn btreemap_e2e() {
         let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
@@ -1704,39 +1529,21 @@ mod tests {
             init_memory_state,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, 1 << 21);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        let (proof, program_io) = preprocessing.prove(elf_contents, &inputs, &[], &[]);
+
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(proof, program_io)
+            .expect("Failed to verify proof");
     }
 
     #[test]
     #[serial]
-    fn muldiv_e2e_dory() {
+    fn muldiv_e2e() {
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
@@ -1748,118 +1555,47 @@ mod tests {
             init_memory_state,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, 1 << 21);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &[50],
-            &[],
-            &[],
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        let (proof, program_io) = preprocessing.prove(elf_contents, &[50], &[], &[]);
+
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(proof, program_io)
+            .expect("Failed to verify proof");
     }
 
+    /// Tests independent verifier preprocessing creation
     #[test]
     #[serial]
-    #[should_panic]
-    fn truncated_trace() {
+    fn verifier_preprocessing_standalone() {
         let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&10u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
-        let inputs = postcard::to_stdvec(&9u8).unwrap();
-        let (lazy_trace, mut trace, final_memory_state, mut program_io) =
-            program.trace(&inputs, &[], &[]);
-        trace.truncate(100);
-        program_io.outputs[0] = 0; // change the output to 0
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
-            program_io.memory_layout.clone(),
+            io_device.memory_layout.clone(),
             init_memory_state,
         );
 
+        // Create prover preprocessing
+        let max_trace_length = 1 << 16;
         let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+            RV64IMACPreprocessing::new(shared_preprocessing.clone(), max_trace_length);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
-        let prover = RV64IMACProver::gen_from_trace(
-            &prover_preprocessing,
-            lazy_trace,
-            trace,
-            program_io.clone(),
-            None,
-            final_memory_state,
-        );
+        let (proof, program_io) = prover_preprocessing.prove(elf_contents, &inputs, &[], &[]);
 
-        let (proof, _) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier =
-            RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
-        verifier.verify().unwrap();
-    }
-
-    #[test]
-    #[serial]
-    #[should_panic]
-    fn malicious_trace() {
-        let mut program = host::Program::new("fibonacci-guest");
-        let inputs = postcard::to_stdvec(&1u8).unwrap();
-        let (bytecode, init_memory_state, _) = program.decode();
-        let (lazy_trace, trace, final_memory_state, mut program_io) =
-            program.trace(&inputs, &[], &[]);
-
-        // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            program_io.memory_layout.clone(),
-            init_memory_state,
-        );
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
-
-        // change memory address of output & termination bit to the same address as input
-        // changes here should not be able to spoof the verifier result
-        program_io.memory_layout.output_start = program_io.memory_layout.input_start;
-        program_io.memory_layout.output_end = program_io.memory_layout.input_end;
-        program_io.memory_layout.termination = program_io.memory_layout.input_start;
-
-        let prover = RV64IMACProver::gen_from_trace(
-            &prover_preprocessing,
-            lazy_trace,
-            trace,
-            program_io.clone(),
-            None,
-            final_memory_state,
-        );
-        let (proof, _) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier =
-            JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
-        verifier.verify().unwrap();
+        // Create verifier preprocessing independently (simulates different machine)
+        let verifier_preprocessing =
+            RV64IMACVerifierPreprocessing::new(shared_preprocessing, max_trace_length);
+        verifier_preprocessing
+            .verify(proof, program_io)
+            .expect("Failed to verify proof");
     }
 }

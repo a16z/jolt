@@ -217,10 +217,9 @@ pub trait OpeningAccumulator<F: JoltField> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
 }
 
-/// State for Dory batch opening (Stage 8).
-/// This is a generic interface for batch opening proofs.
+/// State for batch opening (Stage 8).
 #[derive(Clone, Allocative)]
-pub struct DoryOpeningState<F: JoltField> {
+pub struct OpeningState<F: JoltField> {
     /// Unified opening point for all polynomials (length = log_k_chunk + log_T)
     pub opening_point: Vec<F::Challenge>,
     /// γ^i coefficients for the RLC polynomial
@@ -230,8 +229,8 @@ pub struct DoryOpeningState<F: JoltField> {
     pub polynomial_claims: Vec<(CommittedPolynomial, F)>,
 }
 
-impl<F: JoltField> DoryOpeningState<F> {
-    /// Build streaming RLC polynomial from this state.
+impl<F: JoltField> OpeningState<F> {
+    /// Build streaming RLC polynomial from this state (for Dory).
     /// Streams directly from trace - no witness regeneration needed.
     #[tracing::instrument(skip_all)]
     pub fn build_streaming_rlc<PCS: CommitmentScheme<Field = F>>(
@@ -257,6 +256,108 @@ impl<F: JoltField> DoryOpeningState<F> {
             poly_ids.clone(),
             &coeffs,
         ));
+
+        let hints: Vec<PCS::OpeningProofHint> = rlc_map
+            .into_keys()
+            .map(|k| opening_hints.remove(&k).unwrap())
+            .collect();
+
+        let hint = PCS::combine_hints(hints, &coeffs);
+
+        (joint_poly, hint)
+    }
+
+    /// Build materialized dense polynomial from this state (for HyperKZG).
+    /// Regenerates witness polynomials from trace and combines them homomorphically.
+    #[tracing::instrument(skip_all)]
+    pub fn build_materialized_rlc<PCS: CommitmentScheme<Field = F>>(
+        &self,
+        one_hot_params: &OneHotParams,
+        trace: &[tracer::instruction::Cycle],
+        bytecode: &crate::zkvm::bytecode::BytecodePreprocessing,
+        memory_layout: &common::jolt_device::MemoryLayout,
+        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
+        use crate::poly::dense_mlpoly::DensePolynomial;
+        use rayon::prelude::*;
+
+        // Accumulate gamma coefficients per polynomial
+        let mut rlc_map = BTreeMap::new();
+        for (gamma, (poly, _claim)) in self.gamma_powers.iter().zip(self.polynomial_claims.iter()) {
+            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
+        }
+
+        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
+            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
+
+        // Regenerate witness polynomials from trace
+        let polynomials: Vec<MultilinearPolynomial<F>> = poly_ids
+            .iter()
+            .map(|poly_id| {
+                poly_id.generate_witness(bytecode, memory_layout, trace, Some(one_hot_params))
+            })
+            .collect();
+
+        // Partition into dense and one-hot polynomials (like RLCPolynomial::linear_combination)
+        let (dense, one_hot): (Vec<_>, Vec<_>) = polynomials
+            .iter()
+            .zip(coeffs.iter())
+            .partition(|(p, _)| !matches!(p, MultilinearPolynomial::OneHot(_)));
+
+        // Compute joint polynomial length from dense polynomials
+        let dense_len = dense
+            .iter()
+            .map(|(p, _)| p.original_len())
+            .max()
+            .unwrap_or(0);
+
+        // Compute one-hot length (K * T) - all one-hot polys have the same length
+        let one_hot_len = if !one_hot.is_empty() {
+            match &one_hot[0].0 {
+                MultilinearPolynomial::OneHot(oh) => oh.K * oh.nonzero_indices.len(),
+                _ => unreachable!(),
+            }
+        } else {
+            0
+        };
+
+        let joint_len = dense_len.max(one_hot_len);
+
+        // Homomorphically combine dense polynomials: joint[i] = Σ coeff_j * poly_j[i]
+        let mut joint_coeffs: Vec<F> = (0..joint_len)
+            .into_par_iter()
+            .map(|i| {
+                dense
+                    .iter()
+                    .map(|(poly, coeff)| {
+                        if i < poly.original_len() {
+                            **coeff * poly.get_scaled_coeff(i, F::one())
+                        } else {
+                            F::zero()
+                        }
+                    })
+                    .sum()
+            })
+            .collect();
+
+        // Add one-hot polynomials directly (sparse - only set nonzero entries)
+        // Index formula matches HyperKZG::commit_one_hot: k * T + t (no bit reversal)
+        for (poly, coeff) in one_hot.iter() {
+            match poly {
+                MultilinearPolynomial::OneHot(oh) => {
+                    let T = oh.nonzero_indices.len();
+                    for (t, k_opt) in oh.nonzero_indices.iter().enumerate() {
+                        if let Some(k) = k_opt {
+                            let idx = *k as usize * T + t;
+                            joint_coeffs[idx] += **coeff;
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let joint_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(joint_coeffs));
 
         let hints: Vec<PCS::OpeningProofHint> = rlc_map
             .into_keys()

@@ -86,6 +86,7 @@ where
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
+        _eval: &Self::Field,
         _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {

@@ -50,7 +50,7 @@ use crate::zkvm::{
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        DoryOpeningState, OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
+        OpeningAccumulator, OpeningPoint, OpeningState, SumcheckId, VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -534,7 +534,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
         // Build state for computing joint commitment/claim
-        let state = DoryOpeningState {
+        let state = OpeningState {
             opening_point: opening_point.r.clone(),
             gamma_powers: gamma_powers.clone(),
             polynomial_claims,
@@ -575,10 +575,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     fn compute_joint_commitment(
         &self,
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
-        state: &DoryOpeningState<F>,
+        state: &OpeningState<F>,
     ) -> PCS::Commitment {
-        // Accumulate gamma coefficients per polynomial
-        let mut rlc_map = HashMap::new();
+        // Accumulate gamma coefficients per polynomial (use BTreeMap for deterministic order)
+        let mut rlc_map = std::collections::BTreeMap::new();
         for (gamma, (poly, _claim)) in state
             .gamma_powers
             .iter()

@@ -98,6 +98,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
+        _eval: &Self::Field,
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {

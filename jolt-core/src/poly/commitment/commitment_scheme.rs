@@ -29,6 +29,10 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// used as a hint for the opening proof.
     type OpeningProofHint: Sync + Send + Clone + Debug + PartialEq;
 
+    /// Whether this PCS requires materialized (dense) polynomials for opening proofs.
+    /// If true, use `build_materialized_rlc`; if false, use `build_streaming_rlc`.
+    const REQUIRES_MATERIALIZED_POLYS: bool = false;
+
     /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
     /// variables of any polynomial that will be committed using this setup.
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;
@@ -89,6 +93,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `setup` - The prover setup for the commitment scheme
     /// * `poly` - The multilinear polynomial being proved
     /// * `opening_point` - The point at which the polynomial is evaluated
+    /// * `eval` - The claimed evaluation. If None, computed via poly.evaluate().
     /// * `hint` - An optional hint that helps optimize the proof generation.
     ///   When `None`, implementations should compute the hint internally if needed.
     /// * `transcript` - The transcript for Fiat-Shamir transformation
@@ -99,6 +104,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
+        eval: &Self::Field,
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;

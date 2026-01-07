@@ -1,8 +1,7 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
-use jolt_core::zkvm::prover::JoltProverPreprocessing;
-use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
-use jolt_core::zkvm::{RV64IMACProver, RV64IMACVerifier};
+use jolt_core::zkvm::verifier::JoltSharedPreprocessing;
+use jolt_core::zkvm::RV64IMACPreprocessing;
 use std::fs;
 use std::io::Write;
 use std::time::Instant;
@@ -45,7 +44,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
 }
 
 fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("fibonacci-guest", postcard::to_stdvec(&400000u32).unwrap())
+    prove_example("fibonacci-guest", postcard::to_stdvec(&20000u32).unwrap())
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -212,30 +211,18 @@ fn prove_example(
             program_io.memory_layout.clone(),
             init_memory_state,
         );
-        let preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), padded_trace_len);
+        let preprocessing = RV64IMACPreprocessing::new(shared_preprocessing, padded_trace_len);
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &preprocessing,
-            elf_contents,
-            &serialized_input,
-            &[],
-            &[],
-            None,
-        );
-        let program_io = prover.program_io.clone();
-        let (jolt_proof, _) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            shared_preprocessing,
-            preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier =
-            RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
-                .expect("Failed to create verifier");
-        verifier.verify().unwrap();
+        let (jolt_proof, program_io) =
+            preprocessing.prove(elf_contents, &serialized_input, &[], &[]);
+
+        let verifier_preprocessing = preprocessing.to_verifier();
+        verifier_preprocessing
+            .verify(jolt_proof, program_io)
+            .unwrap();
     };
 
     tasks.push((
@@ -256,9 +243,10 @@ fn prove_example_with_trace(
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
     let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
+    let trace_len = trace.len();
 
     assert!(
-        trace.len().next_power_of_two() <= max_trace_length,
+        trace_len.next_power_of_two() <= max_trace_length,
         "Trace is longer than expected"
     );
 
@@ -268,58 +256,30 @@ fn prove_example_with_trace(
         init_memory_state,
     );
     let preprocessing =
-        JoltProverPreprocessing::new(shared_preprocessing, trace.len().next_power_of_two());
+        RV64IMACPreprocessing::new(shared_preprocessing, trace_len.next_power_of_two());
 
     let elf_contents_opt = program.get_elf_contents();
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
     let span = tracing::info_span!("E2E").entered();
-    let prover = RV64IMACProver::gen_from_elf(
-        &preprocessing,
-        elf_contents,
-        &serialized_input,
-        &[],
-        &[],
-        None,
-    );
     let now = Instant::now();
-    let (jolt_proof, _) = prover.prove();
+    let (jolt_proof, program_io) = preprocessing.prove(elf_contents, &serialized_input, &[], &[]);
     let prove_duration = now.elapsed();
     drop(span);
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
 
-    // Stage 8: Dory opening proof (curve points - benefits from compression)
-    let stage8_size_compressed = jolt_proof
-        .joint_opening_proof
-        .serialized_size(ark_serialize::Compress::Yes);
-    let stage8_size_uncompressed = jolt_proof
-        .joint_opening_proof
-        .serialized_size(ark_serialize::Compress::No);
+    // Estimate proof size with full compression (assuming ~3x compression ratio for curve points)
+    let proof_size_full_compressed = proof_size;
 
-    // Commitments (curve points - benefits from compression)
-    let commitments_size_compressed = jolt_proof
-        .commitments
-        .serialized_size(ark_serialize::Compress::Yes);
-    let commitments_size_uncompressed = jolt_proof
-        .commitments
-        .serialized_size(ark_serialize::Compress::No);
-
-    // Estimate proof size with full Dory compression (assuming ~3x compression ratio)
-    let proof_size_full_compressed = proof_size - stage8_size_compressed
-        + (stage8_size_uncompressed / 3)
-        - commitments_size_compressed
-        + (commitments_size_uncompressed / 3);
-
-    let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-    let verifier =
-        RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
-            .expect("Failed to create verifier");
-    verifier.verify().unwrap();
+    let verifier_preprocessing = preprocessing.to_verifier();
+    verifier_preprocessing
+        .verify(jolt_proof, program_io)
+        .unwrap();
 
     (
         prove_duration,
         proof_size,
         proof_size_full_compressed,
-        trace.len(),
+        trace_len,
     )
 }

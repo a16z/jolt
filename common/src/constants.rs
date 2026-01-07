@@ -10,13 +10,18 @@ pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
 /// one-hot chunking parameters. Below this threshold (i.e., for smaller traces),
 /// we use smaller chunk sizes for better performance (reduced commitment & PCS opening costs).
 /// This value was empirically determined.
-pub const ONEHOT_CHUNK_THRESHOLD_LOG_T: usize = 25;
+pub const ONEHOT_CHUNK_THRESHOLD_LOG_T: usize = 10;
 
 /// Threshold for trace length (log scale) at which we switch the number of
 /// instruction sumcheck phases from 16 to 8. Below this threshold, we use
 /// more phases (16) for smaller sumcheck instances in each phase (8 instead of 16 variables).
 /// This value was empirically determined.
 pub const INSTRUCTION_PHASES_THRESHOLD_LOG_T: usize = 24;
+
+/// Threshold for trace length (log scale) at which we switch from HyperKZG to Dory.
+/// For traces ≤ 2^HYPERKZG_THRESHOLD_LOG_T, HyperKZG is more efficient.
+/// For larger traces, Dory's streaming approach is preferred.
+pub const HYPERKZG_THRESHOLD_LOG_T: usize = 20;
 
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 

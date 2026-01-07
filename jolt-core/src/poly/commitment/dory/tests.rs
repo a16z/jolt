@@ -38,6 +38,7 @@ mod tests {
             prover_setup,
             &poly,
             &opening_point,
+            &evaluation,
             Some(row_commitments),
             &mut prove_transcript,
         );
@@ -264,6 +265,7 @@ mod tests {
             &prover_setup,
             &poly,
             &opening_point,
+            &correct_evaluation,
             Some(row_commitments),
             &mut prove_transcript,
         );
@@ -421,6 +423,7 @@ mod tests {
             &prover_setup,
             &poly,
             &opening_point,
+            &evaluation,
             Some(row_commitments),
             &mut prove_transcript,
         );
@@ -504,6 +507,7 @@ mod tests {
             &prover_setup,
             &combined_poly,
             &opening_point,
+            &evaluation,
             Some(combined_hint),
             &mut prove_transcript,
         );
@@ -596,6 +600,7 @@ mod tests {
             &prover_setup,
             &combined_poly,
             &opening_point,
+            &evaluation,
             Some(combined_hint),
             &mut prove_transcript,
         );
@@ -622,6 +627,7 @@ mod tests {
             &prover_setup,
             &combined_poly,
             &opening_point,
+            &evaluation,
             Some(direct_hint),
             &mut prove_transcript2,
         );
