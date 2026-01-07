@@ -451,8 +451,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage4_sumcheck_proof = self.prove_stage4();
         let stage5_sumcheck_proof = self.prove_stage5();
         let stage6_sumcheck_proof = self.prove_stage6();
-        // Advice claims are now reduced in Stage 6 and batched into Stage 8
-        // The old separate advice proofs are no longer generated
         let stage7_sumcheck_proof = self.prove_stage7();
 
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);

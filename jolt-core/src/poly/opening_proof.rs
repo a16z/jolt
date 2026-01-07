@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::{
-    commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::MultilinearPolynomial,
+    commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
+    multilinear_polynomial::MultilinearPolynomial,
 };
 use crate::{
     field::JoltField,
@@ -693,19 +694,13 @@ pub fn compute_advice_lagrange_factor<F: JoltField>(
     let (sigma_a, nu_a) =
         crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(advice_vars);
 
-    // Row selector: ∏_{i=nu_a..nu_main} (1 - r_rows[i])
-    let row_factor: F = r_rows
-        .iter()
-        .skip(nu_a)
-        .map(|r| F::one() - (*r).into())
-        .product();
+    // Row factor: eq(r_rows[nu_a..], [0, 0, ...]) = ∏(1 - r_rows[i]) for i >= nu_a
+    // This selects the "zero" vertex in the row dimension beyond the advice region
+    let row_factor = EqPolynomial::<F>::zero_selector(&r_rows[nu_a..]);
 
-    // Column selector: ∏_{i=sigma_a..sigma_main} (1 - r_cols[i])
-    let col_factor: F = r_cols
-        .iter()
-        .skip(sigma_a)
-        .map(|r| F::one() - (*r).into())
-        .product();
+    // Column factor: eq(r_cols[sigma_a..], [0, 0, ...]) = ∏(1 - r_cols[i]) for i >= sigma_a
+    // This selects the "zero" vertex in the column dimension beyond the advice region
+    let col_factor = EqPolynomial::<F>::zero_selector(&r_cols[sigma_a..]);
 
     row_factor * col_factor
 }
