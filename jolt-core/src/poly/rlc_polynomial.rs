@@ -24,7 +24,7 @@ use tracing::trace_span;
 
 #[derive(Clone, Debug)]
 pub struct RLCStreamingData {
-    pub bytecode: BytecodePreprocessing,
+    pub bytecode: Arc<BytecodePreprocessing>,
     pub memory_layout: MemoryLayout,
 }
 

@@ -580,6 +580,90 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             merged_eq.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
+
+    /// Compute rs2_ra(r_address, r_cycle) = Σ_j [has_rs2[j]] * eq(r_address, rs2[j]) * eq(r_cycle, j)
+    ///
+    /// We compute rs2 (not rs1) because fewer cycles have rs2 reads:
+    /// - rs2 is NOT read by: FormatI (ADDI, etc.), FormatLoad (LB, LW, etc.), FormatU, FormatJ
+    /// - rs1 is NOT read by: only FormatU, FormatJ
+    ///
+    /// Uses a 2-way split-eq optimization over the joint (cycle, address) space:
+    /// - Order: r_joint = [r_cycle..., r_address...] so cycle vars are MSB
+    /// - Total bits: n = log_T + 7 (address)
+    /// - hi_bits = min(log_T, (n+1)/2) ensures hi part contains only cycle bits
+    /// - This enables clean double outer/inner sum: outer over cycle blocks, inner sums E_lo
+    ///
+    /// EqPolynomial bit ordering: bit i of index → r[n-1-i] (reverse order, r[0] is MSB)
+    /// - For r_joint = [r_cycle, r_address]:
+    ///   - bits 0..(addr_bits-1) of joint_index → r_address (LSB part)
+    ///   - bits addr_bits..(n-1) of joint_index → r_cycle (MSB part)
+    /// - So joint_index = (j << addr_bits) | rs2
+    #[tracing::instrument(
+        skip_all,
+        name = "RegistersReadWriteCheckingProver::compute_rs2_ra_claim"
+    )]
+    fn compute_rs2_ra_claim(
+        trace: &[Cycle],
+        r_address: &[F::Challenge],
+        r_cycle: &[F::Challenge],
+    ) -> F {
+        let log_T = r_cycle.len();
+        let addr_bits = r_address.len(); // = 7 for 128 registers
+
+        // 2-way split over joint (cycle, address) space
+        // Order: r_joint = [r_cycle..., r_address...] so cycle vars are MSB
+        let n = log_T + addr_bits;
+
+        // hi_bits contains only cycle vars, lo_bits contains remaining cycle + all address vars
+        let hi_bits = std::cmp::min(log_T, n.div_ceil(2));
+        let lo_bits = n - hi_bits;
+
+        // r_joint = [r_cycle..., r_address...]
+        let r_joint: Vec<F::Challenge> = r_cycle.iter().chain(r_address.iter()).copied().collect();
+        let (r_hi, r_lo) = r_joint.split_at(hi_bits);
+
+        let (E_hi, E_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
+        );
+
+        // joint_index = (j << addr_bits) | rs2
+        // idx_hi = joint_index >> lo_bits = j >> (lo_bits - addr_bits)
+        // idx_lo = joint_index & lo_mask = ((j & cycle_lo_mask) << addr_bits) | rs2
+        let cycle_bits_in_lo = lo_bits - addr_bits; // number of cycle bits in the lo part
+        let cycles_per_block = 1usize << cycle_bits_in_lo;
+        let cycle_lo_mask = cycles_per_block - 1;
+
+        // Double outer/inner sum:
+        // - Outer: parallel over E_hi indices (each corresponds to a block of cycles)
+        // - Inner: sequential sum over cycles in that block
+        (0..E_hi.len())
+            .into_par_iter()
+            .map(|idx_hi| {
+                let e_hi_val = E_hi[idx_hi];
+                let block_start = idx_hi << cycle_bits_in_lo;
+                let block_end = std::cmp::min(block_start + cycles_per_block, trace.len());
+
+                if block_start >= trace.len() {
+                    return F::zero();
+                }
+
+                // Inner sum: iterate over cycles in this block
+                let inner_sum: F = (block_start..block_end)
+                    .filter_map(|j| {
+                        trace[j].rs2_read().map(|(rs2, _)| {
+                            // idx_lo = ((j & cycle_lo_mask) << addr_bits) | rs2
+                            let j_in_block = j & cycle_lo_mask;
+                            let idx_lo = (j_in_block << addr_bits) | (rs2 as usize);
+                            E_lo[idx_lo]
+                        })
+                    })
+                    .sum();
+
+                e_hi_val * inner_sum
+            })
+            .sum()
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
@@ -626,30 +710,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let inc_claim = self.inc.final_sumcheck_claim();
         let combined_ra_claim = self.ra.as_ref().unwrap().final_sumcheck_claim();
         // In order to obtain the individual claims rs1_ra(r) and rs2_ra(r),
-        // we first evaluate rs1_ra(r) directly:
-        let eq_r_address = EqPolynomial::evals(&r_address.r);
-        let (r_cycle_hi, r_cycle_lo) = r_cycle.split_at(r_cycle.len() / 2);
-        let (eq_r_cycle_hi, eq_r_cycle_lo) = rayon::join(
-            || EqPolynomial::evals(&r_cycle_hi.r),
-            || EqPolynomial::evals(&r_cycle_lo.r),
-        );
-        let cycle_lo_mask = (1 << r_cycle_lo.len()) - 1;
-        let rs1_ra_claim: F = self
-            .trace
-            .par_iter()
-            .enumerate()
-            .filter_map(|(j, cycle)| {
-                cycle.rs1_read().map(|(rs1, _)| {
-                    let j_hi = j >> r_cycle_lo.len();
-                    let j_lo = j & cycle_lo_mask;
-                    eq_r_address[rs1 as usize] * eq_r_cycle_hi[j_hi] * eq_r_cycle_lo[j_lo]
-                })
-            })
-            .sum();
-        // Now compute rs2_ra(r) from combined_ra_claim and rs1_ra_claim. Recall that:
+        // we compute rs2_ra(r) directly (fewer cycles have rs2 reads than rs1 reads):
+        let rs2_ra_claim: F = Self::compute_rs2_ra_claim(&self.trace, &r_address.r, &r_cycle.r);
+
+        // Now compute rs1_ra(r) from combined_ra_claim and rs2_ra_claim. Recall that:
         // combined_ra_claim = gamma * rs1_ra(r) + gamma^2 * rs2_ra(r)
-        let gamma_inverse = self.params.gamma.inverse().unwrap();
-        let rs2_ra_claim = (combined_ra_claim * gamma_inverse - rs1_ra_claim) * gamma_inverse;
+        // => rs1_ra(r) = (combined_ra_claim - gamma^2 * rs2_ra(r)) / gamma
+        let gamma = self.params.gamma;
+        let gamma_inverse = gamma.inverse().unwrap();
+        let rs1_ra_claim = (combined_ra_claim - gamma * gamma * rs2_ra_claim) * gamma_inverse;
 
         accumulator.append_virtual(
             transcript,

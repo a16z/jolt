@@ -41,7 +41,7 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
-        bytecode::read_raf_checking::ReadRafSumcheckParams as BytecodeReadRafParams,
+        bytecode::read_raf_checking::BytecodeReadRafSumcheckParams,
         claim_reductions::{
             AdviceClaimReductionPhase1Params, AdviceClaimReductionPhase1Prover,
             AdviceClaimReductionPhase2Params, AdviceClaimReductionPhase2Prover, AdviceKind,
@@ -55,7 +55,7 @@ use crate::{
         config::OneHotParams,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckParams,
-            read_raf_checking::ReadRafSumcheckParams as InstructionReadRafParams,
+            read_raf_checking::InstructionReadRafSumcheckParams,
         },
         ram::{
             hamming_booleanity::HammingBooleanitySumcheckParams,
@@ -89,11 +89,11 @@ use crate::{
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     zkvm::{
-        bytecode::read_raf_checking::ReadRafSumcheckProver as BytecodeReadRafSumcheckProver,
+        bytecode::read_raf_checking::BytecodeReadRafSumcheckProver,
         fiat_shamir_preamble,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
-            read_raf_checking::ReadRafSumcheckProver as LookupsReadRafSumcheckProver,
+            read_raf_checking::InstructionReadRafSumcheckProver,
         },
         proof_serialization::{Claims, JoltProof},
         r1cs::key::UniformSpartanKey,
@@ -972,7 +972,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let lookups_read_raf_params = InstructionReadRafParams::new(
+        let lookups_read_raf_params = InstructionReadRafSumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -991,8 +991,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
-        let lookups_read_raf =
-            LookupsReadRafSumcheckProver::initialize(lookups_read_raf_params, &self.trace);
+        let lookups_read_raf = InstructionReadRafSumcheckProver::initialize(
+            lookups_read_raf_params,
+            Arc::clone(&self.trace),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -1001,7 +1003,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &registers_val_evaluation,
             );
             print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
-            print_data_structure_heap_usage("LookupsReadRafSumcheckProver", &lookups_read_raf);
+            print_data_structure_heap_usage("InstructionReadRafSumcheckProver", &lookups_read_raf);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
@@ -1030,7 +1032,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6 baseline");
 
-        let bytecode_read_raf_params = BytecodeReadRafParams::gen(
+        let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
             &self.preprocessing.shared.bytecode,
             self.trace.len().log_2(),
             &self.one_hot_params,
@@ -1086,8 +1088,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
             bytecode_read_raf_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
+            Arc::clone(&self.trace),
+            Arc::clone(&self.preprocessing.shared.bytecode),
         );
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
@@ -1398,7 +1400,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         };
 
         let streaming_data = Arc::new(RLCStreamingData {
-            bytecode: self.preprocessing.shared.bytecode.clone(),
+            bytecode: Arc::clone(&self.preprocessing.shared.bytecode),
             memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 
