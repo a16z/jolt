@@ -24,6 +24,7 @@ use crate::{
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
+use crate::utils::errors::ProofVerifyError;
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
