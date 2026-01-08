@@ -96,7 +96,9 @@ The verifier searches for non-deterministic transitions. We verify that the tran
     *   **UNSAT:** The circuit is sound (Deterministic).
     *   **SAT:** The circuit is **under-constrained**. The solver found a non-deterministic transition where the same input allows multiple valid next states.
 
-> NOTE: All the symbolic variables are modelled using integer arithmetic instead of finite field, which could cause slightly different behaviours. The harness only enforces consistency checks on the r1cs constraints, full formal verification is only guranteed after correctness modelling against correct RISC-V spec.
+
+> NOTE: All the symbolic variables are modelled using integer arithmetic instead of finite field, which could cause slightly different behaviours. The harness only enforces consistency checks on the r1cs constraints, full formal verification is only guaranteed after correctness modelling against correct RISC-V spec.
+
 
 ## Interpreting Results
 
