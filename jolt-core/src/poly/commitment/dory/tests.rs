@@ -641,4 +641,140 @@ mod tests {
             "Verification should also succeed with direct commitment: {result2:?}"
         );
     }
+
+    #[test]
+    fn test_dory_layout_index_conversions() {
+        let num_rows = 4;
+        let num_cols = 8;
+
+        // Test RowMajor layout
+        let row_major = DoryLayout::RowMajor;
+
+        // In row-major: coeff[i] -> row = i / num_cols, col = i % num_cols
+        // coeff[0] -> (0, 0), coeff[1] -> (0, 1), ..., coeff[7] -> (0, 7)
+        // coeff[8] -> (1, 0), ...
+        assert_eq!(row_major.index_to_position(0, num_rows, num_cols), (0, 0));
+        assert_eq!(row_major.index_to_position(1, num_rows, num_cols), (0, 1));
+        assert_eq!(row_major.index_to_position(7, num_rows, num_cols), (0, 7));
+        assert_eq!(row_major.index_to_position(8, num_rows, num_cols), (1, 0));
+        assert_eq!(row_major.index_to_position(9, num_rows, num_cols), (1, 1));
+
+        // Test reverse: position_to_index
+        assert_eq!(row_major.position_to_index(0, 0, num_rows, num_cols), 0);
+        assert_eq!(row_major.position_to_index(0, 1, num_rows, num_cols), 1);
+        assert_eq!(row_major.position_to_index(1, 0, num_rows, num_cols), 8);
+        assert_eq!(row_major.position_to_index(1, 1, num_rows, num_cols), 9);
+
+        // Test ColumnMajor layout
+        let col_major = DoryLayout::ColumnMajor;
+
+        // In column-major: coeff[i] -> row = i % num_rows, col = i / num_rows
+        // coeff[0] -> (0, 0), coeff[1] -> (1, 0), coeff[2] -> (2, 0), coeff[3] -> (3, 0)
+        // coeff[4] -> (0, 1), coeff[5] -> (1, 1), ...
+        assert_eq!(col_major.index_to_position(0, num_rows, num_cols), (0, 0));
+        assert_eq!(col_major.index_to_position(1, num_rows, num_cols), (1, 0));
+        assert_eq!(col_major.index_to_position(2, num_rows, num_cols), (2, 0));
+        assert_eq!(col_major.index_to_position(3, num_rows, num_cols), (3, 0));
+        assert_eq!(col_major.index_to_position(4, num_rows, num_cols), (0, 1));
+        assert_eq!(col_major.index_to_position(5, num_rows, num_cols), (1, 1));
+
+        // Test reverse: position_to_index
+        assert_eq!(col_major.position_to_index(0, 0, num_rows, num_cols), 0);
+        assert_eq!(col_major.position_to_index(1, 0, num_rows, num_cols), 1);
+        assert_eq!(col_major.position_to_index(0, 1, num_rows, num_cols), 4);
+        assert_eq!(col_major.position_to_index(1, 1, num_rows, num_cols), 5);
+
+        // Verify round-trip for both layouts
+        for i in 0..(num_rows * num_cols) {
+            let (row, col) = row_major.index_to_position(i, num_rows, num_cols);
+            assert_eq!(row_major.position_to_index(row, col, num_rows, num_cols), i);
+
+            let (row, col) = col_major.index_to_position(i, num_rows, num_cols);
+            assert_eq!(col_major.position_to_index(row, col, num_rows, num_cols), i);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_dory_layout_global_state() {
+        DoryGlobals::reset();
+
+        // Default should be RowMajor
+        assert_eq!(DoryGlobals::get_layout(), DoryLayout::RowMajor);
+
+        // Set to ColumnMajor
+        DoryGlobals::set_layout(DoryLayout::ColumnMajor);
+        assert_eq!(DoryGlobals::get_layout(), DoryLayout::ColumnMajor);
+
+        // Set back to RowMajor
+        DoryGlobals::set_layout(DoryLayout::RowMajor);
+        assert_eq!(DoryGlobals::get_layout(), DoryLayout::RowMajor);
+    }
+
+    /// Test that column-major layout produces different commitments than row-major layout.
+    ///
+    /// Note: Full column-major proving/verification requires the underlying dory-pcs library
+    /// to also be aware of the layout. This test verifies that the layout infrastructure
+    /// is working and produces consistent (though different) commitments.
+    #[test]
+    #[serial]
+    fn test_dory_column_major_produces_different_commitment() {
+        DoryGlobals::reset();
+
+        let num_vars = 8;
+        let num_coeffs = 1 << num_vars;
+
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
+
+        let mut rng = thread_rng();
+        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
+
+        let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
+
+        // First, commit with row-major layout (default)
+        DoryGlobals::set_layout(DoryLayout::RowMajor);
+        let (commitment_row_major, _) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+
+        // Then, commit with column-major layout
+        DoryGlobals::set_layout(DoryLayout::ColumnMajor);
+
+        // Create a fresh polynomial to avoid any caching
+        let poly2 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs));
+        let (commitment_col_major, _) = DoryCommitmentScheme::commit(&poly2, &prover_setup);
+
+        // The commitments should be different when using different layouts
+        // (unless the polynomial is specially structured)
+        assert_ne!(
+            commitment_row_major, commitment_col_major,
+            "Row-major and column-major commitments should differ for random polynomials"
+        );
+
+        // Verify that the same layout produces the same commitment
+        let poly3 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+            (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect(),
+        ));
+        let (commitment_col_major_2, _) = DoryCommitmentScheme::commit(&poly3, &prover_setup);
+
+        // Both column-major commitments of the same polynomial should match
+        // (This is just checking consistency - poly3 has different coeffs so it should differ)
+        // Instead, verify that recomputing the same poly gives the same result
+        let poly_same = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+            (0..num_coeffs).map(|i| Fr::from(i as u64)).collect(),
+        ));
+        let (commitment_a, _) = DoryCommitmentScheme::commit(&poly_same, &prover_setup);
+
+        let poly_same2 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+            (0..num_coeffs).map(|i| Fr::from(i as u64)).collect(),
+        ));
+        let (commitment_b, _) = DoryCommitmentScheme::commit(&poly_same2, &prover_setup);
+
+        assert_eq!(
+            commitment_a, commitment_b,
+            "Same polynomial should produce same commitment with same layout"
+        );
+
+        // Make sure we avoid using commitment_col_major_2 warning
+        let _ = commitment_col_major_2;
+    }
 }

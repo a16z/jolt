@@ -7,6 +7,64 @@ use std::sync::{
     OnceLock,
 };
 
+/// Dory matrix layout - determines how polynomial coefficients map to matrix positions.
+///
+/// In Dory, polynomial coefficients are arranged in a 2D matrix for commitment.
+/// This enum controls the mapping from linear coefficient index to (row, col) position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DoryLayout {
+    /// Row-major layout: coeff[i] -> row = i / num_cols, col = i % num_cols
+    ///
+    /// Coefficients in the same row are contiguous in memory.
+    /// This is the default layout used by the current Rust implementation.
+    #[default]
+    RowMajor,
+
+    /// Column-major layout (k-chunk major): coeff[i] -> row = i % num_rows, col = i / num_rows
+    ///
+    /// Coefficients in the same column are contiguous in memory.
+    /// This layout was used in earlier versions and is compatible with certain GPU implementations.
+    ColumnMajor,
+}
+
+impl DoryLayout {
+    /// Convert a linear coefficient index to a (row, col) matrix position.
+    #[inline]
+    pub fn index_to_position(&self, coeff_idx: usize, num_rows: usize, num_cols: usize) -> (usize, usize) {
+        match self {
+            DoryLayout::RowMajor => {
+                let row = coeff_idx / num_cols;
+                let col = coeff_idx % num_cols;
+                (row, col)
+            }
+            DoryLayout::ColumnMajor => {
+                let row = coeff_idx % num_rows;
+                let col = coeff_idx / num_rows;
+                (row, col)
+            }
+        }
+    }
+
+    /// Convert a (row, col) matrix position to a linear coefficient index.
+    #[inline]
+    pub fn position_to_index(&self, row: usize, col: usize, num_rows: usize, num_cols: usize) -> usize {
+        match self {
+            DoryLayout::RowMajor => row * num_cols + col,
+            DoryLayout::ColumnMajor => col * num_rows + row,
+        }
+    }
+}
+
+impl From<u8> for DoryLayout {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => DoryLayout::RowMajor,
+            1 => DoryLayout::ColumnMajor,
+            _ => panic!("Invalid DoryLayout value: {value}"),
+        }
+    }
+}
+
 // Main polynomial globals
 static mut GLOBAL_T: OnceLock<usize> = OnceLock::new();
 static mut MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
@@ -24,6 +82,9 @@ static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 
 // Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
+
+// Layout tracking: 0=RowMajor, 1=ColumnMajor
+static CURRENT_LAYOUT: AtomicU8 = AtomicU8::new(0);
 
 /// Dory commitment context - determines which set of global parameters to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +131,37 @@ impl DoryGlobals {
         DoryContextGuard {
             previous_context: previous,
         }
+    }
+
+    /// Get the current Dory matrix layout
+    pub fn get_layout() -> DoryLayout {
+        CURRENT_LAYOUT.load(Ordering::SeqCst).into()
+    }
+
+    /// Set the Dory matrix layout
+    ///
+    /// This should be called once at initialization time, before any Dory operations.
+    /// The layout determines how polynomial coefficients are mapped to matrix positions:
+    /// - `RowMajor`: coeff[i] -> row = i / num_cols, col = i % num_cols (default)
+    /// - `ColumnMajor`: coeff[i] -> row = i % num_rows, col = i / num_rows
+    pub fn set_layout(layout: DoryLayout) {
+        CURRENT_LAYOUT.store(layout as u8, Ordering::SeqCst);
+    }
+
+    /// Compute coefficient index from row and column using the current layout
+    #[inline]
+    pub fn coeff_index(row: usize, col: usize) -> usize {
+        let num_rows = Self::get_max_num_rows();
+        let num_cols = Self::get_num_columns();
+        Self::get_layout().position_to_index(row, col, num_rows, num_cols)
+    }
+
+    /// Compute row and column from coefficient index using the current layout
+    #[inline]
+    pub fn row_col_from_index(coeff_idx: usize) -> (usize, usize) {
+        let num_rows = Self::get_max_num_rows();
+        let num_cols = Self::get_num_columns();
+        Self::get_layout().index_to_position(coeff_idx, num_rows, num_cols)
     }
 
     fn set_max_num_rows_for_context(max_num_rows: usize, context: DoryContext) {
@@ -234,6 +326,9 @@ impl DoryGlobals {
             let _ = GLOBAL_T.take();
             let _ = MAX_NUM_ROWS.take();
             let _ = NUM_COLUMNS.take();
+
+            // Reset layout to default (RowMajor)
+            CURRENT_LAYOUT.store(0, Ordering::SeqCst);
 
             // Reset trusted advice globals
             let _ = TRUSTED_ADVICE_T.take();
