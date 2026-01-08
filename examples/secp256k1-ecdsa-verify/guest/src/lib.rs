@@ -1,6 +1,6 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-use jolt_inlines_secp256k1::{ecdsa_verify_soft_fail, Secp256k1Fr, Secp256k1Point, SignatureError};
+use jolt_inlines_secp256k1::{ecdsa_verify, Secp256k1Error, Secp256k1Fr, Secp256k1Point};
 
 // verifies an secp256k1 ECDSA signature
 // given message hash z, signature (r, s), and public key Q
@@ -12,10 +12,10 @@ fn secp256k1_ecdsa_verify(
     r: [u64; 4],
     s: [u64; 4],
     q: [u64; 8],
-) -> Result<(), SignatureError> {
-    let z = Secp256k1Fr::from_u64_arr(&z);
-    let r = Secp256k1Fr::from_u64_arr(&r);
-    let s = Secp256k1Fr::from_u64_arr(&s);
-    let q = Secp256k1Point::from_u64_arr(&q);
-    ecdsa_verify_soft_fail(z, r, s, q)
+) -> Result<(), Secp256k1Error> {
+    let z = Secp256k1Fr::from_u64_arr(&z)?;
+    let r = Secp256k1Fr::from_u64_arr(&r)?;
+    let s = Secp256k1Fr::from_u64_arr(&s)?;
+    let q = Secp256k1Point::from_u64_arr(&q)?;
+    ecdsa_verify(z, r, s, q)
 }

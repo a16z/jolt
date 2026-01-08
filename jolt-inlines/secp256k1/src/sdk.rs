@@ -48,6 +48,35 @@ pub fn hcf() {
     panic!("explicit host code panic function called");
 }
 
+pub trait UnwrapOrSpoilProof<T> {
+    /// Unwraps the Result, spoiling the proof if Err.
+    /// Use when invalid result should make the proof unsatisfiable.
+    fn unwrap_or_spoil_proof(self) -> T;
+}
+
+impl<T, E> UnwrapOrSpoilProof<T> for Result<T, E> {
+    #[inline(always)]
+    fn unwrap_or_spoil_proof(self) -> T {
+        match self {
+            Ok(v) => v,
+            Err(_) => {
+                hcf();
+                unreachable!()
+            }
+        }
+    }
+}
+
+/// Error types for secp256k1 operations
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum Secp256k1Error {
+    InvalidFqElement, // input array does not correspond to a valid Fq element
+    InvalidFrElement, // input array does not correspond to a valid Fr element
+    QAtInfinity,      // public key is point at infinity
+    ROrSZero,         // one of the signature components is zero
+    RxMismatch,       // computed R.x does not match r
+}
+
 /// secp256k1 base field element
 /// in montgomery form
 /// as a wrapper around the arkworks implementation
@@ -65,16 +94,16 @@ impl Secp256k1Fq {
     }
     /// creates a new Secp256k1Fq element from a [u64; 4] array
     /// performs conversion to montgomery form
+    /// returns Err(Secp256k1Error) if the array does not correspond to a valid Fq element
     #[inline(always)]
-    pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
+    pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Secp256k1Error> {
         // attempt to create a new Fq element from the array
         let e = Fq::from_bigint(BigInt(*arr));
-        // if not valid, panic
-        if e.is_none() {
-            hcf();
+        // if valid, return element, else return error
+        match e {
+            Some(val) => Ok(Secp256k1Fq { e: val }),
+            None => Err(Secp256k1Error::InvalidFqElement),
         }
-        // otherwise, return the element
-        Secp256k1Fq { e: e.unwrap() }
     }
     /// creates a new Secp256k1Fq element from a [u64; 4] array (unchecked)
     /// the array is assumed to be in canonical montgomery form
@@ -227,16 +256,16 @@ impl Secp256k1Fr {
     }
     /// creates a new Secp256k1Fr element from a [u64; 4] array
     /// performs conversion to montgomery form
+    /// returns Err(Secp256k1Error) if the array does not correspond to a valid Fr element
     #[inline(always)]
-    pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
+    pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Secp256k1Error> {
         // attempt to create a new Fr element from the array
         let e = Fr::from_bigint(BigInt(*arr));
-        // if not valid, panic
-        if e.is_none() {
-            hcf();
+        // if valid, return element, else return error
+        match e {
+            Some(val) => Ok(Secp256k1Fr { e: val }),
+            None => Err(Secp256k1Error::InvalidFrElement),
         }
-        // otherwise, return the element
-        Secp256k1Fr { e: e.unwrap() }
     }
     /// creates a new Secp256k1Fr element from a [u64; 4] array (unchecked)
     /// the array is assumed to be in canonical montgomery form
@@ -375,14 +404,16 @@ pub struct Secp256k1Point {
 
 impl Secp256k1Point {
     /// creates a new Secp256k1Point from two Secp256k1Fq elements
-    /// panics if the point is not on the curve
+    /// returns the point if it is on the curve
+    /// else returns Err(Secp256k1Error)
     #[inline(always)]
-    pub fn new(x: Secp256k1Fq, y: Secp256k1Fq) -> Self {
+    pub fn new(x: Secp256k1Fq, y: Secp256k1Fq) -> Result<Self, Secp256k1Error> {
         let p = Secp256k1Point { x, y };
-        if !p.is_on_curve() {
-            hcf();
+        if p.is_on_curve() {
+            Ok(p)
+        } else {
+            Err(Secp256k1Error::QAtInfinity)
         }
-        p
     }
     /// creates a new Secp256k1Point from two Secp256k1Fq elements
     /// performs no checks to ensure that the point is on the curve
@@ -402,9 +433,9 @@ impl Secp256k1Point {
     /// performs checks to ensure that the point is on the curve
     /// and that the coordinates are well formed
     #[inline(always)]
-    pub fn from_u64_arr(arr: &[u64; 8]) -> Self {
-        let x = Secp256k1Fq::from_u64_arr(&[arr[0], arr[1], arr[2], arr[3]]);
-        let y = Secp256k1Fq::from_u64_arr(&[arr[4], arr[5], arr[6], arr[7]]);
+    pub fn from_u64_arr(arr: &[u64; 8]) -> Result<Self, Secp256k1Error> {
+        let x = Secp256k1Fq::from_u64_arr(&[arr[0], arr[1], arr[2], arr[3]])?;
+        let y = Secp256k1Fq::from_u64_arr(&[arr[4], arr[5], arr[6], arr[7]])?;
         Secp256k1Point::new(x, y)
     }
     /// creates a Secp256k1Point from a [u64; 8] array
@@ -734,33 +765,26 @@ fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum SignatureError {
-    QAtInfinity, // public key is point at infinity
-    ROrSZero,    // one of the signature components is zero
-    RxMismatch,  // computed R.x does not match r
-}
-
 /// verify an ECDSA signature
 /// z is the hash of the message being signed
 /// r and s are the signature components
 /// q is the uncompressed public key point
 /// returns Ok(()) if the signature is valid
-/// returns Err(SignatureError) if the signature is invalid
+/// returns Err(Secp256k1Error) if at any point, the verification fails
 #[inline(always)]
-pub fn ecdsa_verify_soft_fail(
+pub fn ecdsa_verify(
     z: Secp256k1Fr,
     r: Secp256k1Fr,
     s: Secp256k1Fr,
     q: Secp256k1Point,
-) -> Result<(), SignatureError> {
+) -> Result<(), Secp256k1Error> {
     // step 0: check that q is not infinity
     if q.is_infinity() {
-        return Result::Err(SignatureError::QAtInfinity);
+        return Result::Err(Secp256k1Error::QAtInfinity);
     }
     // step 1: check that r and s are in the correct range
     if r.is_zero() || s.is_zero() {
-        return Result::Err(SignatureError::ROrSZero);
+        return Result::Err(Secp256k1Error::ROrSZero);
     }
     // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
     let u1 = z.div(&s);
@@ -784,24 +808,8 @@ pub fn ecdsa_verify_soft_fail(
     let r_claim_x_bigint = r_claim.x.e.into_bigint();
     let r_bigint = r.e.into_bigint();
     if r_claim_x_bigint != r_bigint {
-        return Result::Err(SignatureError::RxMismatch);
+        return Result::Err(Secp256k1Error::RxMismatch);
     }
     // if all checks passed, return Ok(())
     Result::Ok(())
-}
-
-/// verify an ECDSA signature
-/// z is the hash of the message being signed
-/// r and s are the signature components
-/// q is the uncompressed public key point
-/// if not proving, panics on invalid signature
-/// if proving, spoils the proof on invalid signature
-#[inline(always)]
-pub fn ecdsa_verify_hard_fail(z: Secp256k1Fr, r: Secp256k1Fr, s: Secp256k1Fr, q: Secp256k1Point) {
-    match ecdsa_verify_soft_fail(z, r, s, q) {
-        Ok(()) => {}
-        Err(_) => {
-            hcf();
-        }
-    }
 }
