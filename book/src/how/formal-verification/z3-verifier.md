@@ -1,4 +1,4 @@
-# Z3 Verifier Internal Architecture
+# Z3 Verifier
 
 The `z3-verifier` crate provides a formal verification suite for Jolt. It uses the Z3 SMT solver to mathematically prove properties about Jolt's execution logic and constraint systems. Unlike standard unit tests that check specific inputs, this tool proves properties for *all* possible inputs.
 
@@ -23,7 +23,7 @@ Some Virtual sequences make use of `VirtualAdvice`, which when incorrectly const
 The core component is the `SymbolicCpu` struct. Unlike the standard emulator which operates on `u64`, this CPU operates on Z3 **BitVectors** (`BV`).
 *   **Registers:** Tracks $x_0, \dots, x_{31}$ as symbolic 64-bit values.
 *   **Advice:** Maintains a set of advice variables $A = \{a_0, a_1, \dots \}$. When a `VirtualAdvice` instruction is executed, a new unconstrained symbolic variable is created and injected into the register file.
-*   **Asserts:** Collects boolean constraints $\Phi$ (e.g., `VirtualAssertEQ`) generated during execution.
+*   **Asserts:** Collects boolean constraints (e.g., `VirtualAssertEQ`) generated during execution.
 
 ### Symbolic Execution
 The `symbolic_exec` function acts as an interpreter, mapping Jolt `Instruction` variants to Z3 bit-vector operations `BV`
@@ -67,7 +67,7 @@ Proves that the sequence is deterministic, even when relying on prover advice. W
 
 ## 2. R1CS Constraints (`cpu_constraints.rs`)
 
-This module verifies the lowest-level circuits that enforce the CPU's state transitions, ensuring **Completeness**: for a given state $S$ and input $I$, there exists exactly one valid next state $S'$.
+This module verifies the lowest-level circuits that enforce the CPU's state transitions, ensuring **Consistency**: for a given state $S$ and input $I$, there exists exactly one valid next state $S'$.
 
 ![R1CS Verification Flow](../../imgs/z3-r1cs.png)
 
@@ -96,6 +96,7 @@ The verifier searches for non-deterministic transitions. We verify that the tran
     *   **UNSAT:** The circuit is sound (Deterministic).
     *   **SAT:** The circuit is **under-constrained**. The solver found a non-deterministic transition where the same input allows multiple valid next states.
 
+> NOTE: All the symbolic variables are modelled using integer arithmetic instead of finite field, which could cause slightly different behaviours. The harness only enforces consistency checks on the r1cs constraints, full formal verification is only guranteed after correctness modelling against correct RISC-V spec.
 
 ## Interpreting Results
 
@@ -108,10 +109,10 @@ When the test suite runs (`cargo test -p z3-verifier -- --nocapture`), it output
 
 ### 2. Consistency Failures (Under-Constrained Advice)
 **Symptom:** `test_..._consistency` fails.
-**Meaning:** A malicious prover can choose different advice values to produce different final results, satisfying all constraints.
+**Meaning:** A malicious prover can choose different advice values to produce different final results, satisfying all constraints. Usually consistency failures in advice also lead to correctness failures since we can find an advice which leads to incorrect results.
 **Fix:** The virtual sequence is missing validation. Add assertions (e.g., `VirtualAssertEQ`) to tightly constrain the advice.
 
-### 3. Completeness Failures 
+### 3. R1CS Consistency Failures 
 **Symptom:** `test_...` in `cpu_constraints` fails.
 **Meaning:** The R1CS constraints allow multiple next states for the same input.
 **Fix:** Identify the unconstrained variable (e.g., `rd_write_value`). Add a constraint in `jolt-core/src/zkvm/r1cs/constraints.rs` to force this value to a deterministic state.
