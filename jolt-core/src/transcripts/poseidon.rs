@@ -86,7 +86,7 @@ pub struct PoseidonTranscript<F: PrimeField, P: PoseidonParams<F>> {
     /// 256-bit running state
     pub state: [u8; 32],
     /// We append an ordinal to each invocation of the hash
-    n_rounds: u32,
+    pub n_rounds: u32,
     #[cfg(test)]
     /// A complete history of the transcript's `state`; used for testing.
     state_history: Vec<[u8; 32]>,
@@ -425,6 +425,11 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
             q_powers[i] = q * q_powers[i - 1]; // this is optimised
         }
         q_powers
+    }
+
+    fn debug_state(&self, label: &str) {
+        println!("TRANSCRIPT DEBUG [{}]: n_rounds={}, state={:02x?}",
+            label, self.n_rounds, &self.state[..8]);
     }
 }
 

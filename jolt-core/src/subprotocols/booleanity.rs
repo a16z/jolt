@@ -39,8 +39,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::BindingOrder,
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -550,14 +549,16 @@ impl<F: JoltField> BooleanitySumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanitySumcheckVerifier<F> {
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+    for BooleanitySumcheckVerifier<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let ra_claims: Vec<F> = self
@@ -588,7 +589,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);

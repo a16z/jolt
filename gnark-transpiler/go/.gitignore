@@ -1,0 +1,11 @@
+# Groth16 artifacts
+*.pk
+*.vk
+*.r1cs
+*.proof
+*.pub
+groth16
+
+# Test data
+fib_stage1_data.json
+stage1_bundle.json

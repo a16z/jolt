@@ -1,6 +1,6 @@
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
-use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::poly::opening_proof::OpeningAccumulator;
 use crate::subprotocols::univariate_skip::{UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant};
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
@@ -17,10 +17,10 @@ pub mod outer;
 pub mod product;
 pub mod shift;
 
-pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
+pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript, A: OpeningAccumulator<F>>(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
     key: &UniformSpartanKey<F>,
-    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    opening_accumulator: &mut A,
     transcript: &mut T,
 ) -> Result<(OuterUniSkipParams<F>, F::Challenge), ProofVerifyError> {
     let verifier = OuterUniSkipVerifier::new(key, transcript);
@@ -30,6 +30,7 @@ pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
             UniSkipFirstRoundProof::verify::<
                 OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
                 OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
+                A,
             >(std_proof, &verifier, opening_accumulator, transcript)?
         }
         UniSkipFirstRoundProofVariant::Zk(zk_proof) => {
@@ -40,9 +41,9 @@ pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
     Ok((verifier.params, challenge))
 }
 
-pub fn verify_stage2_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
+pub fn verify_stage2_uni_skip<F: JoltField, C: JoltCurve, T: Transcript, A: OpeningAccumulator<F>>(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
-    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    opening_accumulator: &mut A,
     transcript: &mut T,
 ) -> Result<(ProductVirtualUniSkipParams<F>, F::Challenge), ProofVerifyError> {
     let verifier = ProductVirtualUniSkipVerifier::new(opening_accumulator, transcript);
@@ -52,6 +53,7 @@ pub fn verify_stage2_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
             UniSkipFirstRoundProof::verify::<
                 PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+                A,
             >(std_proof, &verifier, opening_accumulator, transcript)?
         }
         UniSkipFirstRoundProofVariant::Zk(zk_proof) => {

@@ -241,12 +241,12 @@ pub fn prover_accumulate_advice<F: JoltField>(
 ///
 /// After Stage 2 address-round alignment, Stage 4 uses a *single* RAM address opening point for
 /// advice commitments. We cache this opening under `SumcheckId::RamValCheck`.
-pub fn verifier_accumulate_advice<F: JoltField>(
+pub fn verifier_accumulate_advice<F: JoltField, A: OpeningAccumulator<F>>(
     ram_K: usize,
     program_io: &JoltDevice,
     has_untrusted_advice_commitment: bool,
     has_trusted_advice_commitment: bool,
-    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    opening_accumulator: &mut A,
 ) {
     let total_vars = ram_K.log_2();
 

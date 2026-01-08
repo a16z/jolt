@@ -337,7 +337,7 @@ pub struct ProductVirtualUniSkipVerifier<F: JoltField> {
 
 impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
     pub fn new<T: Transcript>(
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Self {
         let params = ProductVirtualUniSkipParams::new(opening_accumulator, transcript);
@@ -345,7 +345,7 @@ impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for ProductVirtualUniSkipVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -354,7 +354,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        _accumulator: &VerifierOpeningAccumulator<F>,
+        _accumulator: &A,
         _sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) -> F {
         unimplemented!("Unused for univariate skip")
@@ -362,7 +362,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -824,10 +824,10 @@ pub struct ProductVirtualRemainderVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
-    pub fn new(
+    pub fn new<A: OpeningAccumulator<F>>(
         trace_len: usize,
         uni_skip_params: ProductVirtualUniSkipParams<F>,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
     ) -> Self {
         let params =
             ProductVirtualRemainderParams::new(trace_len, uni_skip_params, opening_accumulator);
@@ -835,7 +835,7 @@ impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for ProductVirtualRemainderVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -844,7 +844,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         // Lagrange weights at r0
@@ -930,7 +930,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);

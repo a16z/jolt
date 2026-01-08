@@ -26,6 +26,7 @@ serde_json = "1.0"
 strum.workspace = true
 build-fs-tree = "0.7.1"
 allocative.workspace = true
+num-bigint = "0.4"
 
 jolt-core = { path = "../jolt-core" }
 common = { path = "../common" }
