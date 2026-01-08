@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace};
 use crate::declare_riscv_instr;
-use crate::emulator::cpu::{GeneralizedCpu, Xlen};
-use crate::emulator::memory::MemoryData;
+use crate::emulator::cpu::{Cpu, Xlen};
 
 declare_riscv_instr!(
     name = VirtualSW,
@@ -14,9 +13,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualSW {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         ram_access: &mut <VirtualSW as RISCVInstruction>::RAMAccess,
     ) {
         // virtual lw is only supported on bit32. On bit64 LW doesn't use this instruction

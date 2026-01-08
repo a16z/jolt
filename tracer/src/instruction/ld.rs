@@ -1,7 +1,7 @@
 use super::{RISCVInstruction, RISCVTrace};
 use crate::{
     declare_riscv_instr,
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
     instruction::format::format_load::FormatLoad,
 };
 use serde::{Deserialize, Serialize};
@@ -15,9 +15,9 @@ declare_riscv_instr!(
 );
 
 impl LD {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         ram_access: &mut <LD as RISCVInstruction>::RAMAccess,
     ) {
         // The LD instruction loads a 64-bit value from memory into register rd for RV64I.

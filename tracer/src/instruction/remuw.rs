@@ -1,8 +1,8 @@
-use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::cpu::Cpu;
 use crate::instruction::mul::MUL;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{emulator::memory::MemoryData, instruction::add::ADD};
+use crate::instruction::add::ADD;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -24,9 +24,9 @@ declare_riscv_instr!(
 );
 
 impl REMUW {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <REMUW as RISCVInstruction>::RAMAccess,
     ) {
         // REMW and REMUW are RV64 instructions that provide the corresponding signed and unsigned
@@ -43,7 +43,7 @@ impl REMUW {
 }
 
 impl RISCVTrace for REMUW {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // REMUW operands
         let x = cpu.x[self.operands.rs1 as usize] as u32;
         let y = cpu.x[self.operands.rs2 as usize] as u32;

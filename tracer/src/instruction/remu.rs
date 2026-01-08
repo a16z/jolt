@@ -1,5 +1,4 @@
-use crate::emulator::cpu::GeneralizedCpu;
-use crate::emulator::memory::MemoryData;
+use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
@@ -23,9 +22,9 @@ declare_riscv_instr!(
 );
 
 impl REMU {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <REMU as RISCVInstruction>::RAMAccess,
     ) {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
@@ -38,7 +37,7 @@ impl REMU {
 }
 
 impl RISCVTrace for REMU {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {

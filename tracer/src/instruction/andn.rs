@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
 };
 
 use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
@@ -17,9 +17,9 @@ declare_riscv_instr!(
 );
 
 impl ANDN {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <ANDN as RISCVInstruction>::RAMAccess,
     ) {
         cpu.x[self.operands.rd as usize] =

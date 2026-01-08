@@ -1,7 +1,4 @@
-use crate::emulator::{
-    cpu::{GeneralizedCpu, Xlen},
-    memory::MemoryData,
-};
+use crate::emulator::cpu::{Cpu, Xlen};
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
@@ -32,15 +29,15 @@ pub trait InstructionFormat:
     type RegisterState: InstructionRegisterState + PartialEq;
 
     fn parse(word: u32) -> Self;
-    fn capture_pre_execution_state<D: MemoryData>(
+    fn capture_pre_execution_state(
         &self,
         state: &mut Self::RegisterState,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
     );
-    fn capture_post_execution_state<D: MemoryData>(
+    fn capture_post_execution_state(
         &self,
         state: &mut Self::RegisterState,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
     );
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self;

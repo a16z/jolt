@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::{
-        cpu::{GeneralizedCpu, Xlen},
-        memory::MemoryData,
+        cpu::{Cpu, Xlen},
     },
 };
 
@@ -19,9 +18,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualPow2I {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <VirtualPow2I as RISCVInstruction>::RAMAccess,
     ) {
         match cpu.xlen {

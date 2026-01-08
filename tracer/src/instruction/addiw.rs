@@ -1,5 +1,5 @@
 use crate::{
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,9 @@ declare_riscv_instr!(
 );
 
 impl ADDIW {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <ADDIW as RISCVInstruction>::RAMAccess,
     ) {
         cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize]
@@ -36,7 +36,7 @@ impl ADDIW {
 }
 
 impl RISCVTrace for ADDIW {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

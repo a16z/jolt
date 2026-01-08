@@ -1,9 +1,8 @@
-use crate::emulator::memory::MemoryData;
 use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::declare_riscv_instr;
-use crate::emulator::cpu::{GeneralizedCpu, Xlen};
+use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::andi::ANDI;
 use super::format::format_load::FormatLoad;
@@ -29,9 +28,9 @@ declare_riscv_instr!(
 );
 
 impl LHU {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         ram_access: &mut <LHU as RISCVInstruction>::RAMAccess,
     ) {
         cpu.x[self.operands.rd as usize] = match cpu
@@ -48,7 +47,7 @@ impl LHU {
 }
 
 impl RISCVTrace for LHU {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

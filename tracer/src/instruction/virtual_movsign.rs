@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::{
-        cpu::{GeneralizedCpu, Xlen},
-        memory::MemoryData,
+        cpu::{Cpu, Xlen},
     },
 };
 
@@ -25,9 +24,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualMovsign {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <VirtualMovsign as RISCVInstruction>::RAMAccess,
     ) {
         let val = cpu.x[self.operands.rs1 as usize] as u64;

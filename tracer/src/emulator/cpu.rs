@@ -8,7 +8,6 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
 use tracing::{info, warn};
 
-use crate::emulator::memory::{MemoryData, ReplayableMemory};
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
@@ -90,7 +89,7 @@ struct ActiveMarker {
 
 /// Emulates a RISC-V CPU core
 #[derive(Clone, Debug)]
-pub struct GeneralizedCpu<D> {
+pub struct Cpu {
     clock: u64,
     pub(crate) xlen: Xlen,
     pub(crate) privilege_mode: PrivilegeMode,
@@ -102,7 +101,7 @@ pub struct GeneralizedCpu<D> {
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
-    pub mmu: Mmu<D>,
+    pub mmu: Mmu,
     reservation: u64, // @TODO: Should support multiple address reservations
     is_reservation_set: bool,
     _dump_flag: bool,
@@ -115,8 +114,6 @@ pub struct GeneralizedCpu<D> {
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
 }
-
-pub type Cpu = GeneralizedCpu<Vec<u64>>;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Xlen {
@@ -254,7 +251,7 @@ fn get_trap_cause(trap: &Trap, xlen: &Xlen) -> u64 {
     }
 }
 
-impl<D: MemoryData> GeneralizedCpu<D> {
+impl Cpu {
     /// Creates a new `Cpu`.
     ///
     /// # Arguments
@@ -986,7 +983,7 @@ impl<D: MemoryData> GeneralizedCpu<D> {
     }
 
     /// Returns mutable `Mmu`
-    pub fn get_mut_mmu(&mut self) -> &mut Mmu<D> {
+    pub fn get_mut_mmu(&mut self) -> &mut Mmu {
         &mut self.mmu
     }
 
@@ -1102,9 +1099,9 @@ impl<D: MemoryData> GeneralizedCpu<D> {
     }
 }
 
-impl<D: MemoryData> GeneralizedCpu<D> {
-    pub fn save_state_with_empty_memory(&self) -> GeneralizedCpu<ReplayableMemory> {
-        GeneralizedCpu::<ReplayableMemory> {
+impl Cpu {
+    pub fn save_state_with_empty_memory(&self) -> Cpu {
+        Cpu {
             clock: self.clock,
             xlen: self.xlen,
             privilege_mode: self.privilege_mode,
@@ -1127,7 +1124,7 @@ impl<D: MemoryData> GeneralizedCpu<D> {
     }
 }
 
-impl<D> Drop for GeneralizedCpu<D> {
+impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
             warn!(

@@ -29,8 +29,8 @@ pub use instruction::inline::{list_registered_inlines, register_inline};
 
 use crate::{
     emulator::{
-        memory::{CheckpointingMemory, Memory, MemoryData, ReplayableMemory},
-        GeneralizedEmulator,
+        memory::Memory,
+        Emulator,
     },
     instruction::uncompress_instruction,
 };
@@ -198,8 +198,8 @@ pub fn trace_checkpoints(
     )
 }
 
-fn step_emulator<D: MemoryData>(
-    emulator: &mut GeneralizedEmulator<D>,
+fn step_emulator(
+    emulator: &mut Emulator,
     prev_pc: &mut u64,
     trace: Option<&mut Vec<Cycle>>,
 ) {
@@ -215,13 +215,13 @@ fn step_emulator<D: MemoryData>(
 }
 
 #[tracing::instrument(skip_all)]
-fn setup_emulator<D: MemoryData>(
+fn setup_emulator(
     elf_contents: &[u8],
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> GeneralizedEmulator<D> {
+) -> Emulator {
     setup_emulator_with_backtraces(
         elf_contents,
         None,
@@ -234,16 +234,16 @@ fn setup_emulator<D: MemoryData>(
 
 #[tracing::instrument(skip_all)]
 /// Sets up an emulator instance with access to the elf-path for symbol loading and de-mangling.
-fn setup_emulator_with_backtraces<D: MemoryData>(
+fn setup_emulator_with_backtraces(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> GeneralizedEmulator<D> {
+) -> Emulator {
     let term = DefaultTerminal::default();
-    let mut emulator = GeneralizedEmulator::new(Box::new(term));
+    let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 
     let mut jolt_device = JoltDevice::new(memory_config);
@@ -340,7 +340,7 @@ impl<T> GeneralizedLazyTraceIter<T> {
 
 #[derive(Clone, Debug)]
 pub struct Checkpoint {
-    emulator_state: GeneralizedEmulator<ReplayableMemory>,
+    emulator_state: Emulator,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
     /// The remaining number of cycles that can be replayed for this checkpoint
@@ -353,8 +353,8 @@ pub struct Checkpoint {
 unsafe impl Send for Checkpoint {}
 
 impl Checkpoint {
-    pub(crate) fn new_with_empty_memory<D: MemoryData>(
-        emulator_state: &GeneralizedEmulator<D>,
+    pub(crate) fn new_with_empty_memory(
+        emulator_state: &Emulator,
         prev_pc: u64,
         current_traces: &[Cycle],
         cycle_count: usize,
@@ -368,14 +368,13 @@ impl Checkpoint {
         }
     }
 
-    pub(crate) fn set_memory_state(&mut self, data: ReplayableMemory, cycles_remaining: usize) {
+    pub(crate) fn set_memory_state(&mut self, memory: Memory, cycles_remaining: usize) {
         self.trace_steps_remaining = cycles_remaining;
         self.emulator_state
             .get_mut_cpu()
             .get_mut_mmu()
             .memory
-            .memory
-            .data = data;
+            .memory = memory;
     }
 }
 
@@ -442,7 +441,7 @@ impl LazyTracer for Checkpoint {
 /// each memory access to a [`Checkpoint`], which can be saved and replayed from.
 #[derive(Clone, Debug)]
 pub struct CheckpointingTracer {
-    emulator_state: GeneralizedEmulator<CheckpointingMemory>,
+    emulator_state: Emulator,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
     trace_steps_since_last_checkpoint: usize,
@@ -453,7 +452,7 @@ pub struct CheckpointingTracer {
 }
 
 impl CheckpointingTracer {
-    pub fn new(emulator_state: GeneralizedEmulator<CheckpointingMemory>) -> Self {
+    pub fn new(emulator_state: Emulator) -> Self {
         Self {
             emulator_state,
             prev_pc: 0,
@@ -500,7 +499,6 @@ impl CheckpointingTracer {
             .get_mut_mmu()
             .memory
             .memory
-            .data
             .start_saving_checkpoints();
     }
 
@@ -516,7 +514,6 @@ impl CheckpointingTracer {
             .mmu
             .memory
             .memory
-            .data
             .is_saving_checkpoints());
 
         // Save the processor state at the start of the current chunk
@@ -538,7 +535,6 @@ impl CheckpointingTracer {
             .get_mut_mmu()
             .memory
             .memory
-            .data
             .save_checkpoint();
         new_processor_state.set_memory_state(data, self.trace_steps_since_last_checkpoint);
         self.trace_steps_since_last_checkpoint = 0;
@@ -775,7 +771,8 @@ mod test {
         }
     }
 
-    fn test_trace_length<D: MemoryData>() {
+    #[test]
+    fn test_trace_length() {
         let elf = ELF_CONTENTS.to_vec();
         let memory_config = MemoryConfig {
             program_size: Some(elf.len() as u64),
@@ -783,7 +780,7 @@ mod test {
         };
 
         let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
-        let mut emulator: GeneralizedEmulator<D> =
+        let mut emulator: Emulator =
             setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
@@ -796,15 +793,5 @@ mod test {
             prev_trace_len = trace.len();
         }
         assert_eq!(execution_trace, trace);
-    }
-
-    #[test]
-    fn test_trace_length_vec_memory() {
-        test_trace_length::<Vec<u64>>();
-    }
-
-    #[test]
-    fn test_trace_length_checkpointing_memory() {
-        test_trace_length::<CheckpointingMemory>();
     }
 }

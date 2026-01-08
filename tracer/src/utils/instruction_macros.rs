@@ -64,9 +64,9 @@ macro_rules! declare_riscv_instr {
                 }
             }
 
-            fn execute<D: $crate::emulator::memory::MemoryData>(
+            fn execute(
                 &self,
-                cpu: &mut $crate::emulator::cpu::GeneralizedCpu<D>,
+                cpu: &mut $crate::emulator::cpu::Cpu,
                 ram: &mut Self::RAMAccess,
             ) {
                 self.exec(cpu, ram)

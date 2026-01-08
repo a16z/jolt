@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::{
-        cpu::{GeneralizedCpu, PrivilegeMode, Trap, TrapType},
-        memory::MemoryData,
-    },
+    emulator::cpu::{Cpu, PrivilegeMode, Trap, TrapType},
 };
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
@@ -24,9 +21,9 @@ declare_riscv_instr!(
 impl ECALL {
     /// **No architectural effects**
     /// Signals to emulator to record cycles through early exit of trap
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <ECALL as RISCVInstruction>::RAMAccess,
     ) {
         let trap_type = match cpu.privilege_mode {

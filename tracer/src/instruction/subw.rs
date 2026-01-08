@@ -1,5 +1,4 @@
-use crate::emulator::cpu::GeneralizedCpu;
-use crate::emulator::memory::MemoryData;
+use crate::emulator::cpu::Cpu;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -20,9 +19,9 @@ declare_riscv_instr!(
 );
 
 impl SUBW {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <SUBW as RISCVInstruction>::RAMAccess,
     ) {
         // ADDW and SUBW are RV64I-only instructions that are defined analogously to ADD and SUB
@@ -36,7 +35,7 @@ impl SUBW {
 }
 
 impl RISCVTrace for SUBW {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

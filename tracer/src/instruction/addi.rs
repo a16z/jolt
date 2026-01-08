@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
 };
 
 use super::{
@@ -19,9 +19,9 @@ declare_riscv_instr!(
 );
 
 impl ADDI {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <ADDI as RISCVInstruction>::RAMAccess,
     ) {
         cpu.x[self.operands.rd as usize] = cpu.sign_extend(

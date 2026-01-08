@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
 };
 
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
@@ -16,9 +16,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertEQ {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <VirtualAssertEQ as RISCVInstruction>::RAMAccess,
     ) {
         assert_eq!(

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
     instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI,
 };
 
@@ -17,9 +17,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualSRLI {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <VirtualSRLI as RISCVInstruction>::RAMAccess,
     ) {
         let shift = self.operands.imm.trailing_zeros();

@@ -15,9 +15,9 @@ macro_rules! declare_xorrot {
         );
 
         impl $name {
-            fn exec<D: $crate::emulator::memory::MemoryData>(
+            fn exec(
                 &self,
-                cpu: &mut $crate::emulator::cpu::GeneralizedCpu<D>,
+                cpu: &mut $crate::emulator::cpu::Cpu,
                 _: &mut <$name as RISCVInstruction>::RAMAccess,
             ) {
                 let xor_result = cpu.x[self.operands.rs1 as usize] ^ cpu.x[self.operands.rs2 as usize];

@@ -1,5 +1,5 @@
 use crate::{
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
     utils::inline_helpers::InstrAssembler,
 };
 use serde::{Deserialize, Serialize};
@@ -29,9 +29,9 @@ declare_riscv_instr!(
 );
 
 impl LBU {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         ram_access: &mut <LBU as RISCVInstruction>::RAMAccess,
     ) {
         cpu.x[self.operands.rd as usize] = match cpu
@@ -48,7 +48,7 @@ impl LBU {
 }
 
 impl RISCVTrace for LBU {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

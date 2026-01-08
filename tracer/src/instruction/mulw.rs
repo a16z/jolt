@@ -1,6 +1,6 @@
-use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{emulator::memory::MemoryData, utils::inline_helpers::InstrAssembler};
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -19,9 +19,9 @@ declare_riscv_instr!(
 );
 
 impl MULW {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <MULW as RISCVInstruction>::RAMAccess,
     ) {
         // MULW is an RV64 instruction that multiplies the lower 32 bits of the source registers,
@@ -34,7 +34,7 @@ impl MULW {
 }
 
 impl RISCVTrace for MULW {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
         let mut trace = trace;

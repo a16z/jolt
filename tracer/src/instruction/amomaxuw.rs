@@ -7,8 +7,7 @@ use super::sltu::SLTU;
 use super::virtual_zero_extend_word::VirtualZeroExtendWord;
 use super::xori::XORI;
 use super::Instruction;
-use crate::emulator::cpu::GeneralizedCpu;
-use crate::emulator::memory::MemoryData;
+use crate::emulator::cpu::Cpu;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -24,9 +23,9 @@ declare_riscv_instr!(
 );
 
 impl AMOMAXUW {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <AMOMAXUW as RISCVInstruction>::RAMAccess,
     ) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
@@ -55,7 +54,7 @@ impl AMOMAXUW {
 }
 
 impl RISCVTrace for AMOMAXUW {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

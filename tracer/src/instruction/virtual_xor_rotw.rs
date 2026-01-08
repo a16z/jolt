@@ -15,9 +15,9 @@ macro_rules! declare_xorrotw {
         );
 
         impl $name {
-            fn exec<D: $crate::emulator::memory::MemoryData>(
+            fn exec(
                 &self,
-                cpu: &mut $crate::emulator::cpu::GeneralizedCpu<D>,
+                cpu: &mut $crate::emulator::cpu::Cpu,
                 _: &mut <$name as RISCVInstruction>::RAMAccess,
             ) {
                 match cpu.xlen {

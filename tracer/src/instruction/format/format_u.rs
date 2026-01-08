@@ -1,4 +1,4 @@
-use crate::emulator::cpu::GeneralizedCpu;
+use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -48,18 +48,18 @@ impl InstructionFormat for FormatU {
         }
     }
 
-    fn capture_pre_execution_state<D>(
+    fn capture_pre_execution_state(
         &self,
         state: &mut Self::RegisterState,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
     ) {
         state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
-    fn capture_post_execution_state<D>(
+    fn capture_post_execution_state(
         &self,
         state: &mut Self::RegisterState,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
     ) {
         state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }

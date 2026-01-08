@@ -4,7 +4,6 @@ const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_MEMORY_SIZE; // big enough to run L
 
 extern crate fnv;
 
-use crate::emulator::memory::{MemoryData, ReplayableMemory};
 use crate::instruction::Cycle;
 
 #[cfg(feature = "std")]
@@ -28,7 +27,7 @@ pub mod memory;
 pub mod mmu;
 pub mod terminal;
 
-use self::cpu::{GeneralizedCpu, Xlen};
+use self::cpu::{Cpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
@@ -50,11 +49,11 @@ use std::path::Path;
 /// emulator.run();
 /// ```
 #[derive(Clone, Debug)]
-pub struct GeneralizedEmulator<D> {
+pub struct Emulator {
     /// addr2line instance for symbol lookups
     pub elf_path: Option<std::path::PathBuf>,
 
-    cpu: GeneralizedCpu<D>,
+    cpu: Cpu,
 
     /// Stores mapping from symbol to virtual address
     symbol_map: FnvHashMap<String, u64>,
@@ -78,17 +77,15 @@ pub struct GeneralizedEmulator<D> {
     pub end_signature_addr: u64,
 }
 
-pub type Emulator = GeneralizedEmulator<Vec<u64>>;
-
 // type alias EmulatorState to Emulator for now
-pub type EmulatorState = GeneralizedEmulator<Vec<u64>>;
+pub type EmulatorState = Emulator;
 
 // Create a new Emulator from a saved state.
 pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
     state
 }
 
-impl<D: MemoryData> GeneralizedEmulator<D> {
+impl Emulator {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
     /// is internally used for transferring input/output data to/from `Emulator`.
     ///
@@ -96,7 +93,7 @@ impl<D: MemoryData> GeneralizedEmulator<D> {
     /// * `terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
         Self {
-            cpu: GeneralizedCpu::new(terminal),
+            cpu: Cpu::new(terminal),
 
             symbol_map: FnvHashMap::default(),
             elf_path: None,
@@ -264,12 +261,12 @@ impl<D: MemoryData> GeneralizedEmulator<D> {
     }
 
     /// Returns immutable reference to `self.cpu`.
-    pub fn get_cpu(&self) -> &GeneralizedCpu<D> {
+    pub fn get_cpu(&self) -> &Cpu {
         &self.cpu
     }
 
     /// Returns mutable reference to `self.cpu`.
-    pub fn get_mut_cpu(&mut self) -> &mut GeneralizedCpu<D> {
+    pub fn get_mut_cpu(&mut self) -> &mut Cpu {
         &mut self.cpu
     }
 
@@ -332,9 +329,9 @@ impl<D: MemoryData> GeneralizedEmulator<D> {
     }
 }
 
-impl<D: MemoryData> GeneralizedEmulator<D> {
-    pub fn save_state_with_empty_memory(&self) -> GeneralizedEmulator<ReplayableMemory> {
-        GeneralizedEmulator::<ReplayableMemory> {
+impl Emulator {
+    pub fn save_state_with_empty_memory(&self) -> Emulator {
+        Emulator {
             elf_path: self.elf_path.clone(),
             cpu: self.cpu.save_state_with_empty_memory(),
             symbol_map: self.symbol_map.clone(),

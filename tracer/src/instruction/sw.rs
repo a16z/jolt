@@ -2,10 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::{
-        cpu::{GeneralizedCpu, Xlen},
-        memory::MemoryData,
-    },
+    emulator::cpu::{Cpu, Xlen},
     instruction::{ori::ORI, srli::SRLI},
     utils::inline_helpers::InstrAssembler,
 };
@@ -35,9 +32,9 @@ declare_riscv_instr!(
 );
 
 impl SW {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         ram_access: &mut <SW as RISCVInstruction>::RAMAccess,
     ) {
         *ram_access = cpu
@@ -52,7 +49,7 @@ impl SW {
 }
 
 impl RISCVTrace for SW {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {

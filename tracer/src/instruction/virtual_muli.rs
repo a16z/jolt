@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::{cpu::GeneralizedCpu, memory::MemoryData},
+    emulator::cpu::Cpu,
     instruction::{format::format_i::FormatI, RISCVInstruction, RISCVTrace},
 };
 
@@ -15,9 +15,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualMULI {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <VirtualMULI as RISCVInstruction>::RAMAccess,
     ) {
         cpu.x[self.operands.rd as usize] = cpu

@@ -2,7 +2,7 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
-use crate::emulator::memory::{MemoryBackend, MemoryData, ReplayableMemory};
+use crate::emulator::memory::Memory;
 use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
@@ -16,13 +16,13 @@ use super::terminal::Terminal;
 /// It may also be said Bus.
 /// @TODO: Memory protection is not implemented yet. We should support.
 #[derive(Clone, Debug)]
-pub struct Mmu<D> {
+pub struct Mmu {
     clock: u64,
     xlen: Xlen,
     ppn: u64,
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,
-    pub memory: MemoryWrapper<D>,
+    pub memory: MemoryWrapper,
 
     pub jolt_device: Option<JoltDevice>,
 
@@ -54,7 +54,7 @@ fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
     }
 }
 
-impl<D: MemoryData> Mmu<D> {
+impl Mmu {
     /// Creates a new `Mmu`.
     ///
     /// # Arguments
@@ -1089,7 +1089,7 @@ impl<D: MemoryData> Mmu<D> {
         Ok(p_address)
     }
 
-    pub fn take_as_vec_memory_mmu(&mut self) -> Mmu<Vec<u64>> {
+    pub fn take_as_vec_memory_mmu(&mut self) -> Mmu {
         Mmu {
             clock: self.clock,
             xlen: self.xlen,
@@ -1103,18 +1103,16 @@ impl<D: MemoryData> Mmu<D> {
     }
 }
 
-impl<D: MemoryData> Mmu<D> {
-    pub fn save_state_with_empty_memory(&self) -> Mmu<ReplayableMemory> {
-        Mmu::<ReplayableMemory> {
+impl Mmu {
+    pub fn save_state_with_empty_memory(&self) -> Mmu {
+        Mmu {
             clock: self.clock,
             xlen: self.xlen,
             ppn: self.ppn,
             addressing_mode: self.addressing_mode,
             privilege_mode: self.privilege_mode,
             memory: MemoryWrapper {
-                memory: MemoryBackend {
-                    data: ReplayableMemory::empty(),
-                },
+                memory: Memory::empty(),
             },
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
@@ -1125,14 +1123,14 @@ impl<D: MemoryData> Mmu<D> {
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
 #[derive(Clone, Debug)]
-pub struct MemoryWrapper<D> {
-    pub memory: MemoryBackend<D>,
+pub struct MemoryWrapper {
+    pub memory: Memory,
 }
 
-impl<D: MemoryData> MemoryWrapper<D> {
+impl MemoryWrapper {
     fn new() -> Self {
         MemoryWrapper {
-            memory: MemoryBackend::empty(),
+            memory: Memory::empty(),
         }
     }
 
@@ -1216,7 +1214,7 @@ impl<D: MemoryData> MemoryWrapper<D> {
         self.memory.validate_address(address - DRAM_BASE)
     }
 
-    pub fn take_as_vec_memory_wrapper(&mut self) -> MemoryWrapper<Vec<u64>> {
+    pub fn take_as_vec_memory_wrapper(&mut self) -> MemoryWrapper {
         MemoryWrapper {
             memory: self.memory.take_as_vec_memory_backend(),
         }
@@ -1230,7 +1228,7 @@ mod test_mmu {
     use common::constants::DEFAULT_MEMORY_SIZE;
     use common::jolt_device::MemoryConfig;
 
-    fn setup_mmu() -> Mmu<Vec<u64>> {
+    fn setup_mmu() -> Mmu {
         let terminal = Box::new(DummyTerminal::default());
         let mut mmu = Mmu::new(Xlen::Bit64, terminal);
         let memory_config = MemoryConfig {

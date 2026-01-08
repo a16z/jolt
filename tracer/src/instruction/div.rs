@@ -1,5 +1,4 @@
-use crate::emulator::cpu::GeneralizedCpu;
-use crate::emulator::memory::MemoryData;
+use crate::emulator::cpu::Cpu;
 use crate::instruction::addi::ADDI;
 use crate::instruction::sub::SUB;
 use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
@@ -26,9 +25,9 @@ declare_riscv_instr!(
 );
 
 impl DIV {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <DIV as RISCVInstruction>::RAMAccess,
     ) {
         let dividend = cpu.x[self.operands.rs1 as usize];
@@ -44,7 +43,7 @@ impl DIV {
 }
 
 impl RISCVTrace for DIV {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // RISCV spec: For REM, the sign of a nonzero result equals the sign of the dividend.
         // DIV operands
         let x = cpu.x[self.operands.rs1 as usize];

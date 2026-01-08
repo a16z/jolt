@@ -1,5 +1,4 @@
-use crate::emulator::cpu::GeneralizedCpu;
-use crate::emulator::memory::MemoryData;
+use crate::emulator::cpu::Cpu;
 use crate::instruction::ld::LD;
 use crate::instruction::sd::SD;
 use crate::instruction::Instruction;
@@ -20,9 +19,9 @@ declare_riscv_instr!(
 );
 
 impl AMOSWAPD {
-    fn exec<D: MemoryData>(
+    fn exec(
         &self,
-        cpu: &mut GeneralizedCpu<D>,
+        cpu: &mut Cpu,
         _: &mut <AMOSWAPD as RISCVInstruction>::RAMAccess,
     ) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
@@ -46,7 +45,7 @@ impl AMOSWAPD {
 }
 
 impl RISCVTrace for AMOSWAPD {
-    fn trace<D: MemoryData>(&self, cpu: &mut GeneralizedCpu<D>, trace: Option<&mut Vec<Cycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
