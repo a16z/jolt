@@ -54,11 +54,11 @@ impl<F: JoltField> Default for OneHotPolynomial<F> {
 impl<F: JoltField> OneHotPolynomial<F> {
     /// The number of rows in the coefficient matrix used to
     /// commit to this polynomial using Dory.
-    /// For AddressMajor layout, this is always the dimension (square matrix).
-    /// For CycleMajor layout, this is K * T / num_columns.
+    ///
+    /// Note: the Dory matrix may be square or almost-square depending on `log2(K*T)`.
     pub fn num_rows(&self) -> usize {
         match DoryGlobals::get_layout() {
-            DoryLayout::AddressMajor => DoryGlobals::get_dimension(),
+            DoryLayout::AddressMajor => DoryGlobals::get_max_num_rows(),
             DoryLayout::CycleMajor => {
                 let T = self.nonzero_indices.len() as u128;
                 let row_length = DoryGlobals::get_num_columns() as u128;
@@ -157,43 +157,22 @@ impl<F: JoltField> OneHotPolynomial<F> {
         &self,
         bases: &[G::Affine],
     ) -> Vec<G> {
-        let num_rows = DoryGlobals::get_dimension();
-        let row_len = DoryGlobals::get_dimension();
+        let num_rows = DoryGlobals::get_max_num_rows();
+        let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
+
+        debug_assert!(
+            bases.len() >= row_len,
+            "Expected at least row_len bases for Dory row commitments"
+        );
 
         tracing::debug!("Committing to one-hot polynomial (AddressMajor) with {num_rows} rows");
 
-        if T < num_rows {
-            // Edge case where T < dimension; each cycle spans multiple rows
-            let rows_per_cycle = num_rows / T;
-
-            let mut row_commitments = vec![G::zero(); num_rows];
-
-            for (cycle, k) in self.nonzero_indices.iter().enumerate() {
-                if let Some(k) = k {
-                    // In AddressMajor with T < dimension:
-                    // The coefficient at (address=k, cycle=t) goes to:
-                    // row = cycle * rows_per_cycle + k / row_len
-                    // col = k % row_len
-                    let row_index = cycle * rows_per_cycle + (*k as usize) / row_len;
-                    let col_index = (*k as usize) % row_len;
-                    if row_index < num_rows && col_index < bases.len() {
-                        // Each row commitment is just a single basis element
-                        let projective = G::from(bases[col_index]);
-                        row_commitments[row_index] = projective;
-                    }
-                }
-            }
-
-            return row_commitments;
-        }
-
-        // Normal case: T >= dimension
-        let cycles_per_row = T / num_rows;
-
-        // For AddressMajor, each row contains `cycles_per_row` consecutive cycles.
-        // Within each row, we need to collect all the nonzero indices and their column positions.
-        // Column position for cycle t within the row = (t % cycles_per_row) * K + address
+        // Collect indices for each row. Under AddressMajor, the linear coefficient index is:
+        //   idx = cycle * K + address
+        // and the Dory matrix uses row-major storage with row length `row_len`.
+        //
+        // This formulation works for both square and almost-square matrices.
 
         // Safety: This function is only called with G1Affine
         let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
@@ -203,10 +182,12 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
         for (cycle, k) in self.nonzero_indices.iter().enumerate() {
             if let Some(k) = k {
-                let row_index = cycle / cycles_per_row;
-                let col_within_row = (cycle % cycles_per_row) * self.K + (*k as usize);
-                if row_index < num_rows && col_within_row < row_len {
-                    row_indices[row_index].push(col_within_row);
+                let global_index = (cycle * self.K) + (*k as usize);
+                let row_index = global_index / row_len;
+                let col_index = global_index % row_len;
+                if row_index < num_rows {
+                    debug_assert!(cycle < T);
+                    row_indices[row_index].push(col_index);
                 }
             }
         }
@@ -246,6 +227,11 @@ impl<F: JoltField> OneHotPolynomial<F> {
         tracing::debug!("Committing to one-hot polynomial (CycleMajor) with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
+
+        debug_assert!(
+            bases.len() >= row_len,
+            "Expected at least row_len bases for Dory row commitments"
+        );
 
         let rows_per_k = T / row_len;
         if rows_per_k >= rayon::current_num_threads() {
@@ -354,6 +340,16 @@ impl<F: JoltField> OneHotPolynomial<F> {
     where
         U: std::borrow::Borrow<OneHotPolynomial<F>> + Sync,
     {
+        // This batching helper was originally written for CycleMajor and is not currently
+        // performance-critical. For AddressMajor, fall back to per-polynomial commits to
+        // ensure correctness.
+        if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+            return one_hot_polys
+                .par_iter()
+                .map(|poly| poly.borrow().commit_rows(bases))
+                .collect();
+        }
+
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
         let rows_per_k = T / row_len;
@@ -476,62 +472,23 @@ impl<F: JoltField> OneHotPolynomial<F> {
     /// Vector-matrix product for AddressMajor layout.
     fn vector_matrix_product_address_major(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
         let T = DoryGlobals::get_T();
-        let num_columns = DoryGlobals::get_dimension();
-        let num_rows = DoryGlobals::get_dimension();
+        let num_columns = DoryGlobals::get_num_columns();
         debug_assert_eq!(result.len(), num_columns);
 
-        if T < num_rows {
-            // Edge case where T < dimension
-            let rows_per_cycle = num_rows / T;
-
-            for (cycle, k) in self.nonzero_indices.iter().enumerate() {
-                if let Some(k) = k {
-                    let row_index = cycle * rows_per_cycle + (*k as usize) / num_columns;
-                    let col_index = (*k as usize) % num_columns;
-                    if row_index < left_vec.len() && col_index < result.len() {
-                        result[col_index] += coeff * left_vec[row_index];
-                    }
+        // Linear-time VMP. Under AddressMajor, the linear coefficient index is:
+        //   idx = cycle * K + address
+        // and the Dory matrix uses row-major storage with row length `num_columns`.
+        for (cycle, k) in self.nonzero_indices.iter().enumerate() {
+            if let Some(k) = k {
+                let global_index = (cycle * self.K) + (*k as usize);
+                let row_index = global_index / num_columns;
+                let col_index = global_index % num_columns;
+                if row_index < left_vec.len() && col_index < result.len() {
+                    debug_assert!(cycle < T);
+                    result[col_index] += coeff * left_vec[row_index];
                 }
             }
-            return;
         }
-
-        // Normal case: T >= dimension
-        let cycles_per_row = T / num_rows;
-
-        // For AddressMajor layout:
-        // - Each row contains `cycles_per_row` consecutive cycles
-        // - Within each row, column = (cycle % cycles_per_row) * K + address
-        let K = self.K;
-        let nonzero_indices = &self.nonzero_indices;
-        result
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(col_index, dest)| {
-                let mut col_dot_product = F::zero();
-
-                // For this column, determine which cycles and addresses map here
-                // col_index = (cycle_within_row) * K + address
-                // where cycle_within_row = cycle % cycles_per_row
-                let address_in_col = col_index % K;
-                let cycle_offset_in_row = col_index / K;
-
-                if cycle_offset_in_row < cycles_per_row {
-                    // Iterate over all rows
-                    for row in 0..num_rows {
-                        let cycle = row * cycles_per_row + cycle_offset_in_row;
-                        if cycle < T {
-                            if let Some(addr) = nonzero_indices[cycle] {
-                                if addr as usize == address_in_col {
-                                    col_dot_product += left_vec[row];
-                                }
-                            }
-                        }
-                    }
-                }
-
-                *dest += coeff * col_dot_product;
-            });
     }
 
     /// Vector-matrix product for CycleMajor layout (original implementation).

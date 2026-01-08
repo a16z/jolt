@@ -285,16 +285,46 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         let mut row_commitments = vec![G::zero(); num_rows];
 
-        // Compute the row commitments for dense submatrix
-        self.dense_rlc
-            .par_chunks(row_len)
-            .zip(row_commitments.par_iter_mut())
-            .for_each(|(dense_row, commitment)| {
-                let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)
-                        .unwrap();
-                *commitment += msm_result
-            });
+        // Compute the row commitments for the dense submatrix.
+        match DoryGlobals::get_layout() {
+            DoryLayout::CycleMajor => {
+                // CycleMajor: dense coefficients occupy the first `T` entries (address=0 block),
+                // which correspond to the first `T/row_len` rows in row-major order.
+                self.dense_rlc
+                    .par_chunks(row_len)
+                    .zip(row_commitments.par_iter_mut())
+                    .for_each(|(dense_row, commitment)| {
+                        let msm_result: G =
+                            VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)
+                                .unwrap();
+                        *commitment += msm_result
+                    });
+            }
+            DoryLayout::AddressMajor => {
+                // AddressMajor: embed the dense (cycle-only) polynomial into the address=0 column
+                // of each K-wide block (col = cycle_offset * K).
+                let k = DoryGlobals::k_from_matrix_shape();
+                let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+
+                let dense_bases: Vec<G::Affine> = bases
+                    .iter()
+                    .take(row_len)
+                    .step_by(k)
+                    .take(cycles_per_row)
+                    .copied()
+                    .collect();
+
+                self.dense_rlc
+                    .par_chunks(cycles_per_row)
+                    .zip(row_commitments.par_iter_mut())
+                    .for_each(|(dense_row, commitment)| {
+                        let msm_result: G =
+                            VariableBaseMSM::msm_field_elements(&dense_bases[..dense_row.len()], dense_row)
+                                .unwrap();
+                        *commitment += msm_result
+                    });
+            }
+        }
 
         // Compute the row commitments for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
@@ -396,49 +426,34 @@ impl<F: JoltField> RLCPolynomial<F> {
         left_vec: &[F],
         num_columns: usize,
     ) -> Vec<F> {
-        let T = DoryGlobals::get_T();
-        let num_rows = DoryGlobals::get_dimension();
-        let row_len = num_columns;
+        let (num_rows, row_len) = DoryGlobals::matrix_shape();
+        debug_assert_eq!(row_len, num_columns);
 
+        let k = DoryGlobals::k_from_matrix_shape();
+        let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+
+        // Under AddressMajor, embed a cycle-only dense polynomial into the address=0 column
+        // of each K-wide column block:
+        //   col = cycle_offset * K
+        // where cycle_offset = cycle % cycles_per_row.
         let mut result = vec![F::zero(); row_len];
-
-        if T < num_rows {
-            // Edge case where T < dimension
-            let rows_per_cycle = num_rows / T;
-
-            for (j, coeff) in self.dense_rlc.iter().enumerate() {
-                let row_index = j * rows_per_cycle;
-                // k = 0 always in first column for dense scalars
-                if row_index < left_vec.len() {
-                    result[0] += *coeff * left_vec[row_index];
-                }
-            }
-
-            return result;
-        }
-
-        let cycles_per_row = T / num_rows;
-
-        // For AddressMajor dense polynomials:
-        // Each coefficient at index j corresponds to cycle j
-        // Row index = j / cycles_per_row
-        // Column offset within row = j % cycles_per_row
-        // For dense scalars (K=1), column = offset * 1 + 0 = offset
         result
             .par_iter_mut()
+            .step_by(k)
             .enumerate()
-            .for_each(|(col_index, dest)| {
-                // For dense (K=1), col_index directly maps to cycle_offset_in_row
-                if col_index < cycles_per_row {
-                    *dest = self
-                        .dense_rlc
-                        .iter()
-                        .skip(col_index)
-                        .step_by(cycles_per_row)
-                        .zip(left_vec.iter())
-                        .map(|(&a, &b)| -> F { a * b })
-                        .sum::<F>();
+            .for_each(|(cycle_offset, dest)| {
+                // cycle_offset ranges over [0, cycles_per_row)
+                if cycle_offset >= cycles_per_row {
+                    return;
                 }
+                let mut sum = F::zero();
+                for row_idx in 0..num_rows.min(left_vec.len()) {
+                    let cycle = row_idx * cycles_per_row + cycle_offset;
+                    if cycle < self.dense_rlc.len() {
+                        sum += self.dense_rlc[cycle] * left_vec[row_idx];
+                    }
+                }
+                *dest = sum;
             });
 
         result
@@ -528,17 +543,35 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
     ) -> Vec<F> {
         let T = DoryGlobals::get_T();
 
-        match &ctx.trace_source {
-            TraceSource::Materialized(trace) => {
-                self.materialized_vector_matrix_product(left_vec, num_columns, trace, &ctx, T)
-            }
-            TraceSource::Lazy(lazy_trace) => self.lazy_vector_matrix_product(
-                left_vec,
-                num_columns,
-                (**lazy_trace).clone(),
-                &ctx,
-                T,
-            ),
+        match DoryGlobals::get_layout() {
+            DoryLayout::CycleMajor => match &ctx.trace_source {
+                TraceSource::Materialized(trace) => {
+                    self.materialized_vector_matrix_product(left_vec, num_columns, trace, &ctx, T)
+                }
+                TraceSource::Lazy(lazy_trace) => self.lazy_vector_matrix_product(
+                    left_vec,
+                    num_columns,
+                    (**lazy_trace).clone(),
+                    &ctx,
+                    T,
+                ),
+            },
+            DoryLayout::AddressMajor => match &ctx.trace_source {
+                TraceSource::Materialized(trace) => self.materialized_vector_matrix_product_address_major(
+                    left_vec,
+                    num_columns,
+                    trace,
+                    &ctx,
+                    T,
+                ),
+                TraceSource::Lazy(lazy_trace) => self.lazy_vector_matrix_product_address_major(
+                    left_vec,
+                    num_columns,
+                    (**lazy_trace).clone(),
+                    &ctx,
+                    T,
+                ),
+            },
         }
     }
 
@@ -615,6 +648,80 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         result
     }
 
+    /// AddressMajor single-pass VMV over materialized trace.
+    ///
+    /// Under AddressMajor, each row corresponds to `cycles_per_row` consecutive cycles and each
+    /// cycle contributes into a K-wide contiguous block of columns for its `cycle_offset`.
+    #[tracing::instrument(skip_all)]
+    fn materialized_vector_matrix_product_address_major(
+        &self,
+        left_vec: &[F],
+        num_columns: usize,
+        trace: &[Cycle],
+        ctx: &StreamingRLCContext<F>,
+        T: usize,
+    ) -> Vec<F> {
+        let (num_rows, row_len) = DoryGlobals::matrix_shape();
+        debug_assert_eq!(row_len, num_columns);
+        let k = DoryGlobals::k_from_matrix_shape();
+        let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+        debug_assert_eq!(num_rows * cycles_per_row, T);
+        debug_assert_eq!(cycles_per_row * k, num_columns);
+        debug_assert_eq!(k, ctx.one_hot_params.k_chunk);
+
+        let trace_len = trace.len();
+        let setup = VmvSetupAddressMajor::new(ctx);
+
+        let num_threads = rayon::current_num_threads();
+        let rows_per_thread = num_rows.div_ceil(num_threads);
+
+        let (dense_accs, onehot_accs) = left_vec[..num_rows]
+            .par_chunks(rows_per_thread)
+            .enumerate()
+            .map(|(chunk_idx, row_weights)| {
+                let (mut dense_accs, mut onehot_accs) =
+                    VmvSetupAddressMajor::<F>::create_accumulators(cycles_per_row, num_columns);
+
+                let row_start = chunk_idx * rows_per_thread;
+                for (local_idx, &row_weight) in row_weights.iter().enumerate() {
+                    let row_idx = row_start + local_idx;
+                    let cycle_start = row_idx * cycles_per_row;
+
+                    // Split into valid trace range vs padding range.
+                    let valid_end = std::cmp::min(cycle_start + cycles_per_row, trace_len);
+                    let row_cycles = if cycle_start < valid_end {
+                        &trace[cycle_start..valid_end]
+                    } else {
+                        &trace[0..0] // Fully padded row
+                    };
+
+                    // Process cycles within the row.
+                    for (cycle_offset, cycle) in row_cycles.iter().enumerate() {
+                        setup.process_cycle_address_major(
+                            cycle,
+                            row_weight,
+                            cycle_offset,
+                            &mut dense_accs[cycle_offset],
+                            &mut onehot_accs,
+                        );
+                    }
+                }
+
+                (dense_accs, onehot_accs)
+            })
+            .reduce(
+                || VmvSetupAddressMajor::<F>::create_accumulators(cycles_per_row, num_columns),
+                VmvSetupAddressMajor::<F>::merge_accumulators,
+            );
+
+        let mut result =
+            VmvSetupAddressMajor::<F>::finalize(dense_accs, onehot_accs, cycles_per_row, k, num_columns);
+
+        // Advice contribution is small and independent of the trace; add it after the streamed pass.
+        Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
+        result
+    }
+
     /// Lazy VMV over lazy trace iterator (experimental, re-runs tracer).
     #[tracing::instrument(skip_all)]
     fn lazy_vector_matrix_product(
@@ -668,6 +775,58 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
         result
     }
+
+    /// AddressMajor lazy VMV over lazy trace iterator (experimental, re-runs tracer).
+    #[tracing::instrument(skip_all)]
+    fn lazy_vector_matrix_product_address_major(
+        &self,
+        left_vec: &[F],
+        num_columns: usize,
+        lazy_trace: LazyTraceIterator,
+        ctx: &StreamingRLCContext<F>,
+        T: usize,
+    ) -> Vec<F> {
+        let (num_rows, row_len) = DoryGlobals::matrix_shape();
+        debug_assert_eq!(row_len, num_columns);
+        let k = DoryGlobals::k_from_matrix_shape();
+        let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+        debug_assert_eq!(num_rows * cycles_per_row, T);
+        debug_assert_eq!(cycles_per_row * k, num_columns);
+        debug_assert_eq!(k, ctx.one_hot_params.k_chunk);
+
+        let setup = VmvSetupAddressMajor::new(ctx);
+
+        let (dense_accs, onehot_accs) = lazy_trace
+            .pad_using(T, |_| Cycle::NoOp)
+            .iter_chunks(cycles_per_row)
+            .enumerate()
+            .par_bridge()
+            .fold(
+                || VmvSetupAddressMajor::<F>::create_accumulators(cycles_per_row, num_columns),
+                |(mut dense_accs, mut onehot_accs), (row_idx, chunk)| {
+                    let row_weight = left_vec[row_idx];
+                    for (cycle_offset, cycle) in chunk.iter().enumerate() {
+                        setup.process_cycle_address_major(
+                            cycle,
+                            row_weight,
+                            cycle_offset,
+                            &mut dense_accs[cycle_offset],
+                            &mut onehot_accs,
+                        );
+                    }
+                    (dense_accs, onehot_accs)
+                },
+            )
+            .reduce(
+                || VmvSetupAddressMajor::<F>::create_accumulators(cycles_per_row, num_columns),
+                VmvSetupAddressMajor::<F>::merge_accumulators,
+            );
+
+        let mut result =
+            VmvSetupAddressMajor::<F>::finalize(dense_accs, onehot_accs, cycles_per_row, k, num_columns);
+        Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
+        result
+    }
 }
 
 // ============================================================================
@@ -683,6 +842,182 @@ struct FoldedOneHotTables<F: JoltField> {
     bytecode: Vec<Vec<F>>,
     /// Tables for RamRa polynomials, indexed by [poly_idx][k]
     ram: Vec<Vec<F>>,
+}
+
+/// Coefficients (RLC scalars) for OneHot polynomials, grouped by polynomial family.
+///
+/// Unlike `FoldedOneHotTables`, these are *not* pre-multiplied by any left-vector factors.
+/// They are used for the AddressMajor streaming VMV path, where address bits live in columns.
+struct OneHotCoeffTables<F: JoltField> {
+    instruction: Vec<F>,
+    bytecode: Vec<F>,
+    ram: Vec<F>,
+}
+
+/// Streaming VMV setup for AddressMajor.
+struct VmvSetupAddressMajor<'a, F: JoltField> {
+    rd_inc_coeff: F,
+    ram_inc_coeff: F,
+    onehot_coeffs: OneHotCoeffTables<F>,
+    bytecode: &'a BytecodePreprocessing,
+    memory_layout: &'a MemoryLayout,
+    one_hot_params: &'a OneHotParams,
+}
+
+impl<'a, F: JoltField> VmvSetupAddressMajor<'a, F> {
+    fn new(ctx: &'a StreamingRLCContext<F>) -> Self {
+        let one_hot_params = &ctx.one_hot_params;
+
+        // Extract dense coefficients
+        let mut rd_inc_coeff = F::zero();
+        let mut ram_inc_coeff = F::zero();
+        for (poly_id, coeff) in ctx.dense_polys.iter() {
+            match poly_id {
+                CommittedPolynomial::RdInc => rd_inc_coeff = *coeff,
+                CommittedPolynomial::RamInc => ram_inc_coeff = *coeff,
+                _ => unreachable!("one-hot polynomial found in dense_polys"),
+            }
+        }
+
+        // Build one-hot coefficient vectors by family
+        let mut instruction: Vec<F> = unsafe_allocate_zero_vec(one_hot_params.instruction_d);
+        let mut bytecode: Vec<F> = unsafe_allocate_zero_vec(one_hot_params.bytecode_d);
+        let mut ram: Vec<F> = unsafe_allocate_zero_vec(one_hot_params.ram_d);
+
+        for (poly_id, coeff) in ctx.onehot_polys.iter() {
+            if coeff.is_zero() {
+                continue;
+            }
+            match poly_id {
+                CommittedPolynomial::InstructionRa(idx) => instruction[*idx] = *coeff,
+                CommittedPolynomial::BytecodeRa(idx) => bytecode[*idx] = *coeff,
+                CommittedPolynomial::RamRa(idx) => ram[*idx] = *coeff,
+                _ => unreachable!("dense polynomial found in onehot_polys"),
+            }
+        }
+
+        Self {
+            rd_inc_coeff,
+            ram_inc_coeff,
+            onehot_coeffs: OneHotCoeffTables {
+                instruction,
+                bytecode,
+                ram,
+            },
+            bytecode: &ctx.preprocessing.bytecode,
+            memory_layout: &ctx.preprocessing.memory_layout,
+            one_hot_params,
+        }
+    }
+
+    #[inline]
+    fn create_accumulators(
+        cycles_per_row: usize,
+        num_columns: usize,
+    ) -> (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>) {
+        (
+            unsafe_allocate_zero_vec(cycles_per_row),
+            unsafe_allocate_zero_vec(num_columns),
+        )
+    }
+
+    #[inline]
+    fn merge_accumulators(
+        (mut dense_a, mut onehot_a): (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>),
+        (dense_b, onehot_b): (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>),
+    ) -> (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>) {
+        for (a, b) in dense_a.iter_mut().zip(dense_b.iter()) {
+            *a = *a + *b;
+        }
+        for (a, b) in onehot_a.iter_mut().zip(onehot_b.iter()) {
+            *a += *b;
+        }
+        (dense_a, onehot_a)
+    }
+
+    #[inline(always)]
+    fn process_cycle_address_major(
+        &self,
+        cycle: &Cycle,
+        row_weight: F,
+        cycle_offset: usize,
+        dense_acc: &mut Acc6S<F>,
+        onehot_accs: &mut [F::Unreduced<9>],
+    ) {
+        // Dense polynomials: accumulate scaled_coeff * (post - pre)
+        let scaled_rd_inc = row_weight * self.rd_inc_coeff;
+        let scaled_ram_inc = row_weight * self.ram_inc_coeff;
+
+        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
+        let diff = s64_from_diff_u64s(post_value, pre_value);
+        dense_acc.fmadd(&scaled_rd_inc, &diff);
+
+        if let tracer::instruction::RAMAccess::Write(write) = cycle.ram_access() {
+            let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
+            dense_acc.fmadd(&scaled_ram_inc, &diff);
+        }
+
+        // One-hot polynomials: emit into the K-wide block for this cycle_offset.
+        let k_chunk = self.one_hot_params.k_chunk;
+        let base_col = cycle_offset * k_chunk;
+
+        // Instruction RA chunks
+        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+        for (i, coeff) in self.onehot_coeffs.instruction.iter().enumerate() {
+            if coeff.is_zero() {
+                continue;
+            }
+            let k = self.one_hot_params.lookup_index_chunk(lookup_index, i) as usize;
+            onehot_accs[base_col + k] += row_weight.mul_unreduced::<9>(*coeff);
+        }
+
+        // Bytecode RA chunks
+        let pc = self.bytecode.get_pc(cycle);
+        for (i, coeff) in self.onehot_coeffs.bytecode.iter().enumerate() {
+            if coeff.is_zero() {
+                continue;
+            }
+            let k = self.one_hot_params.bytecode_pc_chunk(pc, i) as usize;
+            onehot_accs[base_col + k] += row_weight.mul_unreduced::<9>(*coeff);
+        }
+
+        // RAM RA chunks
+        let address = cycle.ram_access().address() as u64;
+        if let Some(remapped) = remap_address(address, self.memory_layout) {
+            for (i, coeff) in self.onehot_coeffs.ram.iter().enumerate() {
+                if coeff.is_zero() {
+                    continue;
+                }
+                let k = self.one_hot_params.ram_address_chunk(remapped, i) as usize;
+                onehot_accs[base_col + k] += row_weight.mul_unreduced::<9>(*coeff);
+            }
+        }
+    }
+
+    fn finalize(
+        dense_accs: Vec<Acc6S<F>>,
+        onehot_accs: Vec<F::Unreduced<9>>,
+        cycles_per_row: usize,
+        k: usize,
+        num_columns: usize,
+    ) -> Vec<F> {
+        (0..num_columns)
+            .into_par_iter()
+            .map(|col_idx| {
+                let dense = if col_idx % k == 0 {
+                    let cycle_offset = col_idx / k;
+                    if cycle_offset < cycles_per_row {
+                        dense_accs[cycle_offset].barrett_reduce()
+                    } else {
+                        F::zero()
+                    }
+                } else {
+                    F::zero()
+                };
+                dense + F::from_montgomery_reduce::<9>(onehot_accs[col_idx])
+            })
+            .collect()
+    }
 }
 
 /// Precomputed VMV setup shared between materialized and lazy paths.

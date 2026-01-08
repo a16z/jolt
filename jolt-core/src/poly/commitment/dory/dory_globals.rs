@@ -14,7 +14,9 @@ use std::sync::{
 ///
 /// For a OneHot polynomial with K addresses and T cycles:
 /// - Total coefficients = K * T
-/// - Matrix dimensions = sqrt(K * T) x sqrt(K * T) (approximately square)
+/// - The Dory matrix shape is chosen by [`DoryGlobals::calculate_dimensions`] as either:
+///   - square: `num_rows == num_cols` when `log2(K*T)` is even, or
+///   - almost-square: `num_cols == 2*num_rows` when `log2(K*T)` is odd.
 ///
 /// The layout determines the mapping from (address, cycle) to matrix (row, col).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -117,38 +119,6 @@ impl DoryLayout {
                 (address, cycle)
             }
         }
-    }
-
-    /// Convert a linear coefficient index to a (row, col) matrix position.
-    ///
-    /// For dense polynomials, this is standard row-major indexing regardless of layout.
-    /// The layout distinction primarily affects OneHot polynomial interpretation.
-    #[inline]
-    pub fn index_to_position(
-        &self,
-        coeff_idx: usize,
-        _num_rows: usize,
-        num_cols: usize,
-    ) -> (usize, usize) {
-        // For dense polynomials, both layouts use row-major matrix storage
-        let row = coeff_idx / num_cols;
-        let col = coeff_idx % num_cols;
-        (row, col)
-    }
-
-    /// Convert a (row, col) matrix position to a linear coefficient index.
-    ///
-    /// For dense polynomials, this is standard row-major indexing regardless of layout.
-    #[inline]
-    pub fn position_to_index(
-        &self,
-        row: usize,
-        col: usize,
-        _num_rows: usize,
-        num_cols: usize,
-    ) -> usize {
-        // For dense polynomials, both layouts use row-major matrix storage
-        row * num_cols + col
     }
 }
 
@@ -284,20 +254,46 @@ impl DoryGlobals {
         CURRENT_LAYOUT.store(layout as u8, Ordering::SeqCst);
     }
 
-    /// Compute coefficient index from row and column using the current layout
+    /// Returns the configured Dory matrix shape `(num_rows, num_cols)` for the current context.
     #[inline]
-    pub fn coeff_index(row: usize, col: usize) -> usize {
-        let num_rows = Self::get_max_num_rows();
-        let num_cols = Self::get_num_columns();
-        Self::get_layout().position_to_index(row, col, num_rows, num_cols)
+    pub fn matrix_shape() -> (usize, usize) {
+        (Self::get_max_num_rows(), Self::get_num_columns())
     }
 
-    /// Compute row and column from coefficient index using the current layout
+    /// Returns the "K" used to initialize the *main* Dory matrix for OneHot polynomials.
+    ///
+    /// This is derived from the identity:
+    /// `K * T == num_rows * num_cols`  (all values are powers of two in our usage).
+    ///
+    /// Note: this is the maximum address-space size configured for the current context, and may
+    /// be larger than a particular OneHot polynomial's `K` if that polynomial is more sparse.
     #[inline]
-    pub fn row_col_from_index(coeff_idx: usize) -> (usize, usize) {
-        let num_rows = Self::get_max_num_rows();
-        let num_cols = Self::get_num_columns();
-        Self::get_layout().index_to_position(coeff_idx, num_rows, num_cols)
+    pub fn k_from_matrix_shape() -> usize {
+        let (num_rows, num_cols) = Self::matrix_shape();
+        let t = Self::get_T();
+        debug_assert_eq!(
+            (num_rows * num_cols) % t,
+            0,
+            "Invalid DoryGlobals: num_rows*num_cols must be divisible by T"
+        );
+        (num_rows * num_cols) / t
+    }
+
+    /// For `AddressMajor`, each Dory matrix row corresponds to this many cycles.
+    ///
+    /// Equivalent to `T / num_rows` and to `num_cols / K`.
+    #[inline]
+    pub fn address_major_cycles_per_row() -> usize {
+        let (num_rows, num_cols) = Self::matrix_shape();
+        let k = Self::k_from_matrix_shape();
+        debug_assert!(k > 0);
+        debug_assert_eq!(num_cols % k, 0, "Expected num_cols to be divisible by K");
+        debug_assert_eq!(
+            Self::get_T() % num_rows,
+            0,
+            "Expected T to be divisible by num_rows"
+        );
+        num_cols / k
     }
 
     fn set_max_num_rows_for_context(max_num_rows: usize, context: DoryContext) {
@@ -366,27 +362,8 @@ impl DoryGlobals {
         }
     }
 
-    /// Get the matrix dimension for AddressMajor layout.
-    /// For AddressMajor, the matrix is always square with dimension = sqrt(K*T).next_power_of_two()
-    /// This is equivalent to get_num_columns() since we compute square matrices.
-    #[inline]
-    pub fn get_dimension() -> usize {
-        Self::get_num_columns()
-    }
-
-    /// Get the number of cycles per row for the current layout.
-    /// - CycleMajor: cycles_per_row = 1 (each cell is one cycle)
-    /// - AddressMajor: cycles_per_row = T / dimension
-    #[inline]
-    pub fn get_cycles_per_row() -> usize {
-        let T = Self::get_T();
-        let dimension = Self::get_dimension();
-        if T >= dimension {
-            T / dimension
-        } else {
-            1
-        }
-    }
+    // NOTE: do not add layout-specific helpers here that assume a square matrix; the
+    // `calculate_dimensions` policy may produce an almost-square matrix when `log2(K*T)` is odd.
 
     fn set_T_for_context(t: usize, context: DoryContext) {
         #[allow(static_mut_refs)]
