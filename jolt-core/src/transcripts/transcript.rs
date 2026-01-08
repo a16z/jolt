@@ -144,4 +144,6 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge;
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge>;
     fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F>;
+    /// Debug method to print current transcript state
+    fn debug_state(&self, label: &str);
 }

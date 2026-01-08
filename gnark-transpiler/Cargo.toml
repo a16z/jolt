@@ -1,0 +1,28 @@
+[package]
+name = "gnark-transpiler"
+version = "0.1.0"
+edition = "2021"
+description = "Transpiles Jolt's Stage 1 verifier into Gnark circuits for Groth16 proving"
+
+[dependencies]
+ark-std.workspace = true
+ark-bn254.workspace = true
+ark-serialize.workspace = true
+ark-ff.workspace = true
+ark-ec.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+jolt-core = { path = "../jolt-core", features = ["transcript-poseidon"] }
+zklean-extractor = { path = "../zklean-extractor" }
+common = { path = "../common" }
+light-poseidon = "0.4.0"
+num-bigint = "0.4"
+
+[[bin]]
+name = "gnark-transpiler"
+path = "src/main.rs"
+
+[[bin]]
+name = "debug_transcript_full"
+path = "src/bin/debug_transcript_full.rs"
