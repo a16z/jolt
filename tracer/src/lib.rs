@@ -29,7 +29,7 @@ pub use instruction::inline::{list_registered_inlines, register_inline};
 
 use crate::{
     emulator::{
-        memory::Memory,
+        memory::{Memory, MemoryData},
         Emulator,
     },
     instruction::uncompress_instruction,
@@ -368,13 +368,14 @@ impl Checkpoint {
         }
     }
 
-    pub(crate) fn set_memory_state(&mut self, memory: Memory, cycles_remaining: usize) {
+    pub(crate) fn set_memory_state(&mut self, data: MemoryData, cycles_remaining: usize) {
         self.trace_steps_remaining = cycles_remaining;
         self.emulator_state
             .get_mut_cpu()
             .get_mut_mmu()
             .memory
-            .memory = memory;
+            .memory
+            .data= data;
     }
 }
 
@@ -499,6 +500,7 @@ impl CheckpointingTracer {
             .get_mut_mmu()
             .memory
             .memory
+            .data
             .start_saving_checkpoints();
     }
 
@@ -514,6 +516,7 @@ impl CheckpointingTracer {
             .mmu
             .memory
             .memory
+            .data
             .is_saving_checkpoints());
 
         // Save the processor state at the start of the current chunk
@@ -535,6 +538,7 @@ impl CheckpointingTracer {
             .get_mut_mmu()
             .memory
             .memory
+            .data
             .save_checkpoint();
         new_processor_state.set_memory_state(data, self.trace_steps_since_last_checkpoint);
         self.trace_steps_since_last_checkpoint = 0;

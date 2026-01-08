@@ -5,29 +5,54 @@ use alloc::{vec, vec::Vec};
 
 #[derive(Clone, Debug)]
 pub enum MemoryData {
-    Full(CheckpointingMemory),
-    Checkpoint(ReplayableMemory),
+    Full {
+        memory: Vec<u64>,
+        // NOTE: This is just the length of `self.memory`, under normal circumstances. We store it
+        // separately because we sometimes call [`std::mem::take`] on `self.memory`, but we still need
+        // the length in that case.
+        num_doublewords: usize,
+        checkpoint: HashMap<usize, u64>,
+        saving_checkpoints: bool,
+    },
+    Checkpoint {
+        memory: HashMap<usize, u64>,
+        num_doublewords: usize,
+    },
 }
 
 impl MemoryData {
     /// Create an empty memory structure with a capacity of 0.
     fn empty() -> Self {
-        Self::Full(CheckpointingMemory::empty())
+        Self::Full {
+            memory: vec![],
+            num_doublewords: 0,
+            checkpoint: HashMap::default(),
+            saving_checkpoints: false,
+        }
     }
 
     /// Set the capacity of the memory structure.
     fn init_with_capacity(&mut self, capacity: u64) {
         match self {
-            Self::Full(inner) => inner.init_with_capacity(capacity),
-            Self::Checkpoint(inner) => inner.init_with_capacity(capacity),
+            Self::Full { memory, num_doublewords, checkpoint, saving_checkpoints } => {
+                *num_doublewords = capacity.div_ceil(8) as usize;
+
+                *memory = vec![0; *num_doublewords];
+                *checkpoint = HashMap::new();
+                *saving_checkpoints = false;
+            }
+            Self::Checkpoint { memory, num_doublewords } => {
+                *num_doublewords = capacity.div_ceil(8) as usize;
+                *memory = HashMap::new();
+            }
         }
     }
 
     /// Get the number of entries in the doubleword-aligned memory storage backend.
     pub fn get_num_doublewords(&self) -> usize {
         match self {
-            Self::Full(inner) => inner.get_num_doublewords(),
-            Self::Checkpoint(inner) => inner.get_num_doublewords(),
+            Self::Full { memory: _, num_doublewords, checkpoint: _, saving_checkpoints: _ } => *num_doublewords,
+            Self::Checkpoint { memory: _, num_doublewords } => *num_doublewords,
         }
     }
 
@@ -37,8 +62,26 @@ impl MemoryData {
     // to do this even when we're not writing.
     fn access_u64(&mut self, index: usize) -> &mut u64 {
         match self {
-            Self::Full(inner) => inner.access_u64(index),
-            Self::Checkpoint(inner) => inner.access_u64(index),
+            Self::Full { memory, num_doublewords: _, checkpoint, saving_checkpoints } => {
+                let res = &mut memory[index];
+                // We store only the initial value of each index accessed (read or written) over the course
+                // of a chunk. If the access is a read, the value is the value read. If the access is a
+                // write, the value is the value stored *prior* to the write. If the index has already been
+                // accessed, we do not modify it.
+                if *saving_checkpoints {
+                    checkpoint.entry(index).or_insert_with(|| *res);
+                }
+
+                res
+            }
+            Self::Checkpoint { memory, num_doublewords } => {
+                if index >= *num_doublewords {
+                    panic!("Out of bounds memory access ({index} >= {num_doublewords})");
+                }
+                // Return the value at the given index if it's been set. If it hasn't been set, the
+                // executing program should never access it within the current chunk, so we error out.
+                memory.get_mut(&index).expect("Invalid memory access for chunk")
+            }
         }
     }
 
@@ -49,8 +92,17 @@ impl MemoryData {
     // can get rid of this function.
     fn take_as_vec_memory(&mut self) -> Self {
         match self {
-            Self::Full(inner) => Self::Full(inner.take_as_vec_memory()),
-            Self::Checkpoint(inner) => Self::Full(inner.take_as_vec_memory()),
+            Self::Full { memory, num_doublewords, checkpoint: _, saving_checkpoints } => {
+                Self::Full {
+                    memory: std::mem::take(memory),
+                    num_doublewords: *num_doublewords,
+                    checkpoint: HashMap::default(),
+                    saving_checkpoints: *saving_checkpoints,
+                }
+            }
+            Self::Checkpoint { memory: _, num_doublewords: _ } => {
+                unimplemented!("Can't take ReplayableMemory as a Vec<u64>");
+            }
         }
     }
 
@@ -58,136 +110,33 @@ impl MemoryData {
     /// checkpointing.
     fn get_u64(&self, index: usize) -> u64 {
         match self {
-            Self::Full(inner) => inner.get_u64(index),
-            Self::Checkpoint(inner) => inner.get_u64(index),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ReplayableMemory {
-    num_doublewords: usize,
-    memory: HashMap<usize, u64>,
-}
-
-impl ReplayableMemory {
-    fn empty() -> Self {
-        Self {
-            num_doublewords: 0,
-            memory: HashMap::default(),
+            Self::Full { memory, num_doublewords: _, checkpoint: _, saving_checkpoints: _ } => memory[index],
+            Self::Checkpoint { memory, num_doublewords: _ } => memory[&index],
         }
     }
 
-    fn init_with_capacity(&mut self, capacity: u64) {
-        *self = Self {
-            num_doublewords: capacity.div_ceil(8) as usize,
-            memory: HashMap::new(),
-        };
-    }
-
-    fn get_num_doublewords(&self) -> usize {
-        self.num_doublewords
-    }
-
-    fn access_u64(&mut self, index: usize) -> &mut u64 {
-        if index >= self.num_doublewords {
-            panic!(
-                "Out of bounds memory access ({index} >= {})",
-                self.num_doublewords
-            );
-        }
-        // Return the value at the given index if it's been set. If it hasn't been set, the
-        // executing program should never access it within the current chunk, so we error out.
-        self.memory
-            .get_mut(&index)
-            .expect("Invalid memory access for chunk")
-    }
-
-    fn get_u64(&self, index: usize) -> u64 {
-        self.memory[&index]
-    }
-
-    fn take_as_vec_memory(&mut self) -> CheckpointingMemory {
-        unimplemented!("Can't take ReplayableMemory as a Vec<u64>");
-    }
-}
-
-/// This memory representation uses a standard `Vec<u64>` representation for execution, but saves
-/// the initial value of each memory access, which can then be retrieved as a [`ReplayableMemory`]
-#[derive(Clone, Debug)]
-pub struct CheckpointingMemory {
-    memory: Vec<u64>,
-    // NOTE: This is just the length of `self.memory`, under normal circumstances. We store it
-    // separately because we sometimes call [`std::mem::take`] on `self.memory`, but we still need
-    // the length in that case.
-    num_doublewords: usize,
-    checkpoint: HashMap<usize, u64>,
-    saving_checkpoints: bool,
-}
-
-impl CheckpointingMemory {
-    fn empty() -> Self {
-        Self {
-            memory: vec![],
-            num_doublewords: 0,
-            checkpoint: HashMap::default(),
-            saving_checkpoints: false,
-        }
-    }
-
-    fn init_with_capacity(&mut self, capacity: u64) {
-        let num_doublewords = capacity.div_ceil(8) as usize;
-
-        self.memory = vec![0; num_doublewords];
-        self.num_doublewords = num_doublewords;
-        self.checkpoint = HashMap::new();
-        self.saving_checkpoints = false;
-    }
-
-    fn get_num_doublewords(&self) -> usize {
-        self.num_doublewords
-    }
-
-    fn access_u64(&mut self, index: usize) -> &mut u64 {
-        let res = &mut self.memory[index];
-        // We store only the initial value of each index accessed (read or written) over the course
-        // of a chunk. If the access is a read, the value is the value read. If the access is a
-        // write, the value is the value stored *prior* to the write. If the index has already been
-        // accessed, we do not modify it.
-        if self.saving_checkpoints {
-            self.checkpoint.entry(index).or_insert_with(|| *res);
-        }
-
-        res
-    }
-
-    fn get_u64(&self, index: usize) -> u64 {
-        self.memory[index]
-    }
-
-    fn take_as_vec_memory(&mut self) -> Self {
-        Self {
-            memory: std::mem::take(&mut self.memory),
-            num_doublewords: self.num_doublewords,
-            checkpoint: HashMap::default(),
-            saving_checkpoints: self.saving_checkpoints,
-        }
-    }
-}
-
-impl CheckpointingMemory {
     /// Retrieve a the memory for the previously executed chunk as a [`ReplayableMemory`]. This
     /// also starts a new chunk by setting `self.checkpoint` to be an empty hashmap.
-    pub fn save_checkpoint(&mut self) -> ReplayableMemory {
-        assert!(self.num_doublewords != 0);
-        ReplayableMemory {
-            num_doublewords: self.num_doublewords,
-            memory: std::mem::take(&mut self.checkpoint),
+    pub fn save_checkpoint(&mut self) -> Self {
+        match self {
+            Self::Full { memory: _, num_doublewords, checkpoint, saving_checkpoints: _ } => {
+                assert!(*num_doublewords != 0);
+                Self::Checkpoint {
+                    num_doublewords: *num_doublewords,
+                    memory: std::mem::take(checkpoint),
+                }
+            }
+            Self::Checkpoint { memory: _, num_doublewords: _ } => {
+                unimplemented!("Can't save checkpoints from within a checkpoint")
+            }
         }
     }
 
     pub fn is_saving_checkpoints(&self) -> bool {
-        self.saving_checkpoints
+        match self {
+            Self::Full { memory: _, num_doublewords: _, checkpoint: _, saving_checkpoints } => *saving_checkpoints,
+            Self::Checkpoint { memory: _, num_doublewords: _ } => false,
+        }
     }
 
     /// Enable checkpoint saving for this memory. If this is true, all memory accesses will have
@@ -195,7 +144,14 @@ impl CheckpointingMemory {
     /// NOTE: This is necessary because memory accesses used to store the bytecode in memory should
     /// *not* have their initial (zero) values saved.
     pub fn start_saving_checkpoints(&mut self) {
-        self.saving_checkpoints = true;
+        match self {
+            Self::Full { memory: _, num_doublewords: _, checkpoint: _, saving_checkpoints } => {
+                *saving_checkpoints = true;
+            }
+            Self::Checkpoint { memory: _, num_doublewords: _ } => {
+                unimplemented!("Can't save checkpoints from within a checkpoint")
+            }
+        }
     }
 }
 
@@ -429,34 +385,5 @@ impl Memory {
             data |= (self.get_byte(address.wrapping_add(i)) as u64) << (i * 8);
         }
         data
-    }
-
-    /// Retrieve a the memory for the previously executed chunk as a [`ReplayableMemory`]. This
-    /// also starts a new chunk by setting `self.checkpoint` to be an empty hashmap.
-    pub fn save_checkpoint(&mut self) -> Memory {
-        match &mut self.data {
-            MemoryData::Full(inner) => Memory {
-                data: MemoryData::Checkpoint(inner.save_checkpoint()),
-            },
-            MemoryData::Checkpoint(_) => unimplemented!("Can't save checkpoints from within a checkpoint"),
-        }
-    }
-
-    pub fn is_saving_checkpoints(&self) -> bool {
-        match &self.data {
-            MemoryData::Full(inner) => inner.saving_checkpoints,
-            MemoryData::Checkpoint(_) => false,
-        }
-    }
-
-    /// Enable checkpoint saving for this memory. If this is true, all memory accesses will have
-    /// their initial values stored to `self.checkpoint`.
-    /// NOTE: This is necessary because memory accesses used to store the bytecode in memory should
-    /// *not* have their initial (zero) values saved.
-    pub fn start_saving_checkpoints(&mut self) {
-        match &mut self.data {
-            MemoryData::Full(inner) => inner.saving_checkpoints = true,
-            MemoryData::Checkpoint(_) => unimplemented!("Can't save checkpoints from within a checkpoint"),
-        }
     }
 }
