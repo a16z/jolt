@@ -530,6 +530,84 @@ The verifier learns **nothing** about the actual computation — only that the c
 
 ---
 
+## Part 7: Jolt-Specific Considerations
+
+### Multi-Stage Sumcheck Architecture
+
+Unlike Spartan2 which has 2 sumcheck phases (outer + inner), Jolt consists of **6 sumcheck stages** with multiple batched instances per stage:
+
+| Stage | Description | Batched Instances |
+|-------|-------------|-------------------|
+| 1 | Spartan Outer (with univariate skip) | 1 |
+| 2 | Product Virtualization + RAM Checking | 4 |
+| 3 | Instruction Constraints (Shift + Encoding) | 2 |
+| 4 | Register Constraints + RAM Value | 4 |
+| 5 | Value + Lookup Table Evaluation | 4 |
+| 6 | One-Hot Encoding + Hamming Properties | 7 |
+
+**Total: 22 batched sumcheck instances across 6 stages**
+
+Additionally, Stage 7 is the polynomial opening proof (handled by ZK-Dory, outside the verifier R1CS).
+
+### Verifier R1CS Structure for Jolt
+
+The verifier R1CS must encode:
+
+1. **Per-Stage Batching Verification**
+   ```
+   For each stage s:
+     - Batching coefficients α₁, ..., αₖ derived from transcript
+     - Combined claim: claim_s = Σᵢ αᵢ · claimᵢ (scaled by 2^(max_rounds - roundsᵢ))
+     - Round consistency: Σᵢ αᵢ · gᵢ(0) + Σᵢ αᵢ · gᵢ(1) = combined_claimed_sum
+   ```
+
+2. **Inter-Stage Challenge Threading**
+   - Stage 1 challenges → Stage 2 inputs
+   - Each stage's final point feeds into next stage's evaluation claims
+   - All stages feed polynomial opening claims into the accumulator
+
+3. **Univariate Skip Verification** (Stages 1-2)
+   - First round uses univariate skip optimization
+   - Circuit verifies the uni-skip proof separately from remaining rounds
+
+### Circuit Size Analysis
+
+```
+Per stage:  O(num_instances × num_rounds × degree) constraints
+Total:      O(22 × log(n) × d) constraints
+
+Where:
+  n = number of RISC-V cycles
+  d = maximum polynomial degree per round (~3 for cubic)
+  log(n) ≈ 20 for typical programs
+```
+
+This is still **O(log n)** but with a constant factor ~10× larger than Spartan2's 2-sumcheck structure.
+
+### Witness Structure
+
+The split-committed R1CS witness contains:
+
+```
+For each stage s ∈ {1..6}:
+  For each round r:
+    - Round polynomial coefficients + randomness
+  For each batched instance i:
+    - Final evaluation claim + randomness
+
+Total witness segments: O(6 × log(n)) coefficient vectors + O(22) evaluation claims
+```
+
+### Commitment Batching
+
+To reduce verifier overhead, round polynomial commitments within a stage can be batched:
+
+1. Prover commits to each round's coefficients: W̄ᵣ = Com(coeffsᵣ, ρᵣ)
+2. At stage end, verifier receives batched commitment verification
+3. BlindFold folding operates on the full witness across all stages
+
+---
+
 ## References
 
 - [Vega: Low-Latency Zero-Knowledge Proofs over Existing Credentials](https://eprint.iacr.org/2024/XXX) - Kaviani, Setty

@@ -580,11 +580,27 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage2_start_flamechart.svg");
         tracing::info!("Stage 2 proving");
-        let (sumcheck_proof, _r_stage2) = BatchedSumcheck::prove(
+
+        // Use ZK sumcheck with Pedersen commitments
+        use crate::curve::{Bn254Curve, Bn254G1};
+        use crate::poly::commitment::pedersen::PedersenGenerators;
+        use ark_bn254::G1Projective;
+        use ark_std::UniformRand;
+
+        let mut rng = rand::thread_rng();
+        let generators: Vec<Bn254G1> = (0..10)
+            .map(|_| Bn254G1(G1Projective::rand(&mut rng)))
+            .collect();
+        let pedersen_gens = PedersenGenerators::<Bn254Curve>::new(generators);
+
+        let (sumcheck_proof, _r_stage2) = BatchedSumcheck::prove_zk::<F, Bn254Curve, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &pedersen_gens,
+            &mut rng,
         );
+
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
         drop_in_background_thread(instances);
