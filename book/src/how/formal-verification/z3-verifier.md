@@ -15,7 +15,7 @@ The crate is organized into two primary verification modules, sharing common uti
 ## 1. Virtual Sequences (`virtual_sequences.rs`)
 
 Jolt handles complex RISC-V instructions (like `DIV`, `REM`) by decomposing them into sequences of simpler Jolt primitives. This module verifies that these sequences are **correct** (match the spec) and **consistent** (deterministic).
-Some Virtual sequences make use of `VirtualAdvice`, which when incorreclty constrained, allow a malicious prover to arbitrarily forge values in destination register for the virtualized instruction.
+Some Virtual sequences make use of `VirtualAdvice`, which when incorrectly constrained, allow a malicious prover to arbitrarily forge values in destination register for the virtualized instruction.
 
 ![Z3 virtual sequence](../../imgs/z3-virtual-sequence.png)
 
