@@ -2132,6 +2132,7 @@ dependencies = [
  "hex-literal",
  "rand 0.8.5",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -2143,6 +2144,7 @@ dependencies = [
  "hex-literal",
  "rand 0.8.5",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -2168,6 +2170,7 @@ dependencies = [
  "hex-literal",
  "num-bigint",
  "num-integer",
+ "serde",
  "tracer",
  "tracing",
 ]

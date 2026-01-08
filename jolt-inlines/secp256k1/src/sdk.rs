@@ -12,6 +12,7 @@ use num_integer::Integer;
 
 extern crate alloc;
 use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 /// panic instruction
 /// spoils the proof
@@ -228,7 +229,7 @@ impl Secp256k1Fr {
     /// performs conversion to montgomery form
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Self {
-        // attempt to create a new Fq element from the array
+        // attempt to create a new Fr element from the array
         let e = Fr::from_bigint(BigInt(*arr));
         // if not valid, panic
         if e.is_none() {
@@ -578,12 +579,12 @@ impl Secp256k1Point {
         unsafe {
             use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_GLVR_ADV_FUNCT3};
             core::arch::asm!(
-                ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
                 opcode = const INLINE_OPCODE,
                 funct3 = const SECP256K1_GLVR_ADV_FUNCT3,
                 funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) out.as_mut_ptr(),
                 rs1 = in(reg) k.e.0.0.as_ptr(),
-                rs2 = in(reg) out.as_mut_ptr(),
                 options(nostack)
             );
         }
@@ -625,7 +626,7 @@ impl Secp256k1Point {
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn decompose_scalar(_k: &Fr) -> [(bool, u128); 2] {
+    pub fn decompose_scalar(_k: &Secp256k1Fr) -> [(bool, u128); 2] {
         panic!("Secp256k1Point::decompose_scalar called on non-RISC-V target without host feature");
     }
     #[cfg(feature = "host")]
@@ -733,20 +734,33 @@ fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum SignatureError {
+    QAtInfinity, // public key is point at infinity
+    ROrSZero,    // one of the signature components is zero
+    RxMismatch,  // computed R.x does not match r
+}
+
 /// verify an ECDSA signature
-/// panics (or spoils the proof) if the signature is invalid
 /// z is the hash of the message being signed
 /// r and s are the signature components
 /// q is the uncompressed public key point
+/// returns Ok(()) if the signature is valid
+/// returns Err(SignatureError) if the signature is invalid
 #[inline(always)]
-pub fn ecdsa_verify(z: Secp256k1Fr, r: Secp256k1Fr, s: Secp256k1Fr, q: Secp256k1Point) {
+pub fn ecdsa_verify_soft_fail(
+    z: Secp256k1Fr,
+    r: Secp256k1Fr,
+    s: Secp256k1Fr,
+    q: Secp256k1Point,
+) -> Result<(), SignatureError> {
     // step 0: check that q is not infinity
     if q.is_infinity() {
-        hcf();
+        return Result::Err(SignatureError::QAtInfinity);
     }
     // step 1: check that r and s are in the correct range
     if r.is_zero() || s.is_zero() {
-        hcf();
+        return Result::Err(SignatureError::ROrSZero);
     }
     // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
     let u1 = z.div(&s);
@@ -770,6 +784,24 @@ pub fn ecdsa_verify(z: Secp256k1Fr, r: Secp256k1Fr, s: Secp256k1Fr, q: Secp256k1
     let r_claim_x_bigint = r_claim.x.e.into_bigint();
     let r_bigint = r.e.into_bigint();
     if r_claim_x_bigint != r_bigint {
-        hcf();
+        return Result::Err(SignatureError::RxMismatch);
+    }
+    // if all checks passed, return Ok(())
+    Result::Ok(())
+}
+
+/// verify an ECDSA signature
+/// z is the hash of the message being signed
+/// r and s are the signature components
+/// q is the uncompressed public key point
+/// if not proving, panics on invalid signature
+/// if proving, spoils the proof on invalid signature
+#[inline(always)]
+pub fn ecdsa_verify_hard_fail(z: Secp256k1Fr, r: Secp256k1Fr, s: Secp256k1Fr, q: Secp256k1Point) {
+    match ecdsa_verify_soft_fail(z, r, s, q) {
+        Ok(()) => {}
+        Err(_) => {
+            hcf();
+        }
     }
 }

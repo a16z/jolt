@@ -20,7 +20,7 @@ use crate::{
 };
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::RwLock;
 
 // Type alias for the inline_sequence functions signature
@@ -28,11 +28,11 @@ pub type InlineSequenceFunction =
     Box<dyn Fn(InstrAssembler, FormatInline) -> Vec<Instruction> + Send + Sync>;
 
 // Type alias for the inline_trace functions signature
-pub type InlineTraceFunction =
-    Box<dyn Fn(InstrAssembler, FormatInline, &mut Cpu, Option<&mut Vec<Cycle>>) + Send + Sync>;
+pub type AdviceFunction =
+    Box<dyn Fn(InstrAssembler, FormatInline, &mut Cpu) -> VecDeque<u64> + Send + Sync>;
 
 // Type alias for value in the registry
-pub type InlineRegistryValue = (String, InlineSequenceFunction, Option<InlineTraceFunction>);
+pub type InlineRegistryValue = (String, InlineSequenceFunction, Option<AdviceFunction>);
 
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
@@ -56,14 +56,14 @@ lazy_static! {
 /// * `name` - Human-readable name for the inline
 /// * `exec_fn` - Function to execute during CPU simulation
 /// * `inline_sequence_fn` - Function to generate virtual instruction sequence
-/// * `custom_inline_trace_fn` - Optional function to generate trace for the inline
+/// * `advice_fn` - Optional function to generate trace for the inline
 pub fn register_inline(
     opcode: u32,
     funct3: u32,
     funct7: u32,
     name: &str,
     inline_sequence_fn: InlineSequenceFunction,
-    custom_inline_trace_fn: Option<InlineTraceFunction>,
+    advice_fn: Option<AdviceFunction>,
 ) -> Result<(), String> {
     if opcode != 0x0B && opcode != 0x2B {
         return Err(format!(
@@ -92,10 +92,7 @@ pub fn register_inline(
         ));
     }
 
-    registry.insert(
-        key,
-        (name.to_string(), inline_sequence_fn, custom_inline_trace_fn),
-    );
+    registry.insert(key, (name.to_string(), inline_sequence_fn, advice_fn));
     Ok(())
 }
 
@@ -206,15 +203,40 @@ impl RISCVTrace for INLINE {
         let key = (self.opcode, self.funct3, self.funct7);
         match INLINE_REGISTRY.read() {
             Ok(registry) => match registry.get(&key) {
-                Some((_name, _virtual_seq_fn, Some(custom_inline_trace_fn))) => {
-                    // if a custom trace function is registered, use it!
+                Some((_name, _, Some(advice_fn))) => {
+                    // if a custom advice function is registered, get advice as a vec
                     let asm = InstrAssembler::new_inline(
                         self.address,
                         self.is_compressed,
                         cpu.xlen,
                         &cpu.vr_allocator,
                     );
-                    custom_inline_trace_fn(asm, self.operands, cpu, trace);
+                    let mut advice = advice_fn(asm, self.operands, cpu);
+                    // then execute the inline sequence, passing in the advice when called for by the instructions
+                    let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+                    let mut trace = trace;
+                    for instr in inline_sequence.iter_mut() {
+                        if let Instruction::VirtualAdvice(va) = instr {
+                            va.advice = match advice.pop_front() {
+                                Some(val) => val,
+                                None => panic!(
+                                    "Inline advice function with
+                                    opcode={:#04x}, funct3={:#03b}, funct7={:#09b}
+                                    did not provide enough advice values",
+                                    self.opcode, self.funct3, self.funct7
+                                ),
+                            };
+                        }
+                        instr.trace(cpu, trace.as_deref_mut());
+                    }
+                    if !advice.is_empty() {
+                        panic!(
+                            "Inline advice function with
+                            opcode={:#04x}, funct3={:#03b}, funct7={:#09b}
+                            provided too many advice values",
+                            self.opcode, self.funct3, self.funct7
+                        );
+                    }
                 }
                 _ => {
                     // default behavior: execute the inline sequence

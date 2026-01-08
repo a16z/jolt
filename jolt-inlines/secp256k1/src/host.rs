@@ -16,30 +16,30 @@ pub fn init_inlines() -> Result<(), String> {
         INLINE_OPCODE,
         SECP256K1_DIVQ_ADV_FUNCT3,
         SECP256K1_FUNCT7,
-        "SECP256K1_DIVQ_ADV_INLINE",
+        SECP256K1_DIVQ_ADV_NAME,
         std::boxed::Box::new(sequence_builder::secp256k1_divq_adv_sequence_builder),
         Some(std::boxed::Box::new(
-            sequence_builder::secp256k1_divq_adv_custom_trace,
+            sequence_builder::secp256k1_divq_adv_advice,
         )),
     )?;
     register_inline(
         INLINE_OPCODE,
         SECP256K1_DIVR_ADV_FUNCT3,
         SECP256K1_FUNCT7,
-        "SECP256K1_DIVR_ADV_INLINE",
+        SECP256K1_DIVR_ADV_NAME,
         std::boxed::Box::new(sequence_builder::secp256k1_divr_adv_sequence_builder),
         Some(std::boxed::Box::new(
-            sequence_builder::secp256k1_divr_adv_custom_trace,
+            sequence_builder::secp256k1_divr_adv_advice,
         )),
     )?;
     register_inline(
         INLINE_OPCODE,
         SECP256K1_GLVR_ADV_FUNCT3,
         SECP256K1_FUNCT7,
-        "SECP256K1_GLVR_ADV_INLINE",
+        SECP256K1_GLVR_ADV_NAME,
         std::boxed::Box::new(sequence_builder::secp256k1_glvr_adv_sequence_builder),
         Some(std::boxed::Box::new(
-            sequence_builder::secp256k1_glvr_adv_custom_trace,
+            sequence_builder::secp256k1_glvr_adv_advice,
         )),
     )?;
     Ok(())
@@ -57,7 +57,7 @@ pub fn store_inlines() -> Result<(), String> {
     let instructions =
         sequence_builder::secp256k1_divq_adv_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
-        "secp256k1_divq_adv_trace.joltinline",
+        "secp256k1_trace.joltinline",
         &inline_info,
         &inputs,
         &instructions,
@@ -75,7 +75,7 @@ pub fn store_inlines() -> Result<(), String> {
     let instructions =
         sequence_builder::secp256k1_divr_adv_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
-        "secp256k1_divr_adv_trace.joltinline",
+        "secp256k1_trace.joltinline",
         &inline_info,
         &inputs,
         &instructions,
@@ -93,7 +93,7 @@ pub fn store_inlines() -> Result<(), String> {
     let instructions =
         sequence_builder::secp256k1_glvr_adv_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
-        "secp256k1_glvr_adv_trace.joltinline",
+        "secp256k1_trace.joltinline",
         &inline_info,
         &inputs,
         &instructions,
@@ -113,7 +113,7 @@ fn auto_register() {
 
     if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
         if let Err(e) = store_inlines() {
-            eprintln!("Failed to store secp256k1 inline traces: {e}");
+            tracing::error!("Failed to store secp256k1 inline traces: {e}");
         }
     }
 }

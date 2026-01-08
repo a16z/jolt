@@ -52,7 +52,7 @@ fn auto_register() {
 
     if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
         if let Err(e) = store_inlines() {
-            eprintln!("Failed to store Keccak256 inline traces: {e}");
+            tracing::error!("Failed to store Keccak256 inline traces: {e}");
         }
     }
 }

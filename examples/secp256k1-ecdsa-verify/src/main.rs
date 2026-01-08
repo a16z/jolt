@@ -56,5 +56,6 @@ pub fn main() {
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_secp256k1_ecdsa_verify(z, r, s, q, output, program_io.panic, proof);
 
+    info!("output: {:?}", output);
     info!("valid: {is_valid}");
 }

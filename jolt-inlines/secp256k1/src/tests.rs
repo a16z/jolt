@@ -187,6 +187,6 @@ mod sequence_tests {
             0xdc7f31262e4ba2b7,
             0xdc7b004d3bb2800d,
         ]);
-        crate::sdk::ecdsa_verify(z, r, s, q);
+        assert!(crate::sdk::ecdsa_verify_soft_fail(z, r, s, q).is_ok());
     }
 }

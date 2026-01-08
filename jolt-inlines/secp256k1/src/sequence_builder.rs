@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256k1::{Fq, Fr};
 use num_bigint::BigInt as NBigInt;
@@ -6,25 +8,29 @@ use num_integer::Integer;
 use tracer::{
     emulator::cpu::Cpu,
     instruction::{
-        format::format_inline::FormatInline, sd::SD, virtual_advice::VirtualAdvice, Cycle,
-        Instruction,
+        format::format_inline::FormatInline, sd::SD, virtual_advice::VirtualAdvice, Instruction,
     },
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
 };
-
-struct Secp256k1DivqAdv {
+struct Secp256k1DivAdv {
     asm: InstrAssembler,
     vr: VirtualRegisterGuard, // only one register needed
     operands: FormatInline,
+    is_base_field: bool, // true if base field (Fq), false if scalar field (Fr)
 }
 
-impl Secp256k1DivqAdv {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
+impl Secp256k1DivAdv {
+    fn new(asm: InstrAssembler, operands: FormatInline, is_base_field: bool) -> Self {
         let vr = asm.allocator.allocate_for_inline();
-        Secp256k1DivqAdv { asm, vr, operands }
+        Secp256k1DivAdv {
+            asm,
+            vr,
+            operands,
+            is_base_field,
+        }
     }
-    // custom trace function
-    fn trace(self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    // Custom advice function
+    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
         // read memory directly to get inputs
         let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
         let a = [
@@ -40,27 +46,26 @@ impl Secp256k1DivqAdv {
             cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
             cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
         ];
-        // compute c = a / b
-        let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
-        let advice = (arr_to_fq(&b)
-            .inverse()
-            .expect("Attempted to invert zero in secp256k1 field")
-            * arr_to_fq(&a))
-        .0
-         .0;
-        // maintain counter for advice words
-        let mut advice_counter = 0;
-        // set up trace
-        let mut trace = trace;
-        let mut inline_sequence = self.inline_sequence();
-        // execute remaining instructions, injecting advice where needed
-        for instr in inline_sequence.iter_mut() {
-            if let Instruction::VirtualAdvice(va) = instr {
-                va.advice = advice[advice_counter];
-                advice_counter += 1;
+        // compute c = a / b and return limbs as VecDeque
+        VecDeque::from(
+            if self.is_base_field {
+                let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
+                (arr_to_fq(&b)
+                    .inverse()
+                    .expect("Attempted to invert zero in secp256k1 base field")
+                    * arr_to_fq(&a))
+                .0
+            } else {
+                let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt(*a));
+                (arr_to_fr(&b)
+                    .inverse()
+                    .expect("Attempted to invert zero in secp256k1 scalar field")
+                    * arr_to_fr(&a))
+                .0
             }
-            instr.trace(cpu, trace.as_deref_mut());
-        }
+            .0
+            .to_vec(),
+        )
     }
     // inline sequence function
     fn inline_sequence(mut self) -> Vec<Instruction> {
@@ -79,101 +84,37 @@ pub fn secp256k1_divq_adv_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1DivqAdv::new(asm, operands);
+    let builder = Secp256k1DivAdv::new(asm, operands, true);
     builder.inline_sequence()
 }
 
 /// Custom trace function for unchecked secp256k1 base field modular division
-pub fn secp256k1_divq_adv_custom_trace(
+pub fn secp256k1_divq_adv_advice(
     asm: InstrAssembler,
     operands: FormatInline,
     cpu: &mut Cpu,
-    trace: Option<&mut Vec<Cycle>>,
-) {
-    let builder = Secp256k1DivqAdv::new(asm, operands);
-    builder.trace(cpu, trace);
+) -> VecDeque<u64> {
+    let builder = Secp256k1DivAdv::new(asm, operands, true);
+    builder.advice(cpu)
 }
 
-struct Secp256k1DivrAdv {
-    asm: InstrAssembler,
-    vr: VirtualRegisterGuard, // only one register needed
-    operands: FormatInline,
-}
-
-impl Secp256k1DivrAdv {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = asm.allocator.allocate_for_inline();
-        Secp256k1DivrAdv { asm, vr, operands }
-    }
-    // custom trace function
-    fn trace(self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // read memory directly to get inputs
-        let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
-        let a = [
-            cpu.mmu.load_doubleword(a_addr).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
-        ];
-        let b_addr = cpu.x[self.operands.rs2 as usize] as u64;
-        let b = [
-            cpu.mmu.load_doubleword(b_addr).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
-        ];
-        // compute c = a / b
-        let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt(*a));
-        let advice = (arr_to_fr(&b)
-            .inverse()
-            .expect("Attempted to invert zero in secp256k1 scalar field")
-            * arr_to_fr(&a))
-        .0
-         .0;
-        // maintain counter for advice words
-        let mut advice_counter = 0;
-        // set up trace
-        let mut trace = trace;
-        let mut inline_sequence = self.inline_sequence();
-        // execute remaining instructions, injecting advice where needed
-        for instr in inline_sequence.iter_mut() {
-            if let Instruction::VirtualAdvice(va) = instr {
-                va.advice = advice[advice_counter];
-                advice_counter += 1;
-            }
-            instr.trace(cpu, trace.as_deref_mut());
-        }
-    }
-    // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
-        for i in 0..4 {
-            self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
-            self.asm
-                .emit_s::<SD>(self.operands.rs3, *self.vr, i as i64 * 8);
-        }
-        drop(self.vr);
-        self.asm.finalize_inline()
-    }
-}
-
-/// Virtual instruction builder for unchecked secp256k1 base field modular division
+/// Virtual instruction builder for unchecked secp256k1 scalar field modular division
 pub fn secp256k1_divr_adv_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1DivrAdv::new(asm, operands);
+    let builder = Secp256k1DivAdv::new(asm, operands, false);
     builder.inline_sequence()
 }
 
-/// Custom trace function for unchecked secp256k1 base field modular division
-pub fn secp256k1_divr_adv_custom_trace(
+/// Custom trace function for unchecked secp256k1 scalar field modular division
+pub fn secp256k1_divr_adv_advice(
     asm: InstrAssembler,
     operands: FormatInline,
     cpu: &mut Cpu,
-    trace: Option<&mut Vec<Cycle>>,
-) {
-    let builder = Secp256k1DivrAdv::new(asm, operands);
-    builder.trace(cpu, trace);
+) -> VecDeque<u64> {
+    let builder = Secp256k1DivAdv::new(asm, operands, false);
+    builder.advice(cpu)
 }
 
 struct Secp256k1GlvrAdv {
@@ -187,9 +128,9 @@ impl Secp256k1GlvrAdv {
         let vr = asm.allocator.allocate_for_inline();
         Secp256k1GlvrAdv { asm, vr, operands }
     }
-    // custom trace function
+    // Custom advice function
     // heavily based on the implementation found in ec/src/scalar_mul/glv.rs in arkworks
-    fn trace(self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
         // read memory directly to get inputs
         let k_addr = cpu.x[self.operands.rs1 as usize] as u64;
         let kr = [
@@ -255,34 +196,22 @@ impl Secp256k1GlvrAdv {
         };
         let (s1, k1_arr) = serialize_k(k1);
         let (s2, k2_arr) = serialize_k(k2);
-        let advice = [s1, k1_arr[0], k1_arr[1], s2, k2_arr[0], k2_arr[1]];
-        // maintain counter for advice words
-        let mut advice_counter = 0;
-        // set up trace
-        let mut trace = trace;
-        let mut inline_sequence = self.inline_sequence();
-        // execute remaining instructions, injecting advice where needed
-        for instr in inline_sequence.iter_mut() {
-            if let Instruction::VirtualAdvice(va) = instr {
-                va.advice = advice[advice_counter];
-                advice_counter += 1;
-            }
-            instr.trace(cpu, trace.as_deref_mut());
-        }
+        let advice = vec![s1, k1_arr[0], k1_arr[1], s2, k2_arr[0], k2_arr[1]];
+        VecDeque::from(advice)
     }
     // inline sequence function
     fn inline_sequence(mut self) -> Vec<Instruction> {
         for i in 0..6 {
             self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
             self.asm
-                .emit_s::<SD>(self.operands.rs2, *self.vr, i as i64 * 8);
+                .emit_s::<SD>(self.operands.rs3, *self.vr, i as i64 * 8);
         }
         drop(self.vr);
         self.asm.finalize_inline()
     }
 }
 
-/// Virtual instruction builder for unchecked secp256k1 base field modular division
+/// Virtual instruction builder for unchecked secp256k1 GLV decomposition
 pub fn secp256k1_glvr_adv_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
@@ -291,13 +220,12 @@ pub fn secp256k1_glvr_adv_sequence_builder(
     builder.inline_sequence()
 }
 
-/// Custom trace function for unchecked secp256k1 base field modular division
-pub fn secp256k1_glvr_adv_custom_trace(
+/// Custom trace function for unchecked secp256k1 GLV decomposition
+pub fn secp256k1_glvr_adv_advice(
     asm: InstrAssembler,
     operands: FormatInline,
     cpu: &mut Cpu,
-    trace: Option<&mut Vec<Cycle>>,
-) {
+) -> VecDeque<u64> {
     let builder = Secp256k1GlvrAdv::new(asm, operands);
-    builder.trace(cpu, trace);
+    builder.advice(cpu)
 }
