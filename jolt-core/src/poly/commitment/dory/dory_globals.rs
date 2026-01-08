@@ -84,7 +84,13 @@ impl DoryLayout {
     /// * `K` - Total number of addresses
     /// * `T` - Total number of cycles
     #[inline]
-    pub fn address_cycle_to_index(&self, address: usize, cycle: usize, K: usize, T: usize) -> usize {
+    pub fn address_cycle_to_index(
+        &self,
+        address: usize,
+        cycle: usize,
+        K: usize,
+        T: usize,
+    ) -> usize {
         match self {
             DoryLayout::CycleMajor => address * T + cycle,
             DoryLayout::AddressMajor => cycle * K + address,
@@ -118,7 +124,12 @@ impl DoryLayout {
     /// For dense polynomials, this is standard row-major indexing regardless of layout.
     /// The layout distinction primarily affects OneHot polynomial interpretation.
     #[inline]
-    pub fn index_to_position(&self, coeff_idx: usize, _num_rows: usize, num_cols: usize) -> (usize, usize) {
+    pub fn index_to_position(
+        &self,
+        coeff_idx: usize,
+        _num_rows: usize,
+        num_cols: usize,
+    ) -> (usize, usize) {
         // For dense polynomials, both layouts use row-major matrix storage
         let row = coeff_idx / num_cols;
         let col = coeff_idx % num_cols;
@@ -129,7 +140,13 @@ impl DoryLayout {
     ///
     /// For dense polynomials, this is standard row-major indexing regardless of layout.
     #[inline]
-    pub fn position_to_index(&self, row: usize, col: usize, _num_rows: usize, num_cols: usize) -> usize {
+    pub fn position_to_index(
+        &self,
+        row: usize,
+        col: usize,
+        _num_rows: usize,
+        num_cols: usize,
+    ) -> usize {
         // For dense polynomials, both layouts use row-major matrix storage
         row * num_cols + col
     }

@@ -654,11 +654,11 @@ mod tests {
         let cycle_major = DoryLayout::CycleMajor;
 
         // Address 0: indices 0-7, Address 1: indices 8-15, etc.
-        assert_eq!(cycle_major.address_cycle_to_index(0, 0, K, T), 0);  // addr 0, cycle 0
-        assert_eq!(cycle_major.address_cycle_to_index(0, 1, K, T), 1);  // addr 0, cycle 1
-        assert_eq!(cycle_major.address_cycle_to_index(0, 7, K, T), 7);  // addr 0, cycle 7
-        assert_eq!(cycle_major.address_cycle_to_index(1, 0, K, T), 8);  // addr 1, cycle 0
-        assert_eq!(cycle_major.address_cycle_to_index(1, 1, K, T), 9);  // addr 1, cycle 1
+        assert_eq!(cycle_major.address_cycle_to_index(0, 0, K, T), 0); // addr 0, cycle 0
+        assert_eq!(cycle_major.address_cycle_to_index(0, 1, K, T), 1); // addr 0, cycle 1
+        assert_eq!(cycle_major.address_cycle_to_index(0, 7, K, T), 7); // addr 0, cycle 7
+        assert_eq!(cycle_major.address_cycle_to_index(1, 0, K, T), 8); // addr 1, cycle 0
+        assert_eq!(cycle_major.address_cycle_to_index(1, 1, K, T), 9); // addr 1, cycle 1
         assert_eq!(cycle_major.address_cycle_to_index(3, 7, K, T), 31); // addr 3, cycle 7
 
         // Test reverse: index_to_address_cycle
@@ -671,11 +671,11 @@ mod tests {
         let addr_major = DoryLayout::AddressMajor;
 
         // Cycle 0: indices 0-3, Cycle 1: indices 4-7, etc.
-        assert_eq!(addr_major.address_cycle_to_index(0, 0, K, T), 0);  // addr 0, cycle 0
-        assert_eq!(addr_major.address_cycle_to_index(1, 0, K, T), 1);  // addr 1, cycle 0
-        assert_eq!(addr_major.address_cycle_to_index(3, 0, K, T), 3);  // addr 3, cycle 0
-        assert_eq!(addr_major.address_cycle_to_index(0, 1, K, T), 4);  // addr 0, cycle 1
-        assert_eq!(addr_major.address_cycle_to_index(1, 1, K, T), 5);  // addr 1, cycle 1
+        assert_eq!(addr_major.address_cycle_to_index(0, 0, K, T), 0); // addr 0, cycle 0
+        assert_eq!(addr_major.address_cycle_to_index(1, 0, K, T), 1); // addr 1, cycle 0
+        assert_eq!(addr_major.address_cycle_to_index(3, 0, K, T), 3); // addr 3, cycle 0
+        assert_eq!(addr_major.address_cycle_to_index(0, 1, K, T), 4); // addr 0, cycle 1
+        assert_eq!(addr_major.address_cycle_to_index(1, 1, K, T), 5); // addr 1, cycle 1
         assert_eq!(addr_major.address_cycle_to_index(3, 7, K, T), 31); // addr 3, cycle 7
 
         // Test reverse: index_to_address_cycle
@@ -757,7 +757,7 @@ mod tests {
     /// Test that the layout enum correctly converts between address/cycle and index.
     #[test]
     fn test_dory_layout_enum_methods() {
-        let K = 8;  // addresses
+        let K = 8; // addresses
         let T = 16; // cycles
 
         let cycle_major = DoryLayout::CycleMajor;
@@ -780,7 +780,13 @@ mod tests {
         assert_ne!(idx_cycle, idx_addr);
 
         // But both can round-trip back to the same (address, cycle)
-        assert_eq!(cycle_major.index_to_address_cycle(idx_cycle, K, T), (addr, cycle));
-        assert_eq!(addr_major.index_to_address_cycle(idx_addr, K, T), (addr, cycle));
+        assert_eq!(
+            cycle_major.index_to_address_cycle(idx_cycle, K, T),
+            (addr, cycle)
+        );
+        assert_eq!(
+            addr_major.index_to_address_cycle(idx_addr, K, T),
+            (addr, cycle)
+        );
     }
 }

@@ -378,7 +378,11 @@ impl<F: JoltField> RLCPolynomial<F> {
     }
 
     /// Vector-matrix product for dense polynomials with AddressMajor layout.
-    fn vector_matrix_product_dense_address_major(&self, left_vec: &[F], num_columns: usize) -> Vec<F> {
+    fn vector_matrix_product_dense_address_major(
+        &self,
+        left_vec: &[F],
+        num_columns: usize,
+    ) -> Vec<F> {
         let T = DoryGlobals::get_T();
         let num_rows = DoryGlobals::get_dimension();
         let row_len = num_columns;
