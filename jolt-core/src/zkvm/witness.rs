@@ -35,6 +35,12 @@ pub enum CommittedPolynomial {
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
     RamRa(usize),
+    /// Trusted advice polynomial - committed before proving, verifier has commitment.
+    /// Length cannot exceed max_trace_length.
+    TrustedAdvice,
+    /// Untrusted advice polynomial - committed during proving, commitment in proof.
+    /// Length cannot exceed max_trace_length.
+    UntrustedAdvice,
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -121,6 +127,9 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+                panic!("Advice polynomials should not use streaming witness generation")
+            }
         }
     }
 
@@ -202,6 +211,9 @@ impl CommittedPolynomial {
                     addresses,
                     one_hot_params.k_chunk,
                 ))
+            }
+            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+                panic!("Advice polynomials should not use generate_witness")
             }
         }
     }

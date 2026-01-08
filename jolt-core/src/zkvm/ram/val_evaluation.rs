@@ -26,6 +26,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
+        claim_reductions::AdviceKind,
         config::OneHotParams,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -54,6 +55,7 @@ use rayon::prelude::*;
 /// Degree bound of the sumcheck round polynomials in [`ValEvaluationSumcheckVerifier`].
 const DEGREE_BOUND: usize = 3;
 
+#[derive(Allocative, Clone)]
 pub struct ValEvaluationSumcheckParams<F: JoltField> {
     /// Initial evaluation to subtract (for RAM).
     pub init_eval: F,
@@ -108,7 +110,8 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
 
         // Calculate untrusted advice contribution
         let untrusted_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_untrusted_advice_opening(SumcheckId::RamValEvaluation),
+            opening_accumulator
+                .get_advice_opening(AdviceKind::Untrusted, SumcheckId::RamValEvaluation),
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -120,7 +123,8 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
 
         // Calculate trusted advice contribution
         let trusted_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_trusted_advice_opening(SumcheckId::RamValEvaluation),
+            opening_accumulator
+                .get_advice_opening(AdviceKind::Trusted, SumcheckId::RamValEvaluation),
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -179,8 +183,7 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: RaPolynomial<usize, F>,
     lt: LtPolynomial<F>,
-    #[allocative(skip)]
-    params: ValEvaluationSumcheckParams<F>,
+    pub params: ValEvaluationSumcheckParams<F>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {

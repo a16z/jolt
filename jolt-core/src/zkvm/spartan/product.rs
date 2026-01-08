@@ -78,7 +78,7 @@ pub struct ProductVirtualUniSkipParams<F: JoltField> {
     pub tau: Vec<F::Challenge>,
     /// Base evaluations (claims) for the five product terms at the base domain
     /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
-    base_evals: [F; NUM_PRODUCT_VIRTUAL],
+    pub base_evals: [F; NUM_PRODUCT_VIRTUAL],
 }
 
 impl<F: JoltField> ProductVirtualUniSkipParams<F> {
@@ -141,11 +141,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
 pub struct ProductVirtualUniSkipProver<F: JoltField> {
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
-    params: ProductVirtualUniSkipParams<F>,
     /// Verifier challenge for this univariate skip round
     r0: Option<F::Challenge>,
     /// Prover message for this univariate skip round
     uni_poly: Option<UniPoly<F>>,
+    pub params: ProductVirtualUniSkipParams<F>,
 }
 
 impl<F: JoltField> ProductVirtualUniSkipProver<F> {
@@ -339,13 +339,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
+#[derive(Allocative, Clone)]
 pub struct ProductVirtualRemainderParams<F: JoltField> {
     /// Number of cycle variables to bind in this remainder (equals log2(T))
-    n_cycle_vars: usize,
+    pub n_cycle_vars: usize,
     /// Verifier challenge for univariate skip round
-    r0: F::Challenge,
+    pub r0: F::Challenge,
     /// The tau vector (length 1 + n_cycle_vars), available to prover and verifier
-    tau: Vec<F::Challenge>,
+    pub tau: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> ProductVirtualRemainderParams<F> {
@@ -433,8 +434,7 @@ pub struct ProductVirtualRemainderProver<F: JoltField> {
     right: DensePolynomial<F>,
     /// The first round evals (t0, t_inf) computed from a streaming pass over the trace
     first_round_evals: (F, F),
-    #[allocative(skip)]
-    params: ProductVirtualRemainderParams<F>,
+    pub params: ProductVirtualRemainderParams<F>,
 }
 
 impl<F: JoltField> ProductVirtualRemainderProver<F> {

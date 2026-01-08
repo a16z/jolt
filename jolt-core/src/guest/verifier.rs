@@ -15,6 +15,7 @@ use common::jolt_device::MemoryLayout;
 
 pub fn preprocess(
     guest: &Program,
+    max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
 ) -> JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
     let (bytecode, memory_init, program_size) = guest.decode();
@@ -22,7 +23,8 @@ pub fn preprocess(
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared = JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init);
+    let shared =
+        JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length);
     JoltVerifierPreprocessing::new(shared, verifier_setup)
 }
 

@@ -74,11 +74,17 @@ const DEGREE_BOUND: usize = 2;
 /// - PhaseCycle1: Prefix-suffix cycle rounds (log_T/2 rounds)
 /// - PhaseCycle2: Dense suffix cycle rounds (log_T/2 rounds)
 #[derive(Allocative)]
+pub struct RamRaClaimReductionSumcheckProver<F: JoltField> {
+    phase: RamRaClaimReductionPhase<F>,
+    pub params: RaReductionParams<F>,
+}
+
+#[derive(Allocative)]
 #[allow(clippy::large_enum_variant)]
-pub enum RamRaClaimReductionSumcheckProver<F: JoltField> {
-    PhaseAddress(PhaseAddressProver<F>),
-    PhaseCycle1(PhaseCycle1Prover<F>),
-    PhaseCycle2(PhaseCycle2Prover<F>),
+enum RamRaClaimReductionPhase<F: JoltField> {
+    PhaseAddress(PhaseAddressState<F>),
+    PhaseCycle1(PhaseCycle1State<F>),
+    PhaseCycle2(PhaseCycle2State<F>),
 }
 
 impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
@@ -90,12 +96,13 @@ impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
     ) -> Self {
-        Self::PhaseAddress(PhaseAddressProver::gen(
-            params,
+        let phase = RamRaClaimReductionPhase::PhaseAddress(PhaseAddressState::gen(
+            &params,
             trace,
             memory_layout,
             one_hot_params,
-        ))
+        ));
+        Self { phase, params }
     }
 }
 
@@ -107,54 +114,52 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn num_rounds(&self) -> usize {
-        match self {
-            Self::PhaseAddress(p) => p.params.num_rounds(),
-            Self::PhaseCycle1(p) => p.params.num_rounds(),
-            Self::PhaseCycle2(p) => p.params.num_rounds(),
-        }
+        self.params.num_rounds()
     }
 
     fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        match self {
-            Self::PhaseAddress(p) => p.params.input_claim(),
-            Self::PhaseCycle1(p) => p.params.input_claim(),
-            Self::PhaseCycle2(p) => p.params.input_claim(),
-        }
+        self.params.input_claim()
     }
 
     #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        match self {
-            Self::PhaseAddress(p) => p.compute_message(round, previous_claim),
-            Self::PhaseCycle1(p) => p.compute_message(previous_claim),
-            Self::PhaseCycle2(p) => p.compute_message(previous_claim),
+        match &self.phase {
+            RamRaClaimReductionPhase::PhaseAddress(state) => {
+                state.compute_message(&self.params, round, previous_claim)
+            }
+            RamRaClaimReductionPhase::PhaseCycle1(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
+            RamRaClaimReductionPhase::PhaseCycle2(state) => state.compute_message(previous_claim),
         }
     }
 
     #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        match self {
-            Self::PhaseAddress(prover) => {
-                prover.bind(r_j);
-                if prover.is_last_address_round(round) {
+        match &mut self.phase {
+            RamRaClaimReductionPhase::PhaseAddress(state) => {
+                state.bind(r_j);
+                if state.is_last_address_round(&self.params, round) {
                     // Transition to PhaseCycle1
-                    *self = Self::PhaseCycle1(PhaseCycle1Prover::gen(
-                        prover,
-                        prover.sumcheck_challenges.clone(),
+                    self.phase = RamRaClaimReductionPhase::PhaseCycle1(PhaseCycle1State::gen(
+                        state,
+                        state.sumcheck_challenges.clone(),
+                        &self.params,
                     ));
                 }
             }
-            Self::PhaseCycle1(prover) => {
-                prover.bind(r_j);
-                if prover.should_transition_to_phase2() {
+            RamRaClaimReductionPhase::PhaseCycle1(state) => {
+                state.bind(r_j);
+                if state.should_transition_to_phase2() {
                     // Transition to PhaseCycle2
-                    *self = Self::PhaseCycle2(PhaseCycle2Prover::gen(
-                        prover,
-                        prover.sumcheck_challenges.clone(),
+                    self.phase = RamRaClaimReductionPhase::PhaseCycle2(PhaseCycle2State::gen(
+                        state,
+                        state.sumcheck_challenges.clone(),
+                        &self.params,
                     ));
                 }
             }
-            Self::PhaseCycle2(prover) => prover.bind(r_j),
+            RamRaClaimReductionPhase::PhaseCycle2(state) => state.bind(r_j),
         }
     }
 
@@ -164,11 +169,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let Self::PhaseCycle2(prover) = self else {
+        let RamRaClaimReductionPhase::PhaseCycle2(state) = &self.phase else {
             panic!("cache_openings should only be called in PhaseCycle2");
         };
 
-        let log_K = prover.params.log_K;
+        let log_K = self.params.log_K;
         let r_address_reduced = &sumcheck_challenges[..log_K];
         let r_cycle_reduced = &sumcheck_challenges[log_K..];
 
@@ -181,7 +186,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         );
 
         // The reduced RA claim is H_prime.final_sumcheck_claim()
-        let ra_claim_reduced = prover.H_prime.final_sumcheck_claim();
+        let ra_claim_reduced = state.H_prime.final_sumcheck_claim();
 
         accumulator.append_virtual(
             transcript,
@@ -194,23 +199,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        match self {
-            Self::PhaseAddress(p) => flamegraph.visit_root(p),
-            Self::PhaseCycle1(p) => flamegraph.visit_root(p),
-            Self::PhaseCycle2(p) => flamegraph.visit_root(p),
-        }
+        flamegraph.visit_root(self);
     }
 }
 
 // ============================================================================
-// Phase Address Prover
+// Phase Address State
 // ============================================================================
 
-/// Prover for address rounds (first log_K rounds).
+/// State for address rounds (first log_K rounds).
 ///
 /// Proves: Σ_k [eq(r_addr_1, k)·G_A[k] + γ²·eq(r_addr_2, k)·G_B[k]]
 #[derive(Allocative)]
-pub struct PhaseAddressProver<F: JoltField> {
+struct PhaseAddressState<F: JoltField> {
     /// The trace of addresses accessed at each cycle.
     addresses: Arc<Vec<Option<usize>>>,
 
@@ -227,18 +228,15 @@ pub struct PhaseAddressProver<F: JoltField> {
 
     /// Sumcheck challenges bound so far.
     sumcheck_challenges: Vec<F::Challenge>,
-
-    #[allocative(skip)]
-    params: RaReductionParams<F>,
 }
 
-impl<F: JoltField> PhaseAddressProver<F> {
+impl<F: JoltField> PhaseAddressState<F> {
     /// Minimum number of k iterations to parallelize the inner loop.
     const MIN_INNER_PARALLEL_LEN: usize = 1 << 12;
 
-    #[tracing::instrument(skip_all, name = "PhaseAddressProver::gen")]
+    #[tracing::instrument(skip_all, name = "PhaseAddressState::gen")]
     fn gen(
-        params: RaReductionParams<F>,
+        params: &RaReductionParams<F>,
         trace: &[Cycle],
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
@@ -280,7 +278,6 @@ impl<F: JoltField> PhaseAddressProver<F> {
             G_A,
             G_B,
             sumcheck_challenges: Vec::new(),
-            params,
         }
     }
 
@@ -385,12 +382,18 @@ impl<F: JoltField> PhaseAddressProver<F> {
         (G_A, G_B)
     }
 
-    fn compute_message(&self, round: usize, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(
+        &self,
+        params: &RaReductionParams<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> UniPoly<F> {
         let m = round + 1;
         let half_len = self.B_1.len() / 2;
         let inner_len = 1 << m;
         // Precompute mask for k % (1 << (m - 1)) -> k & f_index_mask
         let f_index_mask = (1 << (m - 1)) - 1;
+        let gamma_squared = params.gamma_squared;
 
         let [eval_0, eval_c2] = (0..half_len)
             .into_par_iter()
@@ -485,9 +488,8 @@ impl<F: JoltField> PhaseAddressProver<F> {
                 let inner_B_c2 = sum_B_1 + sum_B_1 - sum_B_0;
 
                 [
-                    B_1_evals[0] * inner_A_0 + self.params.gamma_squared * B_2_evals[0] * inner_B_0,
-                    B_1_evals[1] * inner_A_c2
-                        + self.params.gamma_squared * B_2_evals[1] * inner_B_c2,
+                    B_1_evals[0] * inner_A_0 + gamma_squared * B_2_evals[0] * inner_B_0,
+                    B_1_evals[1] * inner_A_c2 + gamma_squared * B_2_evals[1] * inner_B_c2,
                 ]
             })
             .reduce(|| [F::zero(), F::zero()], |a, b| [a[0] + b[0], a[1] + b[1]]);
@@ -502,22 +504,22 @@ impl<F: JoltField> PhaseAddressProver<F> {
         self.F.update(r_j);
     }
 
-    fn is_last_address_round(&self, round: usize) -> bool {
-        round == self.params.log_K - 1
+    fn is_last_address_round(&self, params: &RaReductionParams<F>, round: usize) -> bool {
+        round == params.log_K - 1
     }
 }
 
 // ============================================================================
-// Phase Cycle 1 Prover (Prefix-Suffix)
+// Phase Cycle 1 State (Prefix-Suffix)
 // ============================================================================
 
-/// Prover for first half of cycle rounds using prefix-suffix optimization.
+/// State for first half of cycle rounds using prefix-suffix optimization.
 ///
 /// Uses P/Q buffer structure where:
 /// - P_x[c_lo] = eq(r_cycle_x_lo, c_lo)
 /// - Q_x[c_lo] = Σ_{c_hi} H[c_lo, c_hi] · eq(r_cycle_x_hi, c_hi)
 #[derive(Allocative)]
-pub struct PhaseCycle1Prover<F: JoltField> {
+struct PhaseCycle1State<F: JoltField> {
     /// Prefix eq evaluations for each cycle point.
     P_raf: MultilinearPolynomial<F>,
     P_rw: MultilinearPolynomial<F>,
@@ -541,26 +543,23 @@ pub struct PhaseCycle1Prover<F: JoltField> {
     r_cycle_val_hi: Vec<F::Challenge>,
 
     sumcheck_challenges: Vec<F::Challenge>,
-
-    #[allocative(skip)]
-    params: RaReductionParams<F>,
 }
 
-impl<F: JoltField> PhaseCycle1Prover<F> {
+impl<F: JoltField> PhaseCycle1State<F> {
     /// Generate PhaseCycle1 from PhaseAddress after address rounds complete.
-    #[tracing::instrument(skip_all, name = "PhaseCycle1Prover::gen")]
+    #[tracing::instrument(skip_all, name = "PhaseCycle1State::gen")]
     fn gen(
-        address_prover: &mut PhaseAddressProver<F>,
+        address_state: &mut PhaseAddressState<F>,
         address_challenges: Vec<F::Challenge>,
+        params: &RaReductionParams<F>,
     ) -> Self {
         // Get α_1 and α_2 from final B polynomial claims
-        let alpha_1 = address_prover.B_1.final_sumcheck_claim();
-        let alpha_2 = address_prover.B_2.final_sumcheck_claim();
+        let alpha_1 = address_state.B_1.final_sumcheck_claim();
+        let alpha_2 = address_state.B_2.final_sumcheck_claim();
 
         // Get F_values = eq(r_addr_reduced, k) for each k
-        let F_values = address_prover.F.clone_values();
-        let addresses = Arc::clone(&address_prover.addresses);
-        let params = address_prover.params.clone();
+        let F_values = address_state.F.clone_values();
+        let addresses = Arc::clone(&address_state.addresses);
 
         let log_T = params.log_T;
         let prefix_n_vars = log_T / 2;
@@ -613,12 +612,11 @@ impl<F: JoltField> PhaseCycle1Prover<F> {
             r_cycle_rw_hi: r_cycle_rw_hi.to_vec(),
             r_cycle_val_hi: r_cycle_val_hi.to_vec(),
             sumcheck_challenges: address_challenges,
-            params,
         }
     }
 
     /// Compute Q arrays by iterating over trace.
-    #[tracing::instrument(skip_all, name = "PhaseCycle1Prover::compute_Q_arrays")]
+    #[tracing::instrument(skip_all, name = "PhaseCycle1State::compute_Q_arrays")]
     fn compute_Q_arrays(
         addresses: &[Option<usize>],
         F_values: &[F],
@@ -681,11 +679,11 @@ impl<F: JoltField> PhaseCycle1Prover<F> {
             )
     }
 
-    fn compute_message(&self, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(&self, params: &RaReductionParams<F>, previous_claim: F) -> UniPoly<F> {
         // Coefficients: α_1, γ²·α_2, (γ·α_1 + γ³·α_2)
         let coeff_raf = self.alpha_1;
-        let coeff_rw = self.params.gamma_squared * self.alpha_2;
-        let coeff_val = self.params.gamma * self.alpha_1 + self.params.gamma_cubed * self.alpha_2;
+        let coeff_rw = params.gamma_squared * self.alpha_2;
+        let coeff_val = params.gamma * self.alpha_1 + params.gamma_cubed * self.alpha_2;
 
         let half_len = self.P_raf.len() / 2;
 
@@ -741,16 +739,16 @@ impl<F: JoltField> PhaseCycle1Prover<F> {
 }
 
 // ============================================================================
-// Phase Cycle 2 Prover (Dense Suffix)
+// Phase Cycle 2 State (Dense Suffix)
 // ============================================================================
 
-/// Prover for second half of cycle rounds using dense sumcheck.
+/// State for second half of cycle rounds using dense sumcheck.
 ///
 /// After prefix rounds, we have:
 /// - H'[c_hi] = Σ_{c_lo} H[c_lo, c_hi] · eq(r_prefix_reduced, c_lo)
 /// - eq_x_hi polynomials for the suffix variables
 #[derive(Allocative)]
-pub struct PhaseCycle2Prover<F: JoltField> {
+struct PhaseCycle2State<F: JoltField> {
     /// Folded H polynomial: H'[c_hi] = Σ_{c_lo} H[c_lo,c_hi] · eq(r_prefix, c_lo)
     H_prime: MultilinearPolynomial<F>,
 
@@ -763,19 +761,16 @@ pub struct PhaseCycle2Prover<F: JoltField> {
     coeff_raf: F,
     coeff_rw: F,
     coeff_val: F,
-
-    #[allocative(skip)]
-    params: RaReductionParams<F>,
 }
 
-impl<F: JoltField> PhaseCycle2Prover<F> {
+impl<F: JoltField> PhaseCycle2State<F> {
     /// Generate PhaseCycle2 from PhaseCycle1 after prefix rounds complete.
-    #[tracing::instrument(skip_all, name = "PhaseCycle2Prover::gen")]
+    #[tracing::instrument(skip_all, name = "PhaseCycle2State::gen")]
     fn gen(
-        cycle1_prover: &mut PhaseCycle1Prover<F>,
+        cycle1_state: &mut PhaseCycle1State<F>,
         sumcheck_challenges: Vec<F::Challenge>,
+        params: &RaReductionParams<F>,
     ) -> Self {
-        let params = cycle1_prover.params.clone();
         let log_K = params.log_K;
         let log_T = params.log_T;
         let prefix_n_vars = log_T / 2;
@@ -794,17 +789,17 @@ impl<F: JoltField> PhaseCycle2Prover<F> {
         // Compute H'[c_hi] = Σ_{c_lo} H[c_lo, c_hi] · eq_prefix[c_lo]
         // where H[c] = F_values[addresses[c]]
         let H_prime = Self::compute_H_prime(
-            &cycle1_prover.addresses,
-            &cycle1_prover.F_values,
+            &cycle1_state.addresses,
+            &cycle1_state.F_values,
             &eq_prefix,
             prefix_n_vars,
             suffix_n_vars,
         );
 
         // Suffix eq evaluations scaled by eq(r_prefix_x, r_cycle_prefix_reduced)
-        let eq_raf_hi = EqPolynomial::<F>::evals(&cycle1_prover.r_cycle_raf_hi);
-        let eq_rw_hi = EqPolynomial::<F>::evals(&cycle1_prover.r_cycle_rw_hi);
-        let eq_val_hi = EqPolynomial::<F>::evals(&cycle1_prover.r_cycle_val_hi);
+        let eq_raf_hi = EqPolynomial::<F>::evals(&cycle1_state.r_cycle_raf_hi);
+        let eq_rw_hi = EqPolynomial::<F>::evals(&cycle1_state.r_cycle_rw_hi);
+        let eq_val_hi = EqPolynomial::<F>::evals(&cycle1_state.r_cycle_val_hi);
 
         // Compute scaling factors: eq(r_cycle_x_lo, r_cycle_prefix_reduced)
         // r_cycle_*_lo are in BIG_ENDIAN, so reverse r_cycle_prefix for mle
@@ -817,8 +812,8 @@ impl<F: JoltField> PhaseCycle2Prover<F> {
         let scale_val = EqPolynomial::<F>::mle(&r_cycle_val_lo, &r_cycle_prefix);
 
         // Coefficients: α_1·scale_raf, γ²·α_2·scale_rw, (γ·α_1 + γ³·α_2)·scale_val
-        let alpha_1 = cycle1_prover.alpha_1;
-        let alpha_2 = cycle1_prover.alpha_2;
+        let alpha_1 = cycle1_state.alpha_1;
+        let alpha_2 = cycle1_state.alpha_2;
         let coeff_raf = alpha_1 * scale_raf;
         let coeff_rw = params.gamma_squared * alpha_2 * scale_rw;
         let coeff_val = (params.gamma * alpha_1 + params.gamma_cubed * alpha_2) * scale_val;
@@ -831,12 +826,11 @@ impl<F: JoltField> PhaseCycle2Prover<F> {
             coeff_raf,
             coeff_rw,
             coeff_val,
-            params,
         }
     }
 
     /// Compute H'[c_hi] = Σ_{c_lo} H[c_lo, c_hi] · eq_prefix[c_lo]
-    #[tracing::instrument(skip_all, name = "PhaseCycle2Prover::compute_H_prime")]
+    #[tracing::instrument(skip_all, name = "PhaseCycle2State::compute_H_prime")]
     fn compute_H_prime(
         addresses: &[Option<usize>],
         F_values: &[F],

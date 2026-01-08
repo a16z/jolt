@@ -399,7 +399,7 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
 /// Polynomial that unmaps RAM addresses: k -> k*8 + start_address
 #[derive(Allocative)]
 pub struct UnmapRamAddressPolynomial<F: JoltField> {
-    start_address: u64,
+    pub start_address: u64,
     int_poly: IdentityPolynomial<F>,
 }
 

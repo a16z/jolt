@@ -6,6 +6,7 @@ use crate::subprotocols::read_write_matrix::{
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
     field::JoltField,
@@ -61,10 +62,15 @@ const LOG_K: usize = REGISTER_COUNT.ilog2() as usize;
 /// Degree bound of the sumcheck round polynomials in [`RegistersReadWriteCheckingVerifier`].
 const DEGREE_BOUND: usize = 3;
 
+#[derive(Allocative, Clone)]
 pub struct RegistersReadWriteCheckingParams<F: JoltField> {
     pub gamma: F,
     pub T: usize,
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+    /// Number of cycle variables to bind in phase 1.
+    pub phase1_num_rounds: usize,
+    /// Number of address variables to bind in phase 2.
+    pub phase2_num_rounds: usize,
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
@@ -72,6 +78,7 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         trace_length: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        config: &ReadWriteConfig,
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -82,6 +89,8 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
             gamma,
             T: trace_length,
             r_cycle,
+            phase1_num_rounds: config.registers_rw_phase1_num_rounds as usize,
+            phase2_num_rounds: config.registers_rw_phase2_num_rounds as usize,
         }
     }
 }
@@ -129,19 +138,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
         &self,
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let phase1_num_rounds = phase1_num_rounds(self.T);
-        let phase2_num_rounds = phase2_num_rounds(self.T);
-
         // Cycle variables are bound low-to-high in phase 1
         let (phase1_challenges, sumcheck_challenges) =
-            sumcheck_challenges.split_at(phase1_num_rounds);
+            sumcheck_challenges.split_at(self.phase1_num_rounds);
         // Address variables are bound low-to-high in phase 2
         let (phase2_challenges, sumcheck_challenges) =
-            sumcheck_challenges.split_at(phase2_num_rounds);
+            sumcheck_challenges.split_at(self.phase2_num_rounds);
         // Remaining cycle variables, then address variables are
         // bound low-to-high in phase 3
         let (phase3_cycle_challenges, phase3_address_challenges) =
-            sumcheck_challenges.split_at(self.T.log_2() - phase1_num_rounds);
+            sumcheck_challenges.split_at(self.T.log_2() - self.phase1_num_rounds);
 
         // Both Phase 1/2 (GruenSplitEqPolynomial LowToHigh) and Phase 3 (dense LowToHigh)
         // bind variables from the "bottom" (last w component) to "top" (first w component).
@@ -163,31 +169,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
     }
 }
 
-/// Number of cycle variables to bind in Phase 1 (using CycleMajor sparse matrix).
-///
-/// # Supported configurations
-/// The following (phase1, phase2) configurations are supported:
-/// - `(T.log_2(), any)` - All cycle vars bound in phase 1
-/// - `(0, any)` - Skip phase 1 entirely, start binding address vars
-///
-/// Other configurations (e.g., leaving 2+ cycle vars for phase 3 while binding
-/// all address vars in phase 2) may cause verification failures.
-///
-/// TODO: make the implementation works for all configurations.
-fn phase1_num_rounds(T: usize) -> usize {
-    T.log_2()
-}
-
-/// Number of address variables to bind in Phase 2 (using AddressMajor sparse matrix).
-fn phase2_num_rounds(_T: usize) -> usize {
-    K.log_2()
-}
-
 /// Sumcheck prover for [`RegistersReadWriteCheckingVerifier`].
 #[derive(Allocative)]
 pub struct RegistersReadWriteCheckingProver<F: JoltField> {
-    #[allocative(skip)]
-    params: RegistersReadWriteCheckingParams<F>,
     sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>>,
     sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
@@ -200,6 +184,7 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
     wa: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
     merged_eq: Option<MultilinearPolynomial<F>>,
+    pub params: RegistersReadWriteCheckingParams<F>,
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
@@ -211,7 +196,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         memory_layout: &MemoryLayout,
     ) -> Self {
         let r_prime = &params.r_cycle;
-        let (gruen_eq, merged_eq) = if phase1_num_rounds(params.T) > 0 {
+        let (gruen_eq, merged_eq) = if params.phase1_num_rounds > 0 {
             (
                 Some(GruenSplitEqPolynomial::new(
                     &r_prime.r,
@@ -233,8 +218,8 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         );
         let sparse_matrix =
             ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(&trace, params.gamma);
-        let phase1_rounds = phase1_num_rounds(params.T);
-        let phase2_rounds = phase2_num_rounds(params.T);
+        let phase1_rounds = params.phase1_num_rounds;
+        let phase2_rounds = params.phase2_num_rounds;
 
         let (sparse_matrix_phase1, sparse_matrix_phase2) = if phase1_rounds > 0 {
             (sparse_matrix, Default::default())
@@ -405,7 +390,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         if inc.len() > 1 {
             // Cycle variables remaining
             const DEGREE: usize = 3;
-            let K_prime = K >> phase2_num_rounds(params.T);
+            let K_prime = K >> params.phase2_num_rounds;
             let T_prime = inc.len();
             debug_assert_eq!(ra.len(), K_prime * inc.len());
 
@@ -532,14 +517,14 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         gruen_eq.bind(r_j);
         inc.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-        if round == phase1_num_rounds(params.T) - 1 {
+        if round == params.phase1_num_rounds - 1 {
             self.merged_eq = Some(MultilinearPolynomial::LargeScalars(gruen_eq.merge()));
             let sparse_matrix = std::mem::take(sparse_matrix);
-            if phase2_num_rounds(params.T) > 0 {
+            if params.phase2_num_rounds > 0 {
                 self.sparse_matrix_phase2 = sparse_matrix.into();
             } else {
                 // Skip to phase 3: all cycle variables bound, no address variables bound yet
-                let T_prime = params.T >> phase1_num_rounds(params.T);
+                let T_prime = params.T >> params.phase1_num_rounds;
                 let [ra, wa, val] = sparse_matrix.materialize(K, T_prime);
                 self.ra = Some(ra);
                 self.wa = Some(wa);
@@ -557,12 +542,12 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
 
         sparse_matrix.bind(r_j);
 
-        let phase1_num_rounds = phase1_num_rounds(params.T);
-        let phase2_num_rounds = phase2_num_rounds(params.T);
-        if round == phase1_num_rounds + phase2_num_rounds - 1 {
+        if round == params.phase1_num_rounds + params.phase2_num_rounds - 1 {
             let sparse_matrix = std::mem::take(sparse_matrix);
-            let [ra, wa, val] =
-                sparse_matrix.materialize(K >> phase2_num_rounds, params.T >> phase1_num_rounds);
+            let [ra, wa, val] = sparse_matrix.materialize(
+                K >> params.phase2_num_rounds,
+                params.T >> params.phase1_num_rounds,
+            );
             self.ra = Some(ra);
             self.wa = Some(wa);
             self.val = Some(val);
@@ -595,6 +580,90 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             merged_eq.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
+
+    /// Compute rs2_ra(r_address, r_cycle) = Σ_j [has_rs2[j]] * eq(r_address, rs2[j]) * eq(r_cycle, j)
+    ///
+    /// We compute rs2 (not rs1) because fewer cycles have rs2 reads:
+    /// - rs2 is NOT read by: FormatI (ADDI, etc.), FormatLoad (LB, LW, etc.), FormatU, FormatJ
+    /// - rs1 is NOT read by: only FormatU, FormatJ
+    ///
+    /// Uses a 2-way split-eq optimization over the joint (cycle, address) space:
+    /// - Order: r_joint = [r_cycle..., r_address...] so cycle vars are MSB
+    /// - Total bits: n = log_T + 7 (address)
+    /// - hi_bits = min(log_T, (n+1)/2) ensures hi part contains only cycle bits
+    /// - This enables clean double outer/inner sum: outer over cycle blocks, inner sums E_lo
+    ///
+    /// EqPolynomial bit ordering: bit i of index → r[n-1-i] (reverse order, r[0] is MSB)
+    /// - For r_joint = [r_cycle, r_address]:
+    ///   - bits 0..(addr_bits-1) of joint_index → r_address (LSB part)
+    ///   - bits addr_bits..(n-1) of joint_index → r_cycle (MSB part)
+    /// - So joint_index = (j << addr_bits) | rs2
+    #[tracing::instrument(
+        skip_all,
+        name = "RegistersReadWriteCheckingProver::compute_rs2_ra_claim"
+    )]
+    fn compute_rs2_ra_claim(
+        trace: &[Cycle],
+        r_address: &[F::Challenge],
+        r_cycle: &[F::Challenge],
+    ) -> F {
+        let log_T = r_cycle.len();
+        let addr_bits = r_address.len(); // = 7 for 128 registers
+
+        // 2-way split over joint (cycle, address) space
+        // Order: r_joint = [r_cycle..., r_address...] so cycle vars are MSB
+        let n = log_T + addr_bits;
+
+        // hi_bits contains only cycle vars, lo_bits contains remaining cycle + all address vars
+        let hi_bits = std::cmp::min(log_T, n.div_ceil(2));
+        let lo_bits = n - hi_bits;
+
+        // r_joint = [r_cycle..., r_address...]
+        let r_joint: Vec<F::Challenge> = r_cycle.iter().chain(r_address.iter()).copied().collect();
+        let (r_hi, r_lo) = r_joint.split_at(hi_bits);
+
+        let (E_hi, E_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
+        );
+
+        // joint_index = (j << addr_bits) | rs2
+        // idx_hi = joint_index >> lo_bits = j >> (lo_bits - addr_bits)
+        // idx_lo = joint_index & lo_mask = ((j & cycle_lo_mask) << addr_bits) | rs2
+        let cycle_bits_in_lo = lo_bits - addr_bits; // number of cycle bits in the lo part
+        let cycles_per_block = 1usize << cycle_bits_in_lo;
+        let cycle_lo_mask = cycles_per_block - 1;
+
+        // Double outer/inner sum:
+        // - Outer: parallel over E_hi indices (each corresponds to a block of cycles)
+        // - Inner: sequential sum over cycles in that block
+        (0..E_hi.len())
+            .into_par_iter()
+            .map(|idx_hi| {
+                let e_hi_val = E_hi[idx_hi];
+                let block_start = idx_hi << cycle_bits_in_lo;
+                let block_end = std::cmp::min(block_start + cycles_per_block, trace.len());
+
+                if block_start >= trace.len() {
+                    return F::zero();
+                }
+
+                // Inner sum: iterate over cycles in this block
+                let inner_sum: F = (block_start..block_end)
+                    .filter_map(|j| {
+                        trace[j].rs2_read().map(|(rs2, _)| {
+                            // idx_lo = ((j & cycle_lo_mask) << addr_bits) | rs2
+                            let j_in_block = j & cycle_lo_mask;
+                            let idx_lo = (j_in_block << addr_bits) | (rs2 as usize);
+                            E_lo[idx_lo]
+                        })
+                    })
+                    .sum();
+
+                e_hi_val * inner_sum
+            })
+            .sum()
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
@@ -606,11 +675,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        let phase1_num_rounds = phase1_num_rounds(self.params.T);
-        let phase2_num_rounds = phase2_num_rounds(self.params.T);
-        if round < phase1_num_rounds {
+        if round < self.params.phase1_num_rounds {
             self.phase1_compute_message(previous_claim)
-        } else if round < phase1_num_rounds + phase2_num_rounds {
+        } else if round < self.params.phase1_num_rounds + self.params.phase2_num_rounds {
             self.phase2_compute_message(previous_claim)
         } else {
             self.phase3_compute_message(previous_claim)
@@ -619,11 +686,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        let phase1_num_rounds = phase1_num_rounds(self.params.T);
-        let phase2_num_rounds = phase2_num_rounds(self.params.T);
-        if round < phase1_num_rounds {
+        if round < self.params.phase1_num_rounds {
             self.phase1_bind(r_j, round);
-        } else if round < phase1_num_rounds + phase2_num_rounds {
+        } else if round < self.params.phase1_num_rounds + self.params.phase2_num_rounds {
             self.phase2_bind(r_j, round);
         } else {
             self.phase3_bind(r_j);
@@ -645,30 +710,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let inc_claim = self.inc.final_sumcheck_claim();
         let combined_ra_claim = self.ra.as_ref().unwrap().final_sumcheck_claim();
         // In order to obtain the individual claims rs1_ra(r) and rs2_ra(r),
-        // we first evaluate rs1_ra(r) directly:
-        let eq_r_address = EqPolynomial::evals(&r_address.r);
-        let (r_cycle_hi, r_cycle_lo) = r_cycle.split_at(r_cycle.len() / 2);
-        let (eq_r_cycle_hi, eq_r_cycle_lo) = rayon::join(
-            || EqPolynomial::evals(&r_cycle_hi.r),
-            || EqPolynomial::evals(&r_cycle_lo.r),
-        );
-        let cycle_lo_mask = (1 << r_cycle_lo.len()) - 1;
-        let rs1_ra_claim: F = self
-            .trace
-            .par_iter()
-            .enumerate()
-            .filter_map(|(j, cycle)| {
-                cycle.rs1_read().map(|(rs1, _)| {
-                    let j_hi = j >> r_cycle_lo.len();
-                    let j_lo = j & cycle_lo_mask;
-                    eq_r_address[rs1 as usize] * eq_r_cycle_hi[j_hi] * eq_r_cycle_lo[j_lo]
-                })
-            })
-            .sum();
-        // Now compute rs2_ra(r) from combined_ra_claim and rs1_ra_claim. Recall that:
+        // we compute rs2_ra(r) directly (fewer cycles have rs2 reads than rs1 reads):
+        let rs2_ra_claim: F = Self::compute_rs2_ra_claim(&self.trace, &r_address.r, &r_cycle.r);
+
+        // Now compute rs1_ra(r) from combined_ra_claim and rs2_ra_claim. Recall that:
         // combined_ra_claim = gamma * rs1_ra(r) + gamma^2 * rs2_ra(r)
-        let gamma_inverse = self.params.gamma.inverse().unwrap();
-        let rs2_ra_claim = (combined_ra_claim * gamma_inverse - rs1_ra_claim) * gamma_inverse;
+        // => rs1_ra(r) = (combined_ra_claim - gamma^2 * rs2_ra(r)) / gamma
+        let gamma = self.params.gamma;
+        let gamma_inverse = gamma.inverse().unwrap();
+        let rs1_ra_claim = (combined_ra_claim - gamma * gamma * rs2_ra_claim) * gamma_inverse;
 
         accumulator.append_virtual(
             transcript,
@@ -736,9 +786,14 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
         trace_len: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        config: &ReadWriteConfig,
     ) -> Self {
-        let params =
-            RegistersReadWriteCheckingParams::new(trace_len, opening_accumulator, transcript);
+        let params = RegistersReadWriteCheckingParams::new(
+            trace_len,
+            opening_accumulator,
+            transcript,
+            config,
+        );
         Self { params }
     }
 }

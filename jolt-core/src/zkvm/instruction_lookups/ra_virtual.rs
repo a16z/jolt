@@ -35,6 +35,7 @@ use common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+#[derive(Allocative, Clone)]
 pub struct InstructionRaSumcheckParams<F: JoltField> {
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     pub r_address: OpeningPoint<BIG_ENDIAN, F>,
@@ -127,8 +128,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
 pub struct InstructionRaSumcheckProver<F: JoltField> {
     ra_i_polys: Vec<RaPolynomial<u8, F>>,
     eq_poly: GruenSplitEqPolynomial<F>,
-    #[allocative(skip)]
-    params: InstructionRaSumcheckParams<F>,
+    pub params: InstructionRaSumcheckParams<F>,
 }
 
 impl<F: JoltField> InstructionRaSumcheckProver<F> {

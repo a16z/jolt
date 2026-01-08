@@ -4,6 +4,7 @@ mod tests {
     use super::super::*;
     use crate::field::JoltField;
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+    use crate::poly::commitment::dory::DoryContext;
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
     use crate::transcripts::{Blake2bTranscript, Transcript};
@@ -64,7 +65,7 @@ mod tests {
 
         let num_coeffs = 1 << num_vars;
         // Dense polynomial: K = 1, T = num_coeffs
-        let _guard = DoryGlobals::initialize(1, num_coeffs);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
@@ -241,7 +242,7 @@ mod tests {
         let num_coeffs = 1 << num_vars;
 
         // Dense polynomial: K = 1, T = num_coeffs
-        let _guard = DoryGlobals::initialize(1, num_coeffs);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
 
         let mut rng = thread_rng();
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
@@ -385,7 +386,7 @@ mod tests {
         let K = 8;
         let T = 8;
 
-        let _guard = DoryGlobals::initialize(K, T);
+        let _guard = DoryGlobals::initialize_context(K, T, DoryContext::Main);
 
         let mut rng = thread_rng();
         let nonzero_indices: Vec<Option<u8>> = (0..T)
@@ -450,7 +451,7 @@ mod tests {
         let num_coeffs = 1 << num_vars;
         let num_polys = 5;
 
-        let _guard = DoryGlobals::initialize(1, num_coeffs);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
 
         let mut rng = thread_rng();
 
@@ -534,7 +535,7 @@ mod tests {
         let num_coeffs = 1 << num_vars;
         let num_polys = 5;
 
-        let _guard = DoryGlobals::initialize(1, num_coeffs);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
 
         let mut rng = thread_rng();
 
