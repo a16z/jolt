@@ -1,6 +1,7 @@
 use std::fs::File;
 
 use crate::{
+    curve::Bn254Curve,
     field::JoltField,
     poly::opening_proof::ProverOpeningAccumulator,
     poly::{
@@ -132,7 +133,8 @@ pub fn fiat_shamir_preamble(
     transcript.append_u64(trace_length as u64);
 }
 
-pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACProver<'a> =
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 

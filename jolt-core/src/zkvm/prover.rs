@@ -86,10 +86,14 @@ use tracer::{
     ChunksIterator, JoltDevice, LazyTraceIterator,
 };
 
+use crate::curve::JoltCurve;
+use crate::poly::commitment::pedersen::PedersenGenerators;
+
 /// Jolt CPU prover for RV64IMAC.
 pub struct JoltCpuProver<
     'a,
     F: JoltField,
+    C: JoltCurve,
     PCS: StreamingCommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
@@ -107,10 +111,16 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
+    pub pedersen_generators: PedersenGenerators<C>,
 }
 
-impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
-    JoltCpuProver<'a, F, PCS, ProofTranscript>
+impl<
+        'a,
+        F: JoltField,
+        C: JoltCurve,
+        PCS: StreamingCommitmentScheme<Field = F>,
+        ProofTranscript: Transcript,
+    > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
 {
     pub fn gen_from_elf(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
@@ -235,6 +245,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let (initial_ram_state, final_ram_state) =
             gen_ram_memory_states::<F>(ram_K, &preprocessing.ram, &program_io, &final_memory_state);
 
+        let mut rng = rand::thread_rng();
+        let generators: Vec<C::G1> = (0..64).map(|_| C::random_g1(&mut rng)).collect();
+        let pedersen_generators = PedersenGenerators::<C>::new(generators);
+
         Self {
             preprocessing,
             program_io,
@@ -258,6 +272,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 preprocessing.bytecode.code_size,
                 ram_K,
             ),
+            pedersen_generators,
         }
     }
 
@@ -507,10 +522,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &uni_skip_state,
         );
 
-        let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove(
-            vec![&mut spartan_outer_remaining],
+        let mut rng = rand::thread_rng();
+        let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+            vec![&mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>],
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &self.pedersen_generators,
+            &mut rng,
         );
 
         (first_round_proof, sumcheck_proof)
@@ -581,23 +599,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         write_instance_flamegraph_svg(&instances, "stage2_start_flamechart.svg");
         tracing::info!("Stage 2 proving");
 
-        // Use ZK sumcheck with Pedersen commitments
-        use crate::curve::{Bn254Curve, Bn254G1};
-        use crate::poly::commitment::pedersen::PedersenGenerators;
-        use ark_bn254::G1Projective;
-        use ark_std::UniformRand;
-
         let mut rng = rand::thread_rng();
-        let generators: Vec<Bn254G1> = (0..10)
-            .map(|_| Bn254G1(G1Projective::rand(&mut rng)))
-            .collect();
-        let pedersen_gens = PedersenGenerators::<Bn254Curve>::new(generators);
-
-        let (sumcheck_proof, _r_stage2) = BatchedSumcheck::prove_zk::<F, Bn254Curve, _, _>(
+        let (sumcheck_proof, _r_stage2) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-            &pedersen_gens,
+            &self.pedersen_generators,
             &mut rng,
         );
 
@@ -640,10 +647,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
         tracing::info!("Stage 3 proving");
-        let (sumcheck_proof, _r_stage3) = BatchedSumcheck::prove(
+
+        let mut rng = rand::thread_rng();
+        let (sumcheck_proof, _r_stage3) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &self.pedersen_generators,
+            &mut rng,
         );
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
@@ -715,10 +726,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage4_start_flamechart.svg");
         tracing::info!("Stage 4 proving");
-        let (sumcheck_proof, _r_stage4) = BatchedSumcheck::prove(
+
+        let mut rng = rand::thread_rng();
+        let (sumcheck_proof, _r_stage4) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &self.pedersen_generators,
+            &mut rng,
         );
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
@@ -777,10 +792,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage5_start_flamechart.svg");
         tracing::info!("Stage 5 proving");
-        let (sumcheck_proof, _r_stage5) = BatchedSumcheck::prove(
+
+        let mut rng = rand::thread_rng();
+        let (sumcheck_proof, _r_stage5) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &self.pedersen_generators,
+            &mut rng,
         );
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
@@ -864,10 +883,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6_start_flamechart.svg");
         tracing::info!("Stage 6 proving");
-        let (sumcheck_proof, _r_stage6) = BatchedSumcheck::prove(
+
+        let mut rng = rand::thread_rng();
+        let (sumcheck_proof, _r_stage6) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &self.pedersen_generators,
+            &mut rng,
         );
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");

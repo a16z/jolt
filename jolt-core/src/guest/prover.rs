@@ -1,4 +1,5 @@
 use super::program::Program;
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
@@ -26,7 +27,12 @@ pub fn preprocess(
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
-pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
+pub fn prove<
+    F: JoltField,
+    C: JoltCurve,
+    PCS: StreamingCommitmentScheme<Field = F>,
+    FS: Transcript,
+>(
     guest: &Program,
     inputs_bytes: &[u8],
     untrusted_advice_bytes: &[u8],
@@ -41,7 +47,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
 ) {
     use crate::zkvm::prover::JoltCpuProver;
 
-    let prover = JoltCpuProver::gen_from_elf(
+    let prover = JoltCpuProver::<F, C, PCS, FS>::gen_from_elf(
         preprocessing,
         &guest.elf_contents,
         inputs_bytes,

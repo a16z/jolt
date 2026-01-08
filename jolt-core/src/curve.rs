@@ -83,6 +83,9 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
 
     /// Multi-scalar multiplication in G2: Σᵢ scalars[i] * bases[i]
     fn g2_msm<F: JoltField>(bases: &[Self::G2], scalars: &[F]) -> Self::G2;
+
+    /// Generate a random G1 element
+    fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1;
 }
 
 // ============================================================================
@@ -324,6 +327,11 @@ impl JoltCurve for Bn254Curve {
         let bigint_scalars: Vec<_> = fr_scalars.iter().map(|s| s.into_bigint()).collect();
 
         Bn254G2(G2Projective::msm_bigint(&affine_bases, &bigint_scalars))
+    }
+
+    fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1 {
+        use ark_std::UniformRand;
+        Bn254G1(G1Projective::rand(rng))
     }
 }
 
