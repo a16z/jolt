@@ -294,9 +294,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                     .par_chunks(row_len)
                     .zip(row_commitments.par_iter_mut())
                     .for_each(|(dense_row, commitment)| {
-                        let msm_result: G =
-                            VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)
-                                .unwrap();
+                        let msm_result: G = VariableBaseMSM::msm_field_elements(
+                            &bases[..dense_row.len()],
+                            dense_row,
+                        )
+                        .unwrap();
                         *commitment += msm_result
                     });
             }
@@ -318,9 +320,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                     .par_chunks(cycles_per_row)
                     .zip(row_commitments.par_iter_mut())
                     .for_each(|(dense_row, commitment)| {
-                        let msm_result: G =
-                            VariableBaseMSM::msm_field_elements(&dense_bases[..dense_row.len()], dense_row)
-                                .unwrap();
+                        let msm_result: G = VariableBaseMSM::msm_field_elements(
+                            &dense_bases[..dense_row.len()],
+                            dense_row,
+                        )
+                        .unwrap();
                         *commitment += msm_result
                     });
             }
@@ -557,13 +561,14 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                 ),
             },
             DoryLayout::AddressMajor => match &ctx.trace_source {
-                TraceSource::Materialized(trace) => self.materialized_vector_matrix_product_address_major(
-                    left_vec,
-                    num_columns,
-                    trace,
-                    &ctx,
-                    T,
-                ),
+                TraceSource::Materialized(trace) => self
+                    .materialized_vector_matrix_product_address_major(
+                        left_vec,
+                        num_columns,
+                        trace,
+                        &ctx,
+                        T,
+                    ),
                 TraceSource::Lazy(lazy_trace) => self.lazy_vector_matrix_product_address_major(
                     left_vec,
                     num_columns,
@@ -714,8 +719,13 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                 VmvSetupAddressMajor::<F>::merge_accumulators,
             );
 
-        let mut result =
-            VmvSetupAddressMajor::<F>::finalize(dense_accs, onehot_accs, cycles_per_row, k, num_columns);
+        let mut result = VmvSetupAddressMajor::<F>::finalize(
+            dense_accs,
+            onehot_accs,
+            cycles_per_row,
+            k,
+            num_columns,
+        );
 
         // Advice contribution is small and independent of the trace; add it after the streamed pass.
         Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
@@ -822,8 +832,13 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                 VmvSetupAddressMajor::<F>::merge_accumulators,
             );
 
-        let mut result =
-            VmvSetupAddressMajor::<F>::finalize(dense_accs, onehot_accs, cycles_per_row, k, num_columns);
+        let mut result = VmvSetupAddressMajor::<F>::finalize(
+            dense_accs,
+            onehot_accs,
+            cycles_per_row,
+            k,
+            num_columns,
+        );
         Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
         result
     }
