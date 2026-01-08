@@ -643,54 +643,53 @@ mod tests {
     }
 
     #[test]
-    fn test_dory_layout_index_conversions() {
-        let num_rows = 4;
-        let num_cols = 8;
+    fn test_dory_layout_address_cycle_conversions() {
+        let K = 4; // 4 addresses
+        let T = 8; // 8 cycles
 
-        // Test RowMajor layout
-        let row_major = DoryLayout::RowMajor;
+        // Test CycleMajor layout: index = address * T + cycle
+        let cycle_major = DoryLayout::CycleMajor;
 
-        // In row-major: coeff[i] -> row = i / num_cols, col = i % num_cols
-        // coeff[0] -> (0, 0), coeff[1] -> (0, 1), ..., coeff[7] -> (0, 7)
-        // coeff[8] -> (1, 0), ...
-        assert_eq!(row_major.index_to_position(0, num_rows, num_cols), (0, 0));
-        assert_eq!(row_major.index_to_position(1, num_rows, num_cols), (0, 1));
-        assert_eq!(row_major.index_to_position(7, num_rows, num_cols), (0, 7));
-        assert_eq!(row_major.index_to_position(8, num_rows, num_cols), (1, 0));
-        assert_eq!(row_major.index_to_position(9, num_rows, num_cols), (1, 1));
+        // Address 0: indices 0-7, Address 1: indices 8-15, etc.
+        assert_eq!(cycle_major.address_cycle_to_index(0, 0, K, T), 0);  // addr 0, cycle 0
+        assert_eq!(cycle_major.address_cycle_to_index(0, 1, K, T), 1);  // addr 0, cycle 1
+        assert_eq!(cycle_major.address_cycle_to_index(0, 7, K, T), 7);  // addr 0, cycle 7
+        assert_eq!(cycle_major.address_cycle_to_index(1, 0, K, T), 8);  // addr 1, cycle 0
+        assert_eq!(cycle_major.address_cycle_to_index(1, 1, K, T), 9);  // addr 1, cycle 1
+        assert_eq!(cycle_major.address_cycle_to_index(3, 7, K, T), 31); // addr 3, cycle 7
 
-        // Test reverse: position_to_index
-        assert_eq!(row_major.position_to_index(0, 0, num_rows, num_cols), 0);
-        assert_eq!(row_major.position_to_index(0, 1, num_rows, num_cols), 1);
-        assert_eq!(row_major.position_to_index(1, 0, num_rows, num_cols), 8);
-        assert_eq!(row_major.position_to_index(1, 1, num_rows, num_cols), 9);
+        // Test reverse: index_to_address_cycle
+        assert_eq!(cycle_major.index_to_address_cycle(0, K, T), (0, 0));
+        assert_eq!(cycle_major.index_to_address_cycle(1, K, T), (0, 1));
+        assert_eq!(cycle_major.index_to_address_cycle(8, K, T), (1, 0));
+        assert_eq!(cycle_major.index_to_address_cycle(31, K, T), (3, 7));
 
-        // Test ColumnMajor layout
-        let col_major = DoryLayout::ColumnMajor;
+        // Test AddressMajor layout: index = cycle * K + address
+        let addr_major = DoryLayout::AddressMajor;
 
-        // In column-major: coeff[i] -> row = i % num_rows, col = i / num_rows
-        // coeff[0] -> (0, 0), coeff[1] -> (1, 0), coeff[2] -> (2, 0), coeff[3] -> (3, 0)
-        // coeff[4] -> (0, 1), coeff[5] -> (1, 1), ...
-        assert_eq!(col_major.index_to_position(0, num_rows, num_cols), (0, 0));
-        assert_eq!(col_major.index_to_position(1, num_rows, num_cols), (1, 0));
-        assert_eq!(col_major.index_to_position(2, num_rows, num_cols), (2, 0));
-        assert_eq!(col_major.index_to_position(3, num_rows, num_cols), (3, 0));
-        assert_eq!(col_major.index_to_position(4, num_rows, num_cols), (0, 1));
-        assert_eq!(col_major.index_to_position(5, num_rows, num_cols), (1, 1));
+        // Cycle 0: indices 0-3, Cycle 1: indices 4-7, etc.
+        assert_eq!(addr_major.address_cycle_to_index(0, 0, K, T), 0);  // addr 0, cycle 0
+        assert_eq!(addr_major.address_cycle_to_index(1, 0, K, T), 1);  // addr 1, cycle 0
+        assert_eq!(addr_major.address_cycle_to_index(3, 0, K, T), 3);  // addr 3, cycle 0
+        assert_eq!(addr_major.address_cycle_to_index(0, 1, K, T), 4);  // addr 0, cycle 1
+        assert_eq!(addr_major.address_cycle_to_index(1, 1, K, T), 5);  // addr 1, cycle 1
+        assert_eq!(addr_major.address_cycle_to_index(3, 7, K, T), 31); // addr 3, cycle 7
 
-        // Test reverse: position_to_index
-        assert_eq!(col_major.position_to_index(0, 0, num_rows, num_cols), 0);
-        assert_eq!(col_major.position_to_index(1, 0, num_rows, num_cols), 1);
-        assert_eq!(col_major.position_to_index(0, 1, num_rows, num_cols), 4);
-        assert_eq!(col_major.position_to_index(1, 1, num_rows, num_cols), 5);
+        // Test reverse: index_to_address_cycle
+        assert_eq!(addr_major.index_to_address_cycle(0, K, T), (0, 0));
+        assert_eq!(addr_major.index_to_address_cycle(1, K, T), (1, 0));
+        assert_eq!(addr_major.index_to_address_cycle(4, K, T), (0, 1));
+        assert_eq!(addr_major.index_to_address_cycle(31, K, T), (3, 7));
 
         // Verify round-trip for both layouts
-        for i in 0..(num_rows * num_cols) {
-            let (row, col) = row_major.index_to_position(i, num_rows, num_cols);
-            assert_eq!(row_major.position_to_index(row, col, num_rows, num_cols), i);
+        for addr in 0..K {
+            for cycle in 0..T {
+                let idx = cycle_major.address_cycle_to_index(addr, cycle, K, T);
+                assert_eq!(cycle_major.index_to_address_cycle(idx, K, T), (addr, cycle));
 
-            let (row, col) = col_major.index_to_position(i, num_rows, num_cols);
-            assert_eq!(col_major.position_to_index(row, col, num_rows, num_cols), i);
+                let idx = addr_major.address_cycle_to_index(addr, cycle, K, T);
+                assert_eq!(addr_major.index_to_address_cycle(idx, K, T), (addr, cycle));
+            }
         }
     }
 
@@ -699,26 +698,25 @@ mod tests {
     fn test_dory_layout_global_state() {
         DoryGlobals::reset();
 
-        // Default should be RowMajor
-        assert_eq!(DoryGlobals::get_layout(), DoryLayout::RowMajor);
+        // Default should be CycleMajor
+        assert_eq!(DoryGlobals::get_layout(), DoryLayout::CycleMajor);
 
-        // Set to ColumnMajor
-        DoryGlobals::set_layout(DoryLayout::ColumnMajor);
-        assert_eq!(DoryGlobals::get_layout(), DoryLayout::ColumnMajor);
+        // Set to AddressMajor
+        DoryGlobals::set_layout(DoryLayout::AddressMajor);
+        assert_eq!(DoryGlobals::get_layout(), DoryLayout::AddressMajor);
 
-        // Set back to RowMajor
-        DoryGlobals::set_layout(DoryLayout::RowMajor);
-        assert_eq!(DoryGlobals::get_layout(), DoryLayout::RowMajor);
+        // Set back to CycleMajor
+        DoryGlobals::set_layout(DoryLayout::CycleMajor);
+        assert_eq!(DoryGlobals::get_layout(), DoryLayout::CycleMajor);
     }
 
-    /// Test that column-major layout produces different commitments than row-major layout.
+    /// Test that dense polynomials produce the same commitment regardless of layout.
     ///
-    /// Note: Full column-major proving/verification requires the underlying dory-pcs library
-    /// to also be aware of the layout. This test verifies that the layout infrastructure
-    /// is working and produces consistent (though different) commitments.
+    /// The CycleMajor vs AddressMajor distinction only affects OneHot polynomials.
+    /// For dense polynomials, the matrix storage is always row-major.
     #[test]
     #[serial]
-    fn test_dory_column_major_produces_different_commitment() {
+    fn test_dory_layout_dense_polynomials_same_commitment() {
         DoryGlobals::reset();
 
         let num_vars = 8;
@@ -728,53 +726,54 @@ mod tests {
 
         let mut rng = thread_rng();
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
 
-        // First, commit with row-major layout (default)
-        DoryGlobals::set_layout(DoryLayout::RowMajor);
-        let (commitment_row_major, _) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+        // Commit with CycleMajor layout (default)
+        DoryGlobals::set_layout(DoryLayout::CycleMajor);
+        let poly1 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
+        let (commitment_cycle_major, _) = DoryCommitmentScheme::commit(&poly1, &prover_setup);
 
-        // Then, commit with column-major layout
-        DoryGlobals::set_layout(DoryLayout::ColumnMajor);
-
-        // Create a fresh polynomial to avoid any caching
+        // Commit with AddressMajor layout
+        DoryGlobals::set_layout(DoryLayout::AddressMajor);
         let poly2 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs));
-        let (commitment_col_major, _) = DoryCommitmentScheme::commit(&poly2, &prover_setup);
+        let (commitment_addr_major, _) = DoryCommitmentScheme::commit(&poly2, &prover_setup);
 
-        // The commitments should be different when using different layouts
-        // (unless the polynomial is specially structured)
-        assert_ne!(
-            commitment_row_major, commitment_col_major,
-            "Row-major and column-major commitments should differ for random polynomials"
-        );
-
-        // Verify that the same layout produces the same commitment
-        let poly3 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-            (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect(),
-        ));
-        let (commitment_col_major_2, _) = DoryCommitmentScheme::commit(&poly3, &prover_setup);
-
-        // Both column-major commitments of the same polynomial should match
-        // (This is just checking consistency - poly3 has different coeffs so it should differ)
-        // Instead, verify that recomputing the same poly gives the same result
-        let poly_same = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-            (0..num_coeffs).map(|i| Fr::from(i as u64)).collect(),
-        ));
-        let (commitment_a, _) = DoryCommitmentScheme::commit(&poly_same, &prover_setup);
-
-        let poly_same2 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-            (0..num_coeffs).map(|i| Fr::from(i as u64)).collect(),
-        ));
-        let (commitment_b, _) = DoryCommitmentScheme::commit(&poly_same2, &prover_setup);
-
+        // Dense polynomials should produce the same commitment regardless of layout
+        // because the layout distinction only affects OneHot interpretation
         assert_eq!(
-            commitment_a, commitment_b,
-            "Same polynomial should produce same commitment with same layout"
+            commitment_cycle_major, commitment_addr_major,
+            "Dense polynomials should produce the same commitment with any layout"
         );
+    }
 
-        // Make sure we avoid using commitment_col_major_2 warning
-        let _ = commitment_col_major_2;
+    /// Test that the layout enum correctly converts between address/cycle and index.
+    #[test]
+    fn test_dory_layout_enum_methods() {
+        let K = 8;  // addresses
+        let T = 16; // cycles
+
+        let cycle_major = DoryLayout::CycleMajor;
+        let addr_major = DoryLayout::AddressMajor;
+
+        // For the same (address, cycle) pair, the two layouts give different indices
+        let addr = 3;
+        let cycle = 7;
+
+        let idx_cycle = cycle_major.address_cycle_to_index(addr, cycle, K, T);
+        let idx_addr = addr_major.address_cycle_to_index(addr, cycle, K, T);
+
+        // CycleMajor: index = addr * T + cycle = 3 * 16 + 7 = 55
+        assert_eq!(idx_cycle, 55);
+
+        // AddressMajor: index = cycle * K + addr = 7 * 8 + 3 = 59
+        assert_eq!(idx_addr, 59);
+
+        // Different layouts, different indices for the same (address, cycle)
+        assert_ne!(idx_cycle, idx_addr);
+
+        // But both can round-trip back to the same (address, cycle)
+        assert_eq!(cycle_major.index_to_address_cycle(idx_cycle, K, T), (addr, cycle));
+        assert_eq!(addr_major.index_to_address_cycle(idx_addr, K, T), (addr, cycle));
     }
 }

@@ -7,59 +7,139 @@ use std::sync::{
     OnceLock,
 };
 
-/// Dory matrix layout - determines how polynomial coefficients map to matrix positions.
+/// Dory matrix layout for OneHot polynomials.
 ///
-/// In Dory, polynomial coefficients are arranged in a 2D matrix for commitment.
-/// This enum controls the mapping from linear coefficient index to (row, col) position.
+/// This enum controls how polynomial coefficients (indexed by address k and cycle t)
+/// are mapped to matrix positions for Dory commitment.
+///
+/// For a OneHot polynomial with K addresses and T cycles:
+/// - Total coefficients = K * T
+/// - Matrix dimensions = sqrt(K * T) x sqrt(K * T) (approximately square)
+///
+/// The layout determines the mapping from (address, cycle) to matrix (row, col).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DoryLayout {
-    /// Row-major layout: coeff[i] -> row = i / num_cols, col = i % num_cols
+    /// Cycle-major layout (current main branch behavior).
     ///
-    /// Coefficients in the same row are contiguous in memory.
-    /// This is the default layout used by the current Rust implementation.
+    /// Coefficients are ordered by address first, then by cycle within each address:
+    /// ```text
+    /// Memory: [a0_t0, a0_t1, ..., a0_tT-1, a1_t0, a1_t1, ..., a1_tT-1, ...]
+    ///          └──── address 0 cycles ────┘ └──── address 1 cycles ────┘
+    ///
+    /// global_index = address * T + cycle
+    /// ```
+    ///
+    /// Matrix layout (K=4 addresses, T=4 cycles):
+    /// ```text
+    ///            col0    col1    col2    col3
+    ///      ┌────────┬────────┬────────┬────────┐
+    /// row0 │ a0,t0  │ a0,t1  │ a0,t2  │ a0,t3  │  ← All of address 0
+    ///      ├────────┼────────┼────────┼────────┤
+    /// row1 │ a1,t0  │ a1,t1  │ a1,t2  │ a1,t3  │  ← All of address 1
+    ///      ├────────┼────────┼────────┼────────┤
+    /// row2 │ a2,t0  │ a2,t1  │ a2,t2  │ a2,t3  │  ← All of address 2
+    ///      ├────────┼────────┼────────┼────────┤
+    /// row3 │ a3,t0  │ a3,t1  │ a3,t2  │ a3,t3  │  ← All of address 3
+    ///      └────────┴────────┴────────┴────────┘
+    /// ```
     #[default]
-    RowMajor,
+    CycleMajor,
 
-    /// Column-major layout (k-chunk major): coeff[i] -> row = i % num_rows, col = i / num_rows
+    /// Address-major layout (from PR #1038, GPU-compatible).
     ///
-    /// Coefficients in the same column are contiguous in memory.
-    /// This layout was used in earlier versions and is compatible with certain GPU implementations.
-    ColumnMajor,
+    /// Coefficients are ordered by cycle first, then by address within each cycle:
+    /// ```text
+    /// Memory: [t0_a0, t0_a1, ..., t0_aK-1, t1_a0, t1_a1, ..., t1_aK-1, ...]
+    ///          └──── cycle 0 addresses ───┘ └──── cycle 1 addresses ───┘
+    ///
+    /// global_index = cycle * K + address
+    /// ```
+    ///
+    /// Matrix layout (K=4 addresses, T=4 cycles):
+    /// ```text
+    ///            col0    col1    col2    col3
+    ///      ┌────────┬────────┬────────┬────────┐
+    /// row0 │ a0,t0  │ a1,t0  │ a2,t0  │ a3,t0  │  ← All of cycle 0
+    ///      ├────────┼────────┼────────┼────────┤
+    /// row1 │ a0,t1  │ a1,t1  │ a2,t1  │ a3,t1  │  ← All of cycle 1
+    ///      ├────────┼────────┼────────┼────────┤
+    /// row2 │ a0,t2  │ a1,t2  │ a2,t2  │ a3,t2  │  ← All of cycle 2
+    ///      ├────────┼────────┼────────┼────────┤
+    /// row3 │ a0,t3  │ a1,t3  │ a2,t3  │ a3,t3  │  ← All of cycle 3
+    ///      └────────┴────────┴────────┴────────┘
+    /// ```
+    ///
+    /// This layout is optimized for OneHot polynomials where each cycle has exactly
+    /// one nonzero entry (at the accessed address). Each row commitment becomes a
+    /// single basis element lookup rather than an MSM.
+    AddressMajor,
 }
 
 impl DoryLayout {
-    /// Convert a linear coefficient index to a (row, col) matrix position.
+    /// Convert a (address, cycle) pair to a linear coefficient index.
+    ///
+    /// # Arguments
+    /// * `address` - The address index (0 to K-1)
+    /// * `cycle` - The cycle index (0 to T-1)
+    /// * `K` - Total number of addresses
+    /// * `T` - Total number of cycles
     #[inline]
-    pub fn index_to_position(&self, coeff_idx: usize, num_rows: usize, num_cols: usize) -> (usize, usize) {
+    pub fn address_cycle_to_index(&self, address: usize, cycle: usize, K: usize, T: usize) -> usize {
         match self {
-            DoryLayout::RowMajor => {
-                let row = coeff_idx / num_cols;
-                let col = coeff_idx % num_cols;
-                (row, col)
+            DoryLayout::CycleMajor => address * T + cycle,
+            DoryLayout::AddressMajor => cycle * K + address,
+        }
+    }
+
+    /// Convert a linear coefficient index to a (address, cycle) pair.
+    ///
+    /// # Arguments
+    /// * `index` - The linear coefficient index
+    /// * `K` - Total number of addresses
+    /// * `T` - Total number of cycles
+    #[inline]
+    pub fn index_to_address_cycle(&self, index: usize, K: usize, T: usize) -> (usize, usize) {
+        match self {
+            DoryLayout::CycleMajor => {
+                let address = index / T;
+                let cycle = index % T;
+                (address, cycle)
             }
-            DoryLayout::ColumnMajor => {
-                let row = coeff_idx % num_rows;
-                let col = coeff_idx / num_rows;
-                (row, col)
+            DoryLayout::AddressMajor => {
+                let cycle = index / K;
+                let address = index % K;
+                (address, cycle)
             }
         }
     }
 
-    /// Convert a (row, col) matrix position to a linear coefficient index.
+    /// Convert a linear coefficient index to a (row, col) matrix position.
+    ///
+    /// For dense polynomials, this is standard row-major indexing regardless of layout.
+    /// The layout distinction primarily affects OneHot polynomial interpretation.
     #[inline]
-    pub fn position_to_index(&self, row: usize, col: usize, num_rows: usize, num_cols: usize) -> usize {
-        match self {
-            DoryLayout::RowMajor => row * num_cols + col,
-            DoryLayout::ColumnMajor => col * num_rows + row,
-        }
+    pub fn index_to_position(&self, coeff_idx: usize, _num_rows: usize, num_cols: usize) -> (usize, usize) {
+        // For dense polynomials, both layouts use row-major matrix storage
+        let row = coeff_idx / num_cols;
+        let col = coeff_idx % num_cols;
+        (row, col)
+    }
+
+    /// Convert a (row, col) matrix position to a linear coefficient index.
+    ///
+    /// For dense polynomials, this is standard row-major indexing regardless of layout.
+    #[inline]
+    pub fn position_to_index(&self, row: usize, col: usize, _num_rows: usize, num_cols: usize) -> usize {
+        // For dense polynomials, both layouts use row-major matrix storage
+        row * num_cols + col
     }
 }
 
 impl From<u8> for DoryLayout {
     fn from(value: u8) -> Self {
         match value {
-            0 => DoryLayout::RowMajor,
-            1 => DoryLayout::ColumnMajor,
+            0 => DoryLayout::CycleMajor,
+            1 => DoryLayout::AddressMajor,
             _ => panic!("Invalid DoryLayout value: {value}"),
         }
     }
@@ -83,7 +163,7 @@ static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 // Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
-// Layout tracking: 0=RowMajor, 1=ColumnMajor
+// Layout tracking: 0=CycleMajor, 1=AddressMajor
 static CURRENT_LAYOUT: AtomicU8 = AtomicU8::new(0);
 
 /// Dory commitment context - determines which set of global parameters to use
@@ -141,9 +221,9 @@ impl DoryGlobals {
     /// Set the Dory matrix layout
     ///
     /// This should be called once at initialization time, before any Dory operations.
-    /// The layout determines how polynomial coefficients are mapped to matrix positions:
-    /// - `RowMajor`: coeff[i] -> row = i / num_cols, col = i % num_cols (default)
-    /// - `ColumnMajor`: coeff[i] -> row = i % num_rows, col = i / num_rows
+    /// The layout determines how OneHot polynomial coefficients are organized:
+    /// - `CycleMajor`: Coefficients ordered by address, then cycle (current main branch)
+    /// - `AddressMajor`: Coefficients ordered by cycle, then address (GPU-compatible, PR #1038)
     pub fn set_layout(layout: DoryLayout) {
         CURRENT_LAYOUT.store(layout as u8, Ordering::SeqCst);
     }
@@ -327,7 +407,7 @@ impl DoryGlobals {
             let _ = MAX_NUM_ROWS.take();
             let _ = NUM_COLUMNS.take();
 
-            // Reset layout to default (RowMajor)
+            // Reset layout to default (CycleMajor)
             CURRENT_LAYOUT.store(0, Ordering::SeqCst);
 
             // Reset trusted advice globals
