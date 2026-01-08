@@ -1862,4 +1862,207 @@ mod tests {
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
     }
+
+    /// Helper function to run fib e2e test with a specific layout
+    fn run_fib_e2e_with_layout(layout: crate::poly::commitment::dory::DoryLayout) {
+        // Reset DoryGlobals to ensure clean state
+        crate::poly::commitment::dory::DoryGlobals::reset();
+        // Set layout BEFORE any DoryGlobals initialization
+        crate::poly::commitment::dory::DoryGlobals::set_layout(layout);
+
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&50u32).unwrap(); // Smaller input for faster test
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+        );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+    }
+
+    #[test]
+    #[serial]
+    fn fib_e2e_dory_cycle_major() {
+        run_fib_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::CycleMajor);
+    }
+
+    #[test]
+    #[serial]
+    fn fib_e2e_dory_address_major() {
+        run_fib_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::AddressMajor);
+    }
+
+    /// Helper function to run sha3 e2e test with a specific layout
+    fn run_sha3_e2e_with_layout(layout: crate::poly::commitment::dory::DoryLayout) {
+        // Ensure SHA3 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        use jolt_inlines_keccak256 as _;
+
+        // Reset DoryGlobals to ensure clean state
+        crate::poly::commitment::dory::DoryGlobals::reset();
+        // Set layout BEFORE any DoryGlobals initialization
+        crate::poly::commitment::dory::DoryGlobals::set_layout(layout);
+
+        let mut program = host::Program::new("sha3-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+        );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+
+        // Verify outputs match expected SHA3 result
+        let expected_output = &[
+            0xd0, 0x3, 0x5c, 0x96, 0x86, 0x6e, 0xe2, 0x2e, 0x81, 0xf5, 0xc4, 0xef, 0xbd, 0x88,
+            0x33, 0xc1, 0x7e, 0xa1, 0x61, 0x10, 0x81, 0xfc, 0xd7, 0xa3, 0xdd, 0xce, 0xce, 0x7f,
+            0x44, 0x72, 0x4, 0x66,
+        ];
+        assert_eq!(io_device.outputs, expected_output, "SHA3 outputs mismatch");
+    }
+
+    #[test]
+    #[serial]
+    fn sha3_e2e_dory_cycle_major() {
+        run_sha3_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::CycleMajor);
+    }
+
+    #[test]
+    #[serial]
+    fn sha3_e2e_dory_address_major() {
+        run_sha3_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::AddressMajor);
+    }
+
+    /// Helper function to run sha2 e2e test with a specific layout
+    fn run_sha2_e2e_with_layout(layout: crate::poly::commitment::dory::DoryLayout) {
+        // Ensure SHA2 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        use jolt_inlines_sha2 as _;
+
+        // Reset DoryGlobals to ensure clean state
+        crate::poly::commitment::dory::DoryGlobals::reset();
+        // Set layout BEFORE any DoryGlobals initialization
+        crate::poly::commitment::dory::DoryGlobals::set_layout(layout);
+
+        let mut program = host::Program::new("sha2-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+        );
+
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            prover_preprocessing.shared.clone(),
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+
+        // Verify outputs match expected SHA2 result
+        let expected_output = &[
+            0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
+            0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
+            0x3b, 0x50, 0xd2, 0x57,
+        ];
+        assert_eq!(io_device.outputs, expected_output, "SHA2 outputs mismatch");
+    }
+
+    #[test]
+    #[serial]
+    fn sha2_e2e_dory_cycle_major() {
+        run_sha2_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::CycleMajor);
+    }
+
+    #[test]
+    #[serial]
+    fn sha2_e2e_dory_address_major() {
+        run_sha2_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::AddressMajor);
+    }
 }

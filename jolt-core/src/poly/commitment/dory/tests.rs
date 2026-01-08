@@ -382,8 +382,9 @@ mod tests {
 
         DoryGlobals::reset();
 
-        let K = 8;
-        let T = 8;
+        // Use K*T = 1024 (num_vars = 10) to match other tests and avoid generator cache mismatch
+        let K = 32;
+        let T = 32;
 
         let _guard = DoryGlobals::initialize(K, T);
 
@@ -446,7 +447,8 @@ mod tests {
     fn test_dory_homomorphic_combination() {
         DoryGlobals::reset();
 
-        let num_vars = 8;
+        // Use num_vars = 10 to match other tests and avoid generator cache mismatch
+        let num_vars = 10;
         let num_coeffs = 1 << num_vars;
         let num_polys = 5;
 
@@ -530,7 +532,8 @@ mod tests {
     fn test_dory_batch_commit_e2e() {
         DoryGlobals::reset();
 
-        let num_vars = 8;
+        // Use num_vars = 10 to match other tests and avoid generator cache mismatch
+        let num_vars = 10;
         let num_coeffs = 1 << num_vars;
         let num_polys = 5;
 
@@ -719,7 +722,8 @@ mod tests {
     fn test_dory_layout_dense_polynomials_same_commitment() {
         DoryGlobals::reset();
 
-        let num_vars = 8;
+        // Use num_vars = 10 to match other tests and avoid generator cache mismatch
+        let num_vars = 10;
         let num_coeffs = 1 << num_vars;
 
         let _guard = DoryGlobals::initialize(1, num_coeffs);
@@ -745,6 +749,9 @@ mod tests {
             commitment_cycle_major, commitment_addr_major,
             "Dense polynomials should produce the same commitment with any layout"
         );
+
+        // Reset layout to default after test
+        DoryGlobals::set_layout(DoryLayout::CycleMajor);
     }
 
     /// Test that the layout enum correctly converts between address/cycle and index.
