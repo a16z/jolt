@@ -39,14 +39,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
-    /// Trusted advice opening proof at point from RamValEvaluation
-    pub trusted_advice_val_evaluation_proof: Option<PCS::Proof>,
-    /// Trusted advice opening proof at point from RamValFinalEvaluation
-    pub trusted_advice_val_final_proof: Option<PCS::Proof>,
-    /// Untrusted advice opening proof at point from RamValEvaluation
-    pub untrusted_advice_val_evaluation_proof: Option<PCS::Proof>,
-    /// Untrusted advice opening proof at point from RamValFinalEvaluation
-    pub untrusted_advice_val_final_proof: Option<PCS::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -229,12 +221,14 @@ impl CanonicalSerialize for CommittedPolynomial {
                 4u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
+            Self::TrustedAdvice => 5u8.serialize_with_mode(writer, compress),
+            Self::UntrustedAdvice => 6u8.serialize_with_mode(writer, compress),
         }
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         match self {
-            Self::RdInc | Self::RamInc => 1,
+            Self::RdInc | Self::RamInc | Self::TrustedAdvice | Self::UntrustedAdvice => 1,
             Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => 2,
         }
     }
@@ -268,6 +262,8 @@ impl CanonicalDeserialize for CommittedPolynomial {
                     let i = u8::deserialize_with_mode(reader, compress, validate)?;
                     Self::RamRa(i as usize)
                 }
+                5 => Self::TrustedAdvice,
+                6 => Self::UntrustedAdvice,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
