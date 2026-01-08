@@ -2285,14 +2285,15 @@ mod tests {
         let inputs = postcard::to_stdvec(&50u32).unwrap(); // Smaller input for faster test
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let max_padded_trace_length = 1 << 16;
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
+            max_padded_trace_length,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2301,6 +2302,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
         );
         let io_device = prover.program_io.clone();
@@ -2349,14 +2351,15 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
+        let max_padded_trace_length = 1 << 16;
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
+            max_padded_trace_length,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2365,6 +2368,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
         );
         let io_device = prover.program_io.clone();
@@ -2421,14 +2425,15 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
+        let max_padded_trace_length = 1 << 16;
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
+            max_padded_trace_length,
         );
 
-        let prover_preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), 1 << 16);
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2437,6 +2442,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
         );
         let io_device = prover.program_io.clone();

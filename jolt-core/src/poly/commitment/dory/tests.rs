@@ -727,7 +727,7 @@ mod tests {
         let num_vars = 10;
         let num_coeffs = 1 << num_vars;
 
-        let _guard = DoryGlobals::initialize(1, num_coeffs);
+        let _ = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
 
         let mut rng = thread_rng();
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
