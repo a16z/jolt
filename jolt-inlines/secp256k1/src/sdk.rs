@@ -48,13 +48,54 @@ pub fn hcf() {
     panic!("explicit host code panic function called");
 }
 
+/// A trait for unwrapping Results in a way that spoils the proof on error.
+///
+/// # When to Use
+///
+/// Use `.unwrap_or_spoil_proof()` when you want to **assert** that a condition holds,
+/// and if it doesn't, **no valid proof should exist**. This is appropriate when:
+///
+/// - You want to prove "X is valid" (not "I checked X")
+/// - A malicious prover should not be able to produce any proof if the condition fails
+/// - The error case represents something that should be cryptographically impossible
+///
+/// # When NOT to Use
+///
+/// Do NOT use `.unwrap_or_spoil_proof()` for:
+///
+/// - Input validation (use `.unwrap()` or return `Result` instead)
+/// - Expected error cases that should be handled gracefully
+/// - Cases where you want a valid proof showing the error occurred
+///
+/// # Example
+///
+/// ```ignore
+/// // Soft verification - returns Result, proof is valid either way
+/// let result = ecdsa_verify(z, r, s, q);
+///
+/// // Normal panic - proof is valid, shows program panicked
+/// ecdsa_verify(z, r, s, q).unwrap();
+///
+/// // Spoil proof - NO valid proof can exist if signature is invalid
+/// ecdsa_verify(z, r, s, q).unwrap_or_spoil_proof();
+/// ```
 pub trait UnwrapOrSpoilProof<T> {
-    /// Unwraps the Result, spoiling the proof if Err.
-    /// Use when invalid result should make the proof unsatisfiable.
+    /// Unwraps the Result, returning the success value.
+    ///
+    /// If the Result is `Err`, this function triggers a halt-and-catch-fire (HCF)
+    /// instruction that makes the proof unsatisfiable. No valid proof can be
+    /// generated for an execution that reaches this error path.
+    ///
+    /// # Returns
+    /// The unwrapped `Ok` value if successful.
+    ///
+    /// # Proof Implications
+    /// - `Ok(v)` → Returns `v`, proof proceeds normally
+    /// - `Err(_)` → Proof becomes unsatisfiable (cannot be verified)
     fn unwrap_or_spoil_proof(self) -> T;
 }
 
-impl<T, E> UnwrapOrSpoilProof<T> for Result<T, E> {
+impl<T> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
     #[inline(always)]
     fn unwrap_or_spoil_proof(self) -> T {
         match self {
