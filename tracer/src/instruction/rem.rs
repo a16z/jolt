@@ -25,11 +25,7 @@ declare_riscv_instr!(
 );
 
 impl REM {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <REM as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <REM as RISCVInstruction>::RAMAccess) {
         let dividend = cpu.x[self.operands.rs1 as usize];
         let divisor = cpu.x[self.operands.rs2 as usize];
         if divisor == 0 {

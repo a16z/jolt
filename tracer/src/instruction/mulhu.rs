@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl MULHU {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <MULHU as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <MULHU as RISCVInstruction>::RAMAccess) {
         cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => cpu.sign_extend(
                 (((cpu.x[self.operands.rs1 as usize] as u32 as u64)

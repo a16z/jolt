@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl SLLIW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <SLLIW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLLIW as RISCVInstruction>::RAMAccess) {
         // SLLIW, SRLIW, and SRAIW are RV64I-only instructions that are analogously defined but
         // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
         // and SRAIW encodings with imm[5] ≠ 0 are reserved.

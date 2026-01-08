@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualChangeDivisorW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualChangeDivisorW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualChangeDivisorW as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => {
                 panic!("VirtualChangeDivisorW is invalid in 32b mode");

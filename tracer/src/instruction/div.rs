@@ -25,11 +25,7 @@ declare_riscv_instr!(
 );
 
 impl DIV {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <DIV as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <DIV as RISCVInstruction>::RAMAccess) {
         let dividend = cpu.x[self.operands.rs1 as usize];
         let divisor = cpu.x[self.operands.rs2 as usize];
         if divisor == 0 {

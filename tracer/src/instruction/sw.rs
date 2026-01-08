@@ -32,11 +32,7 @@ declare_riscv_instr!(
 );
 
 impl SW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <SW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SW as RISCVInstruction>::RAMAccess) {
         *ram_access = cpu
             .mmu
             .store_word(

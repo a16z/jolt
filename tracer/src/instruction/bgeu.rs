@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::Cpu,
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
 
@@ -16,11 +13,7 @@ declare_riscv_instr!(
 );
 
 impl BGEU {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <BGEU as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <BGEU as RISCVInstruction>::RAMAccess) {
         if cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
             >= cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
         {

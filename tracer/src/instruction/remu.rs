@@ -22,11 +22,7 @@ declare_riscv_instr!(
 );
 
 impl REMU {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <REMU as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <REMU as RISCVInstruction>::RAMAccess) {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
         let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
         cpu.x[self.operands.rd as usize] = match divisor {

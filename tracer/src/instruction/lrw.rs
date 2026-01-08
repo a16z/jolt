@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::Cpu,
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_r::FormatR, RAMRead, RISCVInstruction, RISCVTrace};
 
@@ -16,11 +13,7 @@ declare_riscv_instr!(
 );
 
 impl LRW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <LRW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LRW as RISCVInstruction>::RAMAccess) {
         if cpu.is_reservation_set() {
             println!("LRW: Reservation is already set");
         }

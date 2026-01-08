@@ -1,6 +1,6 @@
 use crate::emulator::cpu::Cpu;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -19,11 +19,7 @@ declare_riscv_instr!(
 );
 
 impl SRL {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <SRL as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRL as RISCVInstruction>::RAMAccess) {
         let mask = match cpu.xlen {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,

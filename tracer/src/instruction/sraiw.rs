@@ -1,6 +1,6 @@
 use crate::emulator::cpu::Cpu;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen, instruction::virtual_srai::VirtualSRAI};
@@ -17,11 +17,7 @@ declare_riscv_instr!(
 );
 
 impl SRAIW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <SRAIW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRAIW as RISCVInstruction>::RAMAccess) {
         // SLLIW, SRLIW, and SRAIW are RV64I-only instructions that are analogously defined but
         // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
         // and SRAIW encodings with imm[5] ≠ 0 are reserved.

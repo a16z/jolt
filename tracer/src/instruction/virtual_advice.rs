@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    emulator::cpu::Cpu,
-    instruction::NormalizedInstruction,
-};
+use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 

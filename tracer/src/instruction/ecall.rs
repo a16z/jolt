@@ -21,11 +21,7 @@ declare_riscv_instr!(
 impl ECALL {
     /// **No architectural effects**
     /// Signals to emulator to record cycles through early exit of trap
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <ECALL as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <ECALL as RISCVInstruction>::RAMAccess) {
         let trap_type = match cpu.privilege_mode {
             PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
             PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,

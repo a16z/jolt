@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualChangeDivisor {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualChangeDivisor as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualChangeDivisor as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => {
                 let dividend = cpu.x[self.operands.rs1 as usize] as i32;

@@ -1,6 +1,6 @@
 use crate::emulator::cpu::Cpu;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -23,11 +23,7 @@ declare_riscv_instr!(
 );
 
 impl DIVUW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <DIVUW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <DIVUW as RISCVInstruction>::RAMAccess) {
         // DIVW and DIVUW are RV64 instructions that divide the lower 32 bits of rs1 by the lower
         // 32 bits of rs2, treating them as signed and unsigned integers, placing the 32-bit
         // quotient in rd, sign-extended to 64 bits.

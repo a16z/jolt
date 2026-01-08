@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl SD {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <SD as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SD as RISCVInstruction>::RAMAccess) {
         // The SD, SW, SH, and SB instructions store 64-bit, 32-bit, 16-bit, and 8-bit values from
         // the low bits of register rs2 to memory respectively.
         *ram_access = cpu

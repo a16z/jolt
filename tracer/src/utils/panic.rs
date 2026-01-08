@@ -1,5 +1,5 @@
-use crate::emulator::Emulator;
 use crate::emulator::cpu::get_register_name;
+use crate::emulator::Emulator;
 use crate::instruction::format::NormalizedOperands;
 use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 

@@ -13,11 +13,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualSW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <VirtualSW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <VirtualSW as RISCVInstruction>::RAMAccess) {
         // virtual lw is only supported on bit32. On bit64 LW doesn't use this instruction
         assert_eq!(cpu.xlen, Xlen::Bit32);
         *ram_access = cpu

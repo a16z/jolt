@@ -1,6 +1,6 @@
 use crate::emulator::cpu::Cpu;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -19,11 +19,7 @@ declare_riscv_instr!(
 );
 
 impl MULH {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <MULH as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <MULH as RISCVInstruction>::RAMAccess) {
         cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => cpu.sign_extend(
                 (cpu.x[self.operands.rs1 as usize] * cpu.x[self.operands.rs2 as usize]) >> 32,

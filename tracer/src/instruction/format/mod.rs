@@ -29,16 +29,8 @@ pub trait InstructionFormat:
     type RegisterState: InstructionRegisterState + PartialEq;
 
     fn parse(word: u32) -> Self;
-    fn capture_pre_execution_state(
-        &self,
-        state: &mut Self::RegisterState,
-        cpu: &mut Cpu,
-    );
-    fn capture_post_execution_state(
-        &self,
-        state: &mut Self::RegisterState,
-        cpu: &mut Cpu,
-    );
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
+    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self;
 }

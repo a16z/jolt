@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualPow2W {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualPow2W as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPow2W as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualPow2W is invalid in 32b mode"),
             Xlen::Bit64 => {

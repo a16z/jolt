@@ -181,11 +181,7 @@ impl RISCVInstruction for INLINE {
 }
 
 impl INLINE {
-    pub fn exec(
-        &self,
-        _cpu: &mut Cpu,
-        _: &mut <INLINE as RISCVInstruction>::RAMAccess,
-    ) {
+    pub fn exec(&self, _cpu: &mut Cpu, _: &mut <INLINE as RISCVInstruction>::RAMAccess) {
         panic!("Inline instructions must use trace(), not exec()");
     }
 }

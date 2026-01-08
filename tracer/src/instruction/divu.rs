@@ -25,11 +25,7 @@ declare_riscv_instr!(
 );
 
 impl DIVU {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <DIVU as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <DIVU as RISCVInstruction>::RAMAccess) {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
         let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
         if divisor == 0 {

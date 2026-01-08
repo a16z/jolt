@@ -1,7 +1,4 @@
-use crate::{
-    emulator::cpu::Cpu,
-    utils::inline_helpers::InstrAssembler,
-};
+use crate::{emulator::cpu::Cpu, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -30,11 +27,7 @@ declare_riscv_instr!(
 );
 
 impl LH {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <LH as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LH as RISCVInstruction>::RAMAccess) {
         cpu.x[self.operands.rd as usize] = match cpu
             .mmu
             .load_halfword(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)

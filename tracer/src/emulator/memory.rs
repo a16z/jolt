@@ -34,14 +34,22 @@ impl MemoryData {
     /// Set the capacity of the memory structure.
     fn init_with_capacity(&mut self, capacity: u64) {
         match self {
-            Self::Full { memory, num_doublewords, checkpoint, saving_checkpoints } => {
+            Self::Full {
+                memory,
+                num_doublewords,
+                checkpoint,
+                saving_checkpoints,
+            } => {
                 *num_doublewords = capacity.div_ceil(8) as usize;
 
                 *memory = vec![0; *num_doublewords];
                 *checkpoint = HashMap::new();
                 *saving_checkpoints = false;
             }
-            Self::Checkpoint { memory, num_doublewords } => {
+            Self::Checkpoint {
+                memory,
+                num_doublewords,
+            } => {
                 *num_doublewords = capacity.div_ceil(8) as usize;
                 *memory = HashMap::new();
             }
@@ -51,8 +59,16 @@ impl MemoryData {
     /// Get the number of entries in the doubleword-aligned memory storage backend.
     pub fn get_num_doublewords(&self) -> usize {
         match self {
-            Self::Full { memory: _, num_doublewords, checkpoint: _, saving_checkpoints: _ } => *num_doublewords,
-            Self::Checkpoint { memory: _, num_doublewords } => *num_doublewords,
+            Self::Full {
+                memory: _,
+                num_doublewords,
+                checkpoint: _,
+                saving_checkpoints: _,
+            } => *num_doublewords,
+            Self::Checkpoint {
+                memory: _,
+                num_doublewords,
+            } => *num_doublewords,
         }
     }
 
@@ -62,7 +78,12 @@ impl MemoryData {
     // to do this even when we're not writing.
     fn access_u64(&mut self, index: usize) -> &mut u64 {
         match self {
-            Self::Full { memory, num_doublewords: _, checkpoint, saving_checkpoints } => {
+            Self::Full {
+                memory,
+                num_doublewords: _,
+                checkpoint,
+                saving_checkpoints,
+            } => {
                 let res = &mut memory[index];
                 // We store only the initial value of each index accessed (read or written) over the course
                 // of a chunk. If the access is a read, the value is the value read. If the access is a
@@ -74,13 +95,18 @@ impl MemoryData {
 
                 res
             }
-            Self::Checkpoint { memory, num_doublewords } => {
+            Self::Checkpoint {
+                memory,
+                num_doublewords,
+            } => {
                 if index >= *num_doublewords {
                     panic!("Out of bounds memory access ({index} >= {num_doublewords})");
                 }
                 // Return the value at the given index if it's been set. If it hasn't been set, the
                 // executing program should never access it within the current chunk, so we error out.
-                memory.get_mut(&index).expect("Invalid memory access for chunk")
+                memory
+                    .get_mut(&index)
+                    .expect("Invalid memory access for chunk")
             }
         }
     }
@@ -92,15 +118,21 @@ impl MemoryData {
     // can get rid of this function.
     fn take_as_vec_memory(&mut self) -> Self {
         match self {
-            Self::Full { memory, num_doublewords, checkpoint: _, saving_checkpoints } => {
-                Self::Full {
-                    memory: std::mem::take(memory),
-                    num_doublewords: *num_doublewords,
-                    checkpoint: HashMap::default(),
-                    saving_checkpoints: *saving_checkpoints,
-                }
-            }
-            Self::Checkpoint { memory: _, num_doublewords: _ } => {
+            Self::Full {
+                memory,
+                num_doublewords,
+                checkpoint: _,
+                saving_checkpoints,
+            } => Self::Full {
+                memory: std::mem::take(memory),
+                num_doublewords: *num_doublewords,
+                checkpoint: HashMap::default(),
+                saving_checkpoints: *saving_checkpoints,
+            },
+            Self::Checkpoint {
+                memory: _,
+                num_doublewords: _,
+            } => {
                 unimplemented!("Can't take ReplayableMemory as a Vec<u64>");
             }
         }
@@ -110,8 +142,16 @@ impl MemoryData {
     /// checkpointing.
     fn get_u64(&self, index: usize) -> u64 {
         match self {
-            Self::Full { memory, num_doublewords: _, checkpoint: _, saving_checkpoints: _ } => memory[index],
-            Self::Checkpoint { memory, num_doublewords: _ } => memory[&index],
+            Self::Full {
+                memory,
+                num_doublewords: _,
+                checkpoint: _,
+                saving_checkpoints: _,
+            } => memory[index],
+            Self::Checkpoint {
+                memory,
+                num_doublewords: _,
+            } => memory[&index],
         }
     }
 
@@ -119,14 +159,22 @@ impl MemoryData {
     /// also starts a new chunk by setting `self.checkpoint` to be an empty hashmap.
     pub fn save_checkpoint(&mut self) -> Self {
         match self {
-            Self::Full { memory: _, num_doublewords, checkpoint, saving_checkpoints: _ } => {
+            Self::Full {
+                memory: _,
+                num_doublewords,
+                checkpoint,
+                saving_checkpoints: _,
+            } => {
                 assert!(*num_doublewords != 0);
                 Self::Checkpoint {
                     num_doublewords: *num_doublewords,
                     memory: std::mem::take(checkpoint),
                 }
             }
-            Self::Checkpoint { memory: _, num_doublewords: _ } => {
+            Self::Checkpoint {
+                memory: _,
+                num_doublewords: _,
+            } => {
                 unimplemented!("Can't save checkpoints from within a checkpoint")
             }
         }
@@ -134,8 +182,16 @@ impl MemoryData {
 
     pub fn is_saving_checkpoints(&self) -> bool {
         match self {
-            Self::Full { memory: _, num_doublewords: _, checkpoint: _, saving_checkpoints } => *saving_checkpoints,
-            Self::Checkpoint { memory: _, num_doublewords: _ } => false,
+            Self::Full {
+                memory: _,
+                num_doublewords: _,
+                checkpoint: _,
+                saving_checkpoints,
+            } => *saving_checkpoints,
+            Self::Checkpoint {
+                memory: _,
+                num_doublewords: _,
+            } => false,
         }
     }
 
@@ -145,10 +201,18 @@ impl MemoryData {
     /// *not* have their initial (zero) values saved.
     pub fn start_saving_checkpoints(&mut self) {
         match self {
-            Self::Full { memory: _, num_doublewords: _, checkpoint: _, saving_checkpoints } => {
+            Self::Full {
+                memory: _,
+                num_doublewords: _,
+                checkpoint: _,
+                saving_checkpoints,
+            } => {
                 *saving_checkpoints = true;
             }
-            Self::Checkpoint { memory: _, num_doublewords: _ } => {
+            Self::Checkpoint {
+                memory: _,
+                num_doublewords: _,
+            } => {
                 unimplemented!("Can't save checkpoints from within a checkpoint")
             }
         }

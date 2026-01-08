@@ -32,11 +32,7 @@ declare_riscv_instr!(
 );
 
 impl AMOSWAPW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <AMOSWAPW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOSWAPW as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let new_value = cpu.x[self.operands.rs2 as usize] as u32;
 

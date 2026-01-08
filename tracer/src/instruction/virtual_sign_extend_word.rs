@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualSignExtendWord {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualSignExtendWord as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSignExtendWord as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualSignExtend is not supported for 32-bit mode"),
             Xlen::Bit64 => {

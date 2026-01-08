@@ -20,11 +20,7 @@ declare_riscv_instr!(
 );
 
 impl AMOORD {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <AMOORD as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOORD as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let or_value = cpu.x[self.operands.rs2 as usize] as u64;
 

@@ -33,11 +33,7 @@ declare_riscv_instr!(
 );
 
 impl SH {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <SH as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SH as RISCVInstruction>::RAMAccess) {
         *ram_access = cpu
             .mmu
             .store_halfword(

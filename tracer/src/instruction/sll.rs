@@ -18,11 +18,7 @@ declare_riscv_instr!(
 );
 
 impl SLL {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <SLL as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLL as RISCVInstruction>::RAMAccess) {
         let mask = match cpu.xlen {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,

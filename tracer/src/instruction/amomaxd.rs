@@ -23,11 +23,7 @@ declare_riscv_instr!(
 );
 
 impl AMOMAXD {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <AMOMAXD as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOMAXD as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let compare_value = cpu.x[self.operands.rs2 as usize];
 

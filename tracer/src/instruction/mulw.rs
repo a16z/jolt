@@ -1,6 +1,6 @@
 use crate::emulator::cpu::Cpu;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Xlen};
@@ -19,11 +19,7 @@ declare_riscv_instr!(
 );
 
 impl MULW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <MULW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <MULW as RISCVInstruction>::RAMAccess) {
         // MULW is an RV64 instruction that multiplies the lower 32 bits of the source registers,
         // placing the sign extension of the lower 32 bits of the result into the destination
         // register.

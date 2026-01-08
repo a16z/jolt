@@ -28,11 +28,7 @@ declare_riscv_instr!(
 );
 
 impl LHU {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <LHU as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LHU as RISCVInstruction>::RAMAccess) {
         cpu.x[self.operands.rd as usize] = match cpu
             .mmu
             .load_halfword(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)

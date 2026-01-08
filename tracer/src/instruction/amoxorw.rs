@@ -19,11 +19,7 @@ declare_riscv_instr!(
 );
 
 impl AMOXORW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <AMOXORW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOXORW as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let xor_value = cpu.x[self.operands.rs2 as usize] as u32;
 

@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::Cpu,
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_r::FormatR, RAMWrite, RISCVInstruction, RISCVTrace};
 
@@ -16,11 +13,7 @@ declare_riscv_instr!(
 );
 
 impl SCW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <SCW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SCW as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let value = cpu.x[self.operands.rs2 as usize] as u32;
 

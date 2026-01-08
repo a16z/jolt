@@ -30,11 +30,7 @@ declare_riscv_instr!(
 );
 
 impl DIVW {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <DIVW as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <DIVW as RISCVInstruction>::RAMAccess) {
         // DIVW and DIVUW are RV64 instructions that divide the lower 32 bits of rs1 by the lower
         // 32 bits of rs2, treating them as signed and unsigned integers, placing the 32-bit
         // quotient in rd, sign-extended to 64 bits.

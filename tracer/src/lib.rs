@@ -198,11 +198,7 @@ pub fn trace_checkpoints(
     )
 }
 
-fn step_emulator(
-    emulator: &mut Emulator,
-    prev_pc: &mut u64,
-    trace: Option<&mut Vec<Cycle>>,
-) {
+fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself
     // into an infinite loop. It seems to be a good heuristic for now but we
@@ -375,7 +371,7 @@ impl Checkpoint {
             .get_mut_mmu()
             .memory
             .memory
-            .data= data;
+            .data = data;
     }
 }
 
@@ -784,8 +780,7 @@ mod test {
         };
 
         let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
-        let mut emulator: Emulator =
-            setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+        let mut emulator: Emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
         let mut prev_trace_len = 0;

@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualRev8W {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualRev8W as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualRev8W as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit64 => {
                 let v = cpu.x[self.operands.rs1 as usize] as u64;
