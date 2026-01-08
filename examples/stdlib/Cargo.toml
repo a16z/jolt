@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
-tracing-subscriber = "0.3"
-tracing = "0.1"
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
 guest = { package = "stdlib-guest", path = "./guest" }

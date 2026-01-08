@@ -143,6 +143,7 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
     "derive",
 ] }
+ark-secp256k1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.10"
@@ -184,6 +185,7 @@ toml_edit = "0.22.14"
 # Numeric
 num = "0.4.3"
 num-integer = "0.1.45"
+num-bigint = { version = "0.4.6", default-features = false }
 num-derive = "0.4.2"
 num-traits = "0.2.19"
 
@@ -228,6 +230,7 @@ getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = f
 # Build and Development
 ctor = { version = "0.2" }
 hex-literal = "0.4.1"
+hex = "0.4.3"
 spinners = { version = "4.1.1", default-features = false }
 
 # Testing
