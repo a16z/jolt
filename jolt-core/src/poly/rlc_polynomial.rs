@@ -1,6 +1,6 @@
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::Acc6S;
 use crate::utils::math::s64_from_diff_u64s;
@@ -340,22 +340,31 @@ impl<F: JoltField> RLCPolynomial<F> {
             // Streaming mode: generate rows on-demand from trace
             self.streaming_vector_matrix_product(left_vec, num_columns, Arc::clone(ctx))
         } else {
-            // Linear space mode: use pre-computed dense_rlc
-            (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    self.dense_rlc
-                        .iter()
-                        .skip(col_index)
-                        .step_by(num_columns)
-                        .zip(left_vec.iter())
-                        .map(|(&a, &b)| -> F { a * b })
-                        .sum::<F>()
-                })
-                .collect()
+            match DoryGlobals::get_layout() {
+                DoryLayout::AddressMajor => {
+                    // AddressMajor: different indexing pattern for dense polynomials
+                    self.vector_matrix_product_dense_address_major(left_vec, num_columns)
+                }
+                DoryLayout::CycleMajor => {
+                    // CycleMajor: original indexing pattern
+                    (0..num_columns)
+                        .into_par_iter()
+                        .map(|col_index| {
+                            self.dense_rlc
+                                .iter()
+                                .skip(col_index)
+                                .step_by(num_columns)
+                                .zip(left_vec.iter())
+                                .map(|(&a, &b)| -> F { a * b })
+                                .sum::<F>()
+                        })
+                        .collect()
+                }
+            }
         };
 
         // Compute the vector-matrix product for one-hot polynomials (linear space)
+        // This is already layout-aware via OneHotPolynomial::vector_matrix_product
         for (coeff, poly) in self.one_hot_rlc.iter() {
             match poly.as_ref() {
                 MultilinearPolynomial::OneHot(one_hot) => {
@@ -364,6 +373,56 @@ impl<F: JoltField> RLCPolynomial<F> {
                 _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
             }
         }
+
+        result
+    }
+
+    /// Vector-matrix product for dense polynomials with AddressMajor layout.
+    fn vector_matrix_product_dense_address_major(&self, left_vec: &[F], num_columns: usize) -> Vec<F> {
+        let T = DoryGlobals::get_T();
+        let num_rows = DoryGlobals::get_dimension();
+        let row_len = num_columns;
+
+        let mut result = vec![F::zero(); row_len];
+
+        if T < num_rows {
+            // Edge case where T < dimension
+            let rows_per_cycle = num_rows / T;
+
+            for (j, coeff) in self.dense_rlc.iter().enumerate() {
+                let row_index = j * rows_per_cycle;
+                // k = 0 always in first column for dense scalars
+                if row_index < left_vec.len() {
+                    result[0] += *coeff * left_vec[row_index];
+                }
+            }
+
+            return result;
+        }
+
+        let cycles_per_row = T / num_rows;
+
+        // For AddressMajor dense polynomials:
+        // Each coefficient at index j corresponds to cycle j
+        // Row index = j / cycles_per_row
+        // Column offset within row = j % cycles_per_row
+        // For dense scalars (K=1), column = offset * 1 + 0 = offset
+        result
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(col_index, dest)| {
+                // For dense (K=1), col_index directly maps to cycle_offset_in_row
+                if col_index < cycles_per_row {
+                    *dest = self
+                        .dense_rlc
+                        .iter()
+                        .skip(col_index)
+                        .step_by(cycles_per_row)
+                        .zip(left_vec.iter())
+                        .map(|(&a, &b)| -> F { a * b })
+                        .sum::<F>();
+                }
+            });
 
         result
     }

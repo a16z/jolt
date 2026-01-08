@@ -310,6 +310,28 @@ impl DoryGlobals {
         }
     }
 
+    /// Get the matrix dimension for AddressMajor layout.
+    /// For AddressMajor, the matrix is always square with dimension = sqrt(K*T).next_power_of_two()
+    /// This is equivalent to get_num_columns() since we compute square matrices.
+    #[inline]
+    pub fn get_dimension() -> usize {
+        Self::get_num_columns()
+    }
+
+    /// Get the number of cycles per row for the current layout.
+    /// - CycleMajor: cycles_per_row = 1 (each cell is one cycle)
+    /// - AddressMajor: cycles_per_row = T / dimension
+    #[inline]
+    pub fn get_cycles_per_row() -> usize {
+        let T = Self::get_T();
+        let dimension = Self::get_dimension();
+        if T >= dimension {
+            T / dimension
+        } else {
+            1
+        }
+    }
+
     fn set_T_for_context(t: usize, context: DoryContext) {
         #[allow(static_mut_refs)]
         unsafe {

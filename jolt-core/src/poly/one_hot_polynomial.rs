@@ -4,7 +4,7 @@
 
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -53,11 +53,18 @@ impl<F: JoltField> Default for OneHotPolynomial<F> {
 
 impl<F: JoltField> OneHotPolynomial<F> {
     /// The number of rows in the coefficient matrix used to
-    /// commit to this polynomial using Dory
+    /// commit to this polynomial using Dory.
+    /// For AddressMajor layout, this is always the dimension (square matrix).
+    /// For CycleMajor layout, this is K * T / num_columns.
     pub fn num_rows(&self) -> usize {
-        let T = self.nonzero_indices.len() as u128;
-        let row_length = DoryGlobals::get_num_columns() as u128;
-        (T * self.K as u128 / row_length) as usize
+        match DoryGlobals::get_layout() {
+            DoryLayout::AddressMajor => DoryGlobals::get_dimension(),
+            DoryLayout::CycleMajor => {
+                let T = self.nonzero_indices.len() as u128;
+                let row_length = DoryGlobals::get_num_columns() as u128;
+                (T * self.K as u128 / row_length) as usize
+            }
+        }
     }
 
     pub fn get_num_vars(&self) -> usize {
@@ -85,17 +92,40 @@ impl<F: JoltField> OneHotPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        assert_eq!(r.len(), self.get_num_vars());
-        let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-        let eq_left = EqPolynomial::<F>::evals(r_left);
-        let eq_right = EqPolynomial::<F>::evals(r_right);
-        let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
-        self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
-        left_product
-            .into_par_iter()
-            .zip_eq(eq_right.par_iter())
-            .map(|(l, r)| l * r)
-            .sum()
+        match DoryGlobals::get_layout() {
+            DoryLayout::AddressMajor => {
+                // AddressMajor: split into address and cycle components
+                let T = DoryGlobals::get_T();
+                let (r_address, r_cycle) = r.split_at(r.len() - T.log_2());
+                let eq_r_address = EqPolynomial::<F>::evals(r_address);
+                let eq_r_cycle = EqPolynomial::<F>::evals(r_cycle);
+                self.nonzero_indices
+                    .par_iter()
+                    .zip(eq_r_cycle.par_iter())
+                    .map(|(k, eq_cycle)| {
+                        if let Some(k) = k {
+                            eq_r_address[*k as usize] * eq_cycle
+                        } else {
+                            F::zero()
+                        }
+                    })
+                    .sum()
+            }
+            DoryLayout::CycleMajor => {
+                // CycleMajor: use vector_matrix_product approach
+                assert_eq!(r.len(), self.get_num_vars());
+                let (r_left, r_right) = r.split_at(self.num_rows().log_2());
+                let eq_left = EqPolynomial::<F>::evals(r_left);
+                let eq_right = EqPolynomial::<F>::evals(r_right);
+                let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
+                self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
+                left_product
+                    .into_par_iter()
+                    .zip_eq(eq_right.par_iter())
+                    .map(|(l, r)| l * r)
+                    .sum()
+            }
+        }
     }
 
     pub fn from_indices(nonzero_indices: Vec<Option<u8>>, K: usize) -> Self {
@@ -114,8 +144,107 @@ impl<F: JoltField> OneHotPolynomial<F> {
         &self,
         bases: &[G::Affine],
     ) -> Vec<G> {
+        match DoryGlobals::get_layout() {
+            DoryLayout::AddressMajor => self.commit_rows_address_major(bases),
+            DoryLayout::CycleMajor => self.commit_rows_cycle_major(bases),
+        }
+    }
+
+    /// Commit rows for AddressMajor layout.
+    /// In this layout, each row corresponds to `cycles_per_row` consecutive cycles.
+    /// Each cycle has at most one nonzero entry (at the accessed address).
+    fn commit_rows_address_major<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
+        &self,
+        bases: &[G::Affine],
+    ) -> Vec<G> {
+        let num_rows = DoryGlobals::get_dimension();
+        let row_len = DoryGlobals::get_dimension();
+        let T = DoryGlobals::get_T();
+
+        tracing::debug!("Committing to one-hot polynomial (AddressMajor) with {num_rows} rows");
+
+        if T < num_rows {
+            // Edge case where T < dimension; each cycle spans multiple rows
+            let rows_per_cycle = num_rows / T;
+
+            let mut row_commitments = vec![G::zero(); num_rows];
+
+            for (cycle, k) in self.nonzero_indices.iter().enumerate() {
+                if let Some(k) = k {
+                    // In AddressMajor with T < dimension:
+                    // The coefficient at (address=k, cycle=t) goes to:
+                    // row = cycle * rows_per_cycle + k / row_len
+                    // col = k % row_len
+                    let row_index = cycle * rows_per_cycle + (*k as usize) / row_len;
+                    let col_index = (*k as usize) % row_len;
+                    if row_index < num_rows && col_index < bases.len() {
+                        // Each row commitment is just a single basis element
+                        let projective = G::from(bases[col_index]);
+                        row_commitments[row_index] = projective;
+                    }
+                }
+            }
+
+            return row_commitments;
+        }
+
+        // Normal case: T >= dimension
+        let cycles_per_row = T / num_rows;
+
+        // For AddressMajor, each row contains `cycles_per_row` consecutive cycles.
+        // Within each row, we need to collect all the nonzero indices and their column positions.
+        // Column position for cycle t within the row = (t % cycles_per_row) * K + address
+
+        // Safety: This function is only called with G1Affine
+        let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
+
+        // Collect indices for each row
+        let mut row_indices: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
+
+        for (cycle, k) in self.nonzero_indices.iter().enumerate() {
+            if let Some(k) = k {
+                let row_index = cycle / cycles_per_row;
+                let col_within_row = (cycle % cycles_per_row) * self.K + (*k as usize);
+                if row_index < num_rows && col_within_row < row_len {
+                    row_indices[row_index].push(col_within_row);
+                }
+            }
+        }
+
+        // Process rows using batch additions
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = std::cmp::max(1, num_rows / num_chunks);
+
+        let mut result: Vec<G> = vec![G::zero(); num_rows];
+
+        result
+            .par_chunks_mut(chunk_size)
+            .zip(row_indices.par_chunks(chunk_size))
+            .for_each(|(result_chunk, indices_chunk)| {
+                let results =
+                    jolt_optimizations::batch_g1_additions_multi(g1_bases, indices_chunk);
+
+                for (row_result, (indices, batch_result)) in result_chunk
+                    .iter_mut()
+                    .zip(indices_chunk.iter().zip(results.into_iter()))
+                {
+                    if !indices.is_empty() {
+                        let projective = ark_bn254::G1Projective::from(batch_result);
+                        *row_result = unsafe { std::mem::transmute_copy(&projective) };
+                    }
+                }
+            });
+
+        result
+    }
+
+    /// Commit rows for CycleMajor layout (original implementation).
+    fn commit_rows_cycle_major<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
+        &self,
+        bases: &[G::Affine],
+    ) -> Vec<G> {
         let num_rows = self.num_rows();
-        tracing::debug!("Committing to one-hot polynomial with {num_rows} rows");
+        tracing::debug!("Committing to one-hot polynomial (CycleMajor) with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
 
@@ -335,6 +464,79 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
+        match DoryGlobals::get_layout() {
+            DoryLayout::AddressMajor => {
+                self.vector_matrix_product_address_major(left_vec, coeff, result)
+            }
+            DoryLayout::CycleMajor => {
+                self.vector_matrix_product_cycle_major(left_vec, coeff, result)
+            }
+        }
+    }
+
+    /// Vector-matrix product for AddressMajor layout.
+    fn vector_matrix_product_address_major(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
+        let T = DoryGlobals::get_T();
+        let num_columns = DoryGlobals::get_dimension();
+        let num_rows = DoryGlobals::get_dimension();
+        debug_assert_eq!(result.len(), num_columns);
+
+        if T < num_rows {
+            // Edge case where T < dimension
+            let rows_per_cycle = num_rows / T;
+
+            for (cycle, k) in self.nonzero_indices.iter().enumerate() {
+                if let Some(k) = k {
+                    let row_index = cycle * rows_per_cycle + (*k as usize) / num_columns;
+                    let col_index = (*k as usize) % num_columns;
+                    if row_index < left_vec.len() && col_index < result.len() {
+                        result[col_index] += coeff * left_vec[row_index];
+                    }
+                }
+            }
+            return;
+        }
+
+        // Normal case: T >= dimension
+        let cycles_per_row = T / num_rows;
+
+        // For AddressMajor layout:
+        // - Each row contains `cycles_per_row` consecutive cycles
+        // - Within each row, column = (cycle % cycles_per_row) * K + address
+        let K = self.K;
+        let nonzero_indices = &self.nonzero_indices;
+        result
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(col_index, dest)| {
+                let mut col_dot_product = F::zero();
+
+                // For this column, determine which cycles and addresses map here
+                // col_index = (cycle_within_row) * K + address
+                // where cycle_within_row = cycle % cycles_per_row
+                let address_in_col = col_index % K;
+                let cycle_offset_in_row = col_index / K;
+
+                if cycle_offset_in_row < cycles_per_row {
+                    // Iterate over all rows
+                    for row in 0..num_rows {
+                        let cycle = row * cycles_per_row + cycle_offset_in_row;
+                        if cycle < T {
+                            if let Some(addr) = nonzero_indices[cycle] {
+                                if addr as usize == address_in_col {
+                                    col_dot_product += left_vec[row];
+                                }
+                            }
+                        }
+                    }
+                }
+
+                *dest += coeff * col_dot_product;
+            });
+    }
+
+    /// Vector-matrix product for CycleMajor layout (original implementation).
+    fn vector_matrix_product_cycle_major(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
         let T = DoryGlobals::get_T();
         let num_columns = DoryGlobals::get_num_columns();
         debug_assert_eq!(result.len(), num_columns);
