@@ -49,7 +49,8 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math, thread::unsafe_allocate_zero_vec},
@@ -1024,6 +1025,32 @@ impl<F: JoltField> RaReductionParams<F> {
             + self.gamma * self.claim_val_final
             + self.gamma_squared * self.claim_rw
             + self.gamma_cubed * self.claim_val_eval
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.num_rounds()
+    }
+
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
+        self.input_claim()
+    }
+
+    fn normalize_opening_point(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        debug_assert_eq!(sumcheck_challenges.len(), self.num_rounds());
+        let (r_address, r_cycle) = sumcheck_challenges.split_at(self.log_K);
+        let r_address_be: Vec<_> = r_address.iter().rev().copied().collect();
+        let r_cycle_be: Vec<_> = r_cycle.iter().rev().copied().collect();
+
+        OpeningPoint::<BIG_ENDIAN, F>::new([r_address_be, r_cycle_be].concat())
     }
 }
 
