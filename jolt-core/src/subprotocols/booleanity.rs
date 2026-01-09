@@ -63,8 +63,11 @@ pub struct BooleanitySumcheckParams<F: JoltField> {
     pub log_k_chunk: usize,
     /// Log of trace length
     pub log_t: usize,
-    /// Batching challenges (γ_i for each RA polynomial)
-    pub gammas: Vec<F::Challenge>,
+    /// Single batching challenge γ.
+    /// We derive per-polynomial batching coefficients as \( \gamma^{2i} \) for i = 0, 1, ...
+    pub gamma: F::Challenge,
+    /// Per-polynomial batching coefficients \( \gamma^{2i} \) (in the base field).
+    pub gamma_powers_square: Vec<F>,
     /// Address binding point (shared across all families)
     pub r_address: Vec<F::Challenge>,
     /// Cycle binding point (shared across all families)
@@ -171,13 +174,29 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             polynomial_types.push(CommittedPolynomial::RamRa(i));
         }
 
-        // Sample batching challenges (TODO: we can also reuse prior challenges from Stage 5)
-        let gammas = transcript.challenge_vector_optimized::<F>(total_d);
+        // Sample a single batching challenge γ, and derive per-polynomial weights γ^{2i}.
+        let mut gamma = transcript.challenge_scalar_optimized::<F>();
+        let mut gamma_f: F = gamma.into();
+        // Avoid the degenerate gamma=0 case (vanishing weights + non-invertible scaling).
+        if gamma_f.is_zero() {
+            gamma = F::Challenge::from(1_u128);
+            gamma_f = gamma.into();
+        }
+
+        // Compute gamma_powers_square (verifier needs these for expected_output_claim)
+        let gamma_sq = gamma_f.square();
+        let mut gamma_powers_square = Vec::with_capacity(total_d);
+        let mut gamma2_i = F::one();
+        for _ in 0..total_d {
+            gamma_powers_square.push(gamma2_i);
+            gamma2_i *= gamma_sq;
+        }
 
         Self {
             log_k_chunk,
             log_t,
-            gammas,
+            gamma,
+            gamma_powers_square,
             r_address,
             r_cycle,
             polynomial_types,
@@ -189,6 +208,12 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
 /// Booleanity Sumcheck Prover.
 #[derive(Allocative)]
 pub struct BooleanitySumcheckProver<F: JoltField> {
+    /// Per-polynomial powers γ^i (in the base field).
+    /// Used to pre-scale the address eq tables for phase 2.
+    gamma_powers: Vec<F>,
+    /// Per-polynomial inverse powers γ^{-i} (in the base field).
+    /// Used to unscale cached committed-polynomial openings.
+    gamma_powers_inv: Vec<F>,
     /// B: split-eq over address-chunk variables (phase 1, LowToHigh).
     B: GruenSplitEqPolynomial<F>,
     /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
@@ -238,7 +263,25 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
         F_table.reset(F::one());
 
+        // Compute prover-only fields: gamma_powers (γ^i) and gamma_powers_inv (γ^{-i})
+        let num_polys = params.polynomial_types.len();
+        let gamma_f: F = params.gamma.into();
+        let mut gamma_powers = Vec::with_capacity(num_polys);
+        let mut gamma_powers_inv = Vec::with_capacity(num_polys);
+        let mut rho_i = F::one();
+        for _ in 0..num_polys {
+            gamma_powers.push(rho_i);
+            gamma_powers_inv.push(
+                rho_i
+                    .inverse()
+                    .expect("gamma_powers[i] is nonzero (gamma != 0)"),
+            );
+            rho_i *= gamma_f;
+        }
+
         Self {
+            gamma_powers,
+            gamma_powers_inv,
             B,
             D,
             G,
@@ -292,9 +335,10 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
+                        let gamma_2i = self.params.gamma_powers_square[i];
                         [
-                            self.params.gammas[i] * F::from_barrett_reduce(inner_sum[0]),
-                            self.params.gammas[i] * F::from_barrett_reduce(inner_sum[1]),
+                            gamma_2i * F::from_barrett_reduce(inner_sum[0]),
+                            gamma_2i * F::from_barrett_reduce(inner_sum[1]),
                         ]
                     })
                     .reduce(
@@ -318,21 +362,18 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                 // Accumulate in unreduced form to minimize per-term reductions
                 let mut acc_c = F::Unreduced::<9>::zero();
                 let mut acc_e = F::Unreduced::<9>::zero();
-                for (i, gamma) in self.params.gammas.iter().enumerate().take(num_polys) {
+                for i in 0..num_polys {
                     let h_0 = H.get_bound_coeff(i, 2 * j_prime);
                     let h_1 = H.get_bound_coeff(i, 2 * j_prime + 1);
                     let b = h_1 - h_0;
 
-                    // Compute gamma * h0, then a single unreduced multiply by (h0 - 1)
-                    let g_h0 = *gamma * h_0;
-                    let h0_minus_one = h_0 - F::one();
-                    let c_unr = g_h0.mul_unreduced::<9>(h0_minus_one);
-                    acc_c += c_unr;
-
-                    // Compute gamma * b, then a single unreduced multiply by b
-                    let g_b = *gamma * b;
-                    let e_unr = g_b.mul_unreduced::<9>(b);
-                    acc_e += e_unr;
+                    // Phase-2 optimization: H is pre-scaled by rho_i = gamma^i, so gamma^{2i}
+                    // factors are already accounted for:
+                    //   gamma^{2i}*h0*(h0-1) = (rho*h0) * (rho*h0 - rho)
+                    //   gamma^{2i}*b*b       = (rho*b) * (rho*b)
+                    let rho = self.gamma_powers[i];
+                    acc_c += h_0.mul_unreduced::<9>(h_0 - rho);
+                    acc_e += b.mul_unreduced::<9>(b);
                 }
                 [
                     F::from_montgomery_reduce::<9>(acc_c),
@@ -374,11 +415,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
             if round == self.params.log_k_chunk - 1 {
                 self.eq_r_r = self.B.get_current_scalar();
 
-                // Initialize SharedRaPolynomials with shared eq table
+                // Initialize SharedRaPolynomials with per-poly pre-scaled eq tables (by rho_i)
                 let F_table = std::mem::take(&mut self.F);
                 let ra_indices = std::mem::take(&mut self.ra_indices);
+                let base_eq = F_table.clone_values();
+                let num_polys = self.params.polynomial_types.len();
+                debug_assert!(
+                    num_polys == self.gamma_powers.len(),
+                    "gamma_powers length mismatch: got {}, expected {}",
+                    self.gamma_powers.len(),
+                    num_polys
+                );
+                let tables: Vec<Vec<F>> = (0..num_polys)
+                    .into_par_iter()
+                    .map(|i| {
+                        let rho = self.gamma_powers[i];
+                        base_eq.iter().map(|v| rho * *v).collect()
+                    })
+                    .collect();
                 self.H = Some(SharedRaPolynomials::new(
-                    F_table.clone_values(),
+                    tables,
                     ra_indices,
                     self.params.one_hot_params.clone(),
                 ));
@@ -404,8 +460,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let H = self.H.as_ref().expect("H should be initialized");
+        // H is scaled by rho_i; unscale so cached openings match the committed polynomials.
         let claims: Vec<F> = (0..H.num_polys())
-            .map(|i| H.final_sumcheck_claim(i))
+            .map(|i| H.final_sumcheck_claim(i) * self.gamma_powers_inv[i])
             .collect();
 
         // All polynomials share the same opening point (r_address, r_cycle)
@@ -468,8 +525,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
             .collect();
 
         EqPolynomial::<F>::mle(sumcheck_challenges, &combined_r)
-            * zip(&self.params.gammas, ra_claims)
-                .map(|(gamma, ra)| (ra.square() - ra) * gamma)
+            * zip(&self.params.gamma_powers_square, ra_claims)
+                .map(|(gamma_2i, ra)| (ra.square() - ra) * gamma_2i)
                 .sum::<F>()
     }
 
