@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::declare_riscv_instr;
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::Xlen;
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 

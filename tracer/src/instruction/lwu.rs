@@ -8,10 +8,12 @@ use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::xori::XORI;
 use super::{addi::ADDI, Instruction};
 use super::{Cycle, RISCVInstruction, RISCVTrace};
-use crate::emulator::cpu::Cpu;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 use serde::{Deserialize, Serialize};
 
 declare_riscv_instr!(

@@ -4,8 +4,8 @@ use super::{
     format::{format_j::FormatJ, normalize_imm},
     RISCVInstruction, RISCVTrace,
 };
-use crate::declare_riscv_instr;
-use crate::{emulator::cpu::Cpu, instruction::format::NormalizedOperands};
+use crate::instruction::format::NormalizedOperands;
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
     name   = JAL,

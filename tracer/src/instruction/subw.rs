@@ -1,7 +1,9 @@
-use crate::emulator::cpu::Cpu;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 use serde::{Deserialize, Serialize};
 
 use super::sub::SUB;

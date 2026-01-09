@@ -1,4 +1,3 @@
-use crate::emulator::cpu::Cpu;
 use crate::instruction::add::ADD;
 use crate::instruction::mul::MUL;
 use crate::instruction::srai::SRAI;
@@ -11,7 +10,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{
     format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,

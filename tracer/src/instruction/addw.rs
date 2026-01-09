@@ -1,10 +1,10 @@
-use crate::{
-    emulator::cpu::Cpu,
-    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
-};
+use crate::utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator};
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::add::ADD;
 use super::virtual_sign_extend_word::VirtualSignExtendWord;

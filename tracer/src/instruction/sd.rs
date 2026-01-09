@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::declare_riscv_instr;
-use crate::emulator::cpu::Cpu;
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::RAMWrite;
 

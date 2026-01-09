@@ -1,9 +1,12 @@
-use crate::emulator::cpu::Cpu;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Xlen, instruction::virtual_srai::VirtualSRAI};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::virtual_srai::VirtualSRAI,
+};
 
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};

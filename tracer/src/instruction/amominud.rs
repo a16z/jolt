@@ -1,4 +1,3 @@
-use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
@@ -10,7 +9,10 @@ use super::sd::SD;
 use super::sltu::SLTU;
 use super::xori::XORI;
 use super::Instruction;
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 

@@ -508,11 +508,7 @@ macro_rules! define_rv32im_enums {
         }
 
         impl Instruction {
-            pub fn trace(
-                &self,
-                cpu: &mut $crate::emulator::cpu::Cpu,
-                trace: Option<&mut Vec<Cycle>>,
-            ) {
+            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
                 match self {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),

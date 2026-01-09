@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace};
-use crate::declare_riscv_instr;
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::Xlen;
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
     name = VirtualSW,

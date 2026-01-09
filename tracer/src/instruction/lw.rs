@@ -1,7 +1,11 @@
-use crate::{emulator::cpu::Cpu, utils::inline_helpers::InstrAssembler};
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Xlen, instruction::ld::LD};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::ld::LD,
+};
 
 use super::andi::ANDI;
 use super::format::format_load::FormatLoad;

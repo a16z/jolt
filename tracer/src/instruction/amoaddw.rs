@@ -3,10 +3,12 @@ use serde::{Deserialize, Serialize};
 use super::add::ADD;
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::Instruction;
-use crate::emulator::cpu::Cpu;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 

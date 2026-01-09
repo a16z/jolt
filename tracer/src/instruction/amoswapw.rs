@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
@@ -19,7 +18,10 @@ use crate::instruction::xor::XOR;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{format::format_amo::FormatAMO, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 

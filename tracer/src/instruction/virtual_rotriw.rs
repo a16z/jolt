@@ -1,9 +1,8 @@
 use common::constants::XLEN;
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu, emulator::cpu::Xlen};
 
 use super::{RISCVInstruction, RISCVTrace};
 

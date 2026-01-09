@@ -4,11 +4,13 @@ use super::ld::LD;
 use super::sd::SD;
 use super::xor::XOR;
 use super::Instruction;
-use crate::emulator::cpu::Cpu;
 use crate::instruction::addi::ADDI;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{declare_riscv_instr, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
