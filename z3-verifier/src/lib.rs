@@ -61,4 +61,7 @@ macro_rules! template_format {
             rs2: 3,
         }
     };
+    (FormatFence) => {
+        FormatFence {}
+    };
 }
