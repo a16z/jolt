@@ -15,6 +15,7 @@ pub fn init_inlines() -> Result<(), String> {
         KECCAK256_FUNCT7,
         KECCAK256_NAME,
         std::boxed::Box::new(sequence_builder::keccak256_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())
@@ -51,7 +52,7 @@ fn auto_register() {
 
     if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
         if let Err(e) = store_inlines() {
-            eprintln!("Failed to store Keccak256 inline traces: {e}");
+            tracing::error!("Failed to store Keccak256 inline traces: {e}");
         }
     }
 }

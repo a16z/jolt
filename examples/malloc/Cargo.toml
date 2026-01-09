@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+jolt-sdk = { workspace = true, features = ["host"] }
 guest = { package = "malloc-guest", path = "./guest" }

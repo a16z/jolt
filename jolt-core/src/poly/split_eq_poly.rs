@@ -455,6 +455,51 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         ])
     }
 
+    /// Compute the round polynomial `s(X) = l(X) · q(X)` for arbitrary degree,
+    /// given partial evaluations of `q` and the previous round claim.
+    ///
+    /// # Arguments
+    /// - `q_evals`: Evaluations `[q(1), q(2), ..., q(deg(q)-1), q(∞)]` where `q(∞)` is
+    ///   the leading coefficient of `q`. The degree of `q` is `q_evals.len()`.
+    /// - `s_0_plus_s_1`: The previous round claim, equal to `s(0) + s(1)`.
+    ///
+    /// # Returns
+    /// The round polynomial `s(X) = l(X) · q(X)` of degree `deg(q) + 1`.
+    ///
+    /// # Algorithm
+    /// 1. Recover `q(0)` from the claim using `s(0) + s(1) = l(0)·q(0) + l(1)·q(1)`.
+    /// 2. Interpolate `q` from its evaluations at `[0, 1, ..., deg(q)-1, ∞]`.
+    /// 3. Multiply by the linear eq polynomial `l(X) = l(0) + (l(1) - l(0))·X`.
+    pub fn gruen_poly_from_evals(&self, q_evals: &[F], s_0_plus_s_1: F) -> UniPoly<F> {
+        let r_round = match self.binding_order {
+            BindingOrder::LowToHigh => self.w[self.current_index - 1],
+            BindingOrder::HighToLow => self.w[self.current_index],
+        };
+
+        // Compute l(0) and l(1) for the current linear eq polynomial
+        let l_at_0 = self.current_scalar * EqPolynomial::mle(&[F::zero()], &[r_round]);
+        let l_at_1 = self.current_scalar * EqPolynomial::mle(&[F::one()], &[r_round]);
+
+        // Recover q(0) from the claim: s(0) + s(1) = l(0)·q(0) + l(1)·q(1)
+        let q_at_0 = (s_0_plus_s_1 - l_at_1 * q_evals[0]) / l_at_0;
+
+        // Interpolate q from [q(0), q(1), ..., q(deg-1), q(∞)]
+        let mut full_q_evals = q_evals.to_vec();
+        full_q_evals.insert(0, q_at_0);
+        let q = UniPoly::from_evals_toom(&full_q_evals);
+
+        // Multiply q(X) by l(X) = l_c0 + l_c1·X
+        let l_c0 = l_at_0;
+        let l_c1 = l_at_1 - l_at_0;
+        let mut s_coeffs = vec![F::zero(); q.coeffs.len() + 1];
+        for (i, q_ci) in q.coeffs.into_iter().enumerate() {
+            s_coeffs[i] += q_ci * l_c0;
+            s_coeffs[i + 1] += q_ci * l_c1;
+        }
+
+        UniPoly::from_coeff(s_coeffs)
+    }
+
     pub fn merge(&self) -> DensePolynomial<F> {
         let evals = match self.binding_order {
             BindingOrder::LowToHigh => {

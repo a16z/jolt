@@ -13,6 +13,7 @@ pub fn init_inlines() -> Result<(), String> {
         BLAKE2_FUNCT7,
         BLAKE2_NAME,
         std::boxed::Box::new(sequence_builder::blake2b_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())
@@ -44,12 +45,12 @@ pub fn store_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        eprintln!("Failed to register BLAKE2 inlines: {e}");
+        tracing::error!("Failed to register BLAKE2 inlines: {e}");
     }
 
     if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
         if let Err(e) = store_inlines() {
-            eprintln!("Failed to store BLAKE2 inline traces: {e}");
+            tracing::error!("Failed to store BLAKE2 inline traces: {e}");
         }
     }
 }

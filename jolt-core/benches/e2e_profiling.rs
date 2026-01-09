@@ -211,9 +211,9 @@ fn prove_example(
             bytecode,
             program_io.memory_layout.clone(),
             init_memory_state,
+            padded_trace_len,
         );
-        let preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), padded_trace_len);
+        let preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -223,6 +223,7 @@ fn prove_example(
             &serialized_input,
             &[],
             &[],
+            None,
             None,
         );
         let program_io = prover.program_io.clone();
@@ -266,9 +267,9 @@ fn prove_example_with_trace(
         bytecode.clone(),
         program_io.memory_layout.clone(),
         init_memory_state,
+        trace.len().next_power_of_two(),
     );
-    let preprocessing =
-        JoltProverPreprocessing::new(shared_preprocessing, trace.len().next_power_of_two());
+    let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
     let elf_contents_opt = program.get_elf_contents();
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -280,6 +281,7 @@ fn prove_example_with_trace(
         &serialized_input,
         &[],
         &[],
+        None,
         None,
     );
     let now = Instant::now();

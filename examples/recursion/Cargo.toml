@@ -8,9 +8,9 @@ name = "recursion"
 path = "src/main.rs"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
-tracing-subscriber = "0.3"
-tracing = "0.1"
-ark-serialize = { version = "0.5.0", default-features = false }
-postcard = { version = "1.0.8", default-features = false, features = ["use-std"] }
-clap = { version = "4.0", features = ["derive"] }
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+ark-serialize.workspace = true
+postcard.workspace = true
+clap.workspace = true

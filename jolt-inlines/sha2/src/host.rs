@@ -18,6 +18,7 @@ pub fn init_inlines() -> Result<(), String> {
         SHA256_FUNCT7,
         SHA256_NAME,
         std::boxed::Box::new(sequence_builder::sha2_inline_sequence_builder),
+        None,
     )?;
 
     register_inline(
@@ -26,6 +27,7 @@ pub fn init_inlines() -> Result<(), String> {
         SHA256_INIT_FUNCT7,
         SHA256_INIT_NAME,
         std::boxed::Box::new(sequence_builder::sha2_init_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())
@@ -82,7 +84,7 @@ fn auto_register() {
 
     if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
         if let Err(e) = store_inlines() {
-            eprintln!("Failed to store SHA256 inline traces: {e}");
+            tracing::error!("Failed to store SHA256 inline traces: {e}");
         }
     }
 }

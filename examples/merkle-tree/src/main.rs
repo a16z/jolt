@@ -20,7 +20,7 @@ pub fn main() {
     let leaf3 = [7u8; 32];
     let leaf4 = [8u8; 32];
 
-    let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
+    let (trusted_advice_commitment, trusted_advice_hint) = guest::commit_trusted_advice_merkle_tree(
         TrustedAdvice::new(leaf2),
         TrustedAdvice::new(leaf3),
         &prover_preprocessing,
@@ -36,6 +36,7 @@ pub fn main() {
         TrustedAdvice::new(leaf3),
         UntrustedAdvice::new(leaf4),
         trusted_advice_commitment,
+        trusted_advice_hint,
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
