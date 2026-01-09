@@ -110,16 +110,8 @@ impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for RamRaClaimReductionSumcheckProver<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::compute_message")]
@@ -1016,16 +1008,6 @@ impl<F: JoltField> RaReductionParams<F> {
         }
     }
 
-    fn num_rounds(&self) -> usize {
-        self.log_K + self.log_T
-    }
-
-    fn input_claim(&self) -> F {
-        self.claim_raf
-            + self.gamma * self.claim_val_final
-            + self.gamma_squared * self.claim_rw
-            + self.gamma_cubed * self.claim_val_eval
-    }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
@@ -1034,11 +1016,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        self.num_rounds()
+        self.log_K + self.log_T
     }
 
     fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
-        self.input_claim()
+        self.claim_raf
+            + self.gamma * self.claim_val_final
+            + self.gamma_squared * self.claim_rw
+            + self.gamma_cubed * self.claim_val_eval
     }
 
     fn normalize_opening_point(
@@ -1080,16 +1065,8 @@ impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RamRaClaimReductionSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
