@@ -198,21 +198,28 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         self.constraints.push(Constraint::new(a, b, c));
     }
 
-    /// Build constraints for a single sumcheck round (degree 3)
+    /// Build constraints for a single sumcheck round (generic degree)
     ///
-    /// For g(X) = c0 + c1*X + c2*X^2 + c3*X^3:
+    /// For g(X) = c0 + c1*X + c2*X^2 + ... + cd*X^d:
     ///
     /// 1. Sum check: g(0) + g(1) = claimed_sum
     ///    g(0) = c0
-    ///    g(1) = c0 + c1 + c2 + c3
-    ///    => 2*c0 + c1 + c2 + c3 = claimed_sum
+    ///    g(1) = c0 + c1 + c2 + ... + cd
+    ///    => 2*c0 + c1 + c2 + ... + cd = claimed_sum
     ///
     /// 2. Horner evaluation: next_claim = g(r) where r is the challenge
-    ///    Using Horner's method: g(r) = c0 + r*(c1 + r*(c2 + r*c3))
-    ///    Constraints:
-    ///    - c3 * r = t1 - c2   (t1 = c2 + r*c3)
-    ///    - t1 * r = t2 - c1   (t2 = c1 + r*t1)
-    ///    - t2 * r = next_claim - c0
+    ///    Using Horner's method: g(r) = c0 + r*(c1 + r*(c2 + ... + r*cd))
+    ///
+    ///    For degree d, we need d-1 intermediate variables.
+    ///    Let's denote intermediates as t[0], t[1], ..., t[d-2]
+    ///
+    ///    Constraints (for degree d >= 2):
+    ///    - cd * r = t[d-2] - c_{d-1}       (first: t[d-2] = c_{d-1} + r*cd)
+    ///    - t[i] * r = t[i-1] - c_i         (middle: for i from d-2 down to 1)
+    ///    - t[0] * r = next_claim - c0      (final)
+    ///
+    ///    For degree 1 (linear), no intermediates needed:
+    ///    - c1 * r = next_claim - c0
     fn add_round_constraints(&mut self, vars: &RoundVariables) {
         let RoundVariables {
             coeffs,
@@ -222,40 +229,75 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             claimed_sum,
         } = vars;
 
-        let c0 = coeffs[0];
-        let c1 = coeffs[1];
-        let c2 = coeffs[2];
-        let c3 = coeffs[3];
-        let t1 = intermediates[0];
-        let t2 = intermediates[1];
+        let degree = coeffs.len() - 1; // d coefficients means degree d-1
 
-        // Constraint 1: (2*c0 + c1 + c2 + c3) * 1 = claimed_sum
-        let a = LinearCombination::new()
-            .add_term(c0, F::from_u64(2))
-            .add_var(c1)
-            .add_var(c2)
-            .add_var(c3);
+        // Constraint 1: Sum check (2*c0 + c1 + c2 + ... + cd) * 1 = claimed_sum
+        let mut a = LinearCombination::new().add_term(coeffs[0], F::from_u64(2));
+        for i in 1..coeffs.len() {
+            a = a.add_var(coeffs[i]);
+        }
         let b = LinearCombination::constant(F::one());
         let c_lc = LinearCombination::variable(*claimed_sum);
         self.add_constraint(a, b, c_lc);
 
-        // Constraint 2: c3 * r = t1 - c2
-        let a = LinearCombination::variable(c3);
-        let b = LinearCombination::variable(*challenge);
-        let c_lc = LinearCombination::variable(t1).sub_var(c2);
-        self.add_constraint(a, b, c_lc);
+        // Horner evaluation constraints
+        if degree == 0 {
+            // Constant polynomial: next_claim = c0 (no multiplication needed)
+            // This is just 1 * 1 = next_claim - c0 + c0, but we need a proper constraint
+            // Actually for degree 0, next_claim = c0 always, so:
+            // 1 * c0 = next_claim
+            let a = LinearCombination::constant(F::one());
+            let b = LinearCombination::variable(coeffs[0]);
+            let c_lc = LinearCombination::variable(*next_claim);
+            self.add_constraint(a, b, c_lc);
+        } else if degree == 1 {
+            // Linear: g(r) = c0 + c1*r
+            // c1 * r = next_claim - c0
+            let a = LinearCombination::variable(coeffs[1]);
+            let b = LinearCombination::variable(*challenge);
+            let c_lc = LinearCombination::variable(*next_claim).sub_var(coeffs[0]);
+            self.add_constraint(a, b, c_lc);
+        } else {
+            // Degree >= 2: use Horner's method with intermediates
+            // intermediates[i] corresponds to the accumulated value at step i
+            // We build from highest degree down:
+            // t[d-2] = c_{d-1} + r * c_d
+            // t[i-1] = c_i + r * t[i] for i from d-2 down to 1
+            // next_claim = c0 + r * t[0]
 
-        // Constraint 3: t1 * r = t2 - c1
-        let a = LinearCombination::variable(t1);
-        let b = LinearCombination::variable(*challenge);
-        let c_lc = LinearCombination::variable(t2).sub_var(c1);
-        self.add_constraint(a, b, c_lc);
+            // First constraint: cd * r = t[d-2] - c_{d-1}
+            let cd = coeffs[degree];
+            let cd_minus_1 = coeffs[degree - 1];
+            let t_last = intermediates[degree - 2];
 
-        // Constraint 4: t2 * r = next_claim - c0
-        let a = LinearCombination::variable(t2);
-        let b = LinearCombination::variable(*challenge);
-        let c_lc = LinearCombination::variable(*next_claim).sub_var(c0);
-        self.add_constraint(a, b, c_lc);
+            let a = LinearCombination::variable(cd);
+            let b = LinearCombination::variable(*challenge);
+            let c_lc = LinearCombination::variable(t_last).sub_var(cd_minus_1);
+            self.add_constraint(a, b, c_lc);
+
+            // Middle constraints: t[i] * r = t[i-1] - c_i for i from d-2 down to 1
+            // t[i] represents the accumulated Horner value up to coefficient i+1
+            // So the constraint encodes: t[i-1] = c_i + r * t[i]
+            for i in (1..degree - 1).rev() {
+                let t_curr = intermediates[i];
+                let t_prev = intermediates[i - 1];
+                let ci = coeffs[i]; // c_i is the coefficient we're adding at this step
+
+                let a = LinearCombination::variable(t_curr);
+                let b = LinearCombination::variable(*challenge);
+                let c_lc = LinearCombination::variable(t_prev).sub_var(ci);
+                self.add_constraint(a, b, c_lc);
+            }
+
+            // Final constraint: t[0] * r = next_claim - c0
+            let t0 = intermediates[0];
+            let c0 = coeffs[0];
+
+            let a = LinearCombination::variable(t0);
+            let b = LinearCombination::variable(*challenge);
+            let c_lc = LinearCombination::variable(*next_claim).sub_var(c0);
+            self.add_constraint(a, b, c_lc);
+        }
     }
 
     /// Build the complete verifier R1CS
@@ -368,15 +410,6 @@ mod tests {
     use super::*;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use ark_bn254::Fr;
-    use ark_std::{One, Zero};
-
-    fn eval_poly<F: JoltField>(coeffs: &[F], x: F) -> F {
-        let mut result = F::zero();
-        for coeff in coeffs.iter().rev() {
-            result = result * x + *coeff;
-        }
-        result
-    }
 
     #[test]
     fn test_single_round_constraint_satisfaction() {
@@ -481,23 +514,28 @@ mod tests {
         let r1cs = builder.build();
 
         // Create invalid witness where sum check fails
-        // 2*c0 + c1 + c2 + c3 = 100, but initial_claim = 200
+        // 2*c0 + c1 + c2 + c3 = 100 (computed claimed_sum)
+        // But we'll use initial_claim = 200, which doesn't match
         let c0 = F::from_u64(40);
         let c1 = F::from_u64(10);
         let c2 = F::from_u64(5);
         let c3 = F::from_u64(5); // 80 + 10 + 5 + 5 = 100
-        let initial_claim = F::from_u64(200); // Doesn't match!
+        let initial_claim = F::from_u64(200); // Doesn't match the coefficients!
         let r = F::from_u64(3);
 
-        let round = RoundWitness::new(vec![c0, c1, c2, c3], r);
+        // Use with_claimed_sum to explicitly set a claimed_sum that won't match
+        let round = RoundWitness::with_claimed_sum(vec![c0, c1, c2, c3], r, F::from_u64(200));
 
-        // This should panic during assignment due to sum check verification
-        let result = std::panic::catch_unwind(|| {
-            let witness =
-                BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
-            witness.assign(&r1cs);
-        });
+        // The assignment will succeed, but R1CS should NOT be satisfied
+        // because the sum check constraint (2*c0 + c1 + c2 + c3 = claimed_sum)
+        // will evaluate to 100 = 200, which is false
+        let witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
+        let z = witness.assign(&r1cs);
 
-        assert!(result.is_err(), "Should panic on invalid witness");
+        // The R1CS should fail on the sum check constraint (constraint 0)
+        assert!(
+            r1cs.check_satisfaction(&z).is_err(),
+            "R1CS should NOT be satisfied with invalid witness"
+        );
     }
 }

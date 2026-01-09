@@ -6,19 +6,39 @@
 use super::r1cs::VerifierR1CS;
 use super::StageConfig;
 use crate::field::JoltField;
+use crate::poly::unipoly::CompressedUniPoly;
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::transcripts::{AppendToTranscript, Transcript};
 
 /// Witness data for a single sumcheck round
 #[derive(Clone, Debug)]
 pub struct RoundWitness<F> {
-    /// Polynomial coefficients [c0, c1, c2, c3]
+    /// Polynomial coefficients [c0, c1, c2, c3, ...]
     pub coeffs: Vec<F>,
     /// Challenge for this round
     pub challenge: F,
+    /// Claimed sum for this round (g(0) + g(1) = 2*c0 + c1 + c2 + ...)
+    pub claimed_sum: F,
 }
 
 impl<F: JoltField> RoundWitness<F> {
     pub fn new(coeffs: Vec<F>, challenge: F) -> Self {
-        Self { coeffs, challenge }
+        // Compute claimed_sum from coefficients: 2*c0 + c1 + c2 + ...
+        let claimed_sum = F::from_u64(2) * coeffs[0]
+            + coeffs[1..].iter().copied().sum::<F>();
+        Self {
+            coeffs,
+            challenge,
+            claimed_sum,
+        }
+    }
+
+    pub fn with_claimed_sum(coeffs: Vec<F>, challenge: F, claimed_sum: F) -> Self {
+        Self {
+            coeffs,
+            challenge,
+            claimed_sum,
+        }
     }
 
     /// Evaluate the polynomial at a point using Horner's method
@@ -30,25 +50,45 @@ impl<F: JoltField> RoundWitness<F> {
         result
     }
 
-    /// Compute Horner intermediates for degree-3 polynomial
+    /// Compute Horner intermediates for variable degree polynomial
     ///
-    /// For g(X) = c0 + c1*X + c2*X^2 + c3*X^3 evaluated at r:
-    /// - t1 = c2 + r * c3
-    /// - t2 = c1 + r * t1
-    /// - g(r) = c0 + r * t2
+    /// For g(X) = c0 + c1*X + c2*X^2 + ... + cd*X^d evaluated at r:
+    /// Using Horner's method: g(r) = c0 + r*(c1 + r*(c2 + ... + r*cd))
+    ///
+    /// For degree d >= 2, we compute d-1 intermediates:
+    /// - t[d-2] = c_{d-1} + r * c_d
+    /// - t[i-1] = c_i + r * t[i]  for i from d-2 down to 1
+    /// - g(r) = c0 + r * t[0]
     pub fn compute_horner_intermediates(&self, r: F) -> (Vec<F>, F) {
-        assert_eq!(self.coeffs.len(), 4, "Expected degree-3 polynomial");
+        let degree = self.coeffs.len() - 1;
 
-        let c0 = self.coeffs[0];
-        let c1 = self.coeffs[1];
-        let c2 = self.coeffs[2];
-        let c3 = self.coeffs[3];
+        if degree == 0 {
+            // Constant polynomial: g(r) = c0
+            return (vec![], self.coeffs[0]);
+        }
 
-        let t1 = c2 + r * c3;
-        let t2 = c1 + r * t1;
-        let next_claim = c0 + r * t2;
+        if degree == 1 {
+            // Linear: g(r) = c0 + c1*r (no intermediates)
+            let next_claim = self.coeffs[0] + r * self.coeffs[1];
+            return (vec![], next_claim);
+        }
 
-        (vec![t1, t2], next_claim)
+        // Degree >= 2: use Horner's method
+        // Build intermediates from highest degree down
+        let mut intermediates = vec![F::zero(); degree - 1];
+
+        // First intermediate: t[d-2] = c_{d-1} + r * c_d
+        intermediates[degree - 2] = self.coeffs[degree - 1] + r * self.coeffs[degree];
+
+        // Middle intermediates: t[i-1] = c_i + r * t[i] for i from d-2 down to 1
+        for i in (1..degree - 1).rev() {
+            intermediates[i - 1] = self.coeffs[i] + r * intermediates[i];
+        }
+
+        // Final evaluation: g(r) = c0 + r * t[0]
+        let next_claim = self.coeffs[0] + r * intermediates[0];
+
+        (intermediates, next_claim)
     }
 }
 
@@ -105,8 +145,6 @@ impl<F: JoltField> BlindFoldWitness<F> {
         // Assign initial claim
         z[initial_claim_idx] = self.initial_claim;
 
-        // Track current claim for chaining
-        let mut current_claim = self.initial_claim;
         let mut challenge_idx = challenge_start;
         let mut witness_idx = witness_start;
 
@@ -120,7 +158,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
             for round_witness in &stage_witness.rounds {
                 let num_coeffs = config.poly_degree + 1;
-                let num_intermediates = config.poly_degree - 1;
+                let num_intermediates = config.poly_degree.saturating_sub(1);
 
                 assert_eq!(
                     round_witness.coeffs.len(),
@@ -137,16 +175,6 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 let (intermediates, next_claim) =
                     round_witness.compute_horner_intermediates(challenge);
 
-                // Verify the sum check: 2*c0 + c1 + c2 + c3 = current_claim
-                let sum_check: F = F::from_u64(2) * round_witness.coeffs[0]
-                    + round_witness.coeffs[1]
-                    + round_witness.coeffs[2]
-                    + round_witness.coeffs[3];
-                assert_eq!(
-                    sum_check, current_claim,
-                    "Sum check failed: {sum_check} != {current_claim}"
-                );
-
                 // Assign coefficients
                 for (i, coeff) in round_witness.coeffs.iter().enumerate() {
                     z[witness_idx + i] = *coeff;
@@ -162,9 +190,6 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 // Assign next_claim
                 z[witness_idx] = next_claim;
                 witness_idx += 1;
-
-                // Chain to next round
-                current_claim = next_claim;
             }
         }
 
@@ -173,12 +198,14 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
     /// Create witness from compressed polynomial coefficients extracted from proof
     ///
-    /// The compressed polynomial format stores coefficients [c1, c2, ...] (excluding c0)
-    /// because c0 can be derived from the sum check: c0 = (claimed_sum - c1 - c2 - c3) / 2
+    /// The compressed polynomial format from `CompressedUniPoly` stores `[c0, c2, c3, ...]`
+    /// (excluding c1, the linear term). c1 can be derived from the sum check:
+    ///   claimed_sum = g(0) + g(1) = c0 + (c0 + c1 + c2 + c3) = 2*c0 + c1 + c2 + c3
+    ///   c1 = claimed_sum - 2*c0 - c2 - c3 - ...
     pub fn from_compressed_polys(
         initial_claim: F,
         stage_configs: &[StageConfig],
-        compressed_coeffs: &[Vec<Vec<F>>], // [stage][round][coeffs without c0]
+        compressed_coeffs: &[Vec<Vec<F>>], // [stage][round][c0, c2, c3, ...]
         challenges: &[Vec<F>],             // [stage][round]
     ) -> Self {
         assert_eq!(compressed_coeffs.len(), stage_configs.len());
@@ -200,14 +227,15 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 let compressed = &stage_compressed[round];
                 let challenge = stage_challenges[round];
 
-                // Decompress: c0 = (claimed_sum - c1 - c2 - c3) / 2
-                // compressed = [c1, c2, c3]
-                let sum_without_2c0: F = compressed.iter().copied().sum();
-                let two = F::from_u64(2);
-                let c0 = (current_claim - sum_without_2c0) * two.inverse().unwrap();
+                // Decompress: c1 = claimed_sum - 2*c0 - c2 - c3 - ...
+                // compressed = [c0, c2, c3, ...]
+                let c0 = compressed[0];
+                let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
+                let c1 = current_claim - c0 - c0 - sum_higher_coeffs;
 
-                let mut coeffs = vec![c0];
-                coeffs.extend_from_slice(compressed);
+                // Build full coefficients: [c0, c1, c2, c3, ...]
+                let mut coeffs = vec![c0, c1];
+                coeffs.extend_from_slice(&compressed[1..]);
 
                 let round_witness = RoundWitness::new(coeffs, challenge);
 
@@ -221,6 +249,139 @@ impl<F: JoltField> BlindFoldWitness<F> {
         }
 
         Self::new(initial_claim, stages)
+    }
+
+    /// Create witness from a sumcheck proof by replaying verification to extract challenges.
+    ///
+    /// This method extracts the round polynomials from the proof and replays the
+    /// transcript operations to derive the Fiat-Shamir challenges.
+    ///
+    /// Note: The transcript must be in the same state it was when the sumcheck
+    /// verification would begin (after appending all prior protocol messages).
+    pub fn from_sumcheck_proof<ProofTranscript: Transcript>(
+        initial_claim: F,
+        proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F::Challenge>) {
+        let num_rounds = proof.compressed_polys.len();
+        let degree = if num_rounds > 0 {
+            proof.compressed_polys[0].degree()
+        } else {
+            3 // Default to degree 3
+        };
+
+        let _configs = [StageConfig::new(num_rounds, degree)];
+        let mut current_claim = initial_claim;
+        let mut challenges = Vec::with_capacity(num_rounds);
+        let mut rounds = Vec::with_capacity(num_rounds);
+
+        for poly in &proof.compressed_polys {
+            // Replay transcript operations exactly as in verification
+            if let Some(ref commitments) = proof.round_commitments {
+                // ZK mode: append commitment
+                transcript.append_message(b"UniPolyCommitment");
+                transcript.append_bytes(&commitments[challenges.len()]);
+            } else {
+                // Non-ZK mode: append raw coefficients
+                poly.append_to_transcript(transcript);
+            }
+
+            // Derive challenge via Fiat-Shamir
+            let challenge: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+            challenges.push(challenge);
+
+            // Extract compressed coefficients and decompress
+            let compressed = &poly.coeffs_except_linear_term;
+            let c0 = compressed[0];
+            let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
+            let c1 = current_claim - c0 - c0 - sum_higher_coeffs;
+
+            let mut coeffs = vec![c0, c1];
+            coeffs.extend_from_slice(&compressed[1..]);
+
+            let round_witness = RoundWitness::new(coeffs, challenge.into());
+
+            // Compute next claim for chaining
+            current_claim = round_witness.evaluate(challenge.into());
+
+            rounds.push(round_witness);
+        }
+
+        let witness = Self::new(
+            initial_claim,
+            vec![StageWitness::new(rounds)],
+        );
+
+        (witness, challenges)
+    }
+
+    /// Create witness from multiple sumcheck proofs (one per stage).
+    ///
+    /// This is useful for Jolt which has 6 sumcheck stages.
+    pub fn from_multiple_sumcheck_proofs<ProofTranscript: Transcript>(
+        initial_claims: &[F],
+        proofs: &[&SumcheckInstanceProof<F, ProofTranscript>],
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<Vec<F::Challenge>>) {
+        assert!(!proofs.is_empty());
+        assert_eq!(initial_claims.len(), proofs.len());
+
+        let mut all_stages = Vec::with_capacity(proofs.len());
+        let mut all_challenges = Vec::with_capacity(proofs.len());
+        let mut current_claim = initial_claims[0];
+
+        for (stage_idx, proof) in proofs.iter().enumerate() {
+            let num_rounds = proof.compressed_polys.len();
+            let mut stage_challenges = Vec::with_capacity(num_rounds);
+            let mut rounds = Vec::with_capacity(num_rounds);
+
+            // For batched sumchecks, the initial claim of subsequent stages
+            // is computed from the batching. For simplicity, we use the
+            // provided initial claims.
+            if stage_idx > 0 {
+                current_claim = initial_claims[stage_idx];
+            }
+
+            for poly in &proof.compressed_polys {
+                // Replay transcript operations
+                if let Some(ref commitments) = proof.round_commitments {
+                    transcript.append_message(b"UniPolyCommitment");
+                    transcript.append_bytes(&commitments[stage_challenges.len()]);
+                } else {
+                    poly.append_to_transcript(transcript);
+                }
+
+                let challenge: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+                stage_challenges.push(challenge);
+
+                // Decompress
+                let compressed = &poly.coeffs_except_linear_term;
+                let c0 = compressed[0];
+                let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
+                let c1 = current_claim - c0 - c0 - sum_higher_coeffs;
+
+                let mut coeffs = vec![c0, c1];
+                coeffs.extend_from_slice(&compressed[1..]);
+
+                let round_witness = RoundWitness::new(coeffs, challenge.into());
+                current_claim = round_witness.evaluate(challenge.into());
+
+                rounds.push(round_witness);
+            }
+
+            all_stages.push(StageWitness::new(rounds));
+            all_challenges.push(stage_challenges);
+        }
+
+        let witness = Self::new(initial_claims[0], all_stages);
+        (witness, all_challenges)
+    }
+}
+
+impl<F: JoltField> CompressedUniPoly<F> {
+    /// Get the compressed coefficients (c0, c2, c3, ...) excluding c1
+    pub fn get_compressed_coeffs(&self) -> &[F] {
+        &self.coeffs_except_linear_term
     }
 }
 
@@ -247,7 +408,7 @@ mod tests {
         // 2*40 + 5 + 10 + 5 = 100
         let r1 = F::from_u64(3);
         let round1 = RoundWitness::new(vec![c0_1, c1_1, c2_1, c3_1], r1);
-        let next1 = round1.evaluate(r1);
+        let _next1 = round1.evaluate(r1);
 
         // Round 2: coeffs such that 2*c0 + c1 + c2 + c3 = next1
         // next1 = 40 + 3*5 + 9*10 + 27*5 = 40 + 15 + 90 + 135 = 280
@@ -275,10 +436,15 @@ mod tests {
 
         let initial_claim = F::from_u64(100);
 
-        // Compressed format: [c1, c2, c3] without c0
-        // If 2*c0 + c1 + c2 + c3 = 100 and [c1,c2,c3] = [5,10,5]
-        // Then c0 = (100 - 5 - 10 - 5) / 2 = 40
-        let compressed_coeffs = vec![vec![vec![F::from_u64(5), F::from_u64(10), F::from_u64(5)]]];
+        // Compressed format: [c0, c2, c3] without c1 (linear term omitted)
+        // For g(x) = c0 + c1*x + c2*x^2 + c3*x^3
+        // claimed_sum = g(0) + g(1) = 2*c0 + c1 + c2 + c3 = 100
+        // If [c0, c2, c3] = [40, 10, 5], then c1 = 100 - 2*40 - 10 - 5 = 5
+        let compressed_coeffs = vec![vec![vec![
+            F::from_u64(40),
+            F::from_u64(10),
+            F::from_u64(5),
+        ]]];
         let challenges = vec![vec![F::from_u64(3)]];
         let configs = [StageConfig::new(1, 3)];
 
