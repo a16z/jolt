@@ -75,7 +75,7 @@ impl MemoryData {
         *self.memory.get(&index).unwrap_or(&0)
     }
 
-    /// Retrieve a the memory for the previously executed chunk as a [`ReplayableMemory`]. This
+    /// Retrieve the memory for the previously executed chunk as a [`ReplayableMemory`]. This
     /// also starts a new chunk by setting `self.checkpoint` to be an empty hashmap.
     pub fn save_checkpoint(&mut self) -> Self {
         let memory = std::mem::take(
