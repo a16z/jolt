@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
-tracing-subscriber = "0.3"
-tracing = "0.1"
-jolt-inlines-sha2 = { path = "../../jolt-inlines/sha2", features = ["host"] }
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 guest = { package = "sha2-guest", path = "./guest" }
-hex = "0.4.3"
+hex.workspace = true

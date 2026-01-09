@@ -268,6 +268,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-secp256k1"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-serialize"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
@@ -2026,6 +2036,7 @@ dependencies = [
  "hex-literal",
  "rand 0.8.5",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -2037,6 +2048,7 @@ dependencies = [
  "hex-literal",
  "rand 0.8.5",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -2046,6 +2058,23 @@ dependencies = [
  "ctor 0.2.9",
  "hex-literal",
  "sha3",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-inlines-secp256k1"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-secp256k1",
+ "ark-serialize",
+ "ctor 0.2.9",
+ "hex-literal",
+ "num-bigint",
+ "num-integer",
+ "serde",
  "tracer",
  "tracing",
 ]
@@ -3468,6 +3497,25 @@ checksum = "b50c5943d326858130af85e049f2661ba3c78b26589b8ab98e65e80ae44a1252"
 dependencies = [
  "secp256k1-sys",
  "serde",
+]
+
+[[package]]
+name = "secp256k1-ecdsa-verify"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-secp256k1",
+ "jolt-sdk",
+ "secp256k1-ecdsa-verify-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "secp256k1-ecdsa-verify-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-secp256k1",
+ "jolt-sdk",
 ]
 
 [[package]]

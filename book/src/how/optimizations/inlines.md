@@ -89,6 +89,39 @@ unsafe {
 }
 ```
 
+Additional inlines for Secp256k1 operations are available but wrapped in a higher-level API. See `jolt-inlines/secp256k1` for details and `examples/secp256k1-ecdsa-verify` for an example of a higher-level ECDSA verification function using the Secp256k1 inlines.
+
+## Error Handling in Secp256k1
+
+When working with inlines that can fail (like cryptographic verification), it's important to understand how different error handling approaches affect the resulting proof.
+
+**Return `Result`** - Use when you want the guest program to handle errors gracefully:
+```rust
+let result = ecdsa_verify(z, r, s, q);
+match result {
+    Ok(()) => { /* signature valid */ }
+    Err(e) => { /* handle invalid signature */ }
+}
+```
+The proof is valid regardless of the outcome and proves which branch was taken.
+
+**`.unwrap()`** - Use when an error is unexpected and should terminate execution:
+```rust
+ecdsa_verify(z, r, s, q).unwrap();
+```
+If verification fails, the program panics. The proof is still valid and proves that the program panicked at this point.
+
+**`.unwrap_or_spoil_proof()`** - Use when you want to **assert** a condition such that no valid proof can exist if it fails:
+```rust
+use jolt_inlines_secp256k1::UnwrapOrSpoilProof;
+
+ecdsa_verify(z, r, s, q).unwrap_or_spoil_proof();
+```
+If verification fails, the proof becomes unsatisfiable. This is appropriate when:
+- You want to prove "the signature IS valid" (not "I checked the signature")
+- A malicious prover should not be able to produce any proof if the condition fails
+- The error case represents something that should be cryptographically impossible
+
 ## Benchmarks
 
 The table below compares the performance of reference and inline implementations for each hash function, using identical 32KB inputs and the same API across both reference and inline implementations.
