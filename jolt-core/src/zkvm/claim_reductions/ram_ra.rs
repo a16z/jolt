@@ -1007,7 +1007,6 @@ impl<F: JoltField> RaReductionParams<F> {
             log_T,
         }
     }
-
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
