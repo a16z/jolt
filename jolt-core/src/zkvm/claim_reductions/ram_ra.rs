@@ -49,7 +49,8 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math, thread::unsafe_allocate_zero_vec},
@@ -109,16 +110,8 @@ impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for RamRaClaimReductionSumcheckProver<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.params.input_claim()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::compute_message")]
@@ -1014,16 +1007,34 @@ impl<F: JoltField> RaReductionParams<F> {
             log_T,
         }
     }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
 
     fn num_rounds(&self) -> usize {
         self.log_K + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
         self.claim_raf
             + self.gamma * self.claim_val_final
             + self.gamma_squared * self.claim_rw
             + self.gamma_cubed * self.claim_val_eval
+    }
+
+    fn normalize_opening_point(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        debug_assert_eq!(sumcheck_challenges.len(), self.num_rounds());
+        let (r_address, r_cycle) = sumcheck_challenges.split_at(self.log_K);
+        let r_address_be: Vec<_> = r_address.iter().rev().copied().collect();
+        let r_cycle_be: Vec<_> = r_cycle.iter().rev().copied().collect();
+
+        OpeningPoint::<BIG_ENDIAN, F>::new([r_address_be, r_cycle_be].concat())
     }
 }
 
@@ -1053,16 +1064,8 @@ impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RamRaClaimReductionSumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.params.num_rounds()
-    }
-
-    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        self.params.input_claim()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
