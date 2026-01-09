@@ -13,7 +13,7 @@ use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
+        commitment::{commitment_scheme::CommitmentScheme, hyrax::Hyrax},
         opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -21,11 +21,28 @@ use crate::{
     zkvm::{
         config::{OneHotConfig, ReadWriteConfig},
         instruction::{CircuitFlags, InstructionFlags},
+        recursion::{
+            recursion_prover::RecursionProof,
+            bijection::{ConstraintMapping, VarCountJaggedBijection},
+            constraints_sys::ConstraintType,
+        },
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+use ark_bn254::Fq;
+use ark_grumpkin::Projective as GrumpkinProjective;
+use crate::transcripts::Blake2bTranscript;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+/// Constraint metadata for the recursion verifier
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct RecursionConstraintMetadata {
+    pub constraint_types: Vec<ConstraintType>,
+    pub jagged_bijection: VarCountJaggedBijection,
+    pub jagged_mapping: ConstraintMapping,
+    pub matrix_rows: Vec<usize>,
+    pub dense_num_vars: usize,
+}
+
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
@@ -39,6 +56,13 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
+    /// Recursion SNARK proof for efficient recursive verification
+    pub recursion_proof: RecursionProof<Fq, Blake2bTranscript, Hyrax<1, GrumpkinProjective>>,
+    /// Hint for PCS recursion extension (used to accelerate recursion verification)
+    /// This field is not serialized and must be provided separately
+    pub stage8_pcs_hint: Option<Box<dyn std::any::Any + Send + Sync>>,
+    /// Constraint metadata for the recursion verifier
+    pub recursion_constraint_metadata: RecursionConstraintMetadata,
     /// Trusted advice opening proof at point from RamValEvaluation
     pub trusted_advice_val_evaluation_proof: Option<PCS::Proof>,
     /// Trusted advice opening proof at point from RamValFinalEvaluation
@@ -53,6 +77,117 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
+    for JoltProof<F, PCS, FS>
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.opening_claims.serialize_with_mode(&mut writer, compress)?;
+        self.commitments.serialize_with_mode(&mut writer, compress)?;
+        self.stage1_uni_skip_first_round_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage1_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage2_uni_skip_first_round_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage2_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage3_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage4_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage5_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage6_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
+        self.stage7_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
+        self.joint_opening_proof.serialize_with_mode(&mut writer, compress)?;
+        self.recursion_proof.serialize_with_mode(&mut writer, compress)?;
+        // Skip stage8_pcs_hint - it's not serializable
+        self.recursion_constraint_metadata.serialize_with_mode(&mut writer, compress)?;
+        self.trusted_advice_val_evaluation_proof.serialize_with_mode(&mut writer, compress)?;
+        self.trusted_advice_val_final_proof.serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_val_evaluation_proof.serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_val_final_proof.serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_commitment.serialize_with_mode(&mut writer, compress)?;
+        self.trace_length.serialize_with_mode(&mut writer, compress)?;
+        self.ram_K.serialize_with_mode(&mut writer, compress)?;
+        self.bytecode_K.serialize_with_mode(&mut writer, compress)?;
+        self.rw_config.serialize_with_mode(&mut writer, compress)?;
+        self.one_hot_config.serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.opening_claims.serialized_size(compress)
+            + self.commitments.serialized_size(compress)
+            + self.stage1_uni_skip_first_round_proof.serialized_size(compress)
+            + self.stage1_sumcheck_proof.serialized_size(compress)
+            + self.stage2_uni_skip_first_round_proof.serialized_size(compress)
+            + self.stage2_sumcheck_proof.serialized_size(compress)
+            + self.stage3_sumcheck_proof.serialized_size(compress)
+            + self.stage4_sumcheck_proof.serialized_size(compress)
+            + self.stage5_sumcheck_proof.serialized_size(compress)
+            + self.stage6_sumcheck_proof.serialized_size(compress)
+            + self.stage7_sumcheck_proof.serialized_size(compress)
+            + self.joint_opening_proof.serialized_size(compress)
+            + self.recursion_proof.serialized_size(compress)
+            // Skip stage8_pcs_hint
+            + self.recursion_constraint_metadata.serialized_size(compress)
+            + self.trusted_advice_val_evaluation_proof.serialized_size(compress)
+            + self.trusted_advice_val_final_proof.serialized_size(compress)
+            + self.untrusted_advice_val_evaluation_proof.serialized_size(compress)
+            + self.untrusted_advice_val_final_proof.serialized_size(compress)
+            + self.untrusted_advice_commitment.serialized_size(compress)
+            + self.trace_length.serialized_size(compress)
+            + self.ram_K.serialized_size(compress)
+            + self.bytecode_K.serialized_size(compress)
+            + self.rw_config.serialized_size(compress)
+            + self.one_hot_config.serialized_size(compress)
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for JoltProof<F, PCS, FS>
+{
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
+    for JoltProof<F, PCS, FS>
+{
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        Ok(Self {
+            opening_claims: Claims::deserialize_with_mode(&mut reader, compress, validate)?,
+            commitments: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage1_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage2_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage3_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage4_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage5_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage6_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage7_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            joint_opening_proof: PCS::Proof::deserialize_with_mode(&mut reader, compress, validate)?,
+            recursion_proof: RecursionProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage8_pcs_hint: None, // Always None when deserializing
+            recursion_constraint_metadata: RecursionConstraintMetadata::deserialize_with_mode(&mut reader, compress, validate)?,
+            trusted_advice_val_evaluation_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
+            trusted_advice_val_final_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
+            untrusted_advice_val_evaluation_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
+            untrusted_advice_val_final_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
+            untrusted_advice_commitment: Option::deserialize_with_mode(&mut reader, compress, validate)?,
+            trace_length: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            ram_K: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            bytecode_K: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            rw_config: ReadWriteConfig::deserialize_with_mode(&mut reader, compress, validate)?,
+            one_hot_config: OneHotConfig::deserialize_with_mode(&mut reader, compress, validate)?,
+        })
+    }
 }
 
 pub struct Claims<F: JoltField>(pub Openings<F>);

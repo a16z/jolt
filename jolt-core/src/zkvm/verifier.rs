@@ -4,8 +4,16 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::poly::commitment::commitment_scheme::{CommitmentScheme, RecursionExt};
+use ark_bn254::Fq;
+use ark_grumpkin::Projective as GrumpkinProjective;
+
+use crate::poly::commitment::{
+    commitment_scheme::{CommitmentScheme, RecursionExt},
+    hyrax::Hyrax,
+};
+use crate::poly::opening_proof::OpeningId;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
+use crate::transcripts::Blake2bTranscript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
@@ -28,6 +36,9 @@ use crate::zkvm::{
     },
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
+    recursion::{
+        recursion_verifier::{RecursionVerifier, RecursionVerifierInput},
+    },
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
@@ -84,8 +95,10 @@ pub struct JoltVerifier<
     pub one_hot_params: OneHotParams,
 }
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + RecursionExt<F>, ProofTranscript: Transcript>
     JoltVerifier<'a, F, PCS, ProofTranscript>
+where
+    <PCS as RecursionExt<F>>::Hint: Send + Sync + Clone + 'static,
 {
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
@@ -200,57 +213,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_trusted_advice_opening_proofs()?;
         self.verify_untrusted_advice_opening_proofs()?;
         self.verify_stage7()?;
-        self.verify_stage8()?;
-
-        Ok(())
-    }
-
-    /// Verify the proof, but verify the Stage 8 PCS opening using a recursion hint (when supported by the PCS).
-    ///
-    /// This is primarily intended for "hint-based verification" flows (e.g. recursive composition),
-    /// where the verifier wants to avoid performing expensive PCS verification work directly.
-    #[tracing::instrument(skip_all)]
-    pub fn verify_with_stage8_pcs_hint(
-        mut self,
-        stage8_hint: &<PCS as RecursionExt<F>>::Hint,
-    ) -> Result<(), anyhow::Error>
-    where
-        PCS: RecursionExt<F>,
-    {
-        let _pprof_verify = pprof_scope!("verify");
-
-        fiat_shamir_preamble(
-            &self.program_io,
-            self.proof.ram_K,
-            self.proof.trace_length,
-            &mut self.transcript,
-        );
-
-        // Append commitments to transcript
-        for commitment in &self.proof.commitments {
-            self.transcript.append_serializable(commitment);
-        }
-        // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
-            self.transcript
-                .append_serializable(untrusted_advice_commitment);
-        }
-        // Append trusted advice commitment to transcript
-        if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
-            self.transcript
-                .append_serializable(trusted_advice_commitment);
-        }
-
-        self.verify_stage1()?;
-        self.verify_stage2()?;
-        self.verify_stage3()?;
-        self.verify_stage4()?;
-        self.verify_stage5()?;
-        self.verify_stage6()?;
-        self.verify_trusted_advice_opening_proofs()?;
-        self.verify_untrusted_advice_opening_proofs()?;
-        self.verify_stage7()?;
-        self.verify_stage8_with_pcs_hint(stage8_hint)?;
+        self.verify_stage8_with_recursion()?;
 
         Ok(())
     }
@@ -747,6 +710,166 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .unzip();
 
         PCS::combine_commitments(&commitments, &coeffs)
+    }
+
+    /// Verify Stage 8 with recursion proof
+    fn verify_stage8_with_recursion(&mut self) -> Result<(), anyhow::Error>
+    where
+        PCS: RecursionExt<F>,
+        <PCS as RecursionExt<F>>::Hint: Clone,
+    {
+        // 1. Verify Dory proof with hints
+        // First check if hint exists and downcast it
+        let hint_exists = self.proof.stage8_pcs_hint.is_some();
+        if !hint_exists {
+            return Err(anyhow::anyhow!("stage8_pcs_hint is required for recursion verification"));
+        }
+
+        // Now safely get and downcast the hint
+        let hint = self.proof.stage8_pcs_hint
+            .as_ref()
+            .unwrap()
+            .downcast_ref::<<PCS as RecursionExt<F>>::Hint>()
+            .ok_or_else(|| anyhow::anyhow!("Failed to downcast stage8_pcs_hint"))?;
+
+        // Store hint data we need before mutable borrow
+        let hint_clone = hint.clone();
+
+        // Now we can safely call the mutable method
+        self.verify_stage8_with_pcs_hint(&hint_clone)?;
+
+        // 2. Extract data for RecursionVerifier
+        let recursion_proof = &self.proof.recursion_proof;
+
+        // Build RecursionVerifierInput from proof data
+        // Note: This is a simplified version. In practice, this data would come from preprocessing
+        // or be computed from the proof structure
+
+        // Extract constraint counts from the opening claims in recursion_proof
+        // We can infer the structure from the types of virtual polynomials
+        let mut num_gt_exp = 0;
+        let mut num_gt_mul = 0;
+        let mut num_g1_scalar_mul = 0;
+
+        // Count constraint types based on the virtual polynomial types in opening claims
+        for (key, _) in &recursion_proof.opening_claims {
+            match key {
+                OpeningId::Virtual(poly, _) => {
+                    match poly {
+                        crate::zkvm::witness::VirtualPolynomial::RecursionBase(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoPrev(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoCurr(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionQuotient(_) => {
+                            // These are GT exp constraints
+                            num_gt_exp = num_gt_exp.max(match poly {
+                                crate::zkvm::witness::VirtualPolynomial::RecursionBase(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoPrev(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoCurr(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionQuotient(i) => *i + 1,
+                        _ => 0,
+                            });
+                        }
+                        crate::zkvm::witness::VirtualPolynomial::RecursionMulLhs(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionMulRhs(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionMulResult(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionMulQuotient(_) => {
+                            // These are GT mul constraints
+                            num_gt_mul = num_gt_mul.max(match poly {
+                                crate::zkvm::witness::VirtualPolynomial::RecursionMulLhs(i)
+                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulRhs(i)
+                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulResult(i)
+                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulQuotient(i) => *i + 1,
+                                _ => 0,
+                            });
+                        }
+                        crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXA(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYA(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXT(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYT(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXANext(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYANext(_)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulIndicator(_) => {
+                            // These are G1 scalar mul constraints
+                            num_g1_scalar_mul = num_g1_scalar_mul.max(match poly {
+                        crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXA(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYA(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXT(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYT(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXANext(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYANext(i)
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulIndicator(i) => *i + 1,
+                        _ => 0,
+                    });
+                        }
+                        _ => {} // Ignore other virtual polynomial types
+                    }
+                }
+                _ => {} // Ignore non-virtual openings
+            }
+        }
+
+        // Use metadata from proof instead of placeholders
+        let metadata = &self.proof.recursion_constraint_metadata;
+
+        let constraint_types = metadata.constraint_types.clone();
+        let num_constraints = constraint_types.len();
+        let num_constraints_padded = num_constraints.next_power_of_two();
+        let num_s_vars = num_constraints_padded.log_2();
+
+        // Fixed parameters for Dory constraints
+        let num_constraint_vars = 8; // All constraints padded to 8 variables
+        let num_vars = num_s_vars + num_constraint_vars;
+
+        // Verify the metadata is consistent
+        if metadata.dense_num_vars != num_vars {
+            return Err(anyhow::anyhow!(
+                "Dense polynomial num_vars mismatch: expected {}, got {}",
+                num_vars,
+                metadata.dense_num_vars
+            ));
+        }
+
+        let jagged_bijection = metadata.jagged_bijection.clone();
+        let jagged_mapping = metadata.jagged_mapping.clone();
+        let matrix_rows = metadata.matrix_rows.clone();
+
+        let verifier_input = RecursionVerifierInput {
+            constraint_types,
+            num_vars,
+            num_constraint_vars,
+            num_s_vars,
+            num_constraints,
+            num_constraints_padded,
+            jagged_bijection,
+            jagged_mapping,
+            matrix_rows,
+        };
+
+        // 3. Verify recursion proof
+        let recursion_verifier = RecursionVerifier::<Fq>::new(verifier_input);
+        let mut recursion_transcript = Blake2bTranscript::new(b"jolt_recursion_snark");
+
+        type HyraxPCS = Hyrax<1, GrumpkinProjective>;
+
+        // Setup Hyrax from proof metadata
+        let dense_num_vars = metadata.dense_num_vars;
+        let hyrax_prover_setup = <HyraxPCS as CommitmentScheme>::setup_prover(dense_num_vars);
+        let hyrax_verifier_setup = <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
+
+        let verification_result = recursion_verifier
+            .verify::<Blake2bTranscript, HyraxPCS>(
+                recursion_proof,
+                &mut recursion_transcript,
+                &recursion_proof.dense_commitment,
+                &hyrax_verifier_setup,
+            )
+            .map_err(|e| anyhow::anyhow!("Recursion verification failed: {:?}", e))?;
+
+        if !verification_result {
+            return Err(anyhow::anyhow!("Recursion proof verification failed"));
+        }
+
+        Ok(())
     }
 
     fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> {

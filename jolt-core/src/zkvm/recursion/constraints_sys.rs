@@ -18,6 +18,7 @@ use crate::{
 };
 use ark_bn254::{Fq, Fr};
 use ark_ff::{One, Zero};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::backends::arkworks::ArkGT;
 use jolt_optimizations::{fq12_to_multilinear_evals, get_g_mle};
 
@@ -1268,5 +1269,111 @@ mod tests {
             &commitment,
         )
         .expect("Verification without hint should also succeed");
+    }
+}
+
+// Manual serialization implementations for enums
+
+use ark_serialize::{Compress, SerializationError, Valid};
+
+impl CanonicalSerialize for PolyType {
+    fn serialize_with_mode<W: ark_serialize::Write>(&self, writer: W, _compress: Compress) -> Result<(), SerializationError> {
+        (*self as u8).serialize_with_mode(writer, _compress)
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        1 // u8 size
+    }
+}
+
+impl CanonicalDeserialize for PolyType {
+    fn deserialize_with_mode<R: ark_serialize::Read>(reader: R, _compress: Compress, _validate: ark_serialize::Validate) -> Result<Self, SerializationError> {
+        let val = u8::deserialize_with_mode(reader, _compress, _validate)?;
+        match val {
+            0 => Ok(PolyType::Base),
+            1 => Ok(PolyType::RhoPrev),
+            2 => Ok(PolyType::RhoCurr),
+            3 => Ok(PolyType::Quotient),
+            4 => Ok(PolyType::MulLhs),
+            5 => Ok(PolyType::MulRhs),
+            6 => Ok(PolyType::MulResult),
+            7 => Ok(PolyType::MulQuotient),
+            8 => Ok(PolyType::G1ScalarMulXA),
+            9 => Ok(PolyType::G1ScalarMulYA),
+            10 => Ok(PolyType::G1ScalarMulXT),
+            11 => Ok(PolyType::G1ScalarMulYT),
+            12 => Ok(PolyType::G1ScalarMulXANext),
+            13 => Ok(PolyType::G1ScalarMulYANext),
+            14 => Ok(PolyType::G1ScalarMulIndicator),
+            _ => Err(SerializationError::InvalidData),
+        }
+    }
+}
+
+impl Valid for PolyType {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalSerialize for ConstraintType {
+    fn serialize_with_mode<W: ark_serialize::Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
+        match self {
+            ConstraintType::GtExp { bit } => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                bit.serialize_with_mode(&mut writer, compress)?;
+            }
+            ConstraintType::GtMul => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+            }
+            ConstraintType::G1ScalarMul { base_point } => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                base_point.0.serialize_with_mode(&mut writer, compress)?;
+                base_point.1.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            ConstraintType::GtExp { bit } => 1 + bit.serialized_size(compress),
+            ConstraintType::GtMul => 1,
+            ConstraintType::G1ScalarMul { base_point } => {
+                1 + base_point.0.serialized_size(compress) + base_point.1.serialized_size(compress)
+            }
+        }
+    }
+}
+
+impl CanonicalDeserialize for ConstraintType {
+    fn deserialize_with_mode<R: ark_serialize::Read>(mut reader: R, compress: Compress, validate: ark_serialize::Validate) -> Result<Self, SerializationError> {
+        let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        match variant {
+            0 => {
+                let bit = bool::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(ConstraintType::GtExp { bit })
+            }
+            1 => Ok(ConstraintType::GtMul),
+            2 => {
+                let x = Fq::deserialize_with_mode(&mut reader, compress, validate)?;
+                let y = Fq::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(ConstraintType::G1ScalarMul { base_point: (x, y) })
+            }
+            _ => Err(SerializationError::InvalidData),
+        }
+    }
+}
+
+impl Valid for ConstraintType {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            ConstraintType::G1ScalarMul { base_point } => {
+                base_point.0.check()?;
+                base_point.1.check()?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }

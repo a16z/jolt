@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{RecursionExt, StreamingCommitmentScheme};
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
@@ -26,13 +26,16 @@ pub fn preprocess(
     JoltVerifierPreprocessing::new(shared, verifier_setup)
 }
 
-pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
+pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F> + RecursionExt<F>, FS: Transcript>(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
     proof: JoltProof<F, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-) -> Result<(), ProofVerifyError> {
+) -> Result<(), ProofVerifyError>
+where
+    <PCS as RecursionExt<F>>::Hint: Send + Sync + Clone + 'static,
+{
     use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {

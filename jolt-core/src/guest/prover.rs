@@ -1,7 +1,7 @@
 use super::program::Program;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{RecursionExt, StreamingCommitmentScheme};
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::zkvm::proof_serialization::JoltProof;
@@ -29,7 +29,7 @@ pub fn preprocess(
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
-pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
+pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F> + RecursionExt<F>, FS: Transcript>(
     guest: &Program,
     inputs_bytes: &[u8],
     untrusted_advice_bytes: &[u8],
@@ -41,7 +41,10 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
     JoltProof<F, PCS, FS>,
     JoltDevice,
     Option<ProverDebugInfo<F, FS, PCS>>,
-) {
+)
+where
+    <PCS as RecursionExt<F>>::Hint: Send + Sync + 'static,
+{
     use crate::zkvm::prover::JoltCpuProver;
 
     let prover = JoltCpuProver::gen_from_elf(

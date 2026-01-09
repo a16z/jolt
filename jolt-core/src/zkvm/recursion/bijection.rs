@@ -9,6 +9,7 @@
 
 use crate::field::JoltField;
 use ark_bn254::Fq;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::constraints_sys::{ConstraintSystem, ConstraintType, MatrixConstraint, PolyType};
 
@@ -31,7 +32,7 @@ pub trait JaggedTransform<F: JoltField> {
 }
 
 /// Represents a polynomial with a specific number of variables
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JaggedPolynomial {
     /// Number of variables (e.g., 4 or 8)
     pub num_vars: usize,
@@ -49,7 +50,7 @@ impl JaggedPolynomial {
 }
 
 /// Main bijection implementation for variable-count based jaggedness
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct VarCountJaggedBijection {
     /// Information for each polynomial
     polynomials: Vec<JaggedPolynomial>,
@@ -154,7 +155,7 @@ impl<F: JoltField> JaggedTransform<F> for VarCountJaggedBijection {
 }
 
 /// Maps between polynomial indices and constraint system structure
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ConstraintMapping {
     /// Maps polynomial index to (constraint_idx, poly_type)
     poly_to_constraint: Vec<(usize, PolyType)>,
