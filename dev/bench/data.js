@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767990436639,
+  "lastUpdate": 1767993748209,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -44782,6 +44782,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 371968,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4633847+protoben@users.noreply.github.com",
+            "name": "Ben Hamlin",
+            "username": "protoben"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "23aebd4836acec5f409d9c5f9f87b05e6de0c93c",
+          "message": "Feature/sparse mem checkpoints (#1176)\n\n* Generalize the representation of memory inside of the emulator MMU\n\nThis adds a `MemoryData` trait for use inside the MMU's `MemoryBackend`.\nThis allows us to use different data structures to represent RAM within\nthe emulator. Specifically, we want a data structure that records the\ninitial state of each accessed entry in memory as a \"checkpoint\", as well\nas one that allows replaying from such a checkpoint.\n\n* Implement saving and replaying memory accesses from a hashmap\n\nThis adds the `CheckpointingMemory` and `ReplayableMemory` structs, which\ncan be used as the underlying memory data structure for the emulator. The\nformer allows saving the initial values of memory accessed during a given\nchunk of execution as a hashmap, and the latter uses a hashmap to replay\nthose memory accesses.\n\n* Generalize the memory type in Cpu and Emulator\n\nFor now, we rename Emulator to GeneralizedEmulator<D> and Cpu to\nGeneralizedCpu<D> and make Emulator and Cpu type aliases, where D is\ninstantiated as Vec<u64>, as before. This avoids making many upstream\nchanges to jolt-core, for the time being.\n\nThis commit touches many files, due to needing to add generics to all of\nthe many places Cpu is used, especially the instruction types.\n\n* Implement checkpoint saving for mmu, cpu, and emulator\n\nThe checkpoint can be called on an underlying memory capable of saving\nreplayable checkpoints. It clones the corresponding data structure, with\nthe exception of the memory, which it extracts with a memory-efficient\nhashmap backend.\n\n* Implement checkpoint-generating and replaying trace iterators\n\n* Run cargo fmt\n\n* Error on uninitialized access in replayable memory\n\n* Make read/write API for memory private and add public read-only API\n\nNow that we need to record accesses to memory in the emulator, the read\ninterface needs to take the memory mutably. This makes it difficult to use\nin jolt-core, where the memory needs to be read within a ParIter. In\naddition, allowing external modification of the emulator memory is\nprobably not desirable. Thus, we make the read/write interface private to\nthe crate and add a collection of simple getters.\n\n* Re-enable tests for trace iterator\n\n* Add trace length test for CheckpointingMemory\n\n* Checkpointing WIP\n\n* Modify `trace_checkpoints` to return hashmap-based checkpoints\n\nThis replaces the full clones of `LazyTraceIter` in `trace_checkpoints`\nwith hashmap-based checkpoints, produced using `CheckpointingTraceIter`.\nThis also entails a few changes to the `MemoryData` interface and\nassociated interfaces:\n- We modify `CheckpointingMemory` to not track memory accesses initially.\n  The `start_recording_checkpoints` function starts the tracking of memory\naccesses. This is in order to avoid tracking the initial access that set\nup the bytecode values in memory, since tracking these causes zeros (the\npre-setup value) to be recorded for the bytecode.\n- We remove the `Default` constraint for `MemoryData` and impl for\n  `MemoryBackend` to prevent `std::mem::take` being called on the\n`MemoryBackend`. Doing so causes values such as the memory capacity to be\nzeroed out, which interferes with checkpoint collection. Instead, we add a\nmethod `take_as_vec_memory` to take the `Vec<u64>` while leaving the rest\nof the data intact.\n- We modify the `Iterator` impls of `CheckpointingMemory` and `Checkpoint`\n  to track trace steps, rather than the notion of a \"cycle\", as tracked by\n`cycle_count`. This allows us to ensure that a checkpoint will produce\nexactly the desired number of entries in its trace.\n\n* Eliminate code duplication in multiple iterators of Iterator<Cycle>\n\nThis commit re-implements `LazyTraceIterator` as a newtype wrapper around\nthe `LazyTracer` trait. This allows us to have one implementation of\n`Iterator<Item = Cycle>`, rather than 3.\n\n* Fix some typoes\n\n* Eliminate the `Vec<u64>` memory backend in favor of `CheckpointingMemory`\n\n* Eliminate clones in into_vec_memory_cpu\n\n* Eliminate additional clones of PrivilegeMode and AddressingMode\n\n* Replace MemoryData trait with enum to avoid propagating the constraint\n\n* Simplify MemoryData enum\n\n* Run cargo fmt\n\n* Use HashMap for main memory as well as checkpoint memory in emulator\n\n* Revert changes to tracer/src/instruction\n\n* Update tracer/src/emulator/memory.rs\r\n\r\nFix typo\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\n\n* Replace include_bytes with literal byte array in tracer tests\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2026-01-09T15:38:32-05:00",
+          "tree_id": "5d2599ac026ae4454c24de1ef395f7abd91ff7e9",
+          "url": "https://github.com/a16z/jolt/commit/23aebd4836acec5f409d9c5f9f87b05e6de0c93c"
+        },
+        "date": 1767993747151,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0224,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 383644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 414820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5847,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 383456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5604,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 385800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7075,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 383768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4933,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 383668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3428,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 386844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7515,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 385520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 381880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 409084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 84.936,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2702172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4128,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 383528,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4776,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 383560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 378828,
             "unit": "KB",
             "extra": ""
           }
