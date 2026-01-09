@@ -463,12 +463,15 @@ pub fn gen_ram_memory_states<F: JoltField>(
     // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
     // so we will still need to populate `final_memory_state` with the contents of
     // `program_io`, which lives at addresses < `RAM_START_ADDRESS`
-    let final_memory_words = final_memory.data.len().min(K - dram_start_index);
+    let final_memory_words = final_memory
+        .data
+        .get_num_doublewords()
+        .min(K - dram_start_index);
     final_memory_state[dram_start_index..dram_start_index + final_memory_words]
         .par_iter_mut()
         .enumerate()
         .for_each(|(k, word)| {
-            *word = final_memory.read_doubleword(8 * k as u64);
+            *word = final_memory.get_doubleword(8 * k as u64);
         });
 
     index = remap_address(

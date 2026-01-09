@@ -92,7 +92,7 @@ impl Emulator {
     /// # Arguments
     /// * `terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
-        Emulator {
+        Self {
             cpu: Cpu::new(terminal),
 
             symbol_map: FnvHashMap::default(),
@@ -104,10 +104,6 @@ impl Emulator {
             begin_signature_addr: 0,
             end_signature_addr: 0,
         }
-    }
-
-    pub fn save_state(&self) -> EmulatorState {
-        self.clone()
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
@@ -264,12 +260,12 @@ impl Emulator {
         self.cpu.update_xlen(xlen);
     }
 
-    /// Returns immutable reference to `Cpu`.
+    /// Returns immutable reference to `self.cpu`.
     pub fn get_cpu(&self) -> &Cpu {
         &self.cpu
     }
 
-    /// Returns mutable reference to `Cpu`.
+    /// Returns mutable reference to `self.cpu`.
     pub fn get_mut_cpu(&mut self) -> &mut Cpu {
         &mut self.cpu
     }
@@ -318,5 +314,19 @@ impl Emulator {
         }
 
         Ok(())
+    }
+}
+
+impl Emulator {
+    pub fn save_state_with_empty_memory(&self) -> Emulator {
+        Emulator {
+            elf_path: self.elf_path.clone(),
+            cpu: self.cpu.save_state_with_empty_memory(),
+            symbol_map: self.symbol_map.clone(),
+            is_test: self.is_test,
+            tohost_addr: self.tohost_addr,
+            begin_signature_addr: self.begin_signature_addr,
+            end_signature_addr: self.end_signature_addr,
+        }
     }
 }
