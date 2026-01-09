@@ -1074,29 +1074,6 @@ impl Cpu {
     pub fn get_call_stack(&self) -> &VecDeque<CallFrame> {
         &self.call_stack
     }
-
-    pub fn into_vec_memory_cpu(mut self) -> Cpu {
-        Cpu {
-            clock: self.clock,
-            xlen: self.xlen,
-            privilege_mode: self.privilege_mode,
-            wfi: self.wfi,
-            x: self.x,
-            f: self.f,
-            pc: self.pc,
-            csr: self.csr,
-            mmu: self.mmu.take_as_vec_memory_mmu(),
-            reservation: self.reservation,
-            is_reservation_set: self.is_reservation_set,
-            _dump_flag: self._dump_flag,
-            unsigned_data_mask: self.unsigned_data_mask,
-            trace_len: self.trace_len,
-            executed_instrs: self.executed_instrs,
-            active_markers: std::mem::take(&mut self.active_markers),
-            vr_allocator: std::mem::take(&mut self.vr_allocator),
-            call_stack: std::mem::take(&mut self.call_stack),
-        }
-    }
 }
 
 impl Cpu {

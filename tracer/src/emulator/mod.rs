@@ -315,18 +315,6 @@ impl Emulator {
 
         Ok(())
     }
-
-    pub fn into_vec_memory_emulator(self) -> Emulator {
-        Emulator {
-            elf_path: self.elf_path,
-            cpu: self.cpu.into_vec_memory_cpu(),
-            symbol_map: self.symbol_map,
-            is_test: self.is_test,
-            tohost_addr: self.tohost_addr,
-            begin_signature_addr: self.begin_signature_addr,
-            end_signature_addr: self.end_signature_addr,
-        }
-    }
 }
 
 impl Emulator {

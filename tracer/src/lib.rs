@@ -92,12 +92,8 @@ pub fn trace(
     );
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
-    let final_memory_state = lazy_trace_iter
-        .lazy_tracer
-        .final_memory_state
-        .as_mut()
-        .unwrap()
-        .take_as_vec_memory_backend();
+    let final_memory_state =
+        std::mem::take(&mut lazy_trace_iter.lazy_tracer.final_memory_state).unwrap();
     (
         lazy_trace_iter_,
         trace,
@@ -587,7 +583,7 @@ impl LazyTracer for CheckpointingTracer {
             self.finished = true;
             let emulator = &mut self.emulator_state;
             let cpu = emulator.get_mut_cpu();
-            self.final_memory_state = Some(cpu.mmu.memory.memory.take_as_vec_memory_backend());
+            self.final_memory_state = Some(cpu.mmu.memory.memory.take_memory());
             None
         } else {
             self.trace_steps_since_last_checkpoint += 1;

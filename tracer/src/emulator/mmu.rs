@@ -1088,19 +1088,6 @@ impl Mmu {
         // println!("PA:{:X}", p_address);
         Ok(p_address)
     }
-
-    pub fn take_as_vec_memory_mmu(&mut self) -> Mmu {
-        Mmu {
-            clock: self.clock,
-            xlen: self.xlen,
-            ppn: self.ppn,
-            addressing_mode: self.addressing_mode,
-            privilege_mode: self.privilege_mode,
-            memory: self.memory.take_as_vec_memory_wrapper(),
-            jolt_device: std::mem::take(&mut self.jolt_device),
-            mstatus: self.mstatus,
-        }
-    }
 }
 
 impl Mmu {
@@ -1212,12 +1199,6 @@ impl MemoryWrapper {
 
     pub fn validate_address(&self, address: u64) -> bool {
         self.memory.validate_address(address - DRAM_BASE)
-    }
-
-    pub fn take_as_vec_memory_wrapper(&mut self) -> MemoryWrapper {
-        MemoryWrapper {
-            memory: self.memory.take_as_vec_memory_backend(),
-        }
     }
 }
 
