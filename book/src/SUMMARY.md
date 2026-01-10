@@ -29,6 +29,8 @@
         - [Small value optimizations](./how/optimizations/small-value.md)
         - [EQ optimizations](./how/optimizations/eq.md)
         - [Torus compression](./how/optimizations/compression.md)
+    - Formal Verification
+        - [Z3 Verifier](./how/formal-verification/z3-verifier.md)
     - [Appendix](./how/appendix/appendix.md)
         - [Terminology and nomenclature](./how/appendix/terminology.md)
         - [Multilinear extensions](./how/appendix/multilinear-extensions.md)
