@@ -12,6 +12,7 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
+const CYCLES_PER_MODEXP: f64 = 50000.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 /// Calculate number of operations to target a specific cycle count
@@ -31,6 +32,8 @@ pub enum BenchType {
     Sha2Chain,
     #[strum(serialize = "SHA3 Chain")]
     Sha3Chain,
+    #[strum(serialize = "modexp-chain")]
+    ModExp,
 }
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -40,6 +43,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha3 => sha3(),
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Sha3Chain => sha3_chain(),
+        BenchType::ModExp => modexp_chain(),
         BenchType::Fibonacci => fibonacci(),
     }
 }
@@ -86,6 +90,18 @@ fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha3-chain-guest", inputs)
 }
 
+fn modexp_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    // simple u128 inputs for example
+    let mut inputs = vec![];
+    // base, exp, modulus
+    inputs.append(&mut postcard::to_stdvec(&123456789u128).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&65537u128).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1000000007u128).unwrap());
+    let iters = scale_to_target_ops(((1 << 24) as f64 * SAFETY_MARGIN) as usize, CYCLES_PER_MODEXP);
+    inputs.append(&mut postcard::to_stdvec(&iters).unwrap());
+    prove_example("modexp-guest", inputs)
+}
+
 pub fn master_benchmark(
     bench_type: BenchType,
     bench_scale: usize,
@@ -124,6 +140,16 @@ pub fn master_benchmark(
                 let iterations = scale_to_target_ops(target, CYCLES_PER_SHA3);
                 [
                     postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                    postcard::to_stdvec(&iterations).unwrap(),
+                ]
+                .concat()
+            }),
+            BenchType::ModExp => ("modexp-chain", |target| {
+                let iterations = scale_to_target_ops(target, CYCLES_PER_MODEXP);
+                [
+                    postcard::to_stdvec(&123456789u128).unwrap(),
+                    postcard::to_stdvec(&65537u128).unwrap(),
+                    postcard::to_stdvec(&1000000007u128).unwrap(),
                     postcard::to_stdvec(&iterations).unwrap(),
                 ]
                 .concat()
