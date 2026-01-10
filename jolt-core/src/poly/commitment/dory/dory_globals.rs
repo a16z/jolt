@@ -1,6 +1,7 @@
 //! Global state management for Dory parameters
 
 use crate::utils::math::Math;
+use allocative::Allocative;
 use dory::backends::arkworks::{init_cache, is_cached, ArkG1, ArkG2};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
@@ -19,9 +20,12 @@ use std::sync::{
 ///   - almost-square: `num_cols == 2*num_rows` when `log2(K*T)` is odd.
 ///
 /// The layout determines the mapping from (address, cycle) to matrix (row, col).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Allocative)]
 pub enum DoryLayout {
-    /// Cycle-major layout (current main branch behavior).
+    /// Cycle-major layout
+    ///
+    /// This is the most performant (and hence default) option for CPU Jolt,
+    /// since e it minimizes the multi-pairing sizes for the Tier-2 Dory Commitments.
     ///
     /// Coefficients are ordered by address first, then by cycle within each address:
     /// ```text
@@ -47,7 +51,11 @@ pub enum DoryLayout {
     #[default]
     CycleMajor,
 
-    /// Address-major layout (from PR #1038, GPU-compatible).
+    /// Address-major layout
+    ///
+    /// This is the most performant option for GPU Jolt. Address-major has a fixed number of
+    /// non-zero elements per row, which allows for better parallelization (despite bigger multi-pairings).
+    ///
     ///
     /// Coefficients are ordered by cycle first, then by address within each cycle:
     /// ```text
@@ -70,22 +78,17 @@ pub enum DoryLayout {
     /// row3 │ a0,t3  │ a1,t3  │ a2,t3  │ a3,t3  │  ← All of cycle 3
     ///      └────────┴────────┴────────┴────────┘
     /// ```
-    ///
-    /// This layout is optimized for OneHot polynomials where each cycle has exactly
-    /// one nonzero entry (at the accessed address). Each row commitment becomes a
-    /// single basis element lookup rather than an MSM.
     AddressMajor,
 }
 
 impl DoryLayout {
-    /// Convert a (address, cycle) pair to a linear coefficient index.
+    /// Convert a (address, cycle) pair to a coefficient index.
     ///
     /// # Arguments
     /// * `address` - The address index (0 to K-1)
     /// * `cycle` - The cycle index (0 to T-1)
     /// * `K` - Total number of addresses
     /// * `T` - Total number of cycles
-    #[inline]
     pub fn address_cycle_to_index(
         &self,
         address: usize,
@@ -99,13 +102,12 @@ impl DoryLayout {
         }
     }
 
-    /// Convert a linear coefficient index to a (address, cycle) pair.
+    /// Convert a coefficient index to a (address, cycle) pair.
     ///
     /// # Arguments
     /// * `index` - The linear coefficient index
     /// * `K` - Total number of addresses
     /// * `T` - Total number of cycles
-    #[inline]
     pub fn index_to_address_cycle(&self, index: usize, K: usize, T: usize) -> (usize, usize) {
         match self {
             DoryLayout::CycleMajor => {
@@ -192,7 +194,6 @@ impl DoryGlobals {
     ///
     /// Dory matrices are conceptually shaped as `2^nu` rows × `2^sigma` columns (row-major).
     /// We use the balanced policy `sigma = ceil(total_vars / 2)` and `nu = total_vars - sigma`.
-    #[inline]
     pub fn balanced_sigma_nu(total_vars: usize) -> (usize, usize) {
         let sigma = total_vars.div_ceil(2);
         let nu = total_vars - sigma;
@@ -200,7 +201,6 @@ impl DoryGlobals {
     }
 
     /// Convenience helper for the main Dory matrix where `total_vars = log_k_chunk + log_t`.
-    #[inline]
     pub fn main_sigma_nu(log_k_chunk: usize, log_t: usize) -> (usize, usize) {
         Self::balanced_sigma_nu(log_k_chunk + log_t)
     }
@@ -210,7 +210,6 @@ impl DoryGlobals {
     /// - `max_advice_size_bytes` is interpreted as bytes of 64-bit words.
     /// - Rounds word count up to the next power of two (minimum 1) and computes log2 as `advice_vars`.
     /// - Returns `(sigma, nu)` where `sigma = ⌈advice_vars/2⌉` and `nu = advice_vars - sigma`.
-    #[inline]
     pub fn advice_sigma_nu_from_max_bytes(max_advice_size_bytes: usize) -> (usize, usize) {
         let words = max_advice_size_bytes / 8;
         let len = words.next_power_of_two().max(1);
@@ -220,7 +219,6 @@ impl DoryGlobals {
 
     /// How many row variables of the *cycle* segment exist in the unified point:
     /// `row_cycle_len = max(0, log_t - sigma_main)`.
-    #[inline]
     pub fn cycle_row_len(log_t: usize, sigma_main: usize) -> usize {
         log_t.saturating_sub(sigma_main)
     }
@@ -244,18 +242,15 @@ impl DoryGlobals {
         CURRENT_LAYOUT.load(Ordering::SeqCst).into()
     }
 
-    /// Set the Dory matrix layout
+    /// Set the Dory matrix layout directly (test-only).
     ///
-    /// This should be called once at initialization time, before any Dory operations.
-    /// The layout determines how OneHot polynomial coefficients are organized:
-    /// - `CycleMajor`: Coefficients ordered by address, then cycle (current main branch)
-    /// - `AddressMajor`: Coefficients ordered by cycle, then address (GPU-compatible, PR #1038)
+    /// In production code, prefer passing the layout to `initialize_context` instead.
+    #[cfg(test)]
     pub fn set_layout(layout: DoryLayout) {
         CURRENT_LAYOUT.store(layout as u8, Ordering::SeqCst);
     }
 
     /// Returns the configured Dory matrix shape `(num_rows, num_cols)` for the current context.
-    #[inline]
     pub fn matrix_shape() -> (usize, usize) {
         (Self::get_max_num_rows(), Self::get_num_columns())
     }
@@ -264,10 +259,6 @@ impl DoryGlobals {
     ///
     /// This is derived from the identity:
     /// `K * T == num_rows * num_cols`  (all values are powers of two in our usage).
-    ///
-    /// Note: this is the maximum address-space size configured for the current context, and may
-    /// be larger than a particular OneHot polynomial's `K` if that polynomial is more sparse.
-    #[inline]
     pub fn k_from_matrix_shape() -> usize {
         let (num_rows, num_cols) = Self::matrix_shape();
         let t = Self::get_T();
@@ -282,7 +273,6 @@ impl DoryGlobals {
     /// For `AddressMajor`, each Dory matrix row corresponds to this many cycles.
     ///
     /// Equivalent to `T / num_rows` and to `num_cols / K`.
-    #[inline]
     pub fn address_major_cycles_per_row() -> usize {
         let (num_rows, num_cols) = Self::matrix_shape();
         let k = Self::k_from_matrix_shape();
@@ -362,9 +352,6 @@ impl DoryGlobals {
         }
     }
 
-    // NOTE: do not add layout-specific helpers here that assume a square matrix; the
-    // `calculate_dimensions` policy may produce an almost-square matrix when `log2(K*T)` is odd.
-
     fn set_T_for_context(t: usize, context: DoryContext) {
         #[allow(static_mut_refs)]
         unsafe {
@@ -422,18 +409,29 @@ impl DoryGlobals {
     /// * `K` - Maximum address space size (K in OneHot polynomials)
     /// * `T` - Maximum trace length (cycle count)
     /// * `context` - The Dory context to initialize (Main, TrustedAdvice, or UntrustedAdvice)
+    /// * `layout` - Optional layout for the Dory matrix. Only applies to Main context.
+    ///   If `Some(layout)`, sets the layout. If `None`, leaves the existing layout
+    ///   unchanged (defaults to `CycleMajor` after `reset()`). Ignored for advice contexts.
     ///
     /// The matrix dimensions are calculated to minimize padding:
     /// - If log2(K*T) is even: creates a square matrix
     /// - If log2(K*T) is odd: creates an almost-square matrix (columns = 2*rows)
-    pub fn initialize_context(K: usize, T: usize, context: DoryContext) -> Option<()> {
+    pub fn initialize_context(
+        K: usize,
+        T: usize,
+        context: DoryContext,
+        layout: Option<DoryLayout>,
+    ) -> Option<()> {
         let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
         Self::set_num_columns_for_context(num_columns, context);
         Self::set_T_for_context(t, context);
         Self::set_max_num_rows_for_context(num_rows, context);
 
-        // For Main context, ensure subsequent uses of `get_*` read from it by default
+        // For Main context, set layout (if provided) and ensure subsequent uses of `get_*` read from it
         if context == DoryContext::Main {
+            if let Some(l) = layout {
+                CURRENT_LAYOUT.store(l as u8, Ordering::SeqCst);
+            }
             CURRENT_CONTEXT.store(DoryContext::Main as u8, Ordering::SeqCst);
         }
 

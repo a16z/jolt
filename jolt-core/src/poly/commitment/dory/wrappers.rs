@@ -1,6 +1,5 @@
 //! Type conversions and wrappers between Jolt types and final-dory's arkworks backend
 
-use super::dory_globals::{DoryGlobals, DoryLayout};
 use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
@@ -112,219 +111,87 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
         let num_cols = 1 << sigma;
         let num_rows = 1 << nu;
 
-        let address_major = DoryGlobals::get_layout() == DoryLayout::AddressMajor;
-        let t = DoryGlobals::get_T();
-
         let wrapped_left_side: Vec<Fr> = left_vec.iter().map(ark_to_jolt).collect();
 
-        // Helper: AddressMajor embedding for cycle-only dense polynomials (len == T).
-        //
-        // Under AddressMajor, we embed a cycle-only polynomial into the address=0 column of each
-        // K-wide block: col = cycle_offset * K, where cycle_offset ranges over [0, cycles_per_row).
-        fn dense_vmp_address_major<FN>(
-            num_cols: usize,
-            num_rows: usize,
-            wrapped_left_side: &[Fr],
-            coeff_len: usize,
-            mul_at_cycle: FN,
-        ) -> Vec<ArkFr>
-        where
-            FN: Fn(usize, Fr) -> Fr + Sync,
-        {
-            let k = DoryGlobals::k_from_matrix_shape();
-            let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
-
-            debug_assert_eq!(num_cols % k, 0);
-            debug_assert_eq!(num_cols / k, cycles_per_row);
-
-            let mut out = vec![Fr::zero(); num_cols];
-            out.par_iter_mut()
-                .step_by(k)
-                .enumerate()
-                .for_each(|(cycle_offset, dest)| {
-                    if cycle_offset >= cycles_per_row {
-                        return;
-                    }
-                    let mut sum = Fr::zero();
-                    for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                        let cycle = row_idx * cycles_per_row + cycle_offset;
-                        if cycle < coeff_len {
-                            sum += mul_at_cycle(cycle, wrapped_left_side[row_idx]);
-                        }
-                    }
-                    *dest = sum;
-                });
-
-            out.into_iter().map(|v| jolt_to_ark(&v)).collect()
-        }
-
         macro_rules! compute_vector_matrix_product {
-            ($poly:expr, $field_mul_method:ident) => {
-                (0..num_cols)
-                    .into_par_iter()
-                    .map(|col_idx| {
+            ($coeffs:expr, $field_mul_method:ident) => {{
+                let mut result = vec![Fr::zero(); num_cols];
+                result
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col_idx, dest)| {
                         let mut sum = Fr::zero();
                         for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
                             let coeff_idx = row_idx * num_cols + col_idx;
-                            if coeff_idx < $poly.len() {
-                                sum +=
-                                    $poly[coeff_idx].$field_mul_method(wrapped_left_side[row_idx]);
+                            if coeff_idx < $coeffs.len() {
+                                sum += $coeffs[coeff_idx]
+                                    .$field_mul_method(wrapped_left_side[row_idx]);
                             }
                         }
-                        jolt_to_ark(&sum)
-                    })
-                    .collect()
-            };
+                        *dest = sum;
+                    });
+                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
+            }};
         }
 
         match self {
             MultilinearPolynomial::LargeScalars(poly) => {
-                if address_major && poly.Z.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.Z.len(),
-                        |i, left| poly.Z[i] * left,
-                    )
-                } else {
-                    (0..num_cols)
-                        .into_par_iter()
-                        .map(|col_idx| {
-                            let mut sum = Fr::zero();
-                            for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                                let coeff_idx = row_idx * num_cols + col_idx;
-                                if coeff_idx < poly.Z.len() {
-                                    sum += poly.Z[coeff_idx] * wrapped_left_side[row_idx];
-                                }
+                let mut result = vec![Fr::zero(); num_cols];
+                result
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col_idx, dest)| {
+                        let mut sum = Fr::zero();
+                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
+                            let coeff_idx = row_idx * num_cols + col_idx;
+                            if coeff_idx < poly.Z.len() {
+                                sum += poly.Z[coeff_idx] * wrapped_left_side[row_idx];
                             }
-                            jolt_to_ark(&sum)
-                        })
-                        .collect()
-                }
+                        }
+                        *dest = sum;
+                    });
+                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
             }
             MultilinearPolynomial::U8Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::U16Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::U32Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::U64Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::I64Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::I128Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::U128Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::S128Scalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| poly.coeffs[i].field_mul(left),
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::BoolScalars(poly) => {
-                if address_major && poly.coeffs.len() == t {
-                    dense_vmp_address_major(
-                        num_cols,
-                        num_rows,
-                        &wrapped_left_side,
-                        poly.coeffs.len(),
-                        |i, left| {
-                            if poly.coeffs[i] {
-                                left
-                            } else {
-                                Fr::zero()
+                let mut result = vec![Fr::zero(); num_cols];
+                result
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col_idx, dest)| {
+                        let mut sum = Fr::zero();
+                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
+                            let coeff_idx = row_idx * num_cols + col_idx;
+                            if coeff_idx < poly.coeffs.len() && poly.coeffs[coeff_idx] {
+                                sum += wrapped_left_side[row_idx];
                             }
-                        },
-                    )
-                } else {
-                    compute_vector_matrix_product!(&poly.coeffs, field_mul)
-                }
+                        }
+                        *dest = sum;
+                    });
+                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
             }
             MultilinearPolynomial::OneHot(poly) => {
                 let mut result = vec![Fr::zero(); num_cols];
@@ -371,106 +238,48 @@ where
         };
     }
 
-    // AddressMajor embedding for cycle-only dense polynomials (len == T):
-    // use bases at stride K (col = cycle_offset * K) and chunk coefficients by cycles_per_row.
-    macro_rules! compute_dense_address_major_msm {
-        ($coeffs:expr, $msm_method:ident) => {{
-            let t = DoryGlobals::get_T();
-            if DoryGlobals::get_layout() == DoryLayout::AddressMajor && $coeffs.len() == t {
-                let k = DoryGlobals::k_from_matrix_shape();
-                let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
-                debug_assert!(k > 0);
-                debug_assert_eq!(row_len % k, 0);
-                debug_assert_eq!(row_len / k, cycles_per_row);
-
-                let dense_bases: Vec<G1Affine> = bases
-                    .iter()
-                    .copied()
-                    .step_by(k)
-                    .take(cycles_per_row)
-                    .collect();
-
-                $coeffs
-                    .par_chunks(cycles_per_row)
-                    .map(|row| {
-                        ArkG1(VariableBaseMSM::$msm_method(&dense_bases[..row.len()], row).unwrap())
-                    })
-                    .collect()
-            } else {
-                compute_msm!($coeffs, $msm_method)
-            }
-        }};
-    }
-
+    // Dense polynomials always use cycle-major indexing (standard row_len chunking)
+    // regardless of DoryLayout. The AddressMajor layout only affects OneHot and RLC polynomials.
     let result: Vec<ArkG1> = match poly {
         MultilinearPolynomial::LargeScalars(poly) => {
-            compute_dense_address_major_msm!(&poly.Z, msm_field_elements)
+            compute_msm!(&poly.Z, msm_field_elements)
         }
         MultilinearPolynomial::U8Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_u8)
+            compute_msm!(&poly.coeffs, msm_u8)
         }
         MultilinearPolynomial::U16Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_u16)
+            compute_msm!(&poly.coeffs, msm_u16)
         }
         MultilinearPolynomial::U32Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_u32)
+            compute_msm!(&poly.coeffs, msm_u32)
         }
         MultilinearPolynomial::U64Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_u64)
+            compute_msm!(&poly.coeffs, msm_u64)
         }
         MultilinearPolynomial::I64Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_i64)
+            compute_msm!(&poly.coeffs, msm_i64)
         }
         MultilinearPolynomial::I128Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_i128)
+            compute_msm!(&poly.coeffs, msm_i128)
         }
         MultilinearPolynomial::U128Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_u128)
+            compute_msm!(&poly.coeffs, msm_u128)
         }
         MultilinearPolynomial::S128Scalars(poly) => {
-            compute_dense_address_major_msm!(&poly.coeffs, msm_s128)
+            compute_msm!(&poly.coeffs, msm_s128)
         }
-        MultilinearPolynomial::BoolScalars(poly) => {
-            let t = DoryGlobals::get_T();
-            if DoryGlobals::get_layout() == DoryLayout::AddressMajor && poly.coeffs.len() == t {
-                let k = DoryGlobals::k_from_matrix_shape();
-                let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
-                debug_assert!(k > 0);
-                debug_assert_eq!(row_len % k, 0);
-                debug_assert_eq!(row_len / k, cycles_per_row);
-
-                let dense_bases: Vec<G1Affine> = bases
+        MultilinearPolynomial::BoolScalars(poly) => poly
+            .coeffs
+            .par_chunks(row_len)
+            .map(|row| {
+                let result = row
                     .iter()
-                    .copied()
-                    .step_by(k)
-                    .take(cycles_per_row)
-                    .collect();
-
-                poly.coeffs
-                    .par_chunks(cycles_per_row)
-                    .map(|row| {
-                        let result = row
-                            .iter()
-                            .zip(&dense_bases[..row.len()])
-                            .filter_map(|(&b, base)| if b { Some(*base) } else { None })
-                            .sum();
-                        ArkG1(result)
-                    })
-                    .collect()
-            } else {
-                poly.coeffs
-                    .par_chunks(row_len)
-                    .map(|row| {
-                        let result = row
-                            .iter()
-                            .zip(&bases[..row.len()])
-                            .filter_map(|(&b, base)| if b { Some(*base) } else { None })
-                            .sum();
-                        ArkG1(result)
-                    })
-                    .collect()
-            }
-        }
+                    .zip(&bases[..row.len()])
+                    .filter_map(|(&b, base)| if b { Some(*base) } else { None })
+                    .sum();
+                ArkG1(result)
+            })
+            .collect(),
         // OneHot and RLC polynomials have their own commit_rows implementations
         // that respect the DoryLayout setting (CycleMajor vs AddressMajor)
         MultilinearPolynomial::OneHot(poly) => {

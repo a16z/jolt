@@ -65,7 +65,7 @@ mod tests {
 
         let num_coeffs = 1 << num_vars;
         // Dense polynomial: K = 1, T = num_coeffs
-        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main, None);
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
@@ -242,7 +242,7 @@ mod tests {
         let num_coeffs = 1 << num_vars;
 
         // Dense polynomial: K = 1, T = num_coeffs
-        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main, None);
 
         let mut rng = thread_rng();
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
@@ -383,11 +383,10 @@ mod tests {
 
         DoryGlobals::reset();
 
-        // Use K*T = 1024 (num_vars = 10) to match other tests and avoid generator cache mismatch
         let K = 32;
         let T = 32;
 
-        let _guard = DoryGlobals::initialize_context(K, T, DoryContext::Main);
+        let _guard = DoryGlobals::initialize_context(K, T, DoryContext::Main, None);
 
         let mut rng = thread_rng();
         let nonzero_indices: Vec<Option<u8>> = (0..T)
@@ -448,12 +447,11 @@ mod tests {
     fn test_dory_homomorphic_combination() {
         DoryGlobals::reset();
 
-        // Use num_vars = 10 to match other tests and avoid generator cache mismatch
         let num_vars = 10;
         let num_coeffs = 1 << num_vars;
         let num_polys = 5;
 
-        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main, None);
 
         let mut rng = thread_rng();
 
@@ -533,12 +531,11 @@ mod tests {
     fn test_dory_batch_commit_e2e() {
         DoryGlobals::reset();
 
-        // Use num_vars = 10 to match other tests and avoid generator cache mismatch
         let num_vars = 10;
         let num_coeffs = 1 << num_vars;
         let num_polys = 5;
 
-        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
+        let _guard = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main, None);
 
         let mut rng = thread_rng();
 
@@ -714,48 +711,39 @@ mod tests {
         assert_eq!(DoryGlobals::get_layout(), DoryLayout::CycleMajor);
     }
 
-    /// Test that dense polynomials produce the same commitment regardless of layout.
-    ///
-    /// The CycleMajor vs AddressMajor distinction only affects OneHot polynomials.
-    /// For dense polynomials, the matrix storage is always row-major.
+    /// Dense polynomials are treated as k=1, so `AddressMajor` and `CycleMajor`
+    /// degenerate to same computation for Dory commitments
+    /// Hence, we expect them to produce the same commitment.
     #[test]
     #[serial]
     fn test_dory_layout_dense_polynomials_same_commitment() {
         DoryGlobals::reset();
 
-        // Use num_vars = 10 to match other tests and avoid generator cache mismatch
         let num_vars = 10;
         let num_coeffs = 1 << num_vars;
 
-        let _ = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main);
+        let _ = DoryGlobals::initialize_context(1, num_coeffs, DoryContext::Main, None);
 
         let mut rng = thread_rng();
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
 
-        // Commit with CycleMajor layout (default)
         DoryGlobals::set_layout(DoryLayout::CycleMajor);
         let poly1 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
         let (commitment_cycle_major, _) = DoryCommitmentScheme::commit(&poly1, &prover_setup);
 
-        // Commit with AddressMajor layout
         DoryGlobals::set_layout(DoryLayout::AddressMajor);
         let poly2 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs));
         let (commitment_addr_major, _) = DoryCommitmentScheme::commit(&poly2, &prover_setup);
 
-        // Dense polynomials should produce the same commitment regardless of layout
-        // because the layout distinction only affects OneHot interpretation
         assert_eq!(
             commitment_cycle_major, commitment_addr_major,
             "Dense polynomials should produce the same commitment with any layout"
         );
-
-        // Reset layout to default after test
         DoryGlobals::set_layout(DoryLayout::CycleMajor);
     }
 
-    /// Test that the layout enum correctly converts between address/cycle and index.
     #[test]
     fn test_dory_layout_enum_methods() {
         let K = 8; // addresses
@@ -764,7 +752,6 @@ mod tests {
         let cycle_major = DoryLayout::CycleMajor;
         let addr_major = DoryLayout::AddressMajor;
 
-        // For the same (address, cycle) pair, the two layouts give different indices
         let addr = 3;
         let cycle = 7;
 
@@ -777,10 +764,6 @@ mod tests {
         // AddressMajor: index = cycle * K + addr = 7 * 8 + 3 = 59
         assert_eq!(idx_addr, 59);
 
-        // Different layouts, different indices for the same (address, cycle)
-        assert_ne!(idx_cycle, idx_addr);
-
-        // But both can round-trip back to the same (address, cycle)
         assert_eq!(
             cycle_major.index_to_address_cycle(idx_cycle, K, T),
             (addr, cycle)
@@ -789,5 +772,166 @@ mod tests {
             addr_major.index_to_address_cycle(idx_addr, K, T),
             (addr, cycle)
         );
+    }
+
+    /// Test that AddressMajor one-hot polynomial proof/verify works correctly.
+    #[test]
+    #[serial]
+    fn test_dory_one_hot_address_major() {
+        use crate::poly::one_hot_polynomial::OneHotPolynomial;
+
+        DoryGlobals::reset();
+
+        let K = 32;
+        let T = 32;
+
+        let _guard = DoryGlobals::initialize_context(
+            K,
+            T,
+            DoryContext::Main,
+            Some(DoryLayout::AddressMajor),
+        );
+
+        let mut rng = thread_rng();
+        let nonzero_indices: Vec<Option<u8>> = (0..T)
+            .map(|_| {
+                if rng.gen::<bool>() {
+                    Some(rng.gen::<u8>() % K as u8)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let one_hot_poly = OneHotPolynomial::from_indices(nonzero_indices, K);
+        let num_vars = one_hot_poly.get_num_vars();
+        let poly = MultilinearPolynomial::OneHot(one_hot_poly);
+
+        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
+            .collect();
+
+        let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
+        let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
+
+        let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+
+        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
+            &poly,
+            &opening_point,
+        );
+
+        let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
+        let proof = DoryCommitmentScheme::prove(
+            &prover_setup,
+            &poly,
+            &opening_point,
+            Some(row_commitments),
+            &mut prove_transcript,
+        );
+
+        let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
+        let verification_result = DoryCommitmentScheme::verify(
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+            &opening_point,
+            &evaluation,
+            &commitment,
+        );
+
+        assert!(
+            verification_result.is_ok(),
+            "Dory verification failed for AddressMajor OneHot: {verification_result:?}"
+        );
+    }
+
+    /// Test VMP correctness for AddressMajor layout with RLC polynomial (dense + one-hot).
+    #[test]
+    #[serial]
+    fn test_vmp_address_major_rlc() {
+        use crate::poly::one_hot_polynomial::OneHotPolynomial;
+        use crate::poly::rlc_polynomial::RLCPolynomial;
+
+        DoryGlobals::reset();
+
+        let K = 16usize;
+        let T = 64usize;
+
+        let _guard = DoryGlobals::initialize_context(
+            K,
+            T,
+            DoryContext::Main,
+            Some(DoryLayout::AddressMajor),
+        );
+
+        let num_columns = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_max_num_rows();
+
+        let mut rng = thread_rng();
+
+        let dense_coeffs: Vec<Fr> = (0..T).map(|_| Fr::rand(&mut rng)).collect();
+
+        let nonzero_indices: Vec<Option<u8>> = (0..T)
+            .map(|_| {
+                if rng.gen::<bool>() {
+                    Some(rng.gen::<u8>() % K as u8)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices.clone(), K);
+
+        let dense_rlc_coeff: Fr = Fr::rand(&mut rng);
+        let one_hot_rlc_coeff: Fr = Fr::rand(&mut rng);
+
+        let rlc_dense: Vec<Fr> = dense_coeffs.iter().map(|c| *c * dense_rlc_coeff).collect();
+        let rlc_poly = RLCPolynomial {
+            dense_rlc: rlc_dense.clone(),
+            one_hot_rlc: vec![(
+                one_hot_rlc_coeff,
+                std::sync::Arc::new(MultilinearPolynomial::OneHot(one_hot_poly.clone())),
+            )],
+            streaming_context: None,
+        };
+
+        let left_vec: Vec<Fr> = (0..num_rows).map(|_| Fr::rand(&mut rng)).collect();
+
+        let vmp_result = rlc_poly.vector_matrix_product(&left_vec);
+
+        let mut expected = vec![Fr::zero(); num_columns];
+
+        // Dense contribution: uses standard row-major layout (cycle-major)
+        // Commitment chunks coefficients by row_len without considering DoryLayout
+        for (global_idx, &coeff) in rlc_dense.iter().enumerate() {
+            let row = global_idx / num_columns;
+            let col = global_idx % num_columns;
+            if row < num_rows {
+                expected[col] += left_vec[row] * coeff;
+            }
+        }
+
+        // One-hot contribution
+        for (cycle, k_opt) in nonzero_indices.iter().enumerate() {
+            if let Some(k) = k_opt {
+                let k = *k as usize;
+                // AddressMajor: global_index = cycle * K + address
+                let global_index = DoryLayout::AddressMajor.address_cycle_to_index(k, cycle, K, T);
+                let row = global_index / num_columns;
+                let col = global_index % num_columns;
+                if row < num_rows && col < num_columns {
+                    expected[col] += left_vec[row] * one_hot_rlc_coeff;
+                }
+            }
+        }
+
+        // Compare results
+        for (col, (actual, exp)) in vmp_result.iter().zip(expected.iter()).enumerate() {
+            assert_eq!(
+                *actual, *exp,
+                "VMP mismatch at column {col}: actual={actual:?}, expected={exp:?}"
+            );
+        }
     }
 }

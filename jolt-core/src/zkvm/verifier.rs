@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -175,16 +174,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
         let _pprof_verify = pprof_scope!("verify");
-        // Parameters are computed from trace length as needed
-
-        // Initialize Dory globals for the verifier
-        // The verifier needs these to compute commitments during verification
-        let padded_trace_len = self.proof.trace_length.next_power_of_two();
-        let _ = DoryGlobals::initialize_context(
-            1 << self.one_hot_params.log_k_chunk,
-            padded_trace_len,
-            crate::poly::commitment::dory::DoryContext::Main,
-        );
 
         fiat_shamir_preamble(
             &self.program_io,

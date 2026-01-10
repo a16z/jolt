@@ -23,7 +23,10 @@ use crate::{
     field::JoltField,
     guest,
     poly::{
-        commitment::{commitment_scheme::StreamingCommitmentScheme, dory::DoryGlobals},
+        commitment::{
+            commitment_scheme::StreamingCommitmentScheme,
+            dory::{DoryGlobals, DoryLayout},
+        },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator,
@@ -493,6 +496,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             bytecode_K: self.one_hot_params.bytecode_k,
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
+            dory_layout: DoryGlobals::get_layout(),
         };
 
         let prove_duration = start.elapsed();
@@ -518,67 +522,107 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             1 << self.one_hot_params.log_k_chunk,
             self.padded_trace_len,
             DoryContext::Main,
+            Some(DoryGlobals::get_layout()),
         );
-        // Generate and commit to all witness polynomials using streaming tier1/tier2 pattern
-        let T = DoryGlobals::get_T();
+
         let polys = all_committed_polynomials(&self.one_hot_params);
-        let row_len = DoryGlobals::get_num_columns();
-        let num_rows = T / DoryGlobals::get_max_num_rows();
+        let T = DoryGlobals::get_T();
 
-        tracing::debug!(
-            "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
-            polys.len(),
-            T,
-            row_len,
-            num_rows
-        );
+        // For AddressMajor, use non-streaming commit path since streaming assumes CycleMajor layout
+        let (commitments, hint_map) = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+            tracing::debug!(
+                "Using non-streaming commit path for AddressMajor layout with {} polynomials",
+                polys.len()
+            );
 
-        // Tier 1: Compute row commitments for each polynomial
-        let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
+            // Materialize the trace for non-streaming commit
+            let trace: Vec<Cycle> = self
+                .lazy_trace
+                .clone()
+                .pad_using(T, |_| Cycle::NoOp)
+                .collect();
 
-        self.lazy_trace
-            .clone()
-            .pad_using(T, |_| Cycle::NoOp)
-            .iter_chunks(row_len)
-            .zip(row_commitments.iter_mut())
-            .par_bridge()
-            .for_each(|(chunk, row_tier1_commitments)| {
-                let res: Vec<_> = polys
-                    .par_iter()
-                    .map(|poly| {
-                        poly.stream_witness_and_commit_rows::<_, PCS>(
-                            &self.preprocessing.generators,
-                            &self.preprocessing.shared,
-                            &chunk,
-                            &self.one_hot_params,
-                        )
-                    })
-                    .collect();
-                *row_tier1_commitments = res;
-            });
+            // Generate witnesses and commit using the regular (non-streaming) path
+            let (commitments, hints): (Vec<_>, Vec<_>) = polys
+                .par_iter()
+                .map(|poly_id| {
+                    let witness: MultilinearPolynomial<F> = poly_id.generate_witness(
+                        &self.preprocessing.shared.bytecode,
+                        &self.preprocessing.shared.memory_layout,
+                        &trace,
+                        Some(&self.one_hot_params),
+                    );
+                    PCS::commit(&witness, &self.preprocessing.generators)
+                })
+                .unzip();
 
-        // Transpose: row_commitments[row][poly] -> tier1_per_poly[poly][row]
-        let tier1_per_poly: Vec<Vec<PCS::ChunkState>> = (0..polys.len())
-            .into_par_iter()
-            .map(|poly_idx| {
-                row_commitments
-                    .iter()
-                    .flat_map(|row| row.get(poly_idx).cloned())
-                    .collect()
-            })
-            .collect();
+            let hint_map = HashMap::from_iter(zip_eq(polys, hints));
+            (commitments, hint_map)
+        } else {
+            // CycleMajor: use streaming
+            let row_len = DoryGlobals::get_num_columns();
+            let num_rows = T / DoryGlobals::get_max_num_rows();
 
-        // Tier 2: Compute final commitments from tier1 commitments
-        let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
-            .into_par_iter()
-            .zip(&polys)
-            .map(|(tier1_commitments, poly)| {
-                let onehot_k = poly.get_onehot_k(&self.one_hot_params);
-                PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
-            })
-            .unzip();
+            tracing::debug!(
+                "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
+                polys.len(),
+                T,
+                row_len,
+                num_rows
+            );
 
-        let hint_map = HashMap::from_iter(zip_eq(polys, hints));
+            // Tier 1: Compute row commitments for each polynomial
+            let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
+
+            self.lazy_trace
+                .clone()
+                .pad_using(T, |_| Cycle::NoOp)
+                .iter_chunks(row_len)
+                .zip(row_commitments.iter_mut())
+                .par_bridge()
+                .for_each(|(chunk, row_tier1_commitments)| {
+                    let res: Vec<_> = polys
+                        .par_iter()
+                        .map(|poly| {
+                            poly.stream_witness_and_commit_rows::<_, PCS>(
+                                &self.preprocessing.generators,
+                                &self.preprocessing.shared,
+                                &chunk,
+                                &self.one_hot_params,
+                            )
+                        })
+                        .collect();
+                    *row_tier1_commitments = res;
+                });
+
+            // Transpose: row_commitments[row][poly] -> tier1_per_poly[poly][row]
+            let tier1_per_poly: Vec<Vec<PCS::ChunkState>> = (0..polys.len())
+                .into_par_iter()
+                .map(|poly_idx| {
+                    row_commitments
+                        .iter()
+                        .flat_map(|row| row.get(poly_idx).cloned())
+                        .collect()
+                })
+                .collect();
+
+            // Tier 2: Compute final commitments from tier1 commitments
+            let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
+                .into_par_iter()
+                .zip(&polys)
+                .map(|(tier1_commitments, poly)| {
+                    let onehot_k = poly.get_onehot_k(&self.one_hot_params);
+                    PCS::aggregate_chunks(
+                        &self.preprocessing.generators,
+                        onehot_k,
+                        &tier1_commitments,
+                    )
+                })
+                .unzip();
+
+            let hint_map = HashMap::from_iter(zip_eq(polys, hints));
+            (commitments, hint_map)
+        };
 
         // Append commitments to transcript
         for commitment in &commitments {
@@ -609,7 +653,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
         let advice_len = poly.len().next_power_of_two().max(1);
 
-        let _guard = DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice);
+        let _guard =
+            DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript.append_serializable(&commitment);
@@ -1281,6 +1326,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.one_hot_params.k_chunk,
             self.padded_trace_len,
             DoryContext::Main,
+            Some(DoryGlobals::get_layout()),
         );
 
         // Get the unified opening point from HammingWeightClaimReduction
@@ -1420,7 +1466,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             advice_polys,
         );
 
-        // Dory opening proof at the unified point
         PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
@@ -1511,10 +1556,11 @@ mod tests {
     use serial_test::serial;
 
     use crate::host;
+    use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
     use crate::poly::{
         commitment::{
             commitment_scheme::CommitmentScheme,
-            dory::{DoryCommitmentScheme, DoryContext, DoryGlobals},
+            dory::{DoryCommitmentScheme, DoryContext},
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningAccumulator, SumcheckId},
@@ -1548,7 +1594,8 @@ mod tests {
         let poly = MultilinearPolynomial::<Fr>::from(trusted_advice_words);
         let advice_len = poly.len().next_power_of_two().max(1);
 
-        let _guard = DoryGlobals::initialize_context(1, advice_len, DoryContext::TrustedAdvice);
+        let _guard =
+            DoryGlobals::initialize_context(1, advice_len, DoryContext::TrustedAdvice, None);
         let (commitment, hint) = {
             let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
             DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
@@ -2274,31 +2321,28 @@ mod tests {
         verifier.verify().unwrap();
     }
 
-    /// Helper function to run fib e2e test with a specific layout
-    fn run_fib_e2e_with_layout(layout: crate::poly::commitment::dory::DoryLayout) {
-        // Reset DoryGlobals to ensure clean state
-        crate::poly::commitment::dory::DoryGlobals::reset();
-        // Set layout BEFORE any DoryGlobals initialization
-        crate::poly::commitment::dory::DoryGlobals::set_layout(layout);
+    #[test]
+    #[serial]
+    fn fib_e2e_dory_address_major() {
+        DoryGlobals::reset();
+        DoryGlobals::set_layout(DoryLayout::AddressMajor);
 
         let mut program = host::Program::new("fibonacci-guest");
-        let inputs = postcard::to_stdvec(&50u32).unwrap(); // Smaller input for faster test
+        let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-        let max_padded_trace_length = 1 << 16;
+
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            max_padded_trace_length,
+            1 << 16,
         );
-
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
-            elf_contents,
+            &elf_contents,
             &inputs,
             &[],
             &[],
@@ -2306,180 +2350,17 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (proof, debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             shared_preprocessing,
             prover_preprocessing.generators.to_verifier_setup(),
         );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
-    }
 
-    #[test]
-    #[serial]
-    fn fib_e2e_dory_cycle_major() {
-        run_fib_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::CycleMajor);
-    }
-
-    #[test]
-    #[serial]
-    fn fib_e2e_dory_address_major() {
-        run_fib_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::AddressMajor);
-    }
-
-    /// Helper function to run sha3 e2e test with a specific layout
-    fn run_sha3_e2e_with_layout(layout: crate::poly::commitment::dory::DoryLayout) {
-        // Ensure SHA3 inline library is linked and auto-registered
-        #[cfg(feature = "host")]
-        use jolt_inlines_keccak256 as _;
-
-        // Reset DoryGlobals to ensure clean state
-        crate::poly::commitment::dory::DoryGlobals::reset();
-        // Set layout BEFORE any DoryGlobals initialization
-        crate::poly::commitment::dory::DoryGlobals::set_layout(layout);
-
-        let mut program = host::Program::new("sha3-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
-        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-        let max_padded_trace_length = 1 << 16;
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            init_memory_state,
-            max_padded_trace_length,
-        );
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
-
-        // Verify outputs match expected SHA3 result
-        let expected_output = &[
-            0xd0, 0x3, 0x5c, 0x96, 0x86, 0x6e, 0xe2, 0x2e, 0x81, 0xf5, 0xc4, 0xef, 0xbd, 0x88,
-            0x33, 0xc1, 0x7e, 0xa1, 0x61, 0x10, 0x81, 0xfc, 0xd7, 0xa3, 0xdd, 0xce, 0xce, 0x7f,
-            0x44, 0x72, 0x4, 0x66,
-        ];
-        assert_eq!(io_device.outputs, expected_output, "SHA3 outputs mismatch");
-    }
-
-    #[test]
-    #[serial]
-    fn sha3_e2e_dory_cycle_major() {
-        run_sha3_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::CycleMajor);
-    }
-
-    #[test]
-    #[serial]
-    fn sha3_e2e_dory_address_major() {
-        run_sha3_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::AddressMajor);
-    }
-
-    /// Helper function to run sha2 e2e test with a specific layout
-    fn run_sha2_e2e_with_layout(layout: crate::poly::commitment::dory::DoryLayout) {
-        // Ensure SHA2 inline library is linked and auto-registered
-        #[cfg(feature = "host")]
-        use jolt_inlines_sha2 as _;
-
-        // Reset DoryGlobals to ensure clean state
-        crate::poly::commitment::dory::DoryGlobals::reset();
-        // Set layout BEFORE any DoryGlobals initialization
-        crate::poly::commitment::dory::DoryGlobals::set_layout(layout);
-
-        let mut program = host::Program::new("sha2-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
-        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-        let max_padded_trace_length = 1 << 16;
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            init_memory_state,
-            max_padded_trace_length,
-        );
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
-
-        // Verify outputs match expected SHA2 result
-        let expected_output = &[
-            0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
-            0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
-            0x3b, 0x50, 0xd2, 0x57,
-        ];
-        assert_eq!(io_device.outputs, expected_output, "SHA2 outputs mismatch");
-    }
-
-    #[test]
-    #[serial]
-    fn sha2_e2e_dory_cycle_major() {
-        run_sha2_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::CycleMajor);
-    }
-
-    #[test]
-    #[serial]
-    fn sha2_e2e_dory_address_major() {
-        run_sha2_e2e_with_layout(crate::poly::commitment::dory::DoryLayout::AddressMajor);
+        // DoryGlobals is now initialized inside the verifier's verify_stage8
+        RV64IMACVerifier::new(&verifier_preprocessing, proof, io_device, None, debug_info)
+            .expect("verifier creation failed")
+            .verify()
+            .expect("verification failed");
     }
 }

@@ -1,6 +1,6 @@
 //! Dory polynomial commitment scheme implementation
 
-use super::dory_globals::DoryGlobals;
+use super::dory_globals::{DoryGlobals, DoryLayout};
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
     jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
@@ -118,10 +118,26 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
+        // For AddressMajor layout, reorder opening_point from [r_address, r_cycle] to [r_cycle, r_address].
+        // This ensures that after Dory's reversal and splitting:
+        // - Column (right) vector gets address variables (matching AddressMajor column indexing)
+        // - Row (left) vector gets cycle variables (matching AddressMajor row indexing)
+        let reordered_point: Vec<_> = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+            let log_t = DoryGlobals::get_T().log_2();
+            let log_k = opening_point.len().saturating_sub(log_t);
+            opening_point[log_k..]
+                .iter()
+                .chain(opening_point[..log_k].iter())
+                .cloned()
+                .collect()
+        } else {
+            opening_point.to_vec()
+        };
+
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = opening_point
+        let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev()  // Reverse the order for Dory
+            .rev() // Reverse the order for Dory
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
@@ -152,10 +168,24 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
+        // For AddressMajor layout, reorder opening_point from [r_address, r_cycle] to [r_cycle, r_address].
+        // This must match the reordering done in prove().
+        let reordered_point: Vec<_> = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+            let log_t = DoryGlobals::get_T().log_2();
+            let log_k = opening_point.len().saturating_sub(log_t);
+            opening_point[log_k..]
+                .iter()
+                .chain(opening_point[..log_k].iter())
+                .cloned()
+                .collect()
+        } else {
+            opening_point.to_vec()
+        };
+
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = opening_point
+        let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev()  // Reverse the order for Dory
+            .rev()
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
