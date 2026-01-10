@@ -475,16 +475,6 @@ impl<F: JoltField> AppendToTranscript for UniPoly<F> {
     }
 }
 
-impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"UniPoly_begin");
-        for i in 0..self.coeffs_except_linear_term.len() {
-            transcript.append_scalar(&self.coeffs_except_linear_term[i]);
-        }
-        transcript.append_message(b"UniPoly_end");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
