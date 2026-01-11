@@ -24,9 +24,6 @@ use std::sync::{
 pub enum DoryLayout {
     /// Cycle-major layout
     ///
-    /// This is the most performant (and hence default) option for CPU Jolt,
-    /// since it minimizes the multi-pairing sizes for the Tier-2 Dory Commitments.
-    ///
     /// Coefficients are ordered by address first, then by cycle within each address:
     /// ```text
     /// Memory: [a0_t0, a0_t1, ..., a0_tT-1, a1_t0, a1_t1, ..., a1_tT-1, ...]
@@ -52,10 +49,6 @@ pub enum DoryLayout {
     CycleMajor,
 
     /// Address-major layout
-    ///
-    /// This is the most performant option for GPU Jolt. Address-major has a fixed number of
-    /// non-zero elements per row, which allows for better parallelization (despite bigger multi-pairings).
-    ///
     ///
     /// Coefficients are ordered by cycle first, then by address within each cycle:
     /// ```text
