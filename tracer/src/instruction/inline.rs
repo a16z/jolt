@@ -19,18 +19,25 @@ use crate::{
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{LazyLock, RwLock};
 
 // Type alias for the inline_sequence functions signature
 pub type InlineSequenceFunction =
     Box<dyn Fn(InstrAssembler, FormatInline) -> Vec<Instruction> + Send + Sync>;
 
+// Type alias for the inline_trace functions signature
+pub type AdviceFunction =
+    Box<dyn Fn(InstrAssembler, FormatInline, &mut Cpu) -> VecDeque<u64> + Send + Sync>;
+
+// Type alias for value in the registry
+pub type InlineRegistryValue = (String, InlineSequenceFunction, Option<AdviceFunction>);
+
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
 
 // Global registry that maps (opcode, funct3, funct7) tuples to inline implementations
-static INLINE_REGISTRY: LazyLock<RwLock<HashMap<InlineKey, (String, InlineSequenceFunction)>>> =
+static INLINE_REGISTRY: LazyLock<RwLock<HashMap<InlineKey, InlineRegistryValue>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Registers a new inline instruction handler.
@@ -46,12 +53,14 @@ static INLINE_REGISTRY: LazyLock<RwLock<HashMap<InlineKey, (String, InlineSequen
 /// * `name` - Human-readable name for the inline
 /// * `exec_fn` - Function to execute during CPU simulation
 /// * `inline_sequence_fn` - Function to generate virtual instruction sequence
+/// * `advice_fn` - Optional function to generate trace for the inline
 pub fn register_inline(
     opcode: u32,
     funct3: u32,
     funct7: u32,
     name: &str,
     inline_sequence_fn: InlineSequenceFunction,
+    advice_fn: Option<AdviceFunction>,
 ) -> Result<(), String> {
     if opcode != 0x0B && opcode != 0x2B {
         return Err(format!(
@@ -75,12 +84,12 @@ pub fn register_inline(
             "Inline '{}' with opcode={opcode:#x}, funct3={funct3}, funct7={funct7} is already registered",
             registry
                 .get(&key)
-                .map(|(name, _)| name.as_str())
+                .map(|(name, _, _)| name.as_str())
                 .unwrap_or("unknown")
         ));
     }
 
-    registry.insert(key, (name.to_string(), inline_sequence_fn));
+    registry.insert(key, (name.to_string(), inline_sequence_fn, advice_fn));
     Ok(())
 }
 
@@ -95,7 +104,7 @@ pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
     match INLINE_REGISTRY.read() {
         Ok(registry) => registry
             .iter()
-            .map(|(&key, (name, _))| (key, name.clone()))
+            .map(|(&key, (name, _, _))| (key, name.clone()))
             .collect(),
         Err(_) => {
             eprintln!("Warning: Failed to acquire read lock on inline registry");
@@ -188,10 +197,59 @@ impl INLINE {
 
 impl RISCVTrace for INLINE {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
-        let mut trace = trace;
-        for instr in inline_sequence {
-            instr.trace(cpu, trace.as_deref_mut());
+        let key = (self.opcode, self.funct3, self.funct7);
+        match INLINE_REGISTRY.read() {
+            Ok(registry) => match registry.get(&key) {
+                Some((_name, _, Some(advice_fn))) => {
+                    // if a custom advice function is registered, get advice as a vec
+                    let asm = InstrAssembler::new_inline(
+                        self.address,
+                        self.is_compressed,
+                        cpu.xlen,
+                        &cpu.vr_allocator,
+                    );
+                    let mut advice = advice_fn(asm, self.operands, cpu);
+                    // then execute the inline sequence, passing in the advice when called for by the instructions
+                    let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+                    let mut trace = trace;
+                    for instr in inline_sequence.iter_mut() {
+                        if let Instruction::VirtualAdvice(va) = instr {
+                            va.advice = match advice.pop_front() {
+                                Some(val) => val,
+                                None => panic!(
+                                    "Inline advice function with
+                                    opcode={:#04x}, funct3={:#03b}, funct7={:#09b}
+                                    did not provide enough advice values",
+                                    self.opcode, self.funct3, self.funct7
+                                ),
+                            };
+                        }
+                        instr.trace(cpu, trace.as_deref_mut());
+                    }
+                    if !advice.is_empty() {
+                        panic!(
+                            "Inline advice function with
+                            opcode={:#04x}, funct3={:#03b}, funct7={:#09b}
+                            provided too many advice values",
+                            self.opcode, self.funct3, self.funct7
+                        );
+                    }
+                }
+                _ => {
+                    // default behavior: execute the inline sequence
+                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+                    let mut trace = trace;
+                    for instr in inline_sequence {
+                        instr.trace(cpu, trace.as_deref_mut());
+                    }
+                }
+            },
+            Err(_) => {
+                panic!(
+                    "Failed to acquire read lock on inline registry. \
+                    This indicates a critical error in the system."
+                );
+            }
         }
     }
 
@@ -201,11 +259,10 @@ impl RISCVTrace for INLINE {
         xlen: Xlen,
     ) -> Vec<Instruction> {
         let key = (self.opcode, self.funct3, self.funct7);
-
         match INLINE_REGISTRY.read() {
             Ok(registry) => {
                 match registry.get(&key) {
-                    Some((_name, virtual_seq_fn)) => {
+                    Some((_, virtual_seq_fn, _)) => {
                         let asm = InstrAssembler::new_inline(
                             self.address,
                             self.is_compressed,
@@ -266,6 +323,7 @@ mod tests {
             0,
             "test",
             Box::new(|_, _| vec![]),
+            None,
         );
         assert!(result.is_err());
 
@@ -276,6 +334,7 @@ mod tests {
             0,
             "test",
             Box::new(|_, _| vec![]),
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -289,6 +348,7 @@ mod tests {
             128, // Invalid funct7 (> 127)
             "test",
             Box::new(|_, _| vec![]),
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -299,7 +359,7 @@ mod tests {
     #[test]
     fn test_valid_opcodes() {
         // Test that 0x0B (custom-0) is valid
-        let result = register_inline(0x0B, 0, 0, "test_custom0", Box::new(|_, _| vec![]));
+        let result = register_inline(0x0B, 0, 0, "test_custom0", Box::new(|_, _| vec![]), None);
         assert!(result.is_ok());
 
         // Test that 0x2B (custom-1) is valid
@@ -309,6 +369,7 @@ mod tests {
             1, // Different funct7 to avoid duplicate registration
             "test_custom1",
             Box::new(|_, _| vec![]),
+            None,
         );
         assert!(result.is_ok());
     }

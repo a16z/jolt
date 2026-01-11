@@ -8,10 +8,10 @@ guest = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
-jolt-inlines-sha2 = { package = "jolt-inlines-sha2", path = "../../../jolt-inlines/sha2" }
-jolt-inlines-keccak256 = { package = "jolt-inlines-keccak256", path = "../../../jolt-inlines/keccak256" }
-jolt-inlines-blake2 = { package = "jolt-inlines-blake2", path = "../../../jolt-inlines/blake2" }
-jolt-inlines-blake3 = { package = "jolt-inlines-blake3", path = "../../../jolt-inlines/blake3" }
+jolt-inlines-sha2.workspace = true
+jolt-inlines-keccak256.workspace = true
+jolt-inlines-blake2.workspace = true
+jolt-inlines-blake3.workspace = true
 
 sha2 = { version = "0.10.9", default-features = false }
 sha3 = { version = "0.10", default-features = false }

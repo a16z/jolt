@@ -2,12 +2,12 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
+use crate::emulator::memory::Memory;
 use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
-use super::memory::Memory;
 use super::terminal::Terminal;
 
 /// Emulates Memory Management Unit. It holds the Main memory and peripheral
@@ -31,7 +31,7 @@ pub struct Mmu {
     mstatus: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum AddressingMode {
     None,
     SV32,
@@ -521,7 +521,7 @@ impl Mmu {
 
     /// Records the memory word being accessed by a load instruction. The memory
     /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
-    fn trace_load(&self, effective_address: u64) -> RAMRead {
+    fn trace_load(&mut self, effective_address: u64) -> RAMRead {
         let word_address = (effective_address >> 2) << 2;
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -906,7 +906,7 @@ impl Mmu {
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
-                                    let current_privilege_mode = self.privilege_mode.clone();
+                                    let current_privilege_mode = self.privilege_mode;
                                     self.update_privilege_mode(privilege_mode);
                                     let result = self.translate_address(v_address, access_type);
                                     self.update_privilege_mode(current_privilege_mode);
@@ -935,7 +935,7 @@ impl Mmu {
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
-                                    let current_privilege_mode = self.privilege_mode.clone();
+                                    let current_privilege_mode = self.privilege_mode;
                                     self.update_privilege_mode(privilege_mode);
                                     let result = self.translate_address(v_address, access_type);
                                     self.update_privilege_mode(current_privilege_mode);
@@ -1090,6 +1090,23 @@ impl Mmu {
     }
 }
 
+impl Mmu {
+    pub fn save_state_with_empty_memory(&self) -> Mmu {
+        Mmu {
+            clock: self.clock,
+            xlen: self.xlen,
+            ppn: self.ppn,
+            addressing_mode: self.addressing_mode,
+            privilege_mode: self.privilege_mode,
+            memory: MemoryWrapper {
+                memory: Memory::empty(),
+            },
+            jolt_device: self.jolt_device.clone(),
+            mstatus: self.mstatus,
+        }
+    }
+}
+
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
 #[derive(Clone, Debug)]
@@ -1100,7 +1117,7 @@ pub struct MemoryWrapper {
 impl MemoryWrapper {
     fn new() -> Self {
         MemoryWrapper {
-            memory: Memory::default(),
+            memory: Memory::empty(),
         }
     }
 
@@ -1108,7 +1125,7 @@ impl MemoryWrapper {
         self.memory.init(capacity);
     }
 
-    pub fn read_byte(&self, p_address: u64) -> u8 {
+    pub fn read_byte(&mut self, p_address: u64) -> u8 {
         debug_assert!(
             p_address >= DRAM_BASE,
             "Memory address must equals to or bigger than DRAM_BASE. {p_address:X}"

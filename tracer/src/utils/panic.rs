@@ -1,5 +1,5 @@
 use crate::emulator::cpu::get_register_name;
-use crate::emulator::EmulatorState;
+use crate::emulator::Emulator;
 use crate::instruction::format::NormalizedOperands;
 use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 
@@ -118,7 +118,7 @@ fn shorten_path(path: &str) -> String {
     }
 }
 
-pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
+pub fn display_panic_backtrace(emulator_state: &Emulator) {
     let cpu = emulator_state.get_cpu();
     let call_stack = cpu.get_call_stack();
 

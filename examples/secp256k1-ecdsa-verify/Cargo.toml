@@ -1,5 +1,5 @@
 [package]
-name = "collatz"
+name = "secp256k1-ecdsa-verify"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,5 @@ edition = "2021"
 jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
-guest = { package = "collatz-guest", path = "./guest" }
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+guest = { package = "secp256k1-ecdsa-verify-guest", path = "./guest" }

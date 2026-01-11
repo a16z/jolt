@@ -1,8 +1,8 @@
 [package]
-name = "jolt-inlines-blake2"
+name = "jolt-inlines-secp256k1"
 version = "0.1.0"
 edition = "2021"
-description = "BLAKE2b inline implementations for Jolt VM"
+description = "Secp256k1 implementations for Jolt VM"
 license = "MIT"
 homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
@@ -15,9 +15,14 @@ host = ["dep:ctor", "dep:tracer", "dep:tracing"]
 ctor = { workspace = true, optional = true }
 tracer = { workspace = true, optional = true, features = ["std"] }
 tracing = { workspace = true, optional = true }
+serde.workspace = true
+ark-secp256k1.workspace = true
+ark-serialize.workspace = true
+ark-ff.workspace = true
+ark-ec.workspace = true
+num-bigint.workspace = true
+num-integer.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
-blake2.workspace = true
-rand = { workspace = true, features = ["std", "std_rng"] }
 tracer = { workspace = true, features = ["std", "test-utils"] }

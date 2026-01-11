@@ -5,6 +5,7 @@ use std::fmt::Debug;
 pub mod format_amo;
 pub mod format_assert_align;
 pub mod format_b;
+pub mod format_fence;
 pub mod format_i;
 pub mod format_inline;
 pub mod format_j;

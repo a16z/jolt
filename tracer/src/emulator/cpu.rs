@@ -121,7 +121,7 @@ pub enum Xlen {
     Bit64, // @TODO: Support Bit128
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum PrivilegeMode {
     User,
     Supervisor,
@@ -257,7 +257,7 @@ impl Cpu {
     /// # Arguments
     /// * `Terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
-        let mut cpu = Cpu {
+        let mut cpu = Self {
             clock: 0,
             xlen: Xlen::Bit64,
             privilege_mode: PrivilegeMode::Machine,
@@ -705,7 +705,7 @@ impl Cpu {
         // So, this trap should be taken
 
         self.privilege_mode = new_privilege_mode;
-        self.mmu.update_privilege_mode(self.privilege_mode.clone());
+        self.mmu.update_privilege_mode(self.privilege_mode);
         let csr_epc_address = match self.privilege_mode {
             PrivilegeMode::Machine => CSR_MEPC_ADDRESS,
             PrivilegeMode::Supervisor => CSR_SEPC_ADDRESS,
@@ -1073,6 +1073,31 @@ impl Cpu {
     /// Get the current call stack (for displaying on panic)
     pub fn get_call_stack(&self) -> &VecDeque<CallFrame> {
         &self.call_stack
+    }
+}
+
+impl Cpu {
+    pub fn save_state_with_empty_memory(&self) -> Cpu {
+        Cpu {
+            clock: self.clock,
+            xlen: self.xlen,
+            privilege_mode: self.privilege_mode,
+            wfi: self.wfi,
+            x: self.x,
+            f: self.f,
+            pc: self.pc,
+            csr: self.csr,
+            mmu: self.mmu.save_state_with_empty_memory(),
+            reservation: self.reservation,
+            is_reservation_set: self.is_reservation_set,
+            _dump_flag: self._dump_flag,
+            unsigned_data_mask: self.unsigned_data_mask,
+            trace_len: self.trace_len,
+            executed_instrs: self.executed_instrs,
+            active_markers: self.active_markers.clone(),
+            vr_allocator: self.vr_allocator.clone(),
+            call_stack: self.call_stack.clone(),
+        }
     }
 }
 

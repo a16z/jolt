@@ -1,5 +1,5 @@
 [package]
-name = "sha3-chain-guest"
+name = "secp256k1-ecdsa-verify-guest"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,4 +8,4 @@ guest = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
-jolt-inlines-keccak256.workspace = true
+jolt-inlines-secp256k1.workspace = true
