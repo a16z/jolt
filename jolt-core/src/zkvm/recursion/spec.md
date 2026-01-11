@@ -132,6 +132,37 @@ After final challenge $r_x'$:
 - `RecursionRhoCurr(i)`: $\tilde{\rho}_{i+1}(r_x')$
 - `RecursionQuotient(i)`: $\tilde{Q}_i(r_x')$
 
+#### Unified Polynomial Optimization (Future Work)
+
+The current approach creates separate polynomials for each exponentiation step, resulting in 1,024 polynomials for a 256-bit exponent (256 steps × 4 polynomial types). A more efficient approach follows the pattern used in G1 scalar multiplication:
+
+**Unified Polynomial Structure**:
+Instead of separate polynomials per step, use 4 unified polynomials:
+- `base_unified`: Contains base value $a$ for all steps
+- `rho_unified`: Contains $\rho_0, \rho_1, \ldots, \rho_{255}$
+- `rho_next_unified`: Contains $\rho_1, \rho_2, \ldots, \rho_{256}$ (shifted by 1)
+- `quotient_unified`: Contains $Q_0, Q_1, \ldots, Q_{255}$
+
+**Benefits**:
+- Reduces polynomial count from 1,024 to 4 (256× reduction)
+- Better cache locality and memory efficiency
+- Simpler Stage 2 virtualization with fewer claims
+- Follows established patterns from G1 scalar multiplication
+
+**Constraint with Unified Polynomials**:
+$$C(s, x) = \rho_{\text{next}}(s, x) - \rho(s, x)^2 \cdot a(s, x)^{b_s} - Q(s, x) \cdot g(x) = 0$$
+
+where:
+- $s \in \{0,1\}^8$ indexes the step (0 to 255)
+- $x \in \{0,1\}^4$ indexes the field element evaluation
+- $b_s$ is the $s$-th bit of the exponent
+
+**Sumcheck Adaptation**:
+Run sumcheck over 12 variables total (8 for step, 4 for element):
+$$0 = \sum_{s \in \{0,1\}^8} \sum_{x \in \{0,1\}^4} \text{eq}(r_s, s) \cdot \text{eq}(r_x, x) \cdot C(s, x)$$
+
+This optimization maintains the same security guarantees while significantly improving performance.
+
 ---
 
 ### 2.3 GT Multiplication
@@ -281,7 +312,18 @@ Polynomial types:
 | MulResult | 6 | GT Mul |
 | MulQuotient | 7 | GT Mul |
 | G1ScalarMulXA | 8 | G1 Scalar Mul |
-| ... | ... | ... |
+| G1ScalarMulYA | 9 | G1 Scalar Mul |
+| G1ScalarMulXT | 10 | G1 Scalar Mul |
+| G1ScalarMulYT | 11 | G1 Scalar Mul |
+| G1ScalarMulXANext | 12 | G1 Scalar Mul |
+| G1ScalarMulYANext | 13 | G1 Scalar Mul |
+| G1ScalarMulIndicator | 14 | G1 Scalar Mul |
+
+**Note**: The unified polynomial optimization for GT exponentiation (described in Section 2.2) would add 4 additional polynomial types:
+- BaseUnified (15): Unified base values for all GT exp steps
+- RhoUnified (16): Unified rho values ρ₀ through ρ₂₅₅
+- RhoNextUnified (17): Unified shifted rho values ρ₁ through ρ₂₅₆
+- QuotientUnified (18): Unified quotient values Q₀ through Q₂₅₅
 
 ### 3.3 Sum-Check Protocol
 
@@ -917,6 +959,12 @@ pub enum PolyType {
 }
 
 pub const NUM_POLY_TYPES: usize = 15;
+
+// Future unified polynomial types (not yet implemented):
+// BaseUnified = 15,
+// RhoUnified = 16,
+// RhoNextUnified = 17,
+// QuotientUnified = 18,
 ```
 
 ### 7.11 Dory Integration: Witness Extraction and Hints

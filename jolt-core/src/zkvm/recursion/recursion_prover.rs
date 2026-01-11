@@ -94,10 +94,12 @@ impl RecursionProver<Fq> {
         let recursion_witness = Self::witnesses_to_dory_recursion(&witness_collection)?;
 
         // Build constraint system from witness collection using DoryMatrixBuilder
+        let build_cs_span = tracing::info_span!("build_constraint_system").entered();
         let constraint_system = Self::build_constraint_system(
             &witness_collection,
             recursion_witness.gt_exp_witness.g_poly.clone(),
         )?;
+        drop(build_cs_span);
 
         Ok(Self {
             constraint_system,
@@ -137,6 +139,8 @@ impl RecursionProver<Fq> {
             crate::poly::commitment::dory::recursion::JoltWitness,
         >,
     ) -> Result<DoryRecursionWitness, Box<dyn std::error::Error>> {
+        let _span = tracing::info_span!("witnesses_to_dory_recursion").entered();
+
         use crate::zkvm::recursion::witness::{GTExpWitness, GTMulWitness};
 
         tracing::debug!(
@@ -146,12 +150,22 @@ impl RecursionProver<Fq> {
             witnesses.g1_scalar_mul.len()
         );
 
-        // Extract GT exp witness data
-        let mut g_values = Vec::new();
-        let mut bits = Vec::new();
-        let mut base_values = Vec::new();
-        let mut rho_values = Vec::new();
-        let mut quotient_values = Vec::new();
+        // Extract GT exp witness data with preallocation
+        let gt_exp_span = tracing::info_span!("process_gt_exp_witnesses").entered();
+
+        // Calculate total sizes for preallocation
+        let total_bits = witnesses.gt_exp.iter().map(|(_, w)| w.bits.len()).sum();
+        let total_rho_elements: usize = witnesses.gt_exp.iter()
+            .map(|(_, w)| w.rho_mles.iter().map(|mle| mle.len()).sum::<usize>())
+            .sum();
+        let total_quotient_elements: usize = witnesses.gt_exp.iter()
+            .map(|(_, w)| w.quotient_mles.iter().map(|mle| mle.len()).sum::<usize>())
+            .sum();
+
+        let mut bits = Vec::with_capacity(total_bits);
+        let mut base_values = Vec::with_capacity(total_rho_elements);
+        let mut rho_values = Vec::with_capacity(total_rho_elements);
+        let mut quotient_values = Vec::with_capacity(total_quotient_elements);
         let mut scalar = Fr::zero();
 
         // Process GT exp witnesses
@@ -164,15 +178,9 @@ impl RecursionProver<Fq> {
             // Collect bits
             bits.extend(&exp_witness.bits);
 
-            // For g_values and base_values, we need the rho MLEs which represent
-            // the intermediate values during exponentiation
+            // Process rho MLEs once, copying to both vectors
             for rho_mle in &exp_witness.rho_mles {
-                g_values.extend(rho_mle);
                 base_values.extend(rho_mle);
-            }
-
-            // Extract rho values from MLEs
-            for rho_mle in &exp_witness.rho_mles {
                 rho_values.extend(rho_mle);
             }
 
@@ -181,9 +189,11 @@ impl RecursionProver<Fq> {
                 quotient_values.extend(quotient_mle);
             }
         }
+        drop(gt_exp_span);
 
         // Get the proper g(x) polynomial from jolt_optimizations
         // This is the irreducible polynomial defining the Fq12 extension field
+        let g_poly_span = tracing::info_span!("process_g_polynomial").entered();
         use super::constraints_sys::DoryMatrixBuilder;
         use jolt_optimizations::get_g_mle;
 
@@ -192,7 +202,8 @@ impl RecursionProver<Fq> {
         // Pad g(x) to 8 variables (matching constraint system)
         let g_poly_values = DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var);
         let g_poly = DensePolynomial::new(g_poly_values.clone());
-        g_values = g_poly_values;
+        let g_values = g_poly_values;
+        drop(g_poly_span);
 
         let gt_exp_witness = GTExpWitness {
             g_poly,
@@ -204,11 +215,17 @@ impl RecursionProver<Fq> {
             quotient_values,
         };
 
-        // Extract GT mul witness data
-        let mut lhs_values = Vec::new();
-        let mut rhs_values = Vec::new();
-        let mut result_values = Vec::new();
-        let mut gt_mul_quotient_values = Vec::new();
+        // Extract GT mul witness data with preallocation
+        let gt_mul_span = tracing::info_span!("process_gt_mul_witnesses").entered();
+
+        let total_mul_quotient_elements: usize = witnesses.gt_mul.iter()
+            .map(|(_, w)| w.quotient_mle.len())
+            .sum();
+
+        let mut lhs_values = Vec::with_capacity(witnesses.gt_mul.len());
+        let mut rhs_values = Vec::with_capacity(witnesses.gt_mul.len());
+        let mut result_values = Vec::with_capacity(witnesses.gt_mul.len());
+        let mut gt_mul_quotient_values = Vec::with_capacity(total_mul_quotient_elements);
 
         for (_op_id, mul_witness) in witnesses.gt_mul.iter() {
             // For GT multiplication, we work with the quotient MLEs which are already in Fq
@@ -223,6 +240,7 @@ impl RecursionProver<Fq> {
                 result_values.push(mul_witness.quotient_mle[0]);
             }
         }
+        drop(gt_mul_span);
 
         let gt_mul_witness = GTMulWitness {
             lhs_values,
@@ -231,34 +249,44 @@ impl RecursionProver<Fq> {
             quotient_values: gt_mul_quotient_values,
         };
 
-        // Extract G1 scalar mul witness data
-        let mut base_points = Vec::new();
-        let mut scalars = Vec::new();
+        // Extract G1 scalar mul witness data with preallocation
+        let g1_scalar_mul_span = tracing::info_span!("process_g1_scalar_mul_witnesses").entered();
+
+        let num_g1_witnesses = witnesses.g1_scalar_mul.len();
+        let total_bits: usize = witnesses.g1_scalar_mul.iter()
+            .map(|(_, w)| w.bits.len())
+            .sum();
+
+        let mut base_points = Vec::with_capacity(num_g1_witnesses);
+        let mut scalars = Vec::with_capacity(num_g1_witnesses);
         let mut x_a_mles = Vec::new();
         let mut y_a_mles = Vec::new();
         let mut x_t_mles = Vec::new();
         let mut y_t_mles = Vec::new();
         let mut x_a_next_mles = Vec::new();
         let mut y_a_next_mles = Vec::new();
-        let mut t_is_infinity_mles = Vec::new();
+        let mut t_is_infinity_mles = Vec::with_capacity(total_bits);
 
         for (_op_id, scalar_mul_witness) in witnesses.g1_scalar_mul.iter() {
             base_points.push(scalar_mul_witness.point_base);
             scalars.push(scalar_mul_witness.scalar);
-            x_a_mles.extend(scalar_mul_witness.x_a_mles.clone());
-            y_a_mles.extend(scalar_mul_witness.y_a_mles.clone());
-            x_t_mles.extend(scalar_mul_witness.x_t_mles.clone());
-            y_t_mles.extend(scalar_mul_witness.y_t_mles.clone());
-            x_a_next_mles.extend(scalar_mul_witness.x_a_next_mles.clone());
-            y_a_next_mles.extend(scalar_mul_witness.y_a_next_mles.clone());
+
+            // Use iterators to avoid cloning - just extend from the slice
+            x_a_mles.extend_from_slice(&scalar_mul_witness.x_a_mles);
+            y_a_mles.extend_from_slice(&scalar_mul_witness.y_a_mles);
+            x_t_mles.extend_from_slice(&scalar_mul_witness.x_t_mles);
+            y_t_mles.extend_from_slice(&scalar_mul_witness.y_t_mles);
+            x_a_next_mles.extend_from_slice(&scalar_mul_witness.x_a_next_mles);
+            y_a_next_mles.extend_from_slice(&scalar_mul_witness.y_a_next_mles);
 
             // Generate t_is_infinity MLEs based on the bits
-            for (_i, bit) in scalar_mul_witness.bits.iter().enumerate() {
+            for bit in scalar_mul_witness.bits.iter() {
                 // T is infinity when bit is 0 (we don't add)
                 let is_infinity = if !bit { Fq::one() } else { Fq::zero() };
                 t_is_infinity_mles.push(vec![is_infinity]);
             }
         }
+        drop(g1_scalar_mul_span);
 
         let g1_scalar_mul_witness = G1ScalarMulWitness {
             base_points,
@@ -292,21 +320,32 @@ impl RecursionProver<Fq> {
         let mut builder = DoryMatrixBuilder::new(8);
 
         // Add GT exp witnesses
+        let gt_exp_span = tracing::info_span!("add_gt_exp_witnesses",
+            count = witness_collection.gt_exp.len()).entered();
         for (_op_id, witness) in witness_collection.gt_exp.iter() {
             builder.add_gt_exp_witness(witness);
         }
+        drop(gt_exp_span);
 
         // Add GT mul witnesses
+        let gt_mul_span = tracing::info_span!("add_gt_mul_witnesses",
+            count = witness_collection.gt_mul.len()).entered();
         for (_op_id, witness) in witness_collection.gt_mul.iter() {
             builder.add_gt_mul_witness(witness);
         }
+        drop(gt_mul_span);
 
         // Add G1 scalar mul witnesses
+        let g1_scalar_mul_span = tracing::info_span!("add_g1_scalar_mul_witnesses",
+            count = witness_collection.g1_scalar_mul.len()).entered();
         for (_op_id, witness) in witness_collection.g1_scalar_mul.iter() {
             builder.add_g1_scalar_mul_witness(witness);
         }
+        drop(g1_scalar_mul_span);
 
+        let build_matrix_span = tracing::info_span!("build_matrix").entered();
         let (matrix, constraints) = builder.build();
+        drop(build_matrix_span);
 
         Ok(ConstraintSystem {
             constraints,
@@ -328,6 +367,7 @@ impl<F: JoltField> RecursionProver<F> {
     }
 
     /// Run the full two-stage recursion prover for any PCS (without requiring RecursionExt)
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_with_pcs")]
     pub fn prove_with_pcs<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         self,
         transcript: &mut T,
@@ -344,17 +384,30 @@ impl<F: JoltField> RecursionProver<F> {
         let mut accumulator = ProverOpeningAccumulator::<F>::new(log_T);
 
         // ============ STAGE 1: Constraint Sumchecks ============
+        tracing::info_span!("recursion_stage1_sumchecks").in_scope(|| {
+            tracing::info!("Starting Stage 1: Constraint sumchecks");
+        });
         let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
 
         // ============ STAGE 2: Virtualization Sumcheck ============
+        tracing::info_span!("recursion_stage2_virtualization").in_scope(|| {
+            tracing::info!("Starting Stage 2: Virtualization sumcheck");
+        });
         let (stage2_proof, r_stage2) =
             self.prove_stage2(transcript, &mut accumulator, &r_stage1)?;
 
         // ============ STAGE 3: Jagged Transform Sumcheck ============
+        tracing::info_span!("recursion_stage3_jagged").in_scope(|| {
+            tracing::info!("Starting Stage 3: Jagged transform sumcheck");
+        });
         let (stage3_proof, _r_stage3) =
             self.prove_stage3(transcript, &mut accumulator, &r_stage1, &r_stage2)?;
 
         // ============ PCS OPENING PROOF ============
+        tracing::info_span!("recursion_pcs_opening_proof").in_scope(|| {
+            tracing::info!("Starting PCS opening proof generation");
+        });
+
         // Now we commit to the dense polynomial instead of the full matrix
         let (dense_poly, _bijection, _mapping) = self.constraint_system.build_dense_polynomial();
 
@@ -393,6 +446,7 @@ impl<F: JoltField> RecursionProver<F> {
     }
 
     /// Run Stage 1: Constraint sumchecks
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage1")]
     pub(crate) fn prove_stage1<T: Transcript>(
         &self,
         transcript: &mut T,
@@ -410,6 +464,14 @@ impl<F: JoltField> RecursionProver<F> {
         if TypeId::of::<F>() != TypeId::of::<Fq>() {
             panic!("Recursion SNARK constraint system requires F = Fq");
         }
+
+        // Convert g_poly once for all provers
+        let g_poly_f = unsafe {
+            std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
+                self.constraint_system.g_poly.clone(),
+            )
+        };
+
         // Create provers for each constraint type
         let mut provers: Vec<Box<dyn SumcheckInstanceProver<F, T>>> = Vec::new();
 
@@ -434,15 +496,8 @@ impl<F: JoltField> RecursionProver<F> {
                 >(gt_exp_constraints)
             };
 
-            // Convert g_poly from Fq to F
-            let g_poly_f = unsafe {
-                std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
-                    self.constraint_system.g_poly.clone(),
-                )
-            };
-
             let prover =
-                SquareAndMultiplyProver::new(params, gt_exp_constraints_f, g_poly_f, transcript);
+                SquareAndMultiplyProver::new(params, gt_exp_constraints_f, g_poly_f.clone(), transcript);
             provers.push(Box::new(prover));
         }
 
@@ -476,14 +531,7 @@ impl<F: JoltField> RecursionProver<F> {
                 >(gt_mul_constraints_fq)
             };
 
-            // Convert g_poly from Fq to F
-            let g_poly_f = unsafe {
-                std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
-                    self.constraint_system.g_poly.clone(),
-                )
-            };
-
-            let prover = GtMulProver::new(params, gt_mul_constraints_f, g_poly_f, transcript);
+            let prover = GtMulProver::new(params, gt_mul_constraints_f, g_poly_f.clone(), transcript);
             provers.push(Box::new(prover));
         }
 
@@ -544,6 +592,7 @@ impl<F: JoltField> RecursionProver<F> {
     }
 
     /// Run Stage 2: Virtualization sumcheck
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage2")]
     pub(crate) fn prove_stage2<T: Transcript>(
         &self,
         transcript: &mut T,
@@ -591,6 +640,7 @@ impl<F: JoltField> RecursionProver<F> {
     }
 
     /// Run Stage 3: Jagged Transform Sumcheck
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage3")]
     pub(crate) fn prove_stage3<T: Transcript>(
         &self,
         transcript: &mut T,

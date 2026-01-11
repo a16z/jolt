@@ -978,7 +978,6 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/dory?branch=quang%2Ffeat%2Frecursion#7a0bfe663e23ad9723a2fc68eaf9879e1c22082c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -988,7 +987,6 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/dory?branch=quang%2Ffeat%2Frecursion#7a0bfe663e23ad9723a2fc68eaf9879e1c22082c"
 dependencies = [
  "ark-bn254",
  "ark-ec",

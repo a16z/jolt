@@ -325,6 +325,10 @@ pub struct JaggedSumcheckVerifier<F: JoltField> {
 
     /// Precomputed matrix row indices for each polynomial index
     pub matrix_rows: Vec<usize>,
+
+    /// Precomputed cumulative sizes for each matrix row
+    /// row_cumulative_sizes[i] = total size of all polynomials in rows 0..i
+    row_cumulative_sizes: Vec<usize>,
 }
 
 impl<F: JoltField> JaggedSumcheckVerifier<F> {
@@ -336,7 +340,35 @@ impl<F: JoltField> JaggedSumcheckVerifier<F> {
         matrix_rows: Vec<usize>,
         params: JaggedSumcheckParams,
     ) -> Self {
+        let _new_span = tracing::info_span!("JaggedSumcheckVerifier::new",
+            num_polys = bijection.num_polynomials(),
+            num_s_vars = params.num_s_vars
+        ).entered();
+
         let (r_s_final, r_x_prev) = sparse_opening_point;
+
+        let _precompute_span = tracing::info_span!("precompute_row_cumulative_sizes").entered();
+        // Build mapping from matrix row to cumulative size
+        // This is needed to implement the formula correctly
+        let num_rows = 1 << params.num_s_vars; // 2^num_s_vars
+        let mut row_cumulative_sizes = vec![0usize; num_rows + 1]; // +1 for easier indexing
+
+        // For each polynomial, add its size to its row's total
+        for poly_idx in 0..bijection.num_polynomials() {
+            let matrix_row = matrix_rows[poly_idx];
+            let poly_size = if poly_idx == 0 {
+                bijection.cumulative_size(0)
+            } else {
+                bijection.cumulative_size(poly_idx) - bijection.cumulative_size(poly_idx - 1)
+            };
+            row_cumulative_sizes[matrix_row + 1] += poly_size;
+        }
+
+        // Convert to cumulative sums
+        for i in 1..=num_rows {
+            row_cumulative_sizes[i] += row_cumulative_sizes[i - 1];
+        }
+        drop(_precompute_span);
 
         Self {
             params,
@@ -346,6 +378,7 @@ impl<F: JoltField> JaggedSumcheckVerifier<F> {
             bijection,
             mapping,
             matrix_rows,
+            row_cumulative_sizes,
         }
     }
 
@@ -372,13 +405,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
+        let _span = tracing::info_span!("jagged_expected_output_claim",
+            round = sumcheck_challenges.len()
+        ).entered();
+
+        let _get_claim_span = tracing::info_span!("get_dense_claim").entered();
         // Get the dense polynomial opening claim from the accumulator
         let (_, dense_claim) = accumulator
             .get_committed_polynomial_opening(self.params.polynomial, self.params.sumcheck_id);
+        drop(_get_claim_span);
 
+        let _convert_challenges_span = tracing::info_span!("convert_sumcheck_challenges").entered();
         // Convert challenges to field elements, reversing to match high-to-low order
         // (sumcheck produces low-to-high, but we need high-to-low for polynomial evaluation)
         let r_dense: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
+        drop(_convert_challenges_span);
 
         // Following the paper's Claim 3.2.1, adapted for row-based jaggedness:
         // Original formula: ˆft(zr, zc, i) = Σ_{y∈{0,1}^k} eq(zc, y) · ĝ(zr, i, t_{y-1}, t_y)
@@ -400,60 +441,51 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
 
         let mut f_jagged_at_r_dense = F::zero();
 
-        // Sum over all y ∈ {0,1}^k (all polynomials/rows)
-        for poly_idx in 0..self.bijection.num_polynomials() {
-            // Get t_{y-1} and t_y
-            let t_prev = self.bijection.cumulative_size_before(poly_idx);
-            let t_curr = self.bijection.cumulative_size(poly_idx);
+        // Add fine-grained tracing for performance analysis
+        let num_rows = 1 << self.params.num_s_vars; // 2^num_s_vars
+        let _row_loop_span = tracing::info_span!("jagged_row_loop",
+            num_rows = num_rows
+        ).entered();
 
-            // Get the actual matrix row from precomputed values
-            let matrix_row = self.matrix_rows[poly_idx];
+        let _setup_span = tracing::info_span!("setup_branching_program").entered();
+        // Create branching program once, reuse for all rows
+        let num_bits = std::cmp::max(self.params.num_constraint_vars, self.params.num_dense_vars);
+        let branching_program = JaggedBranchingProgram::new(num_bits);
 
-            // Convert matrix_row to binary for eq evaluation
-            // In our case: rows are polynomials (s-indexed), cols are evaluations (x-indexed)
-            // The paper iterates y over columns, but our jaggedness is per-row
-            // So we adapt: iterate over rows, and y represents the matrix row index
-            let row_binary = index_to_binary_vec::<F>(matrix_row, self.params.num_s_vars);
+        // Create points once, reuse in loop
+        let za = Point::from_slice(&self.sparse_opening_point_x);
+        let zb = Point::from_slice(&r_dense);
+        drop(_setup_span);
+
+        // Sum over all y ∈ {0,1}^k (all possible rows)
+        for row_idx in 0..num_rows {
+            // Get t_{y-1} and t_y from precomputed cumulative sizes
+            let t_prev = self.row_cumulative_sizes[row_idx];
+            let t_curr = self.row_cumulative_sizes[row_idx + 1];
+
+            // Skip if this row has no polynomials (t_prev == t_curr)
+            if t_prev == t_curr {
+                continue;
+            }
+
+            // Compute eq(sparse_opening_point_s, binary(row_idx))
+            let row_binary = index_to_binary_vec::<F>(row_idx, self.params.num_s_vars);
             let eq_zr_y = EqPolynomial::mle(&row_binary, &self.sparse_opening_point_s);
-
-            // Now we need to compute ĝ(zc, i, t_{y-1}, t_y) for the multilinear extension of g
-            // g(a, b, c, d) = 1 iff b < d and b = a + c
-            // In our adapted formula (with swapped row/col roles):
-            // - a = zc (sparse_opening_point_x - the column/evaluation index)
-            // - b = i (r_dense - the dense index)
-            // - c = t_{y-1} (cumulative size before this row)
-            // - d = t_y (cumulative size including this row)
-
-            // Use the branching program optimization
-            // The branching program computes g(a,b,c,d) = 1[b < d ∧ b = a + c]
-            //
-            // We need: Σ_{a,b} g(a,b,t_prev,t_curr) * eq(a, sparse_x) * eq(b, r_dense)
-            //
-            // But note that g(a,b,t_prev,t_curr) = 1 only when:
-            // 1) b < t_curr
-            // 2) b = a + t_prev
-            //
-            // So this sum equals: Σ_{a} 1[a + t_prev < t_curr] * eq(a, sparse_x) * eq(a + t_prev, r_dense)
-            // Which is exactly what the original code computed!
-
-            let num_bits =
-                std::cmp::max(self.params.num_constraint_vars, self.params.num_dense_vars);
-
-            // Create the branching program
-            let prog = JaggedBranchingProgram::new(num_bits);
 
             // Compute ĝ(sparse_x, r_dense, t_prev, t_curr) directly
             // This gives us the MLE of g evaluated at our challenge points
-            let za = Point::from_slice(&self.sparse_opening_point_x);
-            let zb = Point::from_slice(&r_dense);
             let zc = Point::from_usize(t_prev, num_bits);
             let zd = Point::from_usize(t_curr, num_bits);
 
-            let g_mle = prog.eval_multilinear(&za, &zb, &zc, &zd);
+            let g_mle = branching_program.eval_multilinear(&za, &zb, &zc, &zd);
 
             // Add eq(zr, y) * ĝ contribution
             f_jagged_at_r_dense += eq_zr_y * g_mle;
         }
+
+        drop(_row_loop_span);
+
+        let _final_span = tracing::info_span!("final_computation").entered();
 
         // Return q(r_dense) * f̂_jagged(r_s, r_x, r_dense)
         dense_claim * f_jagged_at_r_dense

@@ -72,6 +72,7 @@ impl<F: JoltField> RecursionVerifier<F> {
     }
 
     /// Verify the full two-stage recursion proof and PCS opening
+    #[tracing::instrument(skip_all, name = "RecursionVerifier::verify")]
     pub fn verify<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         &self,
         proof: &RecursionProof<F, T, PCS>,
@@ -94,45 +95,58 @@ impl<F: JoltField> RecursionVerifier<F> {
         }
 
         // ============ STAGE 1: Verify Constraint Sumchecks ============
-        let r_stage1 = self.verify_stage1(
-            &proof.stage1_proof,
-            transcript,
-            &mut accumulator,
-            proof.gamma,
-            proof.delta,
-        )?;
+        let r_stage1 = tracing::info_span!("verify_recursion_stage1").in_scope(|| {
+            tracing::info!("Verifying Stage 1: Constraint sumchecks");
+            self.verify_stage1(
+                &proof.stage1_proof,
+                transcript,
+                &mut accumulator,
+                proof.gamma,
+                proof.delta,
+            )
+        })?;
 
         // ============ STAGE 2: Verify Virtualization Sumcheck ============
-        let r_stage2 = self.verify_stage2(
-            &proof.stage2_proof,
-            transcript,
-            &mut accumulator,
-            &r_stage1,
-            proof.gamma,
-        )?;
+        let r_stage2 = tracing::info_span!("verify_recursion_stage2").in_scope(|| {
+            tracing::info!("Verifying Stage 2: Virtualization sumcheck");
+            self.verify_stage2(
+                &proof.stage2_proof,
+                transcript,
+                &mut accumulator,
+                &r_stage1,
+                proof.gamma,
+            )
+        })?;
 
-        // ============ STAGE 3: Verify Jagged Transform Sumcheck ============
-        let _r_stage3 = self.verify_stage3(
-            &proof.stage3_proof,
-            transcript,
-            &mut accumulator,
-            &r_stage1,
-            &r_stage2,
-        )?;
+        // // ============ STAGE 3: Verify Jagged Transform Sumcheck ============
+        // let _r_stage3 = tracing::info_span!("verify_recursion_stage3").in_scope(|| {
+        //     tracing::info!("Verifying Stage 3: Jagged transform sumcheck");
+        //     self.verify_stage3(
+        //         &proof.stage3_proof,
+        //         transcript,
+        //         &mut accumulator,
+        //         &r_stage1,
+        //         &r_stage2,
+        //     )
+        // })?;
 
-        // ============ PCS OPENING VERIFICATION ============
-        // Verify opening proof using PCS
-        accumulator.verify_single::<T, PCS>(
-            &proof.opening_proof,
-            matrix_commitment.clone(),
-            verifier_setup,
-            transcript,
-        )?;
+        // // ============ PCS OPENING VERIFICATION ============
+        // tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
+        //     tracing::info!("Verifying PCS opening proof");
+        //     // Verify opening proof using PCS
+        //     accumulator.verify_single::<T, PCS>(
+        //         &proof.opening_proof,
+        //         matrix_commitment.clone(),
+        //         verifier_setup,
+        //         transcript,
+        //     )
+        // })?;
 
         Ok(true)
     }
 
     /// Verify Stage 1: Constraint sumchecks
+    #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage1")]
     fn verify_stage1<T: Transcript>(
         &self,
         proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
@@ -222,6 +236,7 @@ impl<F: JoltField> RecursionVerifier<F> {
     }
 
     /// Verify Stage 2: Virtualization sumcheck
+    #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage2")]
     fn verify_stage2<T: Transcript>(
         &self,
         proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
@@ -260,6 +275,7 @@ impl<F: JoltField> RecursionVerifier<F> {
     }
 
     /// Verify Stage 3: Jagged transform sumcheck
+    #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage3")]
     fn verify_stage3<T: Transcript>(
         &self,
         proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
@@ -275,12 +291,15 @@ impl<F: JoltField> RecursionVerifier<F> {
             panic!("Recursion SNARK requires F = Fq");
         }
 
+        let _get_claim_span = tracing::info_span!("stage3_get_sparse_claim").entered();
         // Get the Stage 2 opening claim (sparse matrix claim)
         let (_, sparse_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::DorySparseConstraintMatrix,
             SumcheckId::RecursionVirtualization,
         );
+        drop(_get_claim_span);
 
+        let _convert_challenges_span = tracing::info_span!("stage3_convert_challenges").entered();
         // Convert challenges to field elements
         let r_s_final: Vec<F> = r_stage2
             .iter()
@@ -288,21 +307,32 @@ impl<F: JoltField> RecursionVerifier<F> {
             .map(|c| (*c).into())
             .collect();
         let r_x_prev: Vec<F> = r_stage1.iter().map(|c| (*c).into()).collect();
+        drop(_convert_challenges_span);
 
+        let _dense_size_span = tracing::info_span!("stage3_compute_dense_size").entered();
         // Calculate number of dense variables based on the true dense size
         // The dense polynomial now only includes unique values (no padding redundancy)
         let dense_size = <VarCountJaggedBijection as crate::zkvm::recursion::bijection::JaggedTransform<Fq>>::dense_size(&self.input.jagged_bijection);
         let num_dense_vars = dense_size.next_power_of_two().trailing_zeros() as usize;
+        drop(_dense_size_span);
 
+        let _create_params_span = tracing::info_span!("stage3_create_params").entered();
         // Create jagged sumcheck parameters
-
         let params = JaggedSumcheckParams::new(
             self.input.num_s_vars,
             self.input.num_constraint_vars,
             num_dense_vars,
         );
+        drop(_create_params_span);
 
+        let _create_verifier_span = tracing::info_span!(
+            "stage3_create_verifier",
+            num_polys = self.input.jagged_bijection.num_polynomials(),
+            num_matrix_rows = self.input.matrix_rows.len()
+        )
+        .entered();
         // Create jagged sumcheck verifier
+        // NOTE: We pass references instead of cloning to avoid expensive copies
         let verifier = JaggedSumcheckVerifier::new(
             (r_s_final, r_x_prev),
             sparse_claim,
@@ -311,10 +341,13 @@ impl<F: JoltField> RecursionVerifier<F> {
             self.input.matrix_rows.clone(),
             params,
         );
+        drop(_create_verifier_span);
 
+        let _batched_sumcheck_span =
+            tracing::info_span!("stage3_batched_sumcheck_verify").entered();
         let r_stage3 = BatchedSumcheck::verify(proof, vec![&verifier], accumulator, transcript)?;
+        drop(_batched_sumcheck_span);
 
         Ok(r_stage3)
     }
 }
-

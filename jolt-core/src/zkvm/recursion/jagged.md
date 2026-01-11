@@ -73,6 +73,23 @@ The function `f̂_t` can be computed efficiently because:
 - The multilinear extension of such functions can be evaluated in `O(m)` time
 - For row-wise jagged with `2^k` rows, the verifier complexity is `O(m · 2^k)`
 
+### Critical Verification Detail: Summing Over All Possible Rows
+
+**Important**: Based on Claim 3.2.1 from the jagged polynomial paper, the verifier must sum over **ALL** possible k-bit strings, not just existing rows/polynomials. The correct formula is:
+
+```
+f̂_t(z_row, z_col, i) = ∑_{y∈{0,1}^k} eq(z_col, y) · ĝ(z_row, i, t_{y-1}, t_y)
+```
+
+Where:
+- The sum is over **all** `2^k` possible row indices `y ∈ {0,1}^k`
+- This includes rows with zero width (`w_y = 0`)
+- For rows with `w_y = 0`, we have `t_y = t_{y-1}` (cumulative width doesn't increase)
+
+**Common Implementation Error**: It is incorrect to iterate only over existing polynomials or non-empty rows. The mathematics requires summing over the entire domain `{0,1}^k` to maintain the algebraic properties of the multilinear extension.
+
+**Performance Implication**: The `O(m · 2^k)` verifier complexity comes from this requirement to iterate over all `2^k` rows, even though many may be empty.
+
 ## Key Properties
 
 1. **Prover efficiency**: `O(M)` field operations for commitment and evaluation proofs
@@ -139,3 +156,179 @@ This design allows us to:
 - Maintain a clean separation between the bijection logic and the constraint system structure
 
 The theoretical jagged polynomial scheme assumes a simple row-wise sparse matrix, but real constraint systems have more structure that requires this additional mapping layer.
+
+## Correct Verification Implementation
+
+### The Bug
+
+Our current implementation **incorrectly** iterates only over existing polynomials:
+
+```rust
+// WRONG: Only iterates over existing polynomials
+for poly_idx in 0..self.bijection.num_polynomials() {
+    let t_prev = self.bijection.cumulative_size_before(poly_idx);
+    let t_curr = self.bijection.cumulative_size(poly_idx);
+    // ... compute g_mle and accumulate ...
+}
+```
+
+### The Fix
+
+According to Claim 3.2.1, we must iterate over **all** possible row indices:
+
+```rust
+// CORRECT: Iterates over all 2^k possible rows
+let num_rows = 1 << self.params.num_s_vars; // 2^k rows
+for row_idx in 0..num_rows {
+    // Need to map row_idx to cumulative sizes
+    // For non-existent rows, t_prev == t_curr
+    let t_prev = get_cumulative_size_before(row_idx);
+    let t_curr = get_cumulative_size_at(row_idx);
+    // ... compute g_mle and accumulate ...
+}
+```
+
+### Implementation Strategy
+
+To fix this efficiently:
+
+1. **Precompute cumulative sizes for all 2^k rows**: Most will have zero width, so `t_y = t_{y-1}`.
+
+2. **Sparse representation**: Store only non-zero widths and compute cumulative sizes on demand.
+
+3. **Equality polynomial optimization**: Since we're summing over all rows, we can use the fact that `∑_{y∈{0,1}^k} eq(z_col, y) = 1` for certain optimizations.
+
+### Why This Matters
+
+The incorrect implementation breaks the algebraic properties of the multilinear extension. By only summing over existing polynomials, we're effectively evaluating a different polynomial than what the prover committed to. This is why verification takes ~6 seconds instead of milliseconds - we're computing the wrong thing entirely.
+
+## Proposed Solution: Stage 4 for Batch Verification
+
+Instead of trying to fix Stage 3 to sum over all 2^k rows directly, we propose adding a new Stage 4 that uses the "Jagged Assist" protocol from the paper (Section 5 / Theorem 1.5).
+
+### Architecture Change
+
+Current (broken):
+```
+Stage 1 → Stage 2 → Stage 3 (tries to sum over 2^k rows) → PCS
+                         ↑
+                    [BOTTLENECK: wrong sum]
+```
+
+Proposed:
+```
+Stage 1 → Stage 2 → Stage 3 → Stage 4 → PCS
+                      ↓          ↓
+                   [claim]   [batch verify]
+```
+
+### How Stage 4 Works
+
+#### The Problem
+Stage 3 needs to compute:
+```
+Σ_{y∈{0,1}^k} eq(zc, y) · ĝ(zr, i, t_{y-1}, t_y)
+```
+This requires 2^k evaluations of the branching program ĝ.
+
+#### The Solution: Batch Verification Protocol
+
+1. **Stage 3 (modified)** outputs:
+   - A claim: `Σ_{y∈{0,1}^k} eq(zc, y) · ĝ(zr, i, t_{y-1}, t_y) = v`
+   - The 2^k individual values: `{ĝ(zr, i, t_{y-1}, t_y)}_{y∈{0,1}^k}`
+
+2. **Stage 4** verifies all 2^k evaluations using batch verification:
+   - Verifier chooses random coefficients r₁, ..., r_{2^k}
+   - Reduces to single claim via sumcheck
+   - Verifier only evaluates ĝ ONCE at a random point
+   - Total verifier work: O(m·2^k) arithmetic operations
+
+### Implementation Plan
+
+#### Stage 4 Verifier
+```rust
+fn verify_stage4(
+    proof: &Stage4Proof,
+    transcript: &mut T,
+    accumulator: &mut VerifierOpeningAccumulator,
+    zr: &[F],      // from Stage 1
+    zc: &[F],      // from Stage 2
+    i: &[F],       // from Stage 3
+    claimed_sum: F, // from Stage 3
+) -> Result<Vec<F>, Box<dyn Error>> {
+    let K = 1 << num_s_vars; // 2^k
+
+    // 1. Verify the sum matches claimed values
+    let computed_sum: F = (0..K)
+        .map(|y| eq(zc, y) * proof.g_evaluations[y])
+        .sum();
+    assert_eq!(computed_sum, claimed_sum);
+
+    // 2. Setup batch verification for K evaluations
+    let points: Vec<_> = (0..K)
+        .map(|y| (zr, i, cumulative_sizes[y], cumulative_sizes[y+1]))
+        .collect();
+
+    // 3. Run batch MLE verification (reduces to 1 evaluation)
+    BatchedSumcheck::verify(
+        &proof.batch_proof,
+        &points,
+        &proof.g_evaluations,
+        accumulator,
+        transcript
+    )
+}
+```
+
+#### Stage 4 Prover
+```rust
+fn prove_stage4(
+    transcript: &mut T,
+    branching_program: &JaggedBranchingProgram,
+    r_stage1: &[F],
+    r_stage3: &[F],
+) -> Stage4Proof {
+    let K = 1 << num_s_vars;
+
+    // 1. Compute all 2^k evaluations
+    let g_evaluations: Vec<F> = (0..K)
+        .map(|y| {
+            evaluate_branching_program(
+                branching_program,
+                r_stage1,
+                r_stage3,
+                cumulative_sizes[y],
+                cumulative_sizes[y+1]
+            )
+        })
+        .collect();
+
+    // 2. Create batch proof
+    let batch_proof = BatchedSumcheck::prove(...);
+
+    Stage4Proof { g_evaluations, batch_proof }
+}
+```
+
+### Benefits
+
+1. **Clean separation**: Stage 3 handles jagged transform, Stage 4 handles batch verification
+2. **No major refactoring**: Stage 3 keeps most current structure
+3. **Correct mathematics**: We properly sum over all 2^k rows
+4. **Efficient verification**: O(m·2^k) work with only ONE branching program evaluation
+5. **Better debugging**: Stage 4 can be tested independently
+
+### Preprocessing Requirements
+
+Need to precompute and store:
+- Cumulative sizes for all 2^k possible rows (most will have size 0)
+- This is a vector of size 2^k + 1
+
+### TODO
+
+1. Implement `compute_all_cumulative_sizes()` that handles non-existent rows
+2. Create Stage4Proof structure
+3. Implement Stage 4 prover and verifier
+4. Modify Stage 3 to output claims instead of computing the sum
+5. Update RecursionProof to include Stage 4
+6. Add Stage 4 to the verification pipeline

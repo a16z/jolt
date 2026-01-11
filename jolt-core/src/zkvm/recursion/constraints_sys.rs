@@ -611,27 +611,32 @@ impl DoryMatrixBuilder {
         );
 
         let row_size = 1 << self.num_constraint_vars;
-        let zero_row = vec![Fq::zero(); row_size];
+        let capacity = num_rows * row_size;
 
-        let mut evaluations = Vec::with_capacity(num_rows * row_size);
+        // Pre-allocate the exact size and initialize to zero
+        let mut evaluations = vec![Fq::zero(); capacity];
 
-        // Layout: rows are organized as [all base] [all rho_prev] [all rho_curr] [all quotient]
-        for poly_type in PolyType::all() {
-            let rows = &self.rows_by_type[poly_type as usize];
+        // Use unsafe for faster copying without bounds checks
+        unsafe {
+            let eval_ptr = evaluations.as_mut_ptr();
+            let mut offset = 0;
 
-            for row in rows {
-                evaluations.extend_from_slice(row);
+            for poly_type in PolyType::all() {
+                let rows = &self.rows_by_type[poly_type as usize];
+
+                // Copy actual rows
+                for row in rows {
+                    std::ptr::copy_nonoverlapping(
+                        row.as_ptr(),
+                        eval_ptr.add(offset),
+                        row_size
+                    );
+                    offset += row_size;
+                }
+
+                // Skip zero padding (already initialized to zero)
+                offset += (num_constraints_padded - rows.len()) * row_size;
             }
-
-            for _ in rows.len()..num_constraints_padded {
-                evaluations.extend_from_slice(&zero_row);
-            }
-        }
-
-        // Pad the evaluations to reach the full power-of-2 size
-        let expected_size = num_rows * row_size;
-        while evaluations.len() < expected_size {
-            evaluations.extend_from_slice(&zero_row);
         }
 
         let matrix = DoryMultilinearMatrix {
@@ -846,9 +851,14 @@ impl ConstraintSystem {
     pub fn extract_constraint_polynomials(
         &self,
     ) -> Vec<crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials<Fq>> {
-        let mut polys = Vec::new();
         let num_constraint_vars = self.matrix.num_constraint_vars;
         let row_size = 1 << num_constraint_vars;
+
+        // Pre-allocate with exact capacity
+        let gt_exp_count = self.constraints.iter()
+            .filter(|c| matches!(c.constraint_type, ConstraintType::GtExp { .. }))
+            .count();
+        let mut polys = Vec::with_capacity(gt_exp_count);
 
         for (idx, constraint) in self.constraints.iter().enumerate() {
             if let ConstraintType::GtExp { bit } = constraint.constraint_type {
@@ -878,9 +888,14 @@ impl ConstraintSystem {
 
     /// Extract GT mul constraint data for gt_mul sumcheck
     pub fn extract_gt_mul_constraints(&self) -> Vec<(usize, Vec<Fq>, Vec<Fq>, Vec<Fq>, Vec<Fq>)> {
-        let mut constraints = Vec::new();
         let num_constraint_vars = self.matrix.num_constraint_vars;
         let row_size = 1 << num_constraint_vars;
+
+        // Pre-allocate with exact capacity
+        let gt_mul_count = self.constraints.iter()
+            .filter(|c| matches!(c.constraint_type, ConstraintType::GtMul))
+            .count();
+        let mut constraints = Vec::with_capacity(gt_mul_count);
 
         for (idx, constraint) in self.constraints.iter().enumerate() {
             if let ConstraintType::GtMul = constraint.constraint_type {
@@ -910,9 +925,14 @@ impl ConstraintSystem {
         Vec<Fq>,
         Vec<Fq>,
     )> {
-        let mut constraints = Vec::new();
         let num_constraint_vars = self.matrix.num_constraint_vars;
         let row_size = 1 << num_constraint_vars;
+
+        // Pre-allocate with exact capacity
+        let g1_scalar_mul_count = self.constraints.iter()
+            .filter(|c| matches!(c.constraint_type, ConstraintType::G1ScalarMul { .. }))
+            .count();
+        let mut constraints = Vec::with_capacity(g1_scalar_mul_count);
 
         for (idx, constraint) in self.constraints.iter().enumerate() {
             if let ConstraintType::G1ScalarMul { base_point } = constraint.constraint_type {
