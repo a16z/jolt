@@ -14,6 +14,22 @@ extern crate alloc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+/// Returns `true` iff `x >= modulus`, i.e., `x` is non-canonical.
+/// Performs lexicographic comparison on little-endian 4-limb u64 arrays.
+#[allow(dead_code)] // Only used in guest (RISC-V) builds.
+#[inline(always)]
+fn is_non_canonical(x: &[u64; 4], modulus: &[u64; 4]) -> bool {
+    for i in (0..4).rev() {
+        if x[i] > modulus[i] {
+            return true;
+        }
+        if x[i] < modulus[i] {
+            return false;
+        }
+    }
+    true // equal => x >= modulus
+}
+
 /// panic instruction
 /// spoils the proof
 /// used for inline checks
@@ -230,6 +246,10 @@ impl Secp256k1Fq {
     ))]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
+        // 0/0 would pass the correctness check for any c, so reject it explicitly
+        if other.is_zero() {
+            hcf();
+        }
         // get inverse as pure advice
         let mut c = Secp256k1Fq::zero();
         unsafe {
@@ -247,11 +267,8 @@ impl Secp256k1Fq {
         }
         // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if greater than or equal to p, or other * c is not equal to self, panic
-        if (c.e.0 .0[3] == 0xFFFFFFFFFFFFFFFF
-            && c.e.0 .0[2] == 0xFFFFFFFFFFFFFFFF
-            && c.e.0 .0[1] == 0xFFFFFFFFFFFFFFFF
-            && c.e.0 .0[0] >= 0xFFFFFFFFFFFFFC2F)
+        // if not canonical (>= p), or other * c is not equal to self, panic
+        if is_non_canonical(&c.e.0 .0, &Fq::MODULUS.0)
             || (tmp.e.0 .0[0] != self.e.0 .0[0]
                 || tmp.e.0 .0[1] != self.e.0 .0[1]
                 || tmp.e.0 .0[2] != self.e.0 .0[2]
@@ -371,6 +388,10 @@ impl Secp256k1Fr {
     ))]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
+        // 0/0 would pass the correctness check for any c, so reject it explicitly
+        if other.is_zero() {
+            hcf();
+        }
         // get inverse as pure advice
         let mut c = Secp256k1Fr::zero();
         unsafe {
@@ -388,32 +409,16 @@ impl Secp256k1Fr {
         }
         // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if greater than or equal to p, or other * c is not equal to self, panic
-        if tmp.e.0 .0[0] != self.e.0 .0[0]
-            || tmp.e.0 .0[1] != self.e.0 .0[1]
-            || tmp.e.0 .0[2] != self.e.0 .0[2]
-            || tmp.e.0 .0[3] != self.e.0 .0[3]
+        // if not canonical (>= r), or other * c is not equal to self, panic
+        if is_non_canonical(&c.e.0 .0, &Fr::MODULUS.0)
+            || (tmp.e.0 .0[0] != self.e.0 .0[0]
+                || tmp.e.0 .0[1] != self.e.0 .0[1]
+                || tmp.e.0 .0[2] != self.e.0 .0[2]
+                || tmp.e.0 .0[3] != self.e.0 .0[3])
         {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
-            hcf();
-        }
-        let mut greater = false;
-        if c.e.0 .0[3] == 0xffffffffffffffff {
-            if c.e.0 .0[2] > Fr::MODULUS.0[2] {
-                greater = true;
-            } else if c.e.0 .0[2] == Fr::MODULUS.0[2] {
-                if c.e.0 .0[1] > Fr::MODULUS.0[1] {
-                    greater = true;
-                } else if c.e.0 .0[1] == Fr::MODULUS.0[1] {
-                    if c.e.0 .0[0] >= Fr::MODULUS.0[0] {
-                        greater = true;
-                    }
-                }
-            }
-        }
-        if greater {
             hcf();
         }
         c
