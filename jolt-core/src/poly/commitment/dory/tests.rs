@@ -383,6 +383,8 @@ mod tests {
 
         DoryGlobals::reset();
 
+        // Use K=32, T=32 to ensure the test exercises both row and column variables
+        // in the Dory matrix (log2(32*32) = 10 variables, split as sigma=5, nu=5)
         let K = 32;
         let T = 32;
 

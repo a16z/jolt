@@ -118,21 +118,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
-        // For AddressMajor layout, reorder opening_point from [r_address, r_cycle] to [r_cycle, r_address].
-        // This ensures that after Dory's reversal and splitting:
-        // - Column (right) vector gets address variables (matching AddressMajor column indexing)
-        // - Row (left) vector gets cycle variables (matching AddressMajor row indexing)
-        let reordered_point: Vec<_> = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
-            let log_t = DoryGlobals::get_T().log_2();
-            let log_k = opening_point.len().saturating_sub(log_t);
-            opening_point[log_k..]
-                .iter()
-                .chain(opening_point[..log_k].iter())
-                .cloned()
-                .collect()
-        } else {
-            opening_point.to_vec()
-        };
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
 
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
@@ -168,19 +154,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
-        // For AddressMajor layout, reorder opening_point from [r_address, r_cycle] to [r_cycle, r_address].
-        // This must match the reordering done in prove().
-        let reordered_point: Vec<_> = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
-            let log_t = DoryGlobals::get_T().log_2();
-            let log_k = opening_point.len().saturating_sub(log_t);
-            opening_point[log_k..]
-                .iter()
-                .chain(opening_point[..log_k].iter())
-                .cloned()
-                .collect()
-        } else {
-            opening_point.to_vec()
-        };
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
 
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
@@ -369,5 +343,29 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
             (tier_2, row_commitments)
         }
+    }
+}
+
+/// Reorders opening_point for AddressMajor layout.
+///
+/// For AddressMajor layout, reorders opening_point from [r_address, r_cycle] to [r_cycle, r_address].
+/// This ensures that after Dory's reversal and splitting:
+/// - Column (right) vector gets address variables (matching AddressMajor column indexing)
+/// - Row (left) vector gets cycle variables (matching AddressMajor row indexing)
+///
+/// For CycleMajor layout, returns the point unchanged.
+fn reorder_opening_point_for_layout<F: JoltField>(
+    opening_point: &[F::Challenge],
+) -> Vec<F::Challenge> {
+    if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+        let log_t = DoryGlobals::get_T().log_2();
+        let log_k = opening_point.len().saturating_sub(log_t);
+        opening_point[log_k..]
+            .iter()
+            .chain(opening_point[..log_k].iter())
+            .cloned()
+            .collect()
+    } else {
+        opening_point.to_vec()
     }
 }

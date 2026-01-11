@@ -25,7 +25,7 @@ pub enum DoryLayout {
     /// Cycle-major layout
     ///
     /// This is the most performant (and hence default) option for CPU Jolt,
-    /// since e it minimizes the multi-pairing sizes for the Tier-2 Dory Commitments.
+    /// since it minimizes the multi-pairing sizes for the Tier-2 Dory Commitments.
     ///
     /// Coefficients are ordered by address first, then by cycle within each address:
     /// ```text
@@ -134,6 +134,15 @@ impl From<u8> for DoryLayout {
     }
 }
 
+impl From<DoryLayout> for u8 {
+    fn from(layout: DoryLayout) -> Self {
+        match layout {
+            DoryLayout::CycleMajor => 0,
+            DoryLayout::AddressMajor => 1,
+        }
+    }
+}
+
 // Main polynomial globals
 static mut GLOBAL_T: OnceLock<usize> = OnceLock::new();
 static mut MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
@@ -194,6 +203,7 @@ impl DoryGlobals {
     ///
     /// Dory matrices are conceptually shaped as `2^nu` rows × `2^sigma` columns (row-major).
     /// We use the balanced policy `sigma = ceil(total_vars / 2)` and `nu = total_vars - sigma`.
+    #[inline]
     pub fn balanced_sigma_nu(total_vars: usize) -> (usize, usize) {
         let sigma = total_vars.div_ceil(2);
         let nu = total_vars - sigma;
@@ -201,6 +211,7 @@ impl DoryGlobals {
     }
 
     /// Convenience helper for the main Dory matrix where `total_vars = log_k_chunk + log_t`.
+    #[inline]
     pub fn main_sigma_nu(log_k_chunk: usize, log_t: usize) -> (usize, usize) {
         Self::balanced_sigma_nu(log_k_chunk + log_t)
     }
@@ -210,6 +221,7 @@ impl DoryGlobals {
     /// - `max_advice_size_bytes` is interpreted as bytes of 64-bit words.
     /// - Rounds word count up to the next power of two (minimum 1) and computes log2 as `advice_vars`.
     /// - Returns `(sigma, nu)` where `sigma = ⌈advice_vars/2⌉` and `nu = advice_vars - sigma`.
+    #[inline]
     pub fn advice_sigma_nu_from_max_bytes(max_advice_size_bytes: usize) -> (usize, usize) {
         let words = max_advice_size_bytes / 8;
         let len = words.next_power_of_two().max(1);
@@ -219,6 +231,7 @@ impl DoryGlobals {
 
     /// How many row variables of the *cycle* segment exist in the unified point:
     /// `row_cycle_len = max(0, log_t - sigma_main)`.
+    #[inline]
     pub fn cycle_row_len(log_t: usize, sigma_main: usize) -> usize {
         log_t.saturating_sub(sigma_main)
     }

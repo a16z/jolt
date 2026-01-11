@@ -241,33 +241,15 @@ where
     // Dense polynomials always use cycle-major indexing (standard row_len chunking)
     // regardless of DoryLayout. The AddressMajor layout only affects OneHot and RLC polynomials.
     let result: Vec<ArkG1> = match poly {
-        MultilinearPolynomial::LargeScalars(poly) => {
-            compute_msm!(&poly.Z, msm_field_elements)
-        }
-        MultilinearPolynomial::U8Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_u8)
-        }
-        MultilinearPolynomial::U16Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_u16)
-        }
-        MultilinearPolynomial::U32Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_u32)
-        }
-        MultilinearPolynomial::U64Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_u64)
-        }
-        MultilinearPolynomial::I64Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_i64)
-        }
-        MultilinearPolynomial::I128Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_i128)
-        }
-        MultilinearPolynomial::U128Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_u128)
-        }
-        MultilinearPolynomial::S128Scalars(poly) => {
-            compute_msm!(&poly.coeffs, msm_s128)
-        }
+        MultilinearPolynomial::LargeScalars(poly) => compute_msm!(&poly.Z, msm_field_elements),
+        MultilinearPolynomial::U8Scalars(poly) => compute_msm!(&poly.coeffs, msm_u8),
+        MultilinearPolynomial::U16Scalars(poly) => compute_msm!(&poly.coeffs, msm_u16),
+        MultilinearPolynomial::U32Scalars(poly) => compute_msm!(&poly.coeffs, msm_u32),
+        MultilinearPolynomial::U64Scalars(poly) => compute_msm!(&poly.coeffs, msm_u64),
+        MultilinearPolynomial::I64Scalars(poly) => compute_msm!(&poly.coeffs, msm_i64),
+        MultilinearPolynomial::I128Scalars(poly) => compute_msm!(&poly.coeffs, msm_i128),
+        MultilinearPolynomial::U128Scalars(poly) => compute_msm!(&poly.coeffs, msm_u128),
+        MultilinearPolynomial::S128Scalars(poly) => compute_msm!(&poly.coeffs, msm_s128),
         MultilinearPolynomial::BoolScalars(poly) => poly
             .coeffs
             .par_chunks(row_len)

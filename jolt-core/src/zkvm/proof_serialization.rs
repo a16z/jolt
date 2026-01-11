@@ -48,15 +48,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub dory_layout: DoryLayout,
 }
 
-impl From<DoryLayout> for u8 {
-    fn from(layout: DoryLayout) -> Self {
-        match layout {
-            DoryLayout::CycleMajor => 0,
-            DoryLayout::AddressMajor => 1,
-        }
-    }
-}
-
 impl CanonicalSerialize for DoryLayout {
     fn serialize_with_mode<W: Write>(
         &self,

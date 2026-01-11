@@ -760,6 +760,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
     }
 
     /// Compute row_factors and eq_k from the Dory left vector.
+    #[inline]
     fn compute_row_factors_and_eq_k(
         left_vec: &[F],
         rows_per_k: usize,
@@ -837,6 +838,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
     }
 
     /// Process a single cycle.
+    #[inline(always)]
     fn process_cycle(
         &self,
         cycle: &Cycle,
@@ -887,6 +889,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         *onehot_acc += row_factor.mul_unreduced::<9>(inner_sum_reduced);
     }
 
+    #[inline]
     fn create_accumulators(num_columns: usize) -> (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>) {
         (
             unsafe_allocate_zero_vec(num_columns),

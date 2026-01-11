@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -549,6 +550,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     /// Stage 8: Dory batch opening verification.
     fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
+        // Initialize DoryGlobals with the layout from the proof
+        // This ensures the verifier uses the same layout as the prover
+        let _guard = DoryGlobals::initialize_context(
+            1 << self.one_hot_params.log_k_chunk,
+            self.proof.trace_length.next_power_of_two(),
+            DoryContext::Main,
+            Some(self.proof.dory_layout),
+        );
+
         // Get the unified opening point from HammingWeightClaimReduction
         // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
         let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
