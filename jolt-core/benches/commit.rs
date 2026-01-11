@@ -9,7 +9,7 @@ use rand_core::{RngCore, SeedableRng};
 // use rayon::prelude::*;
 
 fn benchmark_dory_dense(c: &mut Criterion, name: &str, k: usize, t: usize) {
-    let globals = DoryGlobals::initialize_context(k, t, DoryContext::Main);
+    let globals = DoryGlobals::initialize_context(k, t, DoryContext::Main, None);
     let setup = <DoryCommitmentScheme as CommitmentScheme>::setup_prover(k.log_2() + t.log_2());
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
 
@@ -26,7 +26,7 @@ fn benchmark_dory_dense(c: &mut Criterion, name: &str, k: usize, t: usize) {
 }
 
 fn benchmark_dory_one_hot_batch(c: &mut Criterion, name: &str, k: usize, t: usize) {
-    let globals = DoryGlobals::initialize_context(k, t, DoryContext::Main);
+    let globals = DoryGlobals::initialize_context(k, t, DoryContext::Main, None);
     let setup = <DoryCommitmentScheme as CommitmentScheme>::setup_prover(k.log_2() + t.log_2());
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
 
@@ -52,7 +52,7 @@ fn benchmark_dory_one_hot_batch(c: &mut Criterion, name: &str, k: usize, t: usiz
 }
 
 fn benchmark_dory_mixed_batch(c: &mut Criterion, name: &str, k: usize, t: usize) {
-    let globals = DoryGlobals::initialize_context(k, t, DoryContext::Main);
+    let globals = DoryGlobals::initialize_context(k, t, DoryContext::Main, None);
     let setup = <DoryCommitmentScheme as CommitmentScheme>::setup_prover(k.log_2() + t.log_2());
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
 

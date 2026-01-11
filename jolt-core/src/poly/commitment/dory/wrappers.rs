@@ -114,38 +114,44 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
         let wrapped_left_side: Vec<Fr> = left_vec.iter().map(ark_to_jolt).collect();
 
         macro_rules! compute_vector_matrix_product {
-            ($poly:expr, $field_mul_method:ident) => {
-                (0..num_cols)
-                    .into_par_iter()
-                    .map(|col_idx| {
+            ($coeffs:expr, $field_mul_method:ident) => {{
+                let mut result = vec![Fr::zero(); num_cols];
+                result
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col_idx, dest)| {
                         let mut sum = Fr::zero();
                         for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
                             let coeff_idx = row_idx * num_cols + col_idx;
-                            if coeff_idx < $poly.len() {
-                                sum +=
-                                    $poly[coeff_idx].$field_mul_method(wrapped_left_side[row_idx]);
+                            if coeff_idx < $coeffs.len() {
+                                sum += $coeffs[coeff_idx]
+                                    .$field_mul_method(wrapped_left_side[row_idx]);
                             }
                         }
-                        jolt_to_ark(&sum)
-                    })
-                    .collect()
-            };
+                        *dest = sum;
+                    });
+                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
+            }};
         }
 
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => (0..num_cols)
-                .into_par_iter()
-                .map(|col_idx| {
-                    let mut sum = Fr::zero();
-                    for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                        let coeff_idx = row_idx * num_cols + col_idx;
-                        if coeff_idx < poly.Z.len() {
-                            sum += poly.Z[coeff_idx] * wrapped_left_side[row_idx];
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let mut result = vec![Fr::zero(); num_cols];
+                result
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col_idx, dest)| {
+                        let mut sum = Fr::zero();
+                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
+                            let coeff_idx = row_idx * num_cols + col_idx;
+                            if coeff_idx < poly.Z.len() {
+                                sum += poly.Z[coeff_idx] * wrapped_left_side[row_idx];
+                            }
                         }
-                    }
-                    jolt_to_ark(&sum)
-                })
-                .collect(),
+                        *dest = sum;
+                    });
+                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
+            }
             MultilinearPolynomial::U8Scalars(poly) => {
                 compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
@@ -171,7 +177,21 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
                 compute_vector_matrix_product!(&poly.coeffs, field_mul)
             }
             MultilinearPolynomial::BoolScalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
+                let mut result = vec![Fr::zero(); num_cols];
+                result
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col_idx, dest)| {
+                        let mut sum = Fr::zero();
+                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
+                            let coeff_idx = row_idx * num_cols + col_idx;
+                            if coeff_idx < poly.coeffs.len() && poly.coeffs[coeff_idx] {
+                                sum += wrapped_left_side[row_idx];
+                            }
+                        }
+                        *dest = sum;
+                    });
+                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
             }
             MultilinearPolynomial::OneHot(poly) => {
                 let mut result = vec![Fr::zero(); num_cols];
@@ -218,10 +238,10 @@ where
         };
     }
 
+    // Dense polynomials always use cycle-major indexing (standard row_len chunking)
+    // regardless of DoryLayout. The AddressMajor layout only affects OneHot and RLC polynomials.
     let result: Vec<ArkG1> = match poly {
-        MultilinearPolynomial::LargeScalars(poly) => {
-            compute_msm!(&poly.Z, msm_field_elements)
-        }
+        MultilinearPolynomial::LargeScalars(poly) => compute_msm!(&poly.Z, msm_field_elements),
         MultilinearPolynomial::U8Scalars(poly) => compute_msm!(&poly.coeffs, msm_u8),
         MultilinearPolynomial::U16Scalars(poly) => compute_msm!(&poly.coeffs, msm_u16),
         MultilinearPolynomial::U32Scalars(poly) => compute_msm!(&poly.coeffs, msm_u32),
@@ -242,6 +262,8 @@ where
                 ArkG1(result)
             })
             .collect(),
+        // OneHot and RLC polynomials have their own commit_rows implementations
+        // that respect the DoryLayout setting (CycleMajor vs AddressMajor)
         MultilinearPolynomial::OneHot(poly) => {
             poly.commit_rows(&bases).into_iter().map(ArkG1).collect()
         }
