@@ -193,6 +193,8 @@ impl ConstraintSystemJaggedBuilder {
     /// Create builder from constraint system constraints
     /// This matches the matrix layout where rows are organized by polynomial type first
     pub fn from_constraints(constraints: &[MatrixConstraint]) -> Self {
+        eprintln!("ConstraintSystemJaggedBuilder::from_constraints");
+        eprintln!("  num constraints: {}", constraints.len());
         let mut polynomials = Vec::new();
 
         // Get all polynomial types that are actually used
@@ -266,6 +268,7 @@ impl ConstraintSystemJaggedBuilder {
             }
         }
 
+        eprintln!("  Total polynomials collected: {}", polynomials.len());
         Self { polynomials }
     }
 
@@ -324,9 +327,16 @@ impl ConstraintSystem {
             dense_evals.push(self.matrix.evaluations[offset + sparse_idx]);
         }
 
+        // Debug: show dense polynomial size before padding
+        eprintln!("Dense polynomial construction:");
+        eprintln!("  dense_evals.len() before padding: {}", dense_evals.len());
+        eprintln!("  bijection.dense_size(): {}", <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection));
+
         // Pad to power of 2 for multilinear polynomial
         use ark_ff::Zero;
         let padded_size = dense_evals.len().next_power_of_two();
+        eprintln!("  padded_size: {}", padded_size);
+        eprintln!("  log2(padded_size): {}", padded_size.trailing_zeros());
         dense_evals.resize(padded_size, Fq::zero());
 
         (

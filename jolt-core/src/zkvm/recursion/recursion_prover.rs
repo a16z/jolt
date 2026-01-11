@@ -74,6 +74,36 @@ pub struct RecursionProver<F: JoltField = Fq> {
 }
 
 impl RecursionProver<Fq> {
+    /// Create a new recursion prover from pre-generated witnesses
+    pub fn new_from_witnesses(
+        witness_collection: &dory::recursion::WitnessCollection<
+            crate::poly::commitment::dory::recursion::JoltWitness,
+        >,
+        gamma: Fq,
+        delta: Fq,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        tracing::debug!(
+            "Creating RecursionProver from witnesses: GT exp count = {}, GT mul count = {}",
+            witness_collection.gt_exp.len(),
+            witness_collection.gt_mul.len()
+        );
+
+        // Convert witness collection to DoryRecursionWitness
+        let recursion_witness = Self::witnesses_to_dory_recursion(&witness_collection)?;
+
+        // Build constraint system from witness collection using DoryMatrixBuilder
+        let constraint_system = Self::build_constraint_system(
+            &witness_collection,
+            recursion_witness.gt_exp_witness.g_poly.clone(),
+        )?;
+
+        Ok(Self {
+            constraint_system,
+            gamma,
+            delta,
+        })
+    }
+
     /// Create a new recursion prover by generating witnesses from a Dory proof
     pub fn new_from_dory_proof<T: Transcript>(
         dory_proof: &ArkDoryProof,
@@ -94,26 +124,9 @@ impl RecursionProver<Fq> {
             evaluation,
             commitment,
         )?;
-        tracing::debug!(
-            "Witness collection: GT exp count = {}, GT mul count = {}",
-            witness_collection.gt_exp.len(),
-            witness_collection.gt_mul.len()
-        );
 
-        // Convert witness collection to DoryRecursionWitness
-        let recursion_witness = Self::witnesses_to_dory_recursion(&witness_collection)?;
-
-        // Build constraint system from witness collection using DoryMatrixBuilder
-        let constraint_system = Self::build_constraint_system(
-            &witness_collection,
-            recursion_witness.gt_exp_witness.g_poly.clone(),
-        )?;
-
-        Ok(Self {
-            constraint_system,
-            gamma,
-            delta,
-        })
+        // Delegate to new_from_witnesses
+        Self::new_from_witnesses(&witness_collection, gamma, delta)
     }
 
     /// Convert Dory witness collection to DoryRecursionWitness

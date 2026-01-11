@@ -32,6 +32,7 @@ pub mod prover;
 pub mod r1cs;
 pub mod ram;
 pub mod recursion;
+pub mod recursion_helpers;
 pub mod registers;
 pub mod spartan;
 pub mod verifier;

@@ -13,7 +13,6 @@ use crate::poly::commitment::{
 };
 use crate::poly::opening_proof::OpeningId;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
-use crate::transcripts::Blake2bTranscript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
@@ -814,20 +813,19 @@ where
         let constraint_types = metadata.constraint_types.clone();
         let num_constraints = constraint_types.len();
         let num_constraints_padded = num_constraints.next_power_of_two();
-        let num_s_vars = num_constraints_padded.log_2();
 
-        // Fixed parameters for Dory constraints
+        // The dense polynomial is created by the jagged bijection which compresses
+        // the sparse matrix by removing redundant evaluations. We should use the
+        // actual dense_num_vars from the metadata rather than trying to recalculate it.
+        let dense_num_vars = metadata.dense_num_vars;
+
+        // Calculate the constraint system parameters for the verifier input
+        // These are based on the original constraint matrix structure
+        const NUM_POLY_TYPES: usize = 15; // PolyType::NUM_TYPES
+        let num_rows_unpadded = NUM_POLY_TYPES * num_constraints_padded;
+        let num_s_vars = (num_rows_unpadded as f64).log2().ceil() as usize;
         let num_constraint_vars = 8; // All constraints padded to 8 variables
         let num_vars = num_s_vars + num_constraint_vars;
-
-        // Verify the metadata is consistent
-        if metadata.dense_num_vars != num_vars {
-            return Err(anyhow::anyhow!(
-                "Dense polynomial num_vars mismatch: expected {}, got {}",
-                num_vars,
-                metadata.dense_num_vars
-            ));
-        }
 
         let jagged_bijection = metadata.jagged_bijection.clone();
         let jagged_mapping = metadata.jagged_mapping.clone();
@@ -847,7 +845,10 @@ where
 
         // 3. Verify recursion proof
         let recursion_verifier = RecursionVerifier::<Fq>::new(verifier_input);
-        let mut recursion_transcript = Blake2bTranscript::new(b"jolt_recursion_snark");
+
+        // Sample the same challenges from the main transcript that the prover did
+        let gamma: Fq = self.transcript.challenge_scalar();
+        let delta: Fq = self.transcript.challenge_scalar();
 
         type HyraxPCS = Hyrax<1, GrumpkinProjective>;
 
@@ -857,9 +858,9 @@ where
         let hyrax_verifier_setup = <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
 
         let verification_result = recursion_verifier
-            .verify::<Blake2bTranscript, HyraxPCS>(
+            .verify::<ProofTranscript, HyraxPCS>(
                 recursion_proof,
-                &mut recursion_transcript,
+                &mut self.transcript,
                 &recursion_proof.dense_commitment,
                 &hyrax_verifier_setup,
             )

@@ -57,7 +57,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
     /// Recursion SNARK proof for efficient recursive verification
-    pub recursion_proof: RecursionProof<Fq, Blake2bTranscript, Hyrax<1, GrumpkinProjective>>,
+    pub recursion_proof: RecursionProof<Fq, FS, Hyrax<1, GrumpkinProjective>>,
     /// Hint for PCS recursion extension (used to accelerate recursion verification)
     /// This field is not serialized and must be provided separately
     pub stage8_pcs_hint: Option<Box<dyn std::any::Any + Send + Sync>>,
