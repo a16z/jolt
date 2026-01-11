@@ -52,7 +52,7 @@ const N_STAGES: usize = 5;
 ///
 /// Stages virtualize different claim families (Stage1: Spartan outer; Stage2: product-virtualized
 /// flags; Stage3: Shift; Stage4: Registers RW; Stage5: Registers val-eval + Instruction lookups).
-/// 
+///
 /// The input claim is a γ-weighted RLC of stage rv_claims plus RAF contributions folded into
 /// stages 1 and 3 via the identity polynomial. Address vars are bound in `d` chunks; cycle vars
 /// are bound with per-stage `GruenSplitEqPolynomial` (low-to-high binding), producing univariates
@@ -78,7 +78,8 @@ const N_STAGES: usize = 5;
 ///   + β_3^7·1_{VirtualInstruction}(k) + β_3^8·1_{IsFirstInSequence}(k).
 ///   * Stage4: Val_4(k) = 1_{rd=r}(k) + β_4·1_{rs1=r}(k) + β_4^2·1_{rs2=r}(k), where r is fixed by opening.
 ///   * Stage5: Val_5(k) = 1_{rd=r}(k) + β_5·1_{¬interleaved}(k) + Σ_i β_5^{2+i}·1_{table=i}(k).
-///   Here, unexpanded_pc(k) is the instruction’s ELF/address field (`instr.address`) stored in the bytecode row k.
+///
+///   Here, unexpanded_pc(k) is the instruction's ELF/address field (`instr.address`) stored in the bytecode row k.
 ///
 /// Accumulator-provided LHS (RLC of stage claims with RAF):
 ///   rv_1(r_1) + γ·rv_2(r_2) + γ^2·rv_3(r_3) + γ^3·rv_4(r_4) + γ^4·rv_5(r_5)
