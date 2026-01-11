@@ -42,7 +42,7 @@ pub use bijection::{ConstraintMapping, JaggedTransform, VarCountJaggedBijection}
 pub use constraints_sys::{
     ConstraintSystem, ConstraintType, DoryMatrixBuilder, PolyType, RecursionMetadataBuilder,
 };
-pub use recursion_prover::{RecursionProof, RecursionProver, RecursionProverBuilder};
+pub use recursion_prover::{RecursionProof, RecursionProver};
 pub use recursion_verifier::{RecursionVerifier, RecursionVerifierInput};
 pub use stage1::{
     g1_scalar_mul::{G1ScalarMulProver, G1ScalarMulVerifier},

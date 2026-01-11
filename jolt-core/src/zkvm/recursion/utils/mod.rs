@@ -3,4 +3,4 @@
 //! This module contains common helpers and utilities used across
 //! the recursion SNARK implementation.
 
-pub mod virtual_claims;
+pub mod virtual_polynomial_utils;

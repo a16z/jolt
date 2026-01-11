@@ -74,89 +74,6 @@ pub struct RecursionProver<F: JoltField = Fq> {
     pub delta: F,
 }
 
-/// Builder for creating RecursionProver instances with a cleaner API
-/// Currently specialized to Fq field (will be made generic in future)
-pub struct RecursionProverBuilder {
-    witnesses: Option<
-        dory::recursion::WitnessCollection<crate::poly::commitment::dory::recursion::JoltWitness>,
-    >,
-    gamma: Option<Fq>,
-    delta: Option<Fq>,
-}
-
-impl RecursionProverBuilder {
-    /// Create a new builder
-    pub fn new() -> Self {
-        Self {
-            witnesses: None,
-            gamma: None,
-            delta: None,
-        }
-    }
-
-    /// Set the witness collection
-    pub fn with_witnesses(
-        mut self,
-        witnesses: dory::recursion::WitnessCollection<
-            crate::poly::commitment::dory::recursion::JoltWitness,
-        >,
-    ) -> Self {
-        self.witnesses = Some(witnesses);
-        self
-    }
-
-    /// Set the gamma and delta challenges
-    pub fn with_challenges(mut self, gamma: Fq, delta: Fq) -> Self {
-        self.gamma = Some(gamma);
-        self.delta = Some(delta);
-        self
-    }
-
-    /// Build the RecursionProver
-    pub fn build(self) -> Result<RecursionProver<Fq>, Box<dyn std::error::Error>> {
-        let witnesses = self.witnesses.ok_or("Witnesses not provided")?;
-        let gamma = self.gamma.ok_or("Gamma challenge not provided")?;
-        let delta = self.delta.ok_or("Delta challenge not provided")?;
-
-        // Convert witness collection to DoryRecursionWitness
-        let recursion_witness = RecursionProver::<Fq>::witnesses_to_dory_recursion(&witnesses)?;
-
-        // Build constraint system from witness collection using DoryMatrixBuilder
-        let constraint_system = RecursionProver::<Fq>::build_constraint_system(
-            &witnesses,
-            recursion_witness.gt_exp_witness.g_poly.clone(),
-        )?;
-
-        Ok(RecursionProver {
-            constraint_system,
-            gamma,
-            delta,
-        })
-    }
-
-    /// Convenience method to build from a Dory proof
-    pub fn from_dory_proof<T: Transcript>(
-        self,
-        dory_proof: &ArkDoryProof,
-        verifier_setup: &ArkworksVerifierSetup,
-        transcript: &mut T,
-        point: &[<Fr as JoltField>::Challenge],
-        evaluation: &Fr,
-        commitment: &ArkGT,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        // Use Dory's witness_gen to generate witnesses
-        let (witness_collection, _hints) = DoryCommitmentScheme::witness_gen(
-            dory_proof,
-            verifier_setup,
-            transcript,
-            point,
-            evaluation,
-            commitment,
-        )?;
-
-        Ok(self.with_witnesses(witness_collection))
-    }
-}
 
 impl RecursionProver<Fq> {
     /// Create a new recursion prover from pre-generated witnesses
@@ -406,66 +323,8 @@ impl<F: JoltField> RecursionProver<F> {
         transcript: &mut T,
         prover_setup: &PCS::ProverSetup,
     ) -> Result<RecursionProof<F, T, PCS>, Box<dyn std::error::Error>> {
-        use std::any::TypeId;
-
-        // Runtime check that F = Fq for recursion SNARK
-        if TypeId::of::<F>() != TypeId::of::<Fq>() {
-            panic!("Recursion SNARK requires F = Fq");
-        }
-        // Initialize opening accumulator
-        let log_T = self.constraint_system.num_vars();
-        let mut accumulator = ProverOpeningAccumulator::<F>::new(log_T);
-
-        // ============ STAGE 1: Constraint Sumchecks ============
-        let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
-
-        // ============ STAGE 2: Virtualization Sumcheck ============
-        let (stage2_proof, r_stage2) =
-            self.prove_stage2(transcript, &mut accumulator, &r_stage1)?;
-
-        // ============ STAGE 3: Jagged Transform Sumcheck ============
-        let (stage3_proof, _r_stage3) =
-            self.prove_stage3(transcript, &mut accumulator, &r_stage1, &r_stage2)?;
-
-        // ============ PCS OPENING PROOF ============
-        // Now we commit to the dense polynomial instead of the full matrix
-        let (dense_poly, _bijection, _mapping) = self.constraint_system.build_dense_polynomial();
-
-        // Convert dense polynomial evaluations to F
-        let dense_evaluations_f = unsafe { std::mem::transmute::<Vec<Fq>, Vec<F>>(dense_poly.Z) };
-        let dense_matrix_poly = MultilinearPolynomial::from(dense_evaluations_f.clone());
-
-        // Commit to the dense polynomial
-        let (dense_commitment, _) = PCS::commit(&dense_matrix_poly, prover_setup);
-
-        let mut polynomials_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
-            HashMap::new();
-        polynomials_map.insert(
-            CommittedPolynomial::DoryDenseMatrix, // Using dense matrix now
-            dense_matrix_poly,
-        );
-
-        // Generate opening proof using PCS
-        let opening_proof = accumulator
-            .prove_single::<T, PCS>(polynomials_map, prover_setup, transcript)
-            .map_err(|e| format!("Failed to generate opening proof: {:?}", e))?;
-
-        // Extract opening claims from accumulator
-        let opening_claims = accumulator.openings.clone();
-
-        // Create final proof
-        let proof = RecursionProof {
-            stage1_proof,
-            stage2_proof,
-            stage3_proof,
-            opening_proof,
-            gamma: self.gamma,
-            delta: self.delta,
-            opening_claims,
-            dense_commitment,
-        };
-
-        Ok(proof)
+        // Delegate to prove_with_pcs - the RecursionExt trait bound is not actually used
+        self.prove_with_pcs(transcript, prover_setup)
     }
 
     /// Run the full two-stage recursion prover for any PCS (without requiring RecursionExt)
@@ -808,10 +667,3 @@ impl<F: JoltField> RecursionProver<F> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_recursion_prover_creation() {
-        // TODO: Add test for prover creation
-    }
-}

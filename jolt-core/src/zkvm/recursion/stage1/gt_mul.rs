@@ -12,7 +12,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         unipoly::UniPoly,
@@ -21,7 +21,8 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    zkvm::witness::VirtualPolynomial,
+    zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
+    virtual_claims,
 };
 use rayon::prelude::*;
 
@@ -37,34 +38,13 @@ fn append_gt_mul_virtual_claims<F: JoltField, T: Transcript>(
     result_claim: F,
     quotient_claim: F,
 ) {
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionMulLhs(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        lhs_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionMulRhs(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        rhs_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionMulResult(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        result_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionMulQuotient(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        quotient_claim,
-    );
+    let claims = virtual_claims![
+        VirtualPolynomial::RecursionMulLhs(constraint_idx) => lhs_claim,
+        VirtualPolynomial::RecursionMulRhs(constraint_idx) => rhs_claim,
+        VirtualPolynomial::RecursionMulResult(constraint_idx) => result_claim,
+        VirtualPolynomial::RecursionMulQuotient(constraint_idx) => quotient_claim,
+    ];
+    append_virtual_claims(accumulator, transcript, sumcheck_id, opening_point, &claims);
 }
 
 /// Helper to retrieve all virtual claims for a GT mul constraint
@@ -73,24 +53,14 @@ fn get_gt_mul_virtual_claims<F: JoltField>(
     constraint_idx: usize,
     sumcheck_id: SumcheckId,
 ) -> (F, F, F, F) {
-    let (_, lhs_claim) = accumulator.get_virtual_polynomial_opening(
+    let polynomials = vec![
         VirtualPolynomial::RecursionMulLhs(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, rhs_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionMulRhs(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, result_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionMulResult(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, quotient_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionMulQuotient(constraint_idx),
-        sumcheck_id,
-    );
-
-    (lhs_claim, rhs_claim, result_claim, quotient_claim)
+    ];
+    let claims = get_virtual_claims(accumulator, sumcheck_id, &polynomials);
+    (claims[0], claims[1], claims[2], claims[3])
 }
 
 /// Helper to append virtual opening points for a GT mul constraint (verifier side)
@@ -101,30 +71,13 @@ fn append_gt_mul_virtual_openings<F: JoltField, T: Transcript>(
     sumcheck_id: SumcheckId,
     opening_point: &OpeningPoint<BIG_ENDIAN, F>,
 ) {
-    accumulator.append_virtual(
-        transcript,
+    let polynomials = vec![
         VirtualPolynomial::RecursionMulLhs(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionMulRhs(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionMulResult(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionMulQuotient(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
+    ];
+    append_virtual_openings(accumulator, transcript, sumcheck_id, opening_point, &polynomials);
 }
 
 /// Individual polynomial data for a single GT mul constraint

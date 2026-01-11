@@ -13,7 +13,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         unipoly::UniPoly,
@@ -22,7 +22,8 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    zkvm::witness::VirtualPolynomial,
+    zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
+    virtual_claims,
 };
 use ark_bn254::Fq;
 use ark_ff::One;
@@ -43,55 +44,16 @@ fn append_g1_scalar_mul_virtual_claims<F: JoltField, T: Transcript>(
     y_a_next_claim: F,
     t_is_infinity_claim: F,
 ) {
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionG1ScalarMulXA(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        x_a_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionG1ScalarMulYA(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        y_a_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionG1ScalarMulXT(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        x_t_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionG1ScalarMulYT(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        y_t_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionG1ScalarMulXANext(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        x_a_next_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionG1ScalarMulYANext(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        y_a_next_claim,
-    );
-    accumulator.append_virtual(
-        transcript,
-        VirtualPolynomial::RecursionG1ScalarMulIndicator(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-        t_is_infinity_claim,
-    );
+    let claims = virtual_claims![
+        VirtualPolynomial::RecursionG1ScalarMulXA(constraint_idx) => x_a_claim,
+        VirtualPolynomial::RecursionG1ScalarMulYA(constraint_idx) => y_a_claim,
+        VirtualPolynomial::RecursionG1ScalarMulXT(constraint_idx) => x_t_claim,
+        VirtualPolynomial::RecursionG1ScalarMulYT(constraint_idx) => y_t_claim,
+        VirtualPolynomial::RecursionG1ScalarMulXANext(constraint_idx) => x_a_next_claim,
+        VirtualPolynomial::RecursionG1ScalarMulYANext(constraint_idx) => y_a_next_claim,
+        VirtualPolynomial::RecursionG1ScalarMulIndicator(constraint_idx) => t_is_infinity_claim,
+    ];
+    append_virtual_claims(accumulator, transcript, sumcheck_id, opening_point, &claims);
 }
 
 /// Helper to retrieve all virtual claims for a G1 scalar mul constraint
@@ -100,44 +62,17 @@ fn get_g1_scalar_mul_virtual_claims<F: JoltField>(
     constraint_idx: usize,
     sumcheck_id: SumcheckId,
 ) -> (F, F, F, F, F, F, F) {
-    let (_, x_a_claim) = accumulator.get_virtual_polynomial_opening(
+    let polynomials = vec![
         VirtualPolynomial::RecursionG1ScalarMulXA(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, y_a_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionG1ScalarMulYA(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, x_t_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionG1ScalarMulXT(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, y_t_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionG1ScalarMulYT(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, x_a_next_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionG1ScalarMulXANext(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, y_a_next_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionG1ScalarMulYANext(constraint_idx),
-        sumcheck_id,
-    );
-    let (_, t_is_infinity_claim) = accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RecursionG1ScalarMulIndicator(constraint_idx),
-        sumcheck_id,
-    );
-
-    (
-        x_a_claim,
-        y_a_claim,
-        x_t_claim,
-        y_t_claim,
-        x_a_next_claim,
-        y_a_next_claim,
-        t_is_infinity_claim,
-    )
+    ];
+    let claims = get_virtual_claims(accumulator, sumcheck_id, &polynomials);
+    (claims[0], claims[1], claims[2], claims[3], claims[4], claims[5], claims[6])
 }
 
 /// Helper to append virtual opening points for a G1 scalar mul constraint (verifier side)
@@ -148,48 +83,16 @@ fn append_g1_scalar_mul_virtual_openings<F: JoltField, T: Transcript>(
     sumcheck_id: SumcheckId,
     opening_point: &OpeningPoint<BIG_ENDIAN, F>,
 ) {
-    accumulator.append_virtual(
-        transcript,
+    let polynomials = vec![
         VirtualPolynomial::RecursionG1ScalarMulXA(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionG1ScalarMulYA(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionG1ScalarMulXT(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionG1ScalarMulYT(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionG1ScalarMulXANext(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionG1ScalarMulYANext(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
-    accumulator.append_virtual(
-        transcript,
         VirtualPolynomial::RecursionG1ScalarMulIndicator(constraint_idx),
-        sumcheck_id,
-        opening_point.clone(),
-    );
+    ];
+    append_virtual_openings(accumulator, transcript, sumcheck_id, opening_point, &polynomials);
 }
 
 // Helper functions for computing constraints

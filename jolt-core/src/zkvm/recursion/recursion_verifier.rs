@@ -318,10 +318,3 @@ impl<F: JoltField> RecursionVerifier<F> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_recursion_verifier_creation() {
-        // TODO: Add test for verifier creation
-    }
-}
