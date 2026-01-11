@@ -36,6 +36,56 @@ pub fn index_to_binary<F: JoltField>(index: usize, num_vars: usize) -> Vec<F> {
     binary
 }
 
+/// Builder for RecursionConstraintMetadata that encapsulates all metadata extraction
+#[derive(Clone)]
+pub struct RecursionMetadataBuilder {
+    constraint_system: ConstraintSystem,
+}
+
+impl RecursionMetadataBuilder {
+    /// Create a new builder from a constraint system
+    pub fn from_constraint_system(constraint_system: ConstraintSystem) -> Self {
+        Self { constraint_system }
+    }
+
+    /// Build the metadata, extracting all necessary information
+    pub fn build(self) -> crate::zkvm::proof_serialization::RecursionConstraintMetadata {
+        // Extract constraint types
+        let constraint_types: Vec<_> = self
+            .constraint_system
+            .constraints
+            .iter()
+            .map(|c| c.constraint_type.clone())
+            .collect();
+
+        // Build dense polynomial and get bijection info
+        let (dense_poly, jagged_bijection, jagged_mapping) =
+            self.constraint_system.build_dense_polynomial();
+        let dense_num_vars = dense_poly.get_num_vars();
+
+        // Compute matrix rows for the verifier
+        let num_polynomials = jagged_bijection.num_polynomials();
+        let mut matrix_rows = Vec::with_capacity(num_polynomials);
+
+        for poly_idx in 0..num_polynomials {
+            let (constraint_idx, poly_type) = jagged_mapping.decode(poly_idx);
+            let matrix_row = self
+                .constraint_system
+                .matrix
+                .row_index(poly_type, constraint_idx);
+            matrix_rows.push(matrix_row);
+        }
+
+        crate::zkvm::proof_serialization::RecursionConstraintMetadata {
+            constraint_types,
+            jagged_bijection,
+            jagged_mapping,
+            matrix_rows,
+            dense_num_vars,
+        }
+    }
+}
+
 /// Compute constraint formula: ρ_curr - ρ_prev² × base^{b} - quotient × g
 pub fn compute_constraint_formula(
     rho_curr: Fq,
@@ -125,6 +175,7 @@ impl PolyType {
 /// Layout: M(s, x) where s is the row index and x are the constraint variables
 /// Physical layout: rows are organized as [all base] [all rho_prev] [all rho_curr] [all quotient]
 /// Row index = poly_type * num_constraints_padded + constraint_index
+#[derive(Clone)]
 pub struct DoryMultilinearMatrix {
     /// Number of s variables (log2(num_rows))
     pub num_s_vars: usize,
@@ -632,6 +683,7 @@ pub struct MatrixConstraint {
 }
 
 /// Constraint system using a giant multilinear matrix for all witness polynomials
+#[derive(Clone)]
 pub struct ConstraintSystem {
     /// The giant matrix M(s, x)
     pub matrix: DoryMultilinearMatrix,
@@ -1277,7 +1329,11 @@ mod tests {
 use ark_serialize::{Compress, SerializationError, Valid};
 
 impl CanonicalSerialize for PolyType {
-    fn serialize_with_mode<W: ark_serialize::Write>(&self, writer: W, _compress: Compress) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
         (*self as u8).serialize_with_mode(writer, _compress)
     }
 
@@ -1287,7 +1343,11 @@ impl CanonicalSerialize for PolyType {
 }
 
 impl CanonicalDeserialize for PolyType {
-    fn deserialize_with_mode<R: ark_serialize::Read>(reader: R, _compress: Compress, _validate: ark_serialize::Validate) -> Result<Self, SerializationError> {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        reader: R,
+        _compress: Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, SerializationError> {
         let val = u8::deserialize_with_mode(reader, _compress, _validate)?;
         match val {
             0 => Ok(PolyType::Base),
@@ -1317,7 +1377,11 @@ impl Valid for PolyType {
 }
 
 impl CanonicalSerialize for ConstraintType {
-    fn serialize_with_mode<W: ark_serialize::Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
         match self {
             ConstraintType::GtExp { bit } => {
                 0u8.serialize_with_mode(&mut writer, compress)?;
@@ -1347,7 +1411,11 @@ impl CanonicalSerialize for ConstraintType {
 }
 
 impl CanonicalDeserialize for ConstraintType {
-    fn deserialize_with_mode<R: ark_serialize::Read>(mut reader: R, compress: Compress, validate: ark_serialize::Validate) -> Result<Self, SerializationError> {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, SerializationError> {
         let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         match variant {
             0 => {

@@ -249,8 +249,12 @@ impl BatchedSumcheck {
 
                 #[cfg(debug_assertions)]
                 {
-                    eprintln!("  claim = {:?}, coeff = {:?}, claim * coeff = {:?}",
-                             claim, coeff, claim * coeff);
+                    eprintln!(
+                        "  claim = {:?}, coeff = {:?}, claim * coeff = {:?}",
+                        claim,
+                        coeff,
+                        claim * coeff
+                    );
                 }
 
                 claim * coeff

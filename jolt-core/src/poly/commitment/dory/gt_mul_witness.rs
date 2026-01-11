@@ -8,10 +8,10 @@ use jolt_optimizations::{fq12_to_multilinear_evals, get_g_mle};
 /// GT multiplication witness generation
 #[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MultiplicationSteps {
-    pub lhs: Fq12,              // Left operand
-    pub rhs: Fq12,              // Right operand
-    pub result: Fq12,           // Product lhs * rhs
-    pub quotient_mle: Vec<Fq>,  // MLE of quotient polynomial Q(x)
+    pub lhs: Fq12,             // Left operand
+    pub rhs: Fq12,             // Right operand
+    pub result: Fq12,          // Product lhs * rhs
+    pub quotient_mle: Vec<Fq>, // MLE of quotient polynomial Q(x)
 }
 
 impl MultiplicationSteps {

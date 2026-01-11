@@ -181,7 +181,9 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
             match poly_id {
-                CommittedPolynomial::RdInc | CommittedPolynomial::RamInc | CommittedPolynomial::DoryDenseMatrix => {
+                CommittedPolynomial::RdInc
+                | CommittedPolynomial::RamInc
+                | CommittedPolynomial::DoryDenseMatrix => {
                     dense_polys.push((*poly_id, *coeff));
                 }
                 CommittedPolynomial::InstructionRa(_)

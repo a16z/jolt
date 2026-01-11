@@ -29,7 +29,11 @@ pub fn preprocess(
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
-pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F> + RecursionExt<F>, FS: Transcript>(
+pub fn prove<
+    F: JoltField,
+    PCS: StreamingCommitmentScheme<Field = F> + RecursionExt<F>,
+    FS: Transcript,
+>(
     guest: &Program,
     inputs_bytes: &[u8],
     untrusted_advice_bytes: &[u8],

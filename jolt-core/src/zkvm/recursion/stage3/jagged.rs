@@ -200,7 +200,6 @@ impl<F: JoltField, T: Transcript> JaggedSumcheckProver<F, T> {
             _marker: std::marker::PhantomData,
         }
     }
-
 }
 
 /// Helper function to convert index to binary representation
@@ -379,10 +378,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
 
         // Convert challenges to field elements, reversing to match high-to-low order
         // (sumcheck produces low-to-high, but we need high-to-low for polynomial evaluation)
-        let r_dense: Vec<F> = sumcheck_challenges
-            .iter()
-            .map(|c| (*c).into())
-            .collect();
+        let r_dense: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
 
         // Following the paper's Claim 3.2.1, adapted for row-based jaggedness:
         // Original formula: ˆft(zr, zc, i) = Σ_{y∈{0,1}^k} eq(zc, y) · ĝ(zr, i, t_{y-1}, t_y)

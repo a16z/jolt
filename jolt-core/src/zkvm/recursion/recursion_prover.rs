@@ -64,6 +64,7 @@ pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Fie
 
 /// Type alias for readability
 /// Unified prover for the recursion SNARK
+#[derive(Clone)]
 pub struct RecursionProver<F: JoltField = Fq> {
     /// The constraint system containing all constraints and witness data
     pub constraint_system: ConstraintSystem,
@@ -71,6 +72,90 @@ pub struct RecursionProver<F: JoltField = Fq> {
     pub gamma: F,
     /// Delta value for batching within constraints
     pub delta: F,
+}
+
+/// Builder for creating RecursionProver instances with a cleaner API
+/// Currently specialized to Fq field (will be made generic in future)
+pub struct RecursionProverBuilder {
+    witnesses: Option<
+        dory::recursion::WitnessCollection<crate::poly::commitment::dory::recursion::JoltWitness>,
+    >,
+    gamma: Option<Fq>,
+    delta: Option<Fq>,
+}
+
+impl RecursionProverBuilder {
+    /// Create a new builder
+    pub fn new() -> Self {
+        Self {
+            witnesses: None,
+            gamma: None,
+            delta: None,
+        }
+    }
+
+    /// Set the witness collection
+    pub fn with_witnesses(
+        mut self,
+        witnesses: dory::recursion::WitnessCollection<
+            crate::poly::commitment::dory::recursion::JoltWitness,
+        >,
+    ) -> Self {
+        self.witnesses = Some(witnesses);
+        self
+    }
+
+    /// Set the gamma and delta challenges
+    pub fn with_challenges(mut self, gamma: Fq, delta: Fq) -> Self {
+        self.gamma = Some(gamma);
+        self.delta = Some(delta);
+        self
+    }
+
+    /// Build the RecursionProver
+    pub fn build(self) -> Result<RecursionProver<Fq>, Box<dyn std::error::Error>> {
+        let witnesses = self.witnesses.ok_or("Witnesses not provided")?;
+        let gamma = self.gamma.ok_or("Gamma challenge not provided")?;
+        let delta = self.delta.ok_or("Delta challenge not provided")?;
+
+        // Convert witness collection to DoryRecursionWitness
+        let recursion_witness = RecursionProver::<Fq>::witnesses_to_dory_recursion(&witnesses)?;
+
+        // Build constraint system from witness collection using DoryMatrixBuilder
+        let constraint_system = RecursionProver::<Fq>::build_constraint_system(
+            &witnesses,
+            recursion_witness.gt_exp_witness.g_poly.clone(),
+        )?;
+
+        Ok(RecursionProver {
+            constraint_system,
+            gamma,
+            delta,
+        })
+    }
+
+    /// Convenience method to build from a Dory proof
+    pub fn from_dory_proof<T: Transcript>(
+        self,
+        dory_proof: &ArkDoryProof,
+        verifier_setup: &ArkworksVerifierSetup,
+        transcript: &mut T,
+        point: &[<Fr as JoltField>::Challenge],
+        evaluation: &Fr,
+        commitment: &ArkGT,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        // Use Dory's witness_gen to generate witnesses
+        let (witness_collection, _hints) = DoryCommitmentScheme::witness_gen(
+            dory_proof,
+            verifier_setup,
+            transcript,
+            point,
+            evaluation,
+            commitment,
+        )?;
+
+        Ok(self.with_witnesses(witness_collection))
+    }
 }
 
 impl RecursionProver<Fq> {
@@ -449,7 +534,7 @@ impl<F: JoltField> RecursionProver<F> {
     }
 
     /// Run Stage 1: Constraint sumchecks
-    fn prove_stage1<T: Transcript>(
+    pub(crate) fn prove_stage1<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
@@ -600,7 +685,7 @@ impl<F: JoltField> RecursionProver<F> {
     }
 
     /// Run Stage 2: Virtualization sumcheck
-    fn prove_stage2<T: Transcript>(
+    pub(crate) fn prove_stage2<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
@@ -647,7 +732,7 @@ impl<F: JoltField> RecursionProver<F> {
     }
 
     /// Run Stage 3: Jagged Transform Sumcheck
-    fn prove_stage3<T: Transcript>(
+    pub(crate) fn prove_stage3<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
@@ -695,7 +780,10 @@ impl<F: JoltField> RecursionProver<F> {
         let mut matrix_rows = Vec::with_capacity(num_polynomials);
         for poly_idx in 0..num_polynomials {
             let (constraint_idx, poly_type) = mapping.decode(poly_idx);
-            let matrix_row = self.constraint_system.matrix.row_index(poly_type, constraint_idx);
+            let matrix_row = self
+                .constraint_system
+                .matrix
+                .row_index(poly_type, constraint_idx);
             matrix_rows.push(matrix_row);
         }
 

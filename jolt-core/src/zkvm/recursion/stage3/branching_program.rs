@@ -258,16 +258,32 @@ impl JaggedBranchingProgram {
             let mut val = F::one();
 
             // eq(a_bit, za)
-            val *= if bits.a_bit { za_val } else { F::one() - za_val };
+            val *= if bits.a_bit {
+                za_val
+            } else {
+                F::one() - za_val
+            };
 
             // eq(b_bit, zb)
-            val *= if bits.b_bit { zb_val } else { F::one() - zb_val };
+            val *= if bits.b_bit {
+                zb_val
+            } else {
+                F::one() - zb_val
+            };
 
             // eq(c_bit, zc)
-            val *= if bits.c_bit { zc_val } else { F::one() - zc_val };
+            val *= if bits.c_bit {
+                zc_val
+            } else {
+                F::one() - zc_val
+            };
 
             // eq(d_bit, zd)
-            val *= if bits.d_bit { zd_val } else { F::one() - zd_val };
+            val *= if bits.d_bit {
+                zd_val
+            } else {
+                F::one() - zd_val
+            };
 
             eq_values[i] = val;
         }
@@ -290,8 +306,8 @@ impl JaggedBranchingProgram {
 mod tests {
     use super::*;
     use ark_bn254::Fq;
-    use ark_ff::{One, Zero};
     use ark_ff::UniformRand;
+    use ark_ff::{One, Zero};
 
     fn bool_vec(val: usize, len: usize) -> Vec<bool> {
         (0..len).map(|i| ((val >> i) & 1) != 0).collect()
@@ -310,19 +326,44 @@ mod tests {
         let prog = JaggedBranchingProgram::new(4);
 
         // Test: g(2, 5, 3, 8) = true because 5 < 8 AND 5 = 2 + 3
-        assert!(prog.eval_boolean(&bool_vec(2, 4), &bool_vec(5, 4), &bool_vec(3, 4), &bool_vec(8, 4)));
+        assert!(prog.eval_boolean(
+            &bool_vec(2, 4),
+            &bool_vec(5, 4),
+            &bool_vec(3, 4),
+            &bool_vec(8, 4)
+        ));
 
         // Test: g(2, 6, 3, 8) = false because 6 ≠ 2 + 3 (should be 5)
-        assert!(!prog.eval_boolean(&bool_vec(2, 4), &bool_vec(6, 4), &bool_vec(3, 4), &bool_vec(8, 4)));
+        assert!(!prog.eval_boolean(
+            &bool_vec(2, 4),
+            &bool_vec(6, 4),
+            &bool_vec(3, 4),
+            &bool_vec(8, 4)
+        ));
 
         // Test: g(2, 5, 3, 4) = false because 5 ≮ 4
-        assert!(!prog.eval_boolean(&bool_vec(2, 4), &bool_vec(5, 4), &bool_vec(3, 4), &bool_vec(4, 4)));
+        assert!(!prog.eval_boolean(
+            &bool_vec(2, 4),
+            &bool_vec(5, 4),
+            &bool_vec(3, 4),
+            &bool_vec(4, 4)
+        ));
 
         // Test: g(1, 3, 2, 10) = true because 3 < 10 AND 3 = 1 + 2
-        assert!(prog.eval_boolean(&bool_vec(1, 4), &bool_vec(3, 4), &bool_vec(2, 4), &bool_vec(10, 4)));
+        assert!(prog.eval_boolean(
+            &bool_vec(1, 4),
+            &bool_vec(3, 4),
+            &bool_vec(2, 4),
+            &bool_vec(10, 4)
+        ));
 
         // Edge case: g(0, 0, 0, 1) = true because 0 < 1 AND 0 = 0 + 0
-        assert!(prog.eval_boolean(&bool_vec(0, 4), &bool_vec(0, 4), &bool_vec(0, 4), &bool_vec(1, 4)));
+        assert!(prog.eval_boolean(
+            &bool_vec(0, 4),
+            &bool_vec(0, 4),
+            &bool_vec(0, 4),
+            &bool_vec(1, 4)
+        ));
     }
 
     #[test]
@@ -331,10 +372,26 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         // Random evaluation points
-        let za = Point::from(vec![Fq::rand(&mut rng), Fq::rand(&mut rng), Fq::rand(&mut rng)]);
-        let zb = Point::from(vec![Fq::rand(&mut rng), Fq::rand(&mut rng), Fq::rand(&mut rng)]);
-        let zc = Point::from(vec![Fq::rand(&mut rng), Fq::rand(&mut rng), Fq::rand(&mut rng)]);
-        let zd = Point::from(vec![Fq::rand(&mut rng), Fq::rand(&mut rng), Fq::rand(&mut rng)]);
+        let za = Point::from(vec![
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+        ]);
+        let zb = Point::from(vec![
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+        ]);
+        let zc = Point::from(vec![
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+        ]);
+        let zd = Point::from(vec![
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+            Fq::rand(&mut rng),
+        ]);
 
         // Compute MLE using branching program
         let mle_result = prog.eval_multilinear(&za, &zb, &zc, &zd);
@@ -346,8 +403,12 @@ mod tests {
                 for c_val in 0..8 {
                     for d_val in 0..8 {
                         // Check if g(a,b,c,d) = 1
-                        if prog.eval_boolean(&bool_vec(a_val, 3), &bool_vec(b_val, 3),
-                                           &bool_vec(c_val, 3), &bool_vec(d_val, 3)) {
+                        if prog.eval_boolean(
+                            &bool_vec(a_val, 3),
+                            &bool_vec(b_val, 3),
+                            &bool_vec(c_val, 3),
+                            &bool_vec(d_val, 3),
+                        ) {
                             // Add eq(a, za) * eq(b, zb) * eq(c, zc) * eq(d, zd)
                             let mut term = Fq::one();
 
@@ -382,9 +443,9 @@ mod tests {
     fn test_point_creation() {
         let p1 = Point::<Fq>::from_usize(5, 4);
         assert_eq!(p1.dimension(), 4);
-        assert_eq!(p1.get(0).unwrap(), &Fq::one());  // bit 0 = 1
+        assert_eq!(p1.get(0).unwrap(), &Fq::one()); // bit 0 = 1
         assert_eq!(p1.get(1).unwrap(), &Fq::zero()); // bit 1 = 0
-        assert_eq!(p1.get(2).unwrap(), &Fq::one());  // bit 2 = 1
+        assert_eq!(p1.get(2).unwrap(), &Fq::one()); // bit 2 = 1
         assert_eq!(p1.get(3).unwrap(), &Fq::zero()); // bit 3 = 0
 
         let p2 = Point::from(vec![Fq::one(), Fq::zero()]);

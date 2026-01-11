@@ -22,7 +22,13 @@ pub fn append_virtual_claim<T: Transcript>(
     opening_point: &OpeningPoint<BIG_ENDIAN, Fq>,
     claim: Fq,
 ) {
-    accumulator.append_virtual(transcript, polynomial, sumcheck_id, opening_point.clone(), claim);
+    accumulator.append_virtual(
+        transcript,
+        polynomial,
+        sumcheck_id,
+        opening_point.clone(),
+        claim,
+    );
 }
 
 /// Appends a virtual polynomial opening point to the verifier accumulator
@@ -47,6 +53,10 @@ pub fn get_virtual_claim(
         .openings
         .get(&opening_key)
         .map(|(_, claim)| *claim)
-        .unwrap_or_else(|| panic!("Virtual polynomial {:?} not found for sumcheck {:?}", polynomial, sumcheck_id))
+        .unwrap_or_else(|| {
+            panic!(
+                "Virtual polynomial {:?} not found for sumcheck {:?}",
+                polynomial, sumcheck_id
+            )
+        })
 }
-

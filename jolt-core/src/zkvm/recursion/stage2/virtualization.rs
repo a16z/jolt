@@ -25,11 +25,10 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_prover::SumcheckInstanceProver,
-        sumcheck_verifier::SumcheckInstanceVerifier,
+        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
-    zkvm::recursion::constraints_sys::{ConstraintSystem, ConstraintType, PolyType},
     transcripts::Transcript,
+    zkvm::recursion::constraints_sys::{ConstraintSystem, ConstraintType, PolyType},
     zkvm::witness::VirtualPolynomial,
 };
 use ark_bn254::Fq;
@@ -208,7 +207,8 @@ impl<F: JoltField, T: Transcript> RecursionVirtualizationProver<F, T> {
 
         let eq_r_s = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_s));
         // SAFETY: We checked F = Fq above, so this transmute is safe
-        let matrix_evals_f: Vec<F> = unsafe { std::mem::transmute(constraint_system.matrix.evaluations.clone()) };
+        let matrix_evals_f: Vec<F> =
+            unsafe { std::mem::transmute(constraint_system.matrix.evaluations.clone()) };
         let mut m_poly = MultilinearPolynomial::from(matrix_evals_f);
 
         // Matrix layout is [x_bits, s_bits] in little-endian
@@ -313,10 +313,11 @@ impl<F: JoltField, T: Transcript> RecursionVirtualizationProver<F, T> {
                         VirtualPolynomial::RecursionG1ScalarMulYANext(i),
                         SumcheckId::G1ScalarMul,
                     );
-                    let (_, t_is_infinity_claim) = stage1_accumulator.get_virtual_polynomial_opening(
-                        VirtualPolynomial::RecursionG1ScalarMulIndicator(i),
-                        SumcheckId::G1ScalarMul,
-                    );
+                    let (_, t_is_infinity_claim) = stage1_accumulator
+                        .get_virtual_polynomial_opening(
+                            VirtualPolynomial::RecursionG1ScalarMulIndicator(i),
+                            SumcheckId::G1ScalarMul,
+                        );
 
                     g1_x_a_claims[i] = x_a_claim;
                     g1_y_a_claims[i] = y_a_claim;
@@ -362,7 +363,9 @@ impl<F: JoltField, T: Transcript> RecursionVirtualizationProver<F, T> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RecursionVirtualizationProver<F, T> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for RecursionVirtualizationProver<F, T>
+{
     fn degree(&self) -> usize {
         2 // Degree 2 because eq(r_s, s) * M(s, x) in the s variables
     }
@@ -492,7 +495,9 @@ impl<F: JoltField> RecursionVirtualizationVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RecursionVirtualizationVerifier<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for RecursionVirtualizationVerifier<F>
+{
     fn degree(&self) -> usize {
         2 // Degree 2 because eq(r_s, s) * M(s, x) in the s variables
     }

@@ -10,7 +10,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningAccumulator, VerifierOpeningAccumulator, SumcheckId},
+        opening_proof::{OpeningAccumulator, SumcheckId, VerifierOpeningAccumulator},
     },
     transcripts::Transcript,
     zkvm::witness::VirtualPolynomial,
@@ -26,15 +26,10 @@ use super::{
         gt_mul::{GtMulParams, GtMulVerifier},
         square_and_multiply::{SquareAndMultiplyParams, SquareAndMultiplyVerifier},
     },
-    stage2::virtualization::{
-        RecursionVirtualizationParams, RecursionVirtualizationVerifier,
-    },
+    stage2::virtualization::{RecursionVirtualizationParams, RecursionVirtualizationVerifier},
     stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
 };
-use crate::subprotocols::{
-    sumcheck::BatchedSumcheck,
-    sumcheck_verifier::SumcheckInstanceVerifier,
-};
+use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_verifier::SumcheckInstanceVerifier};
 
 /// Input required by the verifier
 #[derive(Clone, Debug)]
@@ -127,13 +122,12 @@ impl<F: JoltField> RecursionVerifier<F> {
 
         // ============ PCS OPENING VERIFICATION ============
         // Verify opening proof using PCS
-        accumulator
-            .verify_single::<T, PCS>(
-                &proof.opening_proof,
-                matrix_commitment.clone(),
-                verifier_setup,
-                transcript,
-            )?;
+        accumulator.verify_single::<T, PCS>(
+            &proof.opening_proof,
+            matrix_commitment.clone(),
+            verifier_setup,
+            transcript,
+        )?;
 
         Ok(true)
     }
@@ -190,23 +184,15 @@ impl<F: JoltField> RecursionVerifier<F> {
         // Add GT exp verifier if we have GT exp constraints
         if num_gt_exp > 0 {
             let params = SquareAndMultiplyParams::new(num_gt_exp);
-            let verifier = SquareAndMultiplyVerifier::new(
-                params,
-                gt_exp_bits,
-                gt_exp_indices,
-                transcript,
-            );
+            let verifier =
+                SquareAndMultiplyVerifier::new(params, gt_exp_bits, gt_exp_indices, transcript);
             verifiers.push(Box::new(verifier));
         }
 
         // Add GT mul verifier if we have GT mul constraints
         if num_gt_mul > 0 {
             let params = GtMulParams::new(num_gt_mul);
-            let verifier = GtMulVerifier::new(
-                params,
-                gt_mul_indices,
-                transcript,
-            );
+            let verifier = GtMulVerifier::new(params, gt_mul_indices, transcript);
             verifiers.push(Box::new(verifier));
         }
 
@@ -230,12 +216,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         let verifier_refs: Vec<&dyn SumcheckInstanceVerifier<F, T>> =
             verifiers.iter().map(|v| &**v).collect();
 
-        let r_stage1 = BatchedSumcheck::verify(
-            proof,
-            verifier_refs,
-            accumulator,
-            transcript,
-        )?;
+        let r_stage1 = BatchedSumcheck::verify(proof, verifier_refs, accumulator, transcript)?;
 
         Ok(r_stage1)
     }
@@ -273,12 +254,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         );
 
         // Run virtualization sumcheck verification
-        let r_stage2 = BatchedSumcheck::verify(
-            proof,
-            vec![&verifier],
-            accumulator,
-            transcript,
-        )?;
+        let r_stage2 = BatchedSumcheck::verify(proof, vec![&verifier], accumulator, transcript)?;
 
         Ok(r_stage2)
     }
@@ -300,8 +276,10 @@ impl<F: JoltField> RecursionVerifier<F> {
         }
 
         // Get the Stage 2 opening claim (sparse matrix claim)
-        let (_, sparse_claim) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::DorySparseConstraintMatrix, SumcheckId::RecursionVirtualization);
+        let (_, sparse_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::DorySparseConstraintMatrix,
+            SumcheckId::RecursionVirtualization,
+        );
 
         // Convert challenges to field elements
         let r_s_final: Vec<F> = r_stage2
@@ -314,9 +292,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         // Calculate number of dense variables based on the true dense size
         // The dense polynomial now only includes unique values (no padding redundancy)
         let dense_size = <VarCountJaggedBijection as crate::zkvm::recursion::bijection::JaggedTransform<Fq>>::dense_size(&self.input.jagged_bijection);
-        let num_dense_vars = dense_size
-            .next_power_of_two()
-            .trailing_zeros() as usize;
+        let num_dense_vars = dense_size.next_power_of_two().trailing_zeros() as usize;
 
         // Create jagged sumcheck parameters
 
@@ -336,13 +312,7 @@ impl<F: JoltField> RecursionVerifier<F> {
             params,
         );
 
-
-        let r_stage3 = BatchedSumcheck::verify(
-            proof,
-            vec![&verifier],
-            accumulator,
-            transcript,
-        )?;
+        let r_stage3 = BatchedSumcheck::verify(proof, vec![&verifier], accumulator, transcript)?;
 
         Ok(r_stage3)
     }

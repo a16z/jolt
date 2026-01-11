@@ -35,9 +35,6 @@ use crate::zkvm::{
     },
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
-    recursion::{
-        recursion_verifier::{RecursionVerifier, RecursionVerifierInput},
-    },
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
@@ -46,6 +43,7 @@ use crate::zkvm::{
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
         verifier_accumulate_advice,
     },
+    recursion::recursion_verifier::{RecursionVerifier, RecursionVerifierInput},
     registers::{
         read_write_checking::RegistersReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
@@ -94,8 +92,12 @@ pub struct JoltVerifier<
     pub one_hot_params: OneHotParams,
 }
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + RecursionExt<F>, ProofTranscript: Transcript>
-    JoltVerifier<'a, F, PCS, ProofTranscript>
+impl<
+        'a,
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F> + RecursionExt<F>,
+        ProofTranscript: Transcript,
+    > JoltVerifier<'a, F, PCS, ProofTranscript>
 where
     <PCS as RecursionExt<F>>::Hint: Send + Sync + Clone + 'static,
 {
@@ -487,6 +489,7 @@ where
     }
 
     /// Stage 8: Dory batch opening verification.
+    #[allow(dead_code)]
     fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
         // Get the unified opening point from HammingWeightClaimReduction
         // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
@@ -573,7 +576,7 @@ where
 
         // Verify opening
         PCS::verify(
-            &self.proof.joint_opening_proof,
+            &self.proof.stage8_opening_proof,
             &self.preprocessing.generators,
             &mut self.transcript,
             &opening_point.r,
@@ -676,7 +679,7 @@ where
 
         // Verify opening using the hint-based PCS verifier
         PCS::verify_with_hint(
-            &self.proof.joint_opening_proof,
+            &self.proof.stage8_opening_proof,
             &self.preprocessing.generators,
             &mut self.transcript,
             &opening_point.r,
@@ -719,17 +722,21 @@ where
     {
         // 1. Verify Dory proof with hints
         // First check if hint exists and downcast it
-        let hint_exists = self.proof.stage8_pcs_hint.is_some();
+        let hint_exists = self.proof.stage9_pcs_hint.is_some();
         if !hint_exists {
-            return Err(anyhow::anyhow!("stage8_pcs_hint is required for recursion verification"));
+            return Err(anyhow::anyhow!(
+                "stage9_pcs_hint is required for recursion verification"
+            ));
         }
 
         // Now safely get and downcast the hint
-        let hint = self.proof.stage8_pcs_hint
+        let hint = self
+            .proof
+            .stage9_pcs_hint
             .as_ref()
             .unwrap()
             .downcast_ref::<<PCS as RecursionExt<F>>::Hint>()
-            .ok_or_else(|| anyhow::anyhow!("Failed to downcast stage8_pcs_hint"))?;
+            .ok_or_else(|| anyhow::anyhow!("Failed to downcast stage9_pcs_hint"))?;
 
         // Store hint data we need before mutable borrow
         let hint_clone = hint.clone();
@@ -762,10 +769,12 @@ where
                             // These are GT exp constraints
                             num_gt_exp = num_gt_exp.max(match poly {
                                 crate::zkvm::witness::VirtualPolynomial::RecursionBase(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoPrev(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoCurr(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionQuotient(i) => *i + 1,
-                        _ => 0,
+                                | crate::zkvm::witness::VirtualPolynomial::RecursionRhoPrev(i)
+                                | crate::zkvm::witness::VirtualPolynomial::RecursionRhoCurr(i)
+                                | crate::zkvm::witness::VirtualPolynomial::RecursionQuotient(i) => {
+                                    *i + 1
+                                }
+                                _ => 0,
                             });
                         }
                         crate::zkvm::witness::VirtualPolynomial::RecursionMulLhs(_)
@@ -777,7 +786,9 @@ where
                                 crate::zkvm::witness::VirtualPolynomial::RecursionMulLhs(i)
                                 | crate::zkvm::witness::VirtualPolynomial::RecursionMulRhs(i)
                                 | crate::zkvm::witness::VirtualPolynomial::RecursionMulResult(i)
-                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulQuotient(i) => *i + 1,
+                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulQuotient(
+                                    i,
+                                ) => *i + 1,
                                 _ => 0,
                             });
                         }
@@ -787,7 +798,9 @@ where
                         | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYT(_)
                         | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXANext(_)
                         | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYANext(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulIndicator(_) => {
+                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulIndicator(
+                            _,
+                        ) => {
                             // These are G1 scalar mul constraints
                             num_g1_scalar_mul = num_g1_scalar_mul.max(match poly {
                         crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXA(i)
@@ -808,7 +821,7 @@ where
         }
 
         // Use metadata from proof instead of placeholders
-        let metadata = &self.proof.recursion_constraint_metadata;
+        let metadata = &self.proof.stage10_recursion_metadata;
 
         let constraint_types = metadata.constraint_types.clone();
         let num_constraints = constraint_types.len();
@@ -817,7 +830,6 @@ where
         // The dense polynomial is created by the jagged bijection which compresses
         // the sparse matrix by removing redundant evaluations. We should use the
         // actual dense_num_vars from the metadata rather than trying to recalculate it.
-        let dense_num_vars = metadata.dense_num_vars;
 
         // Calculate the constraint system parameters for the verifier input
         // These are based on the original constraint matrix structure
@@ -847,15 +859,16 @@ where
         let recursion_verifier = RecursionVerifier::<Fq>::new(verifier_input);
 
         // Sample the same challenges from the main transcript that the prover did
-        let gamma: Fq = self.transcript.challenge_scalar();
-        let delta: Fq = self.transcript.challenge_scalar();
+        let _gamma: Fq = self.transcript.challenge_scalar();
+        let _delta: Fq = self.transcript.challenge_scalar();
 
         type HyraxPCS = Hyrax<1, GrumpkinProjective>;
 
         // Setup Hyrax from proof metadata
         let dense_num_vars = metadata.dense_num_vars;
         let hyrax_prover_setup = <HyraxPCS as CommitmentScheme>::setup_prover(dense_num_vars);
-        let hyrax_verifier_setup = <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
+        let hyrax_verifier_setup =
+            <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
 
         let verification_result = recursion_verifier
             .verify::<ProofTranscript, HyraxPCS>(

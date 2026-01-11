@@ -28,7 +28,9 @@ impl<G: CurveGroup> PedersenGenerators<G> {
     pub fn new(size: usize, label: &[u8]) -> Self {
         // Deterministic generation using label as seed
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(
-            label.iter().fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+            label
+                .iter()
+                .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64)),
         );
 
         Self {
@@ -55,7 +57,6 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
 
     (col_size, row_size)
 }
-
 
 #[derive(Default, Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
@@ -438,7 +439,9 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> Commitmen
                     commitments
                         .iter()
                         .zip(coeffs)
-                        .map(|(commitment, &coeff)| commitment.borrow().row_commitments[row_idx] * coeff)
+                        .map(|(commitment, &coeff)| {
+                            commitment.borrow().row_commitments[row_idx] * coeff
+                        })
                         .sum()
                 })
                 .collect();

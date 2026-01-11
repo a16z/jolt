@@ -22,16 +22,15 @@ use crate::{
         config::{OneHotConfig, ReadWriteConfig},
         instruction::{CircuitFlags, InstructionFlags},
         recursion::{
-            recursion_prover::RecursionProof,
             bijection::{ConstraintMapping, VarCountJaggedBijection},
             constraints_sys::ConstraintType,
+            recursion_prover::RecursionProof,
         },
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use ark_bn254::Fq;
 use ark_grumpkin::Projective as GrumpkinProjective;
-use crate::transcripts::Blake2bTranscript;
 
 /// Constraint metadata for the recursion verifier
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -43,26 +42,55 @@ pub struct RecursionConstraintMetadata {
     pub dense_num_vars: usize,
 }
 
+/// Jolt proof structure organized by verification stages
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+    // ============ Shared Data ============
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
+
+    // ============ Stage 1: R1CS Proof ============
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
     pub stage1_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+
+    // ============ Stage 2: Spartan Virtual Remainder ============
     pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
     pub stage2_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+
+    // ============ Stage 3: Spartan Shift ============
     pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+
+    // ============ Stage 4: Read-Write Memory Checking ============
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+
+    // ============ Stage 5: Registers & Bytecode ============
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+
+    // ============ Stage 6: Hamming Weight & Ra Claims ============
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+
+    // ============ Stage 7: Inc Claims & Virtualization ============
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub joint_opening_proof: PCS::Proof,
-    /// Recursion SNARK proof for efficient recursive verification
+
+    // ============ Stage 8: Dory Batch Opening ============
+    /// Dory polynomial commitment opening proof
+    pub stage8_opening_proof: PCS::Proof,
+
+    // ============ Stage 9: Recursion Witness Generation ============
+    /// PCS hint for recursion witness generation (not serialized)
+    pub stage9_pcs_hint: Option<Box<dyn std::any::Any + Send + Sync>>,
+
+    // ============ Stage 10: Constraint System Metadata ============
+    /// Constraint metadata extracted from recursion prover
+    pub stage10_recursion_metadata: RecursionConstraintMetadata,
+
+    // ============ Stages 11-13: Recursion SNARK ============
+    /// Combined proof containing:
+    /// - Stage 11: Recursion sumchecks (constraint, virtualization, jagged)
+    /// - Stage 12: Dense polynomial commitment
+    /// - Stage 13: Hyrax opening proof
     pub recursion_proof: RecursionProof<Fq, FS, Hyrax<1, GrumpkinProjective>>,
-    /// Hint for PCS recursion extension (used to accelerate recursion verification)
-    /// This field is not serialized and must be provided separately
-    pub stage8_pcs_hint: Option<Box<dyn std::any::Any + Send + Sync>>,
-    /// Constraint metadata for the recursion verifier
-    pub recursion_constraint_metadata: RecursionConstraintMetadata,
+
+    // ============ Advice Proofs ============
     /// Trusted advice opening proof at point from RamValEvaluation
     pub trusted_advice_val_evaluation_proof: Option<PCS::Proof>,
     /// Trusted advice opening proof at point from RamValFinalEvaluation
@@ -72,6 +100,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     /// Untrusted advice opening proof at point from RamValFinalEvaluation
     pub untrusted_advice_val_final_proof: Option<PCS::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
+
+    // ============ Configuration ============
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
@@ -87,31 +117,52 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.opening_claims.serialize_with_mode(&mut writer, compress)?;
-        self.commitments.serialize_with_mode(&mut writer, compress)?;
-        self.stage1_uni_skip_first_round_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage1_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage2_uni_skip_first_round_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage2_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage3_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage4_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage5_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage6_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
-        self.stage7_sumcheck_proof.serialize_with_mode(&mut writer, compress)?;
-        self.joint_opening_proof.serialize_with_mode(&mut writer, compress)?;
-        self.recursion_proof.serialize_with_mode(&mut writer, compress)?;
-        // Skip stage8_pcs_hint - it's not serializable
-        self.recursion_constraint_metadata.serialize_with_mode(&mut writer, compress)?;
-        self.trusted_advice_val_evaluation_proof.serialize_with_mode(&mut writer, compress)?;
-        self.trusted_advice_val_final_proof.serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_val_evaluation_proof.serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_val_final_proof.serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_commitment.serialize_with_mode(&mut writer, compress)?;
-        self.trace_length.serialize_with_mode(&mut writer, compress)?;
+        self.opening_claims
+            .serialize_with_mode(&mut writer, compress)?;
+        self.commitments
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage1_uni_skip_first_round_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage1_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2_uni_skip_first_round_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage3_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage4_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage5_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage6_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage7_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage8_opening_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        // Skip stage9_pcs_hint - it's not serializable
+        self.stage10_recursion_metadata
+            .serialize_with_mode(&mut writer, compress)?;
+        self.recursion_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.trusted_advice_val_evaluation_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.trusted_advice_val_final_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_val_evaluation_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_val_final_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_commitment
+            .serialize_with_mode(&mut writer, compress)?;
+        self.trace_length
+            .serialize_with_mode(&mut writer, compress)?;
         self.ram_K.serialize_with_mode(&mut writer, compress)?;
         self.bytecode_K.serialize_with_mode(&mut writer, compress)?;
         self.rw_config.serialize_with_mode(&mut writer, compress)?;
-        self.one_hot_config.serialize_with_mode(&mut writer, compress)?;
+        self.one_hot_config
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -127,10 +178,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.stage5_sumcheck_proof.serialized_size(compress)
             + self.stage6_sumcheck_proof.serialized_size(compress)
             + self.stage7_sumcheck_proof.serialized_size(compress)
-            + self.joint_opening_proof.serialized_size(compress)
+            + self.stage8_opening_proof.serialized_size(compress)
+            // Skip stage9_pcs_hint
+            + self.stage10_recursion_metadata.serialized_size(compress)
             + self.recursion_proof.serialized_size(compress)
-            // Skip stage8_pcs_hint
-            + self.recursion_constraint_metadata.serialized_size(compress)
             + self.trusted_advice_val_evaluation_proof.serialized_size(compress)
             + self.trusted_advice_val_final_proof.serialized_size(compress)
             + self.untrusted_advice_val_evaluation_proof.serialized_size(compress)
@@ -163,24 +214,92 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         Ok(Self {
             opening_claims: Claims::deserialize_with_mode(&mut reader, compress, validate)?,
             commitments: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage1_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage2_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage3_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage4_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage5_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage6_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage7_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            joint_opening_proof: PCS::Proof::deserialize_with_mode(&mut reader, compress, validate)?,
-            recursion_proof: RecursionProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage8_pcs_hint: None, // Always None when deserializing
-            recursion_constraint_metadata: RecursionConstraintMetadata::deserialize_with_mode(&mut reader, compress, validate)?,
-            trusted_advice_val_evaluation_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
-            trusted_advice_val_final_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
-            untrusted_advice_val_evaluation_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
-            untrusted_advice_val_final_proof: Option::deserialize_with_mode(&mut reader, compress, validate)?,
-            untrusted_advice_commitment: Option::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage1_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage2_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage3_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage4_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage5_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage6_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage7_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage8_opening_proof: PCS::Proof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage9_pcs_hint: None, // Always None when deserializing
+            stage10_recursion_metadata: RecursionConstraintMetadata::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            recursion_proof: RecursionProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            trusted_advice_val_evaluation_proof: Option::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            trusted_advice_val_final_proof: Option::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            untrusted_advice_val_evaluation_proof: Option::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            untrusted_advice_val_final_proof: Option::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            untrusted_advice_commitment: Option::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
             trace_length: usize::deserialize_with_mode(&mut reader, compress, validate)?,
             ram_K: usize::deserialize_with_mode(&mut reader, compress, validate)?,
             bytecode_K: usize::deserialize_with_mode(&mut reader, compress, validate)?,

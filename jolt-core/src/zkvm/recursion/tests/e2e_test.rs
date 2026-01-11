@@ -12,11 +12,7 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
     transcripts::{Blake2bTranscript, Transcript},
-    zkvm::{
-        recursion::{
-            ConstraintType, RecursionProver, RecursionVerifier, RecursionVerifierInput,
-        },
-    },
+    zkvm::recursion::{ConstraintType, RecursionProver, RecursionVerifier, RecursionVerifierInput},
 };
 use ark_bn254::{Fq, Fr};
 use ark_ff::UniformRand;
@@ -102,7 +98,8 @@ fn test_recursion_snark_e2e_with_dory() {
     let num_constraints_padded = prover.constraint_system.matrix.num_constraints_padded;
 
     // Build dense polynomial, bijection, and mapping for Stage 3
-    let (dense_poly, jagged_bijection, jagged_mapping) = prover.constraint_system.build_dense_polynomial();
+    let (dense_poly, jagged_bijection, jagged_mapping) =
+        prover.constraint_system.build_dense_polynomial();
     let dense_num_vars = dense_poly.get_num_vars();
 
     // Precompute matrix row indices for all polynomial indices
@@ -110,10 +107,12 @@ fn test_recursion_snark_e2e_with_dory() {
     let mut matrix_rows = Vec::with_capacity(num_polynomials);
     for poly_idx in 0..num_polynomials {
         let (constraint_idx, poly_type) = jagged_mapping.decode(poly_idx);
-        let matrix_row = prover.constraint_system.matrix.row_index(poly_type, constraint_idx);
+        let matrix_row = prover
+            .constraint_system
+            .matrix
+            .row_index(poly_type, constraint_idx);
         matrix_rows.push(matrix_row);
     }
-
 
     // Extract constraint types for verification
     let constraint_types: Vec<ConstraintType> = prover

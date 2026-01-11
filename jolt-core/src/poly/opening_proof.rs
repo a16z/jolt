@@ -6,7 +6,10 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 use crate::{
-    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
+    poly::{
+        rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
+        rlc_utils::compute_rlc_coefficients,
+    },
     zkvm::config::OneHotParams,
 };
 use allocative::Allocative;
@@ -20,18 +23,20 @@ use std::sync::Arc;
 use super::{
     commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::MultilinearPolynomial,
 };
+use crate::utils::errors::ProofVerifyError;
 use crate::{
     field::JoltField,
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
-use crate::utils::errors::ProofVerifyError;
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq, Default, Allocative, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Default, Allocative, CanonicalSerialize, CanonicalDeserialize,
+)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F::Challenge>,
 }
@@ -256,11 +261,9 @@ impl<F: JoltField> DoryOpeningState<F> {
         rlc_streaming_data: Arc<RLCStreamingData>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
-        // Accumulate gamma coefficients per polynomial
-        let mut rlc_map = BTreeMap::new();
-        for (gamma, (poly, _claim)) in self.gamma_powers.iter().zip(self.polynomial_claims.iter()) {
-            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-        }
+        // Accumulate gamma coefficients per polynomial using shared utility
+        let rlc_map =
+            compute_rlc_coefficients(&self.gamma_powers, self.polynomial_claims.iter().cloned());
 
         let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
             rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
@@ -480,7 +483,9 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<PCS::Proof, ProofVerifyError> {
         // 1. Find all committed polynomial openings (ignore virtual ones)
-        let committed_openings: Vec<_> = self.openings.iter()
+        let committed_openings: Vec<_> = self
+            .openings
+            .iter()
             .filter(|(id, _)| matches!(id, OpeningId::Committed(_, _)))
             .collect();
 
@@ -693,7 +698,9 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // 1. Find all committed polynomial openings (ignore virtual ones)
-        let committed_openings: Vec<_> = self.openings.iter()
+        let committed_openings: Vec<_> = self
+            .openings
+            .iter()
             .filter(|(id, _)| matches!(id, OpeningId::Committed(_, _)))
             .collect();
 

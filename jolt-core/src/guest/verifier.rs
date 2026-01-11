@@ -26,7 +26,11 @@ pub fn preprocess(
     JoltVerifierPreprocessing::new(shared, verifier_setup)
 }
 
-pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F> + RecursionExt<F>, FS: Transcript>(
+pub fn verify<
+    F: JoltField,
+    PCS: StreamingCommitmentScheme<Field = F> + RecursionExt<F>,
+    FS: Transcript,
+>(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],

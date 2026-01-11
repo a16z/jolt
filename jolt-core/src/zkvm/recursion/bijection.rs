@@ -237,26 +237,33 @@ impl ConstraintSystemJaggedBuilder {
                     ConstraintType::GtExp { .. } => {
                         // GT exp uses Base, RhoPrev, RhoCurr, Quotient
                         match poly_type {
-                            PolyType::Base | PolyType::RhoPrev |
-                            PolyType::RhoCurr | PolyType::Quotient => Some(4),
+                            PolyType::Base
+                            | PolyType::RhoPrev
+                            | PolyType::RhoCurr
+                            | PolyType::Quotient => Some(4),
                             _ => None,
                         }
                     }
                     ConstraintType::GtMul => {
                         // GT mul uses MulLhs, MulRhs, MulResult, MulQuotient
                         match poly_type {
-                            PolyType::MulLhs | PolyType::MulRhs |
-                            PolyType::MulResult | PolyType::MulQuotient => Some(4),
+                            PolyType::MulLhs
+                            | PolyType::MulRhs
+                            | PolyType::MulResult
+                            | PolyType::MulQuotient => Some(4),
                             _ => None,
                         }
                     }
                     ConstraintType::G1ScalarMul { .. } => {
                         // G1 scalar mul uses all G1ScalarMul* types
                         match poly_type {
-                            PolyType::G1ScalarMulXA | PolyType::G1ScalarMulYA |
-                            PolyType::G1ScalarMulXT | PolyType::G1ScalarMulYT |
-                            PolyType::G1ScalarMulXANext | PolyType::G1ScalarMulYANext |
-                            PolyType::G1ScalarMulIndicator => Some(8),
+                            PolyType::G1ScalarMulXA
+                            | PolyType::G1ScalarMulYA
+                            | PolyType::G1ScalarMulXT
+                            | PolyType::G1ScalarMulYT
+                            | PolyType::G1ScalarMulXANext
+                            | PolyType::G1ScalarMulYANext
+                            | PolyType::G1ScalarMulIndicator => Some(8),
                             _ => None,
                         }
                     }
@@ -307,14 +314,17 @@ impl ConstraintSystem {
 
         // Extract only native (non-padded) evaluations
         for dense_idx in 0..dense_size {
-            let poly_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, dense_idx);
-            let eval_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&bijection, dense_idx);
+            let poly_idx =
+                <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, dense_idx);
+            let eval_idx =
+                <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&bijection, dense_idx);
 
             let (constraint_idx, poly_type) = mapping.decode(poly_idx);
 
             // Get the number of variables for this polynomial
-            let _num_vars =
-                <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(&bijection, poly_idx);
+            let _num_vars = <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(
+                &bijection, poly_idx,
+            );
 
             // Get the row in the matrix
             let matrix_row = self.matrix.row_index(poly_type, constraint_idx);
@@ -322,7 +332,7 @@ impl ConstraintSystem {
 
             // For 4-var polynomials with zero padding, values are stored directly
             // at the beginning of the padded array (no repetition).
-            let sparse_idx = eval_idx;  // Direct indexing for both 4-var and 8-var
+            let sparse_idx = eval_idx; // Direct indexing for both 4-var and 8-var
 
             dense_evals.push(self.matrix.evaluations[offset + sparse_idx]);
         }
@@ -330,7 +340,10 @@ impl ConstraintSystem {
         // Debug: show dense polynomial size before padding
         eprintln!("Dense polynomial construction:");
         eprintln!("  dense_evals.len() before padding: {}", dense_evals.len());
-        eprintln!("  bijection.dense_size(): {}", <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection));
+        eprintln!(
+            "  bijection.dense_size(): {}",
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection)
+        );
 
         // Pad to power of 2 for multilinear polynomial
         use ark_ff::Zero;

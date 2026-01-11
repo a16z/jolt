@@ -268,20 +268,20 @@ pub enum VirtualPolynomial {
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
     // Recursion protocol virtual polynomials - indexed by constraint index
-    RecursionBase(usize),      // a(x) values for constraint i (GT exp)
-    RecursionRhoPrev(usize),   // ρ_j values for constraint i (GT exp)
-    RecursionRhoCurr(usize),   // ρ_{j+1} values for constraint i (GT exp)
-    RecursionQuotient(usize),  // Q_j values for constraint i (GT exp)
+    RecursionBase(usize),     // a(x) values for constraint i (GT exp)
+    RecursionRhoPrev(usize),  // ρ_j values for constraint i (GT exp)
+    RecursionRhoCurr(usize),  // ρ_{j+1} values for constraint i (GT exp)
+    RecursionQuotient(usize), // Q_j values for constraint i (GT exp)
     // GT multiplication virtual polynomials - indexed by constraint index
-    RecursionMulLhs(usize),    // Left operand a(x) for GT mul constraint i
-    RecursionMulRhs(usize),    // Right operand b(x) for GT mul constraint i
-    RecursionMulResult(usize), // Result c(x) for GT mul constraint i
+    RecursionMulLhs(usize),      // Left operand a(x) for GT mul constraint i
+    RecursionMulRhs(usize),      // Right operand b(x) for GT mul constraint i
+    RecursionMulResult(usize),   // Result c(x) for GT mul constraint i
     RecursionMulQuotient(usize), // Quotient Q(x) for GT mul constraint i
     // G1 scalar multiplication virtual polynomials - indexed by constraint index
-    RecursionG1ScalarMulXA(usize),     // x_A values for G1 scalar mul constraint i
-    RecursionG1ScalarMulYA(usize),     // y_A values for G1 scalar mul constraint i
-    RecursionG1ScalarMulXT(usize),     // x_T values for G1 scalar mul constraint i
-    RecursionG1ScalarMulYT(usize),     // y_T values for G1 scalar mul constraint i
+    RecursionG1ScalarMulXA(usize), // x_A values for G1 scalar mul constraint i
+    RecursionG1ScalarMulYA(usize), // y_A values for G1 scalar mul constraint i
+    RecursionG1ScalarMulXT(usize), // x_T values for G1 scalar mul constraint i
+    RecursionG1ScalarMulYT(usize), // y_T values for G1 scalar mul constraint i
     RecursionG1ScalarMulXANext(usize), // x_A' values (shifted) for G1 scalar mul constraint i
     RecursionG1ScalarMulYANext(usize), // y_A' values (shifted) for G1 scalar mul constraint i
     RecursionG1ScalarMulIndicator(usize), // Infinity indicator for G1 scalar mul constraint i

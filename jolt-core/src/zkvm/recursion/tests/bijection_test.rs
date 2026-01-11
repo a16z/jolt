@@ -3,25 +3,25 @@ use crate::zkvm::recursion::bijection::*;
 use crate::zkvm::recursion::constraints_sys::{
     ConstraintSystem, ConstraintType, MatrixConstraint, PolyType,
 };
-use ark_bn254::Fq;
-use ark_ff::{One, Zero};
-use rand::{rngs::StdRng, SeedableRng};
 use crate::{
     field::JoltField,
     poly::{
+        commitment::{
+            commitment_scheme::CommitmentScheme,
+            dory::{DoryCommitmentScheme, DoryGlobals},
+        },
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        commitment::{
-            dory::{DoryCommitmentScheme, DoryGlobals},
-            commitment_scheme::CommitmentScheme,
-        },
     },
-    zkvm::recursion::RecursionProver,
     transcripts::{Blake2bTranscript, Transcript},
+    zkvm::recursion::RecursionProver,
 };
-use ark_ff::UniformRand;
-use ark_std::test_rng;
+use ark_bn254::Fq;
 use ark_bn254::Fr;
+use ark_ff::UniformRand;
+use ark_ff::{One, Zero};
+use ark_std::test_rng;
+use rand::{rngs::StdRng, SeedableRng};
 use serial_test::serial;
 
 fn create_mixed_constraint_system() -> ConstraintSystem {
@@ -59,7 +59,8 @@ fn create_mixed_constraint_system() -> ConstraintSystem {
     ConstraintSystem::from_witness(
         constraints.into_iter().map(|c| c.constraint_type).collect(),
         g_poly,
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 #[test]
@@ -70,7 +71,10 @@ fn test_bijection_with_constraint_system() {
 
     assert_eq!(bijection.num_polynomials(), 27);
     assert_eq!(mapping.num_polynomials(), 27);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection), 20 * 16 + 7 * 256);
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection),
+        20 * 16 + 7 * 256
+    );
 
     let (c_idx, p_type) = mapping.decode(0);
     assert_eq!(c_idx, 0);
@@ -137,22 +141,55 @@ fn test_dense_polynomial_extraction() {
 #[test]
 fn test_bijection_boundary_cases() {
     let empty_bijection = VarCountJaggedBijection::new(vec![]);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&empty_bijection), 0);
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&empty_bijection),
+        0
+    );
     assert_eq!(empty_bijection.num_polynomials(), 0);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&empty_bijection, 0, 0), None);
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&empty_bijection, 0, 0),
+        None
+    );
 
     let single = VarCountJaggedBijection::new(vec![JaggedPolynomial::new(3)]);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&single), 8);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::row(&single, 0), 0);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::row(&single, 7), 0);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&single, 0, 7), Some(7));
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&single, 0, 8), None);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&single, 1, 0), None);
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&single),
+        8
+    );
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&single, 0),
+        0
+    );
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&single, 7),
+        0
+    );
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&single, 0, 7),
+        Some(7)
+    );
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&single, 0, 8),
+        None
+    );
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&single, 1, 0),
+        None
+    );
 
     let large = VarCountJaggedBijection::new(vec![JaggedPolynomial::new(10)]);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&large), 1024);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::row(&large, 1023), 0);
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::col(&large, 1023), 1023);
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&large),
+        1024
+    );
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&large, 1023),
+        0
+    );
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&large, 1023),
+        1023
+    );
 }
 
 #[test]
@@ -170,15 +207,36 @@ fn test_mixed_variable_counts() {
     let bijection = VarCountJaggedBijection::new(polys);
 
     let expected_size = 4 + 8 + 16 + 32 + 64 + 128 + 256;
-    assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection), expected_size);
+    assert_eq!(
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection),
+        expected_size
+    );
 
     let mut cumulative = 0;
     for (i, size) in [4, 8, 16, 32, 64, 128, 256].iter().enumerate() {
-        assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, cumulative), i);
-        assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::col(&bijection, cumulative), 0);
+        assert_eq!(
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, cumulative),
+            i
+        );
+        assert_eq!(
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&bijection, cumulative),
+            0
+        );
 
-        assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, cumulative + size - 1), i);
-        assert_eq!(<VarCountJaggedBijection as JaggedTransform<Fq>>::col(&bijection, cumulative + size - 1), size - 1);
+        assert_eq!(
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::row(
+                &bijection,
+                cumulative + size - 1
+            ),
+            i
+        );
+        assert_eq!(
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::col(
+                &bijection,
+                cumulative + size - 1
+            ),
+            size - 1
+        );
 
         cumulative += size;
     }
@@ -248,10 +306,8 @@ fn test_constraint_mapping_consistency() {
 #[test]
 #[should_panic(expected = "Dense index 100 out of bounds")]
 fn test_out_of_bounds_access() {
-    let bijection = VarCountJaggedBijection::new(vec![
-        JaggedPolynomial::new(3),
-        JaggedPolynomial::new(4),
-    ]);
+    let bijection =
+        VarCountJaggedBijection::new(vec![JaggedPolynomial::new(3), JaggedPolynomial::new(4)]);
 
     <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, 100);
 }
@@ -334,15 +390,19 @@ fn test_jagged_bijection_with_real_dory_proof() {
         );
     }
 
-    for dense_idx in 0..<VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection).min(100) {
+    for dense_idx in
+        0..<VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection).min(100)
+    {
         let row = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&bijection, dense_idx);
         let col = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&bijection, dense_idx);
 
-        let reconstructed = <VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&bijection, row, col)
-            .expect("Should map back");
+        let reconstructed =
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(&bijection, row, col)
+                .expect("Should map back");
         assert_eq!(reconstructed, dense_idx);
 
-        let num_vars = <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(&bijection, row);
+        let num_vars =
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(&bijection, row);
         assert!(
             num_vars == 4 || num_vars == 8,
             "Expected 4 or 8 variables, got {}",
@@ -421,17 +481,15 @@ fn test_jagged_relation_with_constraint_system() {
     let mut eval_point = Vec::new();
     eval_point.extend_from_slice(&zc);
     eval_point.extend_from_slice(&zr);
-    let eval_challenges: Vec<<Fq as JoltField>::Challenge> = eval_point
-        .iter()
-        .rev()
-        .map(|&x| x.into())
-        .collect();
+    let eval_challenges: Vec<<Fq as JoltField>::Challenge> =
+        eval_point.iter().rev().map(|&x| x.into()).collect();
     let sparse_eval = PolynomialEvaluation::evaluate(&sparse_mlpoly, &eval_challenges);
 
     let eq_row_evals = EqPolynomial::<Fq>::evals(&zr);
     let eq_col_evals = EqPolynomial::<Fq>::evals(&zc);
 
-    let dense_size = <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
+    let dense_size =
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
     let mut dense_eval = Fq::zero();
 
     for i in 0..dense_size {
@@ -489,15 +547,20 @@ fn test_sparse_dense_isomorphism_value_by_value() {
     let builder = ConstraintSystemJaggedBuilder::from_constraints(&constraint_system.constraints);
     let (_, mapping) = builder.build();
 
-    let dense_size = <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
+    let dense_size =
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
 
     for dense_idx in 0..dense_size {
-        let poly_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, dense_idx);
-        let eval_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, dense_idx);
+        let poly_idx =
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, dense_idx);
+        let eval_idx =
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, dense_idx);
 
         let (constraint_idx, poly_type) = mapping.decode(poly_idx);
 
-        let matrix_row = constraint_system.matrix.row_index(poly_type, constraint_idx);
+        let matrix_row = constraint_system
+            .matrix
+            .row_index(poly_type, constraint_idx);
         let storage_offset = constraint_system.matrix.storage_offset(matrix_row);
 
         let sparse_idx = eval_idx;
@@ -523,11 +586,8 @@ fn test_sparse_dense_isomorphism_value_by_value() {
     let mut eval_point = Vec::new();
     eval_point.extend_from_slice(&zc);
     eval_point.extend_from_slice(&zr);
-    let eval_challenges: Vec<<Fq as JoltField>::Challenge> = eval_point
-        .iter()
-        .rev()
-        .map(|&x| x.into())
-        .collect();
+    let eval_challenges: Vec<<Fq as JoltField>::Challenge> =
+        eval_point.iter().rev().map(|&x| x.into()).collect();
     let sparse_eval = PolynomialEvaluation::evaluate(&sparse_mlpoly, &eval_challenges);
 
     let eq_row_evals = EqPolynomial::<Fq>::evals(&zr);
@@ -609,7 +669,8 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
     let constraint_system = &prover.constraint_system;
     let (dense_poly, jagged_bijection, _mapping) = constraint_system.build_dense_polynomial();
 
-    let dense_size = <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
+    let dense_size =
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
 
     let builder = ConstraintSystemJaggedBuilder::from_constraints(&constraint_system.constraints);
     let polynomials_info = builder.polynomials.clone();
@@ -617,12 +678,16 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
 
     let sample_size = 100.min(dense_size);
     for dense_idx in (0..dense_size).step_by(dense_size / sample_size) {
-        let row = <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, dense_idx);
-        let col = <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, dense_idx);
+        let row =
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::row(&jagged_bijection, dense_idx);
+        let col =
+            <VarCountJaggedBijection as JaggedTransform<Fq>>::col(&jagged_bijection, dense_idx);
 
         let (constraint_idx, poly_type) = mapping.decode(row);
 
-        let matrix_row = constraint_system.matrix.row_index(poly_type, constraint_idx);
+        let matrix_row = constraint_system
+            .matrix
+            .row_index(poly_type, constraint_idx);
         let storage_offset = constraint_system.matrix.storage_offset(matrix_row);
 
         let sparse_idx = col;
@@ -631,9 +696,13 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
         let dense_value = dense_poly.Z[dense_idx];
 
         assert_eq!(
-            sparse_value, dense_value,
+            sparse_value,
+            dense_value,
             "Bijection failed at dense[{}] → sparse[{}] (poly {} type {:?})",
-            dense_idx, storage_offset + sparse_idx, row, poly_type
+            dense_idx,
+            storage_offset + sparse_idx,
+            row,
+            poly_type
         );
     }
 
@@ -655,14 +724,15 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
                 PolyType::MulResult,
                 PolyType::MulQuotient,
             ],
-            ConstraintType::G1ScalarMul { .. } => vec![
-                PolyType::G1ScalarMulXA,
-                PolyType::G1ScalarMulYA,
-            ],
+            ConstraintType::G1ScalarMul { .. } => {
+                vec![PolyType::G1ScalarMulXA, PolyType::G1ScalarMulYA]
+            }
         };
 
         for poly_type in poly_types {
-            let matrix_row = constraint_system.matrix.row_index(poly_type, constraint_idx);
+            let matrix_row = constraint_system
+                .matrix
+                .row_index(poly_type, constraint_idx);
             let storage_offset = constraint_system.matrix.storage_offset(matrix_row);
 
             let num_vars = match constraint_type {
@@ -679,9 +749,7 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
 
                 let poly_idx = polynomials_info
                     .iter()
-                    .position(|(c_idx, p_type, _)| {
-                        *c_idx == constraint_idx && *p_type == poly_type
-                    })
+                    .position(|(c_idx, p_type, _)| *c_idx == constraint_idx && *p_type == poly_type)
                     .expect("Should find polynomial");
 
                 let dense_idx = <VarCountJaggedBijection as JaggedTransform<Fq>>::sparse_to_dense(
@@ -708,7 +776,9 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
         if let ConstraintType::GtExp { .. } | ConstraintType::GtMul =
             &constraint_system.constraints[constraint_idx].constraint_type
         {
-            let matrix_row = constraint_system.matrix.row_index(PolyType::Base, constraint_idx);
+            let matrix_row = constraint_system
+                .matrix
+                .row_index(PolyType::Base, constraint_idx);
             let storage_offset = constraint_system.matrix.storage_offset(matrix_row);
 
             let mut has_nonzero = false;
@@ -718,7 +788,10 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
                     break;
                 }
             }
-            assert!(has_nonzero, "Should have at least one non-zero value in first 16 positions");
+            assert!(
+                has_nonzero,
+                "Should have at least one non-zero value in first 16 positions"
+            );
 
             for i in 16..256 {
                 assert!(

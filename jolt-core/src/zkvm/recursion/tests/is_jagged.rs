@@ -99,7 +99,9 @@ fn test_dory_matrix_is_jagged() {
             assert!(
                 val.is_zero(),
                 "Row {} should have all zeros past height {}, but found non-zero at position {}",
-                row_idx, height, i
+                row_idx,
+                height,
+                i
             );
         }
 

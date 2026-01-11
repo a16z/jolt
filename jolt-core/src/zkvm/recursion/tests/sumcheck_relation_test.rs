@@ -125,7 +125,8 @@ fn test_sumcheck_relation_with_mapping() {
     // where f_t(zs, zx, i) = eq(row_t(i), zs) · eq(col_t(i), zx)
     // But row_t(i) gives poly_idx, which needs to be mapped to matrix_row
 
-    let dense_size = <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
+    let dense_size =
+        <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&jagged_bijection);
     let mut sumcheck_sum = Fq::zero();
 
     // Precompute matrix rows
@@ -133,7 +134,9 @@ fn test_sumcheck_relation_with_mapping() {
     let mut matrix_rows = Vec::with_capacity(num_polynomials);
     for poly_idx in 0..num_polynomials {
         let (constraint_idx, poly_type) = mapping.decode(poly_idx);
-        let matrix_row = constraint_system.matrix.row_index(poly_type, constraint_idx);
+        let matrix_row = constraint_system
+            .matrix
+            .row_index(poly_type, constraint_idx);
         matrix_rows.push(matrix_row);
     }
 
@@ -211,7 +214,10 @@ fn test_sumcheck_relation_with_mapping() {
     println!("\nAfter sumcheck:");
     println!("q̂(r_dense) = {:?}", q_at_r);
     println!("f̂_t(zs, zx, r_dense) = {:?}", f_t_at_r);
-    println!("Sumcheck final claim ĥ(r_dense) = {:?}", sumcheck_final_claim);
+    println!(
+        "Sumcheck final claim ĥ(r_dense) = {:?}",
+        sumcheck_final_claim
+    );
 
     // The sumcheck verifier would check that this final claim is consistent
     // with the univariate polynomial evaluations from the last round.

@@ -290,10 +290,10 @@ fn prove_example_with_trace(
 
     // Stage 8: Dory opening proof (curve points - benefits from compression)
     let stage8_size_compressed = jolt_proof
-        .joint_opening_proof
+        .stage8_opening_proof
         .serialized_size(ark_serialize::Compress::Yes);
     let stage8_size_uncompressed = jolt_proof
-        .joint_opening_proof
+        .stage8_opening_proof
         .serialized_size(ark_serialize::Compress::No);
 
     // Commitments (curve points - benefits from compression)

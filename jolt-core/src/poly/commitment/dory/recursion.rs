@@ -13,12 +13,12 @@ use std::{marker::PhantomData, rc::Rc};
 
 use super::{
     commitment_scheme::DoryCommitmentScheme,
+    g1_scalar_mul_witness::ScalarMultiplicationSteps,
+    gt_mul_witness::MultiplicationSteps,
     jolt_dory_routines::{JoltG1Routines, JoltG2Routines},
     wrappers::{
         ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkworksVerifierSetup, JoltToDoryTranscript,
     },
-    gt_mul_witness::MultiplicationSteps,
-    g1_scalar_mul_witness::ScalarMultiplicationSteps,
 };
 use crate::poly::commitment::commitment_scheme::RecursionExt;
 use crate::utils::errors::ProofVerifyError;
@@ -48,11 +48,11 @@ impl WitnessResult<ArkGT> for JoltGtExpWitness {
 /// GTMul witness following the MultiplicationSteps pattern
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGtMulWitness {
-    pub lhs: Fq12,              // Left operand (a)
-    pub rhs: Fq12,              // Right operand (b)
-    pub result: Fq12,           // Product (c = a × b)
-    pub quotient_mle: Vec<Fq>,  // Quotient polynomial Q(x)
-    ark_result: ArkGT,          // For WitnessResult trait
+    pub lhs: Fq12,             // Left operand (a)
+    pub rhs: Fq12,             // Right operand (b)
+    pub result: Fq12,          // Product (c = a × b)
+    pub quotient_mle: Vec<Fq>, // Quotient polynomial Q(x)
+    ark_result: ArkGT,         // For WitnessResult trait
 }
 
 impl WitnessResult<ArkGT> for JoltGtMulWitness {
