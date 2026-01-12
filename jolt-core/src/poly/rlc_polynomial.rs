@@ -1,5 +1,4 @@
 use crate::field::{BarrettReduce, FMAdd, JoltField};
-use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::Acc6S;
@@ -10,8 +9,6 @@ use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
 use allocative::Allocative;
-use ark_bn254::{Fr, G1Projective};
-use ark_ec::CurveGroup;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
@@ -20,7 +17,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracer::ChunksIterator;
 use tracer::{instruction::Cycle, LazyTraceIterator};
-use tracing::trace_span;
 
 #[derive(Clone, Debug)]
 pub struct RLCStreamingData {
@@ -267,82 +263,6 @@ impl<F: JoltField> RLCPolynomial<F> {
         result
     }
 
-    /// Commits to the rows of `RLCPolynomial`, viewing its coefficients
-    /// as a matrix (used in Dory).
-    /// We do so by computing the row commitments for the individual
-    /// polynomials comprising the linear combination, and taking the
-    /// linear combination of the resulting commitments.
-    // TODO(moodlezoup): we should be able to cache the row commitments
-    // for each underlying polynomial and take a linear combination of those
-    #[tracing::instrument(skip_all, name = "RLCPolynomial::commit_rows")]
-    pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
-        &self,
-        bases: &[G::Affine],
-    ) -> Vec<G> {
-        let num_rows = DoryGlobals::get_max_num_rows();
-        tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
-        let row_len = DoryGlobals::get_num_columns();
-
-        let mut row_commitments = vec![G::zero(); num_rows];
-
-        // Compute the row commitments for the dense submatrix.
-        // Dense polynomials always use cycle-major indexing regardless of DoryLayout.
-        // The AddressMajor layout only affects OneHot polynomials.
-        let dense_bases = &bases[..row_len];
-
-        self.dense_rlc
-            .par_chunks(row_len)
-            .zip(row_commitments.par_iter_mut())
-            .for_each(|(dense_row, commitment)| {
-                let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(&dense_bases[..dense_row.len()], dense_row)
-                        .unwrap();
-                *commitment += msm_result
-            });
-
-        // Compute the row commitments for one-hot polynomials
-        for (coeff, poly) in self.one_hot_rlc.iter() {
-            let mut new_row_commitments: Vec<G> = match poly.as_ref() {
-                MultilinearPolynomial::OneHot(one_hot) => one_hot.commit_rows(bases),
-                _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
-            };
-
-            // TODO(moodlezoup): Avoid resize
-            new_row_commitments.resize(num_rows, G::zero());
-
-            let updated_row_commitments: &mut [G1Projective] = unsafe {
-                std::slice::from_raw_parts_mut(
-                    new_row_commitments.as_mut_ptr() as *mut G1Projective,
-                    new_row_commitments.len(),
-                )
-            };
-
-            let current_row_commitments: &[G1Projective] = unsafe {
-                std::slice::from_raw_parts(
-                    row_commitments.as_ptr() as *const G1Projective,
-                    row_commitments.len(),
-                )
-            };
-
-            let coeff_fr = unsafe { *(&raw const *coeff as *const Fr) };
-
-            let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
-            let _enter = _span.enter();
-
-            // Scales the row commitments for the current polynomial by
-            // its coefficient
-            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-                updated_row_commitments,
-                coeff_fr,
-                current_row_commitments,
-            );
-
-            let _ = std::mem::replace(&mut row_commitments, new_row_commitments);
-        }
-
-        row_commitments
-    }
-
     /// Computes a vector-matrix product, viewing the coefficients of the
     /// polynomial as a matrix (used in Dory).
     /// We do so by computing the vector-matrix product for the individual
@@ -358,19 +278,40 @@ impl<F: JoltField> RLCPolynomial<F> {
             self.streaming_vector_matrix_product(left_vec, num_columns, Arc::clone(ctx))
         } else {
             let mut dense_result = vec![F::zero(); num_columns];
-            dense_result
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(col_idx, dest)| {
-                    *dest = self
-                        .dense_rlc
-                        .iter()
-                        .skip(col_idx)
-                        .step_by(num_columns)
-                        .zip(left_vec.iter())
-                        .map(|(&a, &b)| a * b)
-                        .sum();
-                });
+            match DoryGlobals::get_layout() {
+                DoryLayout::CycleMajor => {
+                    dense_result
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(col_idx, dest)| {
+                            *dest = self
+                                .dense_rlc
+                                .iter()
+                                .skip(col_idx)
+                                .step_by(num_columns)
+                                .zip(left_vec.iter())
+                                .map(|(&a, &b)| a * b)
+                                .sum();
+                        });
+                }
+                DoryLayout::AddressMajor => {
+                    let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+                    dense_result
+                        .par_iter_mut()
+                        .step_by(num_columns / cycles_per_row)
+                        .enumerate()
+                        .for_each(|(offset, dot_product_result)| {
+                            *dot_product_result = self
+                                .dense_rlc
+                                .par_iter()
+                                .skip(offset)
+                                .step_by(cycles_per_row)
+                                .zip(left_vec.par_iter())
+                                .map(|(&a, &b)| -> F { a * b })
+                                .sum::<F>();
+                        });
+                }
+            }
             dense_result
         };
 

@@ -3,12 +3,14 @@
 use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::{
+        commitment::dory::{DoryGlobals, DoryLayout},
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    },
     transcripts::{AppendToTranscript, Transcript},
 };
-use ark_bn254::{Fr, G1Affine};
+use ark_bn254::Fr;
 use ark_ec::CurveGroup;
-use ark_ff::Zero;
 use dory::{
     error::DoryError,
     primitives::{
@@ -19,7 +21,6 @@ use dory::{
     },
     setup::ProverSetup,
 };
-use num_traits::One;
 use rayon::prelude::*;
 
 pub use dory::backends::arkworks::{
@@ -105,104 +106,16 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
 }
 
 impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
-    fn vector_matrix_product(&self, left_vec: &[ArkFr], nu: usize, sigma: usize) -> Vec<ArkFr> {
-        use crate::utils::small_scalar::SmallScalar;
-
-        let num_cols = 1 << sigma;
-        let num_rows = 1 << nu;
-
+    fn vector_matrix_product(&self, left_vec: &[ArkFr], _nu: usize, _sigma: usize) -> Vec<ArkFr> {
         let wrapped_left_side: Vec<Fr> = left_vec.iter().map(ark_to_jolt).collect();
-
-        macro_rules! compute_vector_matrix_product {
-            ($coeffs:expr, $field_mul_method:ident) => {{
-                let mut result = vec![Fr::zero(); num_cols];
-                result
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(col_idx, dest)| {
-                        let mut sum = Fr::zero();
-                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                            let coeff_idx = row_idx * num_cols + col_idx;
-                            if coeff_idx < $coeffs.len() {
-                                sum += $coeffs[coeff_idx]
-                                    .$field_mul_method(wrapped_left_side[row_idx]);
-                            }
-                        }
-                        *dest = sum;
-                    });
-                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
-            }};
-        }
-
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                let mut result = vec![Fr::zero(); num_cols];
-                result
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(col_idx, dest)| {
-                        let mut sum = Fr::zero();
-                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                            let coeff_idx = row_idx * num_cols + col_idx;
-                            if coeff_idx < poly.Z.len() {
-                                sum += poly.Z[coeff_idx] * wrapped_left_side[row_idx];
-                            }
-                        }
-                        *dest = sum;
-                    });
-                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
-            }
-            MultilinearPolynomial::U8Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::I128Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::U128Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::S128Scalars(poly) => {
-                compute_vector_matrix_product!(&poly.coeffs, field_mul)
-            }
-            MultilinearPolynomial::BoolScalars(poly) => {
-                let mut result = vec![Fr::zero(); num_cols];
-                result
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(col_idx, dest)| {
-                        let mut sum = Fr::zero();
-                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                            let coeff_idx = row_idx * num_cols + col_idx;
-                            if coeff_idx < poly.coeffs.len() && poly.coeffs[coeff_idx] {
-                                sum += wrapped_left_side[row_idx];
-                            }
-                        }
-                        *dest = sum;
-                    });
-                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
-            }
-            MultilinearPolynomial::OneHot(poly) => {
-                let mut result = vec![Fr::zero(); num_cols];
-                poly.vector_matrix_product(&wrapped_left_side, Fr::one(), &mut result);
-                result.into_iter().map(|v| jolt_to_ark(&v)).collect()
-            }
+            // In Jolt, we always perform the Dory opening proof using an RLCPolynomial
             MultilinearPolynomial::RLC(poly) => poly
                 .vector_matrix_product(&wrapped_left_side)
                 .into_iter()
                 .map(|v| jolt_to_ark(&v))
                 .collect(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 }
@@ -221,55 +134,67 @@ where
         std::slice::from_raw_parts(g1_generators.as_ptr() as *const ArkG1, g1_generators.len())
     };
 
-    // All polynomial types should use row_len bases (number of columns).
-    // The globals are sized to be >= what any polynomial needs.
-    let bases: Vec<G1Affine> = g1_slice
-        .iter()
-        .take(row_len)
-        .map(|g| g.0.into_affine())
-        .collect();
+    let dory_layout = DoryGlobals::get_layout();
 
-    macro_rules! compute_msm {
-        ($coeffs:expr, $msm_method:ident) => {
-            $coeffs
-                .par_chunks(row_len)
-                .map(|row| ArkG1(VariableBaseMSM::$msm_method(&bases[..row.len()], row).unwrap()))
-                .collect()
-        };
-    }
-
-    // Dense polynomials always use cycle-major indexing (standard row_len chunking)
-    // regardless of DoryLayout. The AddressMajor layout only affects OneHot and RLC polynomials.
     let result: Vec<ArkG1> = match poly {
-        MultilinearPolynomial::LargeScalars(poly) => compute_msm!(&poly.Z, msm_field_elements),
-        MultilinearPolynomial::U8Scalars(poly) => compute_msm!(&poly.coeffs, msm_u8),
-        MultilinearPolynomial::U16Scalars(poly) => compute_msm!(&poly.coeffs, msm_u16),
-        MultilinearPolynomial::U32Scalars(poly) => compute_msm!(&poly.coeffs, msm_u32),
-        MultilinearPolynomial::U64Scalars(poly) => compute_msm!(&poly.coeffs, msm_u64),
-        MultilinearPolynomial::I64Scalars(poly) => compute_msm!(&poly.coeffs, msm_i64),
-        MultilinearPolynomial::I128Scalars(poly) => compute_msm!(&poly.coeffs, msm_i128),
-        MultilinearPolynomial::U128Scalars(poly) => compute_msm!(&poly.coeffs, msm_u128),
-        MultilinearPolynomial::S128Scalars(poly) => compute_msm!(&poly.coeffs, msm_s128),
-        MultilinearPolynomial::BoolScalars(poly) => poly
-            .coeffs
-            .par_chunks(row_len)
-            .map(|row| {
-                let result = row
-                    .iter()
-                    .zip(&bases[..row.len()])
-                    .filter_map(|(&b, base)| if b { Some(*base) } else { None })
-                    .sum();
-                ArkG1(result)
-            })
-            .collect(),
-        // OneHot and RLC polynomials have their own commit_rows implementations
+        MultilinearPolynomial::U64Scalars(poly) => match dory_layout {
+            DoryLayout::CycleMajor => {
+                let affine_bases: Vec<_> = g1_slice.par_iter().map(|g| g.0.into_affine()).collect();
+                poly.coeffs
+                    .par_chunks(row_len)
+                    .map(|row| ArkG1(VariableBaseMSM::msm_u64(&affine_bases, row).unwrap()))
+                    .collect()
+            }
+            DoryLayout::AddressMajor => {
+                // If we're using address-major matrix layout, dense polynomial coefficients occupy (evenly-spaced)
+                // columns of the matrix. Get G1 bases corresponding to those columns
+                let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+                let affine_bases: Vec<_> = g1_slice
+                    .par_iter()
+                    .take(row_len)
+                    .step_by(row_len / cycles_per_row)
+                    .map(|g| g.0.into_affine())
+                    .collect();
+                poly.coeffs
+                    .par_chunks(cycles_per_row)
+                    .map(|row| ArkG1(VariableBaseMSM::msm_u64(&affine_bases, row).unwrap()))
+                    .collect()
+            }
+        },
+        MultilinearPolynomial::I128Scalars(poly) => match dory_layout {
+            DoryLayout::CycleMajor => {
+                let affine_bases: Vec<_> = g1_slice.par_iter().map(|g| g.0.into_affine()).collect();
+                poly.coeffs
+                    .par_chunks(row_len)
+                    .map(|row| ArkG1(VariableBaseMSM::msm_i128(&affine_bases, row).unwrap()))
+                    .collect()
+            }
+            DoryLayout::AddressMajor => {
+                // If we're using address-major matrix layout, dense polynomial coefficients occupy (evenly-spaced)
+                // columns of the matrix. Get G1 bases corresponding to those columns
+                let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+                let affine_bases: Vec<_> = g1_slice
+                    .par_iter()
+                    .take(row_len)
+                    .step_by(row_len / cycles_per_row)
+                    .map(|g| g.0.into_affine())
+                    .collect();
+                poly.coeffs
+                    .par_chunks(cycles_per_row)
+                    .map(|row| ArkG1(VariableBaseMSM::msm_i128(&affine_bases, row).unwrap()))
+                    .collect()
+            }
+        },
+        // OneHot polynomials have their own commit_rows implementations
         // that respect the DoryLayout setting (CycleMajor vs AddressMajor)
         MultilinearPolynomial::OneHot(poly) => {
-            poly.commit_rows(&bases).into_iter().map(ArkG1).collect()
+            let affine_bases: Vec<_> = g1_slice.par_iter().map(|g| g.0.into_affine()).collect();
+            poly.commit_rows(&affine_bases)
+                .into_iter()
+                .map(ArkG1)
+                .collect()
         }
-        MultilinearPolynomial::RLC(poly) => {
-            poly.commit_rows(&bases).into_iter().map(ArkG1).collect()
-        }
+        _ => unimplemented!("MultilinearPolynomial variant is never committed"),
     };
 
     // SAFETY: Vec<ArkG1> and Vec<E::G1> have the same memory layout when E = BN254.

@@ -310,11 +310,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
-        // Dory globals are process-wide (OnceCell). In tests we run many end-to-end proofs with
-        // different trace lengths in a single process, so reset before each prover construction.
-        #[cfg(test)]
-        crate::poly::commitment::dory::DoryGlobals::reset();
-
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
             program_io

@@ -358,13 +358,10 @@ fn reorder_opening_point_for_layout<F: JoltField>(
     opening_point: &[F::Challenge],
 ) -> Vec<F::Challenge> {
     if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
-        let log_t = DoryGlobals::get_T().log_2();
-        let log_k = opening_point.len().saturating_sub(log_t);
-        opening_point[log_k..]
-            .iter()
-            .chain(opening_point[..log_k].iter())
-            .cloned()
-            .collect()
+        let log_T = DoryGlobals::get_T().log_2();
+        let log_K = opening_point.len().saturating_sub(log_T);
+        let (r_address, r_cycle) = opening_point.split_at(log_K);
+        [r_cycle, r_address].concat()
     } else {
         opening_point.to_vec()
     }
