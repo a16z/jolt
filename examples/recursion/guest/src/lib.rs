@@ -48,7 +48,10 @@ fn verify(bytes: &[u8]) -> u32 {
 
         start_cycle_tracking("verification");
         let verifier = RV64IMACVerifier::new(&verifier_preprocessing, proof, device, None, None);
-        let is_valid = verifier.is_ok_and(|verifier| verifier.verify().is_ok());
+        let is_valid = verifier.is_ok_and(|verifier| {
+            let result = verifier.verify();
+            core::hint::black_box(result).is_ok()
+        });
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;
     }

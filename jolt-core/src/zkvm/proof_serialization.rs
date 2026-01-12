@@ -566,7 +566,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::InstructionRafFlag => 26u8.serialize_with_mode(&mut writer, compress),
             Self::InstructionRa(i) => {
                 27u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RegistersVal => 28u8.serialize_with_mode(&mut writer, compress),
             Self::RamAddress => 29u8.serialize_with_mode(&mut writer, compress),
@@ -592,63 +592,63 @@ impl CanonicalSerialize for VirtualPolynomial {
             }
             Self::RecursionBase(i) => {
                 41u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionRhoPrev(i) => {
                 42u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionRhoCurr(i) => {
                 43u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionQuotient(i) => {
                 44u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionMulLhs(i) => {
                 45u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionMulRhs(i) => {
                 46u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionMulResult(i) => {
                 47u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionMulQuotient(i) => {
                 48u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionG1ScalarMulXA(i) => {
                 49u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionG1ScalarMulYA(i) => {
                 50u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionG1ScalarMulXT(i) => {
                 51u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionG1ScalarMulYT(i) => {
                 52u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionG1ScalarMulXANext(i) => {
                 53u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionG1ScalarMulYANext(i) => {
                 54u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::RecursionG1ScalarMulIndicator(i) => {
                 55u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
+                (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::DorySparseConstraintMatrix => 56u8.serialize_with_mode(&mut writer, compress),
         }
@@ -697,8 +697,8 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
-            | Self::LookupTableFlag(_)
-            | Self::RecursionBase(_)
+            | Self::LookupTableFlag(_) => 2,
+            Self::RecursionBase(_)
             | Self::RecursionRhoPrev(_)
             | Self::RecursionRhoCurr(_)
             | Self::RecursionQuotient(_)
@@ -712,7 +712,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RecursionG1ScalarMulYT(_)
             | Self::RecursionG1ScalarMulXANext(_)
             | Self::RecursionG1ScalarMulYANext(_)
-            | Self::RecursionG1ScalarMulIndicator(_) => 2,
+            | Self::RecursionG1ScalarMulIndicator(_) => 5, // 1 byte discriminator + 4 bytes u32
         }
     }
 }
@@ -759,7 +759,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 25 => Self::InstructionRaf,
                 26 => Self::InstructionRafFlag,
                 27 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::InstructionRa(i as usize)
                 }
                 28 => Self::RegistersVal,
@@ -789,63 +789,63 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     Self::LookupTableFlag(flag as usize)
                 }
                 41 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionBase(i as usize)
                 }
                 42 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionRhoPrev(i as usize)
                 }
                 43 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionRhoCurr(i as usize)
                 }
                 44 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionQuotient(i as usize)
                 }
                 45 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionMulLhs(i as usize)
                 }
                 46 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionMulRhs(i as usize)
                 }
                 47 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionMulResult(i as usize)
                 }
                 48 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionMulQuotient(i as usize)
                 }
                 49 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionG1ScalarMulXA(i as usize)
                 }
                 50 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionG1ScalarMulYA(i as usize)
                 }
                 51 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionG1ScalarMulXT(i as usize)
                 }
                 52 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionG1ScalarMulYT(i as usize)
                 }
                 53 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionG1ScalarMulXANext(i as usize)
                 }
                 54 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionG1ScalarMulYANext(i as usize)
                 }
                 55 => {
-                    let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::RecursionG1ScalarMulIndicator(i as usize)
                 }
                 56 => Self::DorySparseConstraintMatrix,

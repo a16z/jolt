@@ -123,7 +123,7 @@ impl GuestProgram {
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 2000000,
+                        max_input_size: 20000000, // Increased to 20MB
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
@@ -146,7 +146,7 @@ impl GuestProgram {
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 2000000,
+                        max_input_size: 20000000, // Increased to 20MB
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,

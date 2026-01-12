@@ -131,16 +131,16 @@ impl<F: JoltField> RecursionVerifier<F> {
         // })?;
 
         // // ============ PCS OPENING VERIFICATION ============
-        // tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
-        //     tracing::info!("Verifying PCS opening proof");
-        //     // Verify opening proof using PCS
-        //     accumulator.verify_single::<T, PCS>(
-        //         &proof.opening_proof,
-        //         matrix_commitment.clone(),
-        //         verifier_setup,
-        //         transcript,
-        //     )
-        // })?;
+        tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
+            tracing::info!("Verifying PCS opening proof");
+            // Verify opening proof using PCS
+            accumulator.verify_single::<T, PCS>(
+                &proof.opening_proof,
+                matrix_commitment.clone(),
+                verifier_setup,
+                transcript,
+            )
+        })?;
 
         Ok(true)
     }
