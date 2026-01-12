@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 
 /// Returns `true` iff `x >= modulus`, i.e., `x` is non-canonical.
 /// Performs lexicographic comparison on little-endian 4-limb u64 arrays.
-#[allow(dead_code)] // Only used in guest (RISC-V) builds.
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 #[inline(always)]
 fn is_non_canonical(x: &[u64; 4], modulus: &[u64; 4]) -> bool {
     for i in (0..4).rev() {
@@ -28,6 +31,15 @@ fn is_non_canonical(x: &[u64; 4], modulus: &[u64; 4]) -> bool {
         }
     }
     true // equal => x >= modulus
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+#[inline(always)]
+fn is_not_equal(x: &[u64; 4], y: &[u64; 4]) -> bool {
+    x[0] != y[0] || x[1] != y[1] || x[2] != y[2] || x[3] != y[3]
 }
 
 /// panic instruction
@@ -245,11 +257,7 @@ impl Secp256k1Fq {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div(&self, other: &Secp256k1Fq) -> Self {
-        // 0/0 would pass the correctness check for any c, so reject it explicitly
-        if other.is_zero() {
-            hcf();
-        }
+    fn div_impl(&self, other: &Secp256k1Fq) -> Self {
         // get inverse as pure advice
         let mut c = Secp256k1Fq::zero();
         unsafe {
@@ -268,18 +276,42 @@ impl Secp256k1Fq {
         // compute tmp = other * c
         let tmp = other.mul(&c);
         // if not canonical (>= p), or other * c is not equal to self, panic
-        if is_non_canonical(&c.e.0 .0, &Fq::MODULUS.0)
-            || (tmp.e.0 .0[0] != self.e.0 .0[0]
-                || tmp.e.0 .0[1] != self.e.0 .0[1]
-                || tmp.e.0 .0[2] != self.e.0 .0[2]
-                || tmp.e.0 .0[3] != self.e.0 .0[3])
-        {
+        if is_non_canonical(&c.e.0 .0, &Fq::MODULUS.0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
             hcf();
         }
         c
+    }
+    /// returns self / other
+    /// uses custom inline for performance
+    /// costs nearly the same as multiplication
+    ///
+    /// # Proof soundness
+    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
+    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
+    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div(&self, other: &Secp256k1Fq) -> Self {
+        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        if other.is_zero() {
+            hcf();
+        }
+        self.div_impl(other)
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fq) -> Self {
+        self.div_impl(other)
     }
     #[cfg(all(
         not(feature = "host"),
@@ -288,12 +320,25 @@ impl Secp256k1Fq {
     pub fn div(&self, _other: &Secp256k1Fq) -> Self {
         panic!("Secp256k1Fq::div called on non-RISC-V target without host feature");
     }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn div_unchecked(&self, _other: &Secp256k1Fq) -> Self {
+        panic!("Secp256k1Fq::div_unchecked called on non-RISC-V target without host feature");
+    }
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
             e: self.e / other.e,
         }
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fq) -> Self {
+        self.div(other)
     }
 }
 
@@ -387,11 +432,7 @@ impl Secp256k1Fr {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div(&self, other: &Secp256k1Fr) -> Self {
-        // 0/0 would pass the correctness check for any c, so reject it explicitly
-        if other.is_zero() {
-            hcf();
-        }
+    fn div_impl(&self, other: &Secp256k1Fr) -> Self {
         // get inverse as pure advice
         let mut c = Secp256k1Fr::zero();
         unsafe {
@@ -410,18 +451,42 @@ impl Secp256k1Fr {
         // compute tmp = other * c
         let tmp = other.mul(&c);
         // if not canonical (>= r), or other * c is not equal to self, panic
-        if is_non_canonical(&c.e.0 .0, &Fr::MODULUS.0)
-            || (tmp.e.0 .0[0] != self.e.0 .0[0]
-                || tmp.e.0 .0[1] != self.e.0 .0[1]
-                || tmp.e.0 .0[2] != self.e.0 .0[2]
-                || tmp.e.0 .0[3] != self.e.0 .0[3])
-        {
+        if is_non_canonical(&c.e.0 .0, &Fr::MODULUS.0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
             hcf();
         }
         c
+    }
+    /// returns self / other
+    /// uses custom inline for performance
+    /// costs nearly the same as multiplication
+    ///
+    /// # Proof soundness
+    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
+    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
+    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div(&self, other: &Secp256k1Fr) -> Self {
+        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        if other.is_zero() {
+            hcf();
+        }
+        self.div_impl(other)
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fr) -> Self {
+        self.div_impl(other)
     }
     #[cfg(all(
         not(feature = "host"),
@@ -430,12 +495,25 @@ impl Secp256k1Fr {
     pub fn div(&self, _other: &Secp256k1Fr) -> Self {
         panic!("Secp256k1Fr::div called on non-RISC-V target without host feature");
     }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn div_unchecked(&self, _other: &Secp256k1Fr) -> Self {
+        panic!("Secp256k1Fr::div_unchecked called on non-RISC-V target without host feature");
+    }
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
         Secp256k1Fr {
             e: self.e / other.e,
         }
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fr) -> Self {
+        self.div(other)
     }
 }
 
@@ -563,7 +641,7 @@ impl Secp256k1Point {
         if self.y.is_zero() {
             Secp256k1Point::infinity()
         } else {
-            let s = self.x.square().tpl().div(&self.y.dbl());
+            let s = self.x.square().tpl().div_unchecked(&self.y.dbl());
             let x2 = s.square().sub(&self.x.dbl());
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             Secp256k1Point { x: x2, y: y2 }
@@ -585,7 +663,7 @@ impl Secp256k1Point {
             Secp256k1Point::infinity()
         // if the x coordinates are not equal and not infinity, perform standard point addition
         } else {
-            let s = (self.y.sub(&other.y)).div(&self.x.sub(&other.x));
+            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x).sub(&other.x);
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             Secp256k1Point { x: x2, y: y2 }
@@ -613,7 +691,7 @@ impl Secp256k1Point {
         // note that (self + other) cannot equal infinity or self here
         // so no special cases needed
         } else {
-            let s = (self.y.sub(&other.y)).div(&self.x.sub(&other.x));
+            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x).sub(&other.x);
             let t = self.y.dbl().div(&self.x.sub(&x2)).sub(&s);
             let x3 = t.square().sub(&self.x).sub(&x2);
@@ -833,8 +911,8 @@ pub fn ecdsa_verify(
         return Result::Err(Secp256k1Error::ROrSZero);
     }
     // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
-    let u1 = z.div(&s);
-    let u2 = r.div(&s);
+    let u1 = z.div_unchecked(&s);
+    let u2 = r.div_unchecked(&s);
     // step 3: compute R = u1 * G + u2 * q
     // 3.1: perform the glv scalar decomposition
     let decomp_u = Secp256k1Point::decompose_scalar(&u1);
