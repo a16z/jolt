@@ -2952,6 +2952,8 @@ dependencies = [
  "num-integer",
  "num-traits",
  "paste",
+ "poseidon-parameters",
+ "poseidon-paramgen",
  "postcard",
  "pprof",
  "prost 0.14.3",
@@ -3379,6 +3381,18 @@ version = "0.1.0"
 dependencies = [
  "jolt-inlines-sha2",
  "jolt-sdk",
+]
+
+[[package]]
+name = "merlin"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58c38e2799fc0978b65dfff8023ec7843e2330bb462f19198840b34b6582397d"
+dependencies = [
+ "byteorder",
+ "keccak",
+ "rand_core 0.6.4",
+ "zeroize",
 ]
 
 [[package]]
@@ -4052,6 +4066,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a9db96d7fa8782dd8c15ce32ffe8680bbd1e978a43bf51a34d39483540495f5"
 dependencies = [
  "portable-atomic",
+]
+
+[[package]]
+name = "poseidon-parameters"
+version = "0.5.0"
+source = "git+https://github.com/defi-wonderland/poseidon377?branch=arkworks-0.5#a9d0eae403bff047d114c7be28859d407a250c6f"
+dependencies = [
+ "anyhow",
+ "ark-ff",
+ "num-integer",
+]
+
+[[package]]
+name = "poseidon-paramgen"
+version = "0.5.0"
+source = "git+https://github.com/defi-wonderland/poseidon377?branch=arkworks-0.5#a9d0eae403bff047d114c7be28859d407a250c6f"
+dependencies = [
+ "anyhow",
+ "ark-ff",
+ "ark-std",
+ "getrandom 0.2.16",
+ "merlin",
+ "num",
+ "num-bigint",
+ "poseidon-parameters",
+ "rand_core 0.6.4",
 ]
 
 [[package]]

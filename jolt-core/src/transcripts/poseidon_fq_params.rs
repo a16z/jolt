@@ -1,7 +1,17 @@
 //! BN254 Fq Poseidon parameters for width=4
-//! Generated with poseidon-paramgen v0.4.0 (audited by NCC Group)
-//! Security level: 128 bits, alpha=5
-//! Full rounds: 8, Partial rounds: 56
+//!
+//! Generated with poseidon-paramgen v0.4.0 (NCC Group audited, Summer 2022)
+//! using arkworks 0.5 compatible fork: https://github.com/defi-wonderland/poseidon377
+//!
+//! Configuration:
+//! - Security level: 128 bits
+//! - Alpha (S-box exponent): 5
+//! - Full rounds: 8
+//! - Partial rounds: 56
+//! - Width: 4 (allows 3 inputs per hash)
+//!
+//! Verification: Run `cargo test -p jolt-core --features transcript-poseidon verify_hardcoded_fq_params`
+//! Regeneration: See poseidon_param_gen.rs for the generation code
 
 /// Convert hex string (with 0x prefix) to bytes
 pub fn hex_to_bytes(hex_str: &str) -> Vec<u8> {
