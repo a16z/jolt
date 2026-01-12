@@ -13,6 +13,7 @@ use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
 use proof_serialization::JoltProof;
+#[cfg(feature = "prover")]
 use prover::JoltCpuProver;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ use tracer::JoltDevice;
 use verifier::JoltVerifier;
 
 pub mod bytecode;
+pub mod claim_reductions;
 pub mod config;
 pub mod instruction;
 pub mod instruction_lookups;
@@ -132,6 +134,7 @@ pub fn fiat_shamir_preamble(
     transcript.append_u64(trace_length as u64);
 }
 
+#[cfg(feature = "prover")]
 pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;

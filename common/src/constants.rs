@@ -6,6 +6,18 @@ pub const REGISTER_COUNT: u8 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT; //
 pub const BYTES_PER_INSTRUCTION: usize = 4;
 pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
 
+/// Threshold for trace length (log scale) at which we switch between different
+/// one-hot chunking parameters. Below this threshold (i.e., for smaller traces),
+/// we use smaller chunk sizes for better performance (reduced commitment & PCS opening costs).
+/// This value was empirically determined.
+pub const ONEHOT_CHUNK_THRESHOLD_LOG_T: usize = 25;
+
+/// Threshold for trace length (log scale) at which we switch the number of
+/// instruction sumcheck phases from 16 to 8. Below this threshold, we use
+/// more phases (16) for smaller sumcheck instances in each phase (8 instead of 16 variables).
+/// This value was empirically determined.
+pub const INSTRUCTION_PHASES_THRESHOLD_LOG_T: usize = 24;
+
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 
 // big enough to run Linux and xv6

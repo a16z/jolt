@@ -171,7 +171,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -182,7 +182,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -224,7 +224,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "quote",
  "syn 2.0.110",
@@ -233,7 +233,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "ark-grumpkin"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -268,9 +268,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-secp256k1"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std",
@@ -294,7 +304,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -398,7 +408,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "regex",
@@ -689,6 +699,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 name = "common"
 version = "0.2.0"
 dependencies = [
+ "allocative",
  "ark-serialize",
  "derive_more 2.0.1",
  "serde",
@@ -1973,13 +1984,11 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "jolt-platform",
- "lazy_static",
  "memory-stats",
  "num",
  "num-derive",
  "num-integer",
  "num-traits",
- "once_cell",
  "paste",
  "postcard",
  "pprof",
@@ -2027,6 +2036,7 @@ dependencies = [
  "hex-literal",
  "rand 0.8.5",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -2038,6 +2048,7 @@ dependencies = [
  "hex-literal",
  "rand 0.8.5",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -2046,6 +2057,24 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
+ "sha3",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-inlines-secp256k1"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-secp256k1",
+ "ark-serialize",
+ "ctor 0.2.9",
+ "hex-literal",
+ "num-bigint",
+ "num-integer",
+ "serde",
  "tracer",
  "tracing",
 ]
@@ -2056,6 +2085,7 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
+ "sha2",
  "tracer",
  "tracing",
 ]
@@ -2063,7 +2093,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#c5ebe4c975c2243c3ef0fa89261c55ea5f1eb290"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#cc955e90471e5703be8ac54b26a04b6c1f90d9ca"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3470,6 +3500,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "secp256k1-ecdsa-verify"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-secp256k1",
+ "jolt-sdk",
+ "secp256k1-ecdsa-verify-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "secp256k1-ecdsa-verify-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-secp256k1",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "secp256k1-sys"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4177,7 +4226,6 @@ dependencies = [
  "fnv",
  "itertools 0.10.5",
  "jolt-platform",
- "lazy_static",
  "object 0.36.7",
  "paste",
  "postcard",

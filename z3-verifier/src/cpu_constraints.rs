@@ -29,9 +29,10 @@ use tracer::instruction::{
     ecall::ECALL,
     fence::FENCE,
     format::{
-        format_assert_align::AssertAlignFormat, format_b::FormatB, format_i::FormatI,
-        format_j::FormatJ, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
-        format_u::FormatU, format_virtual_right_shift_i::FormatVirtualRightShiftI,
+        format_assert_align::AssertAlignFormat, format_b::FormatB, format_fence::FormatFence,
+        format_i::FormatI, format_j::FormatJ, format_load::FormatLoad, format_r::FormatR,
+        format_s::FormatS, format_u::FormatU,
+        format_virtual_right_shift_i::FormatVirtualRightShiftI,
         format_virtual_right_shift_r::FormatVirtualRightShiftR,
     },
     jal::JAL,
@@ -494,7 +495,7 @@ test_instruction_constraints!(BLT, FormatB);
 test_instruction_constraints!(BLTU, FormatB);
 test_instruction_constraints!(BNE, FormatB);
 test_instruction_constraints!(ECALL, FormatI);
-test_instruction_constraints!(FENCE, FormatI);
+test_instruction_constraints!(FENCE, FormatFence);
 test_instruction_constraints!(JAL, FormatJ);
 test_instruction_constraints!(JALR, FormatI);
 test_instruction_constraints!(LD, FormatLoad);

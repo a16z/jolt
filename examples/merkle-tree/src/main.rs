@@ -8,16 +8,19 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_merkle_tree(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_merkle_tree(&mut program);
-    let verifier_preprocessing =
-        guest::verifier_preprocessing_from_prover_merkle_tree(&prover_preprocessing);
+    let shared_preprocessing = guest::preprocess_shared_merkle_tree(&mut program);
+    let prover_preprocessing = guest::preprocess_prover_merkle_tree(shared_preprocessing.clone());
+    let verifier_preprocessing = guest::preprocess_verifier_merkle_tree(
+        shared_preprocessing,
+        prover_preprocessing.generators.to_verifier_setup(),
+    );
 
     let leaf1: &[u8] = &[5u8; 32];
     let leaf2 = [6u8; 32];
     let leaf3 = [7u8; 32];
     let leaf4 = [8u8; 32];
 
-    let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
+    let (trusted_advice_commitment, trusted_advice_hint) = guest::commit_trusted_advice_merkle_tree(
         TrustedAdvice::new(leaf2),
         TrustedAdvice::new(leaf3),
         &prover_preprocessing,
@@ -33,6 +36,7 @@ pub fn main() {
         TrustedAdvice::new(leaf3),
         UntrustedAdvice::new(leaf4),
         trusted_advice_commitment,
+        trusted_advice_hint,
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 

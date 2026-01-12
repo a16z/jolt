@@ -11,15 +11,13 @@ use crate::subprotocols::sumcheck_claim::{
     OpeningRef, SumcheckFrontend,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
-use crate::utils::math::Math;
 use crate::zkvm::witness::VirtualPolynomial;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
-use std::marker::PhantomData;
 use tracer::instruction::Cycle;
 
 // RAM Hamming booleanity sumcheck
@@ -33,36 +31,65 @@ use tracer::instruction::Cycle;
 /// Degree bound of the sumcheck round polynomials in [`HammingBooleanitySumcheckVerifier`].
 const DEGREE_BOUND: usize = 3;
 
+#[derive(Allocative, Clone)]
+pub struct HammingBooleanitySumcheckParams<F: JoltField> {
+    pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+impl<F: JoltField> HammingBooleanitySumcheckParams<F> {
+    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
+        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+
+        Self { r_cycle }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for HammingBooleanitySumcheckParams<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.r_cycle.len()
+    }
+
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
+        F::zero()
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
 #[derive(Allocative)]
 pub struct HammingBooleanitySumcheckProver<F: JoltField> {
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     H: MultilinearPolynomial<F>,
-    log_T: usize,
+    pub params: HammingBooleanitySumcheckParams<F>,
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::gen")]
-    pub fn gen(trace: &[Cycle], opening_accumulator: &ProverOpeningAccumulator<F>) -> Self {
-        let T = trace.len();
-        let log_T = T.log_2();
-
+    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::initialize")]
+    pub fn initialize(params: HammingBooleanitySumcheckParams<F>, trace: &[Cycle]) -> Self {
         let H = trace
             .par_iter()
             .map(|cycle| cycle.ram_access().address() != 0)
             .collect::<Vec<bool>>();
         let H = MultilinearPolynomial::from(H);
 
-        let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-
-        let eq_r_cycle = GruenSplitEqPolynomial::new(&r_cycle.r, BindingOrder::LowToHigh);
+        let eq_r_cycle = GruenSplitEqPolynomial::new(&params.r_cycle.r, BindingOrder::LowToHigh);
 
         Self {
             eq_r_cycle,
             H,
-            log_T,
+            params,
         }
     }
 }
@@ -70,16 +97,8 @@ impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for HammingBooleanitySumcheckProver<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.log_T
-    }
-
-    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
-        F::zero()
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::compute_message")]
@@ -116,7 +135,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             transcript,
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
-            get_opening_point(sumcheck_challenges),
+            self.params.normalize_opening_point(sumcheck_challenges),
             self.H.final_sumcheck_claim(),
         );
     }
@@ -128,16 +147,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 }
 
 pub struct HammingBooleanitySumcheckVerifier<F: JoltField> {
-    log_T: usize,
-    _phantom: PhantomData<F>,
+    params: HammingBooleanitySumcheckParams<F>,
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
-    pub fn new(n_cycle_vars: usize) -> Self {
+    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
         Self {
-            // TODO: Make the name for this consistent across the codebase.
-            log_T: n_cycle_vars,
-            _phantom: PhantomData,
+            params: HammingBooleanitySumcheckParams::new(opening_accumulator),
         }
     }
 }
@@ -145,24 +161,20 @@ impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for HammingBooleanitySumcheckVerifier<F>
 {
-    fn degree(&self) -> usize {
-        DEGREE_BOUND
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.log_T
-    }
-
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
         let result = Self::input_output_claims().input_claim(&[F::one()], accumulator);
 
         #[cfg(test)]
         {
-            let reference_result = F::zero();
+            let reference_result = self.params.input_claim(accumulator);
             assert_eq!(result, reference_result);
         }
 
         result
+    }
+
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
     }
 
     fn expected_output_claim(
@@ -217,7 +229,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             transcript,
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
-            get_opening_point(sumcheck_challenges),
+            self.params.normalize_opening_point(sumcheck_challenges),
         );
     }
 }
@@ -246,10 +258,4 @@ impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> 
             output_sumcheck_id: SumcheckId::RamHammingBooleanity,
         }
     }
-}
-
-fn get_opening_point<F: JoltField>(
-    sumcheck_challenges: &[F::Challenge],
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }

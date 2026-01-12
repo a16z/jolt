@@ -12,7 +12,6 @@ use crate::{
         multilinear_polynomial::PolynomialEvaluation as _,
         opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
-    utils::math::Math as _,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -145,7 +144,7 @@ impl BatchingPolynomial {
             BatchingPolynomial::Lt(_opening_ref) => todo!(),
             BatchingPolynomial::Identity => todo!(),
             BatchingPolynomial::UnmapRamAddress => UnmapRamAddressPolynomial::<F>::new(
-                eval_params.ram_k.unwrap().log_2(),
+                eval_params.ram_k.unwrap(),
                 eval_params.ram_start_address.unwrap(),
             )
             .evaluate(&r.r),

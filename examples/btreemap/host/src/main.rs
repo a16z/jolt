@@ -17,12 +17,19 @@ pub fn btreemap() {
         guest::compile_btreemap(target_dir)
     });
 
+    let shared_preprocessing = step!("Preprocessing shared", {
+        guest::preprocess_shared_btreemap(&mut program)
+    });
+
     let prover_preprocessing = step!("Preprocessing prover", {
-        guest::preprocess_prover_btreemap(&mut program)
+        guest::preprocess_prover_btreemap(shared_preprocessing.clone())
     });
 
     let verifier_preprocessing = step!("Preprocessing verifier", {
-        guest::verifier_preprocessing_from_prover_btreemap(&prover_preprocessing)
+        guest::preprocess_verifier_btreemap(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+        )
     });
 
     let prove = step!("Building prover", {

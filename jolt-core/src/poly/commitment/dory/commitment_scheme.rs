@@ -20,8 +20,10 @@ use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
 };
-use rand_core::OsRng;
+use rand_chacha::ChaCha20Rng;
+use rand_core::SeedableRng;
 use rayon::prelude::*;
+use sha3::{Digest, Sha3_256};
 use std::borrow::Borrow;
 use tracing::trace_span;
 
@@ -39,8 +41,18 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
-        let setup = ArkworksProverSetup::new_from_urs(&mut OsRng, max_num_vars);
+        let mut hasher = Sha3_256::new();
+        hasher.update(b"Jolt Dory URS seed");
+        let hash_result = hasher.finalize();
+        let seed: [u8; 32] = hash_result.into();
+        let mut rng = ChaCha20Rng::from_seed(seed);
+        let setup = ArkworksProverSetup::new_from_urs(&mut rng, max_num_vars);
 
+        // The prepared-point cache in dory-pcs is global and can only be initialized once.
+        // In unit tests, multiple setups with different sizes are created, so initializing the
+        // cache with a small setup can break later tests that need more generators.
+        // We therefore disable cache initialization in `cfg(test)` builds.
+        #[cfg(not(test))]
         DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
 
         setup
