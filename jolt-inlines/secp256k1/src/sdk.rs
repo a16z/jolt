@@ -14,23 +14,42 @@ extern crate alloc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-/// Returns `true` iff `x >= modulus`, i.e., `x` is non-canonical.
-/// Performs lexicographic comparison on little-endian 4-limb u64 arrays.
+/// Returns `true` iff `x >= p` (Fq modulus), i.e., `x` is non-canonical.
+/// Specialized: since p's upper 3 limbs are all u64::MAX, x >= p iff
+/// all upper 3 limbs are MAX and limb[0] >= Fq::MODULUS.0[0].
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 #[inline(always)]
-fn is_non_canonical(x: &[u64; 4], modulus: &[u64; 4]) -> bool {
-    for i in (0..4).rev() {
-        if x[i] > modulus[i] {
-            return true;
-        }
-        if x[i] < modulus[i] {
-            return false;
-        }
+fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
+    x[3] == u64::MAX && x[2] == u64::MAX && x[1] == u64::MAX && x[0] >= Fq::MODULUS.0[0]
+}
+
+/// Returns `true` iff `x >= n` (Fr modulus), i.e., `x` is non-canonical.
+/// Specialized: since n's limb[3] is u64::MAX, we short-circuit if x[3] < MAX.
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+#[inline(always)]
+fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
+    if x[3] != u64::MAX {
+        return false;
     }
-    true // equal => x >= modulus
+    if x[2] > Fr::MODULUS.0[2] {
+        return true;
+    }
+    if x[2] < Fr::MODULUS.0[2] {
+        return false;
+    }
+    if x[1] > Fr::MODULUS.0[1] {
+        return true;
+    }
+    if x[1] < Fr::MODULUS.0[1] {
+        return false;
+    }
+    x[0] >= Fr::MODULUS.0[0]
 }
 
 #[cfg(all(
@@ -276,7 +295,7 @@ impl Secp256k1Fq {
         // compute tmp = other * c
         let tmp = other.mul(&c);
         // if not canonical (>= p), or other * c is not equal to self, panic
-        if is_non_canonical(&c.e.0 .0, &Fq::MODULUS.0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
+        if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
@@ -450,8 +469,8 @@ impl Secp256k1Fr {
         }
         // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if not canonical (>= r), or other * c is not equal to self, panic
-        if is_non_canonical(&c.e.0 .0, &Fr::MODULUS.0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
+        // if not canonical (>= n), or other * c is not equal to self, panic
+        if is_fr_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
@@ -928,7 +947,24 @@ pub fn ecdsa_verify(
     ];
     // 3.4: perform the 4x128-bit scalar multiplication
     let r_claim = secp256k1_4x128_scalar_mul(scalars, points);
-    // step 4: check that R.x == r (by converting to bigints and comparing)
+    // step 4: check that R.x == r.
+    //
+    // NOTE (ECDSA spec nuance):
+    // Standard ECDSA verification checks `r == x_R mod n`, where:
+    // - `x_R` is the *integer* x-coordinate of `R` in the base field (mod p),
+    // - `n` is the group order (the scalar field modulus).
+    //
+    // Here we do a *stronger* check: `x_R == r` as integers (no reduction mod n).
+    // This is still sound (no false accepts): if `x_R == r` and `r < n`, then
+    // automatically `x_R mod n == r`.
+    //
+    // The tradeoff is completeness: a valid ECDSA signature can (rarely) have
+    // `x_R >= n` with `x_R mod n == r`, which this code would reject. For secp256k1
+    // this is astronomically unlikely because `p - n` is about 2^128, so
+    // Pr[x_R >= n] ≈ 2^-128 under typical distributions.
+    //
+    // If strict spec compliance is required, replace this with a reduction of `x_R`
+    // modulo `n` before comparison.
     let r_claim_x_bigint = r_claim.x.e.into_bigint();
     let r_bigint = r.e.into_bigint();
     if r_claim_x_bigint != r_bigint {
