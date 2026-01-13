@@ -423,6 +423,14 @@ impl<
         Ok(r_stage6)
     }
 
+    /// Verify BlindFold proof binding to sumcheck challenges.
+    ///
+    /// # Security Note
+    /// TODO(#UNI-SKIP): Stages 1-2 use uni_skip_first_round which reveals full univariate
+    /// polynomials without commitments. These rounds are NOT included in BlindFold R1CS
+    /// constraints, meaning they leak prover information. To achieve full ZK, either:
+    /// 1. Commit to uni-skip polynomials and include them in BlindFold, or
+    /// 2. Document as acceptable partial hiding for the use case
     fn verify_blindfold(
         &mut self,
         sumcheck_challenges: &[Vec<F::Challenge>; 6],

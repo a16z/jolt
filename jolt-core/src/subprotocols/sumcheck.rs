@@ -186,6 +186,14 @@ impl BatchedSumcheck {
     /// this appends Pedersen commitments. The proof still contains the
     /// coefficients for verification until BlindFold is implemented.
     ///
+    /// # Security Note
+    /// TODO(#ZK-SUMCHECK): The Pedersen commitments are used for Fiat-Shamir challenge
+    /// derivation but are never opened/verified. The verifier appends the same commitment
+    /// bytes but doesn't check they correspond to the polynomial coefficients. This allows
+    /// a malicious prover to bias challenges. Fix requires either:
+    /// 1. Add batch Pedersen opening proofs for all round commitments, or
+    /// 2. Extend BlindFold R1CS to constrain commitment openings
+    ///
     /// Returns (proof, challenges, initial_batched_claim)
     pub fn prove_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript, R: CryptoRngCore>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
