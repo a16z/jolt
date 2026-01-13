@@ -40,7 +40,10 @@ use super::{
         DirectEvaluationParams, DirectEvaluationProver,
         extract_virtual_claims_from_accumulator,
     },
-    stage3::jagged::JaggedSumcheckProver,
+    stage3::{
+        jagged::JaggedSumcheckProver,
+        jagged_assist::{JaggedAssistProof, JaggedAssistProver},
+    },
 };
 use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckInstanceProver};
 
@@ -53,6 +56,8 @@ pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Fie
     pub stage2_m_eval: F,
     /// Stage 3 jagged transform sumcheck proof
     pub stage3_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+    /// Stage 3b jagged assist proof (batch MLE verification)
+    pub stage3b_proof: JaggedAssistProof<F, T>,
     /// PCS opening proof for the constraint matrix
     pub opening_proof: PCS::Proof,
     /// Gamma value used for batching constraints
@@ -399,11 +404,11 @@ impl<F: JoltField> RecursionProver<F> {
         let (stage2_m_eval, r_stage2) =
             self.prove_stage2(transcript, &mut accumulator, &r_stage1)?;
 
-        // ============ STAGE 3: Jagged Transform Sumcheck ============
+        // ============ STAGE 3: Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
         tracing::info_span!("recursion_stage3_jagged").in_scope(|| {
             tracing::info!("Starting Stage 3: Jagged transform sumcheck");
         });
-        let (stage3_proof, _r_stage3) =
+        let (stage3_proof, stage3b_proof, _r_stage3) =
             self.prove_stage3(transcript, &mut accumulator, &r_stage1, &r_stage2)?;
 
         // ============ PCS OPENING PROOF ============
@@ -438,6 +443,7 @@ impl<F: JoltField> RecursionProver<F> {
             stage1_proof,
             stage2_m_eval,
             stage3_proof,
+            stage3b_proof,
             opening_proof,
             gamma: self.gamma,
             delta: self.delta,
@@ -672,7 +678,7 @@ impl<F: JoltField> RecursionProver<F> {
         Ok((m_eval_f, r_stage2))
     }
 
-    /// Run Stage 3: Jagged Transform Sumcheck
+    /// Run Stage 3: Jagged Transform Sumcheck + Stage 3b: Jagged Assist
     #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage3")]
     pub(crate) fn prove_stage3<T: Transcript>(
         &self,
@@ -683,6 +689,7 @@ impl<F: JoltField> RecursionProver<F> {
     ) -> Result<
         (
             crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+            JaggedAssistProof<F, T>,
             Vec<<F as JoltField>::Challenge>,
         ),
         Box<dyn std::error::Error>,
@@ -731,22 +738,55 @@ impl<F: JoltField> RecursionProver<F> {
 
         // Create Stage 3 prover
         let mut jagged_prover = JaggedSumcheckProver::new(
-            (r_s_final, r_x_prev),
+            (r_s_final.clone(), r_x_prev.clone()),
             sparse_claim_value,
             dense_poly_f,
-            bijection,
+            bijection.clone(),
             mapping,
-            matrix_rows,
+            matrix_rows.clone(),
             transcript,
             self.constraint_system.num_s_vars(),
             self.constraint_system.matrix.num_constraint_vars,
         );
 
         // Run the jagged sumcheck using BatchedSumcheck
-        let (proof, r_stage3) =
+        let (stage3_proof, r_stage3) =
             BatchedSumcheck::prove(vec![&mut jagged_prover], accumulator, transcript);
 
-        Ok((proof, r_stage3))
+        // ============ STAGE 3b: Jagged Assist (Batch MLE Verification) ============
+        tracing::info_span!("recursion_stage3b_jagged_assist").in_scope(|| {
+            tracing::info!("Starting Stage 3b: Jagged Assist batch MLE verification");
+        });
+
+        // Convert r_stage3 (dense challenges) to F
+        let r_dense: Vec<F> = r_stage3.iter().map(|c| (*c).into()).collect();
+
+        // Compute num_bits for branching program
+        let num_constraint_vars = self.constraint_system.matrix.num_constraint_vars;
+        let dense_size = <super::bijection::VarCountJaggedBijection as super::bijection::JaggedTransform<Fq>>::dense_size(&bijection);
+        let num_dense_vars = dense_size.next_power_of_two().trailing_zeros() as usize;
+        let num_bits = std::cmp::max(num_constraint_vars, num_dense_vars);
+
+        // Create Jagged Assist prover - iterates over K polynomials (not rows!)
+        let mut assist_prover = JaggedAssistProver::<F, T>::new(
+            r_x_prev,
+            r_dense,
+            &bijection,
+            num_bits,
+            transcript,
+        );
+
+        // Run Jagged Assist sumcheck
+        let (stage3b_sumcheck_proof, _r_assist) =
+            BatchedSumcheck::prove(vec![&mut assist_prover], accumulator, transcript);
+
+        // Create the JaggedAssistProof
+        let stage3b_proof = JaggedAssistProof {
+            claimed_evaluations: assist_prover.claimed_evaluations.clone(),
+            sumcheck_proof: stage3b_sumcheck_proof,
+        };
+
+        Ok((stage3_proof, stage3b_proof, r_stage3))
     }
 }
 

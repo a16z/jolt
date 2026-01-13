@@ -30,7 +30,10 @@ use super::{
         DirectEvaluationParams, DirectEvaluationVerifier,
         extract_virtual_claims_from_accumulator,
     },
-    stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
+    stage3::{
+        jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
+        jagged_assist::JaggedAssistVerifier,
+    },
 };
 use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_verifier::SumcheckInstanceVerifier};
 
@@ -120,11 +123,12 @@ impl<F: JoltField> RecursionVerifier<F> {
             )
         })?;
 
-        // ============ STAGE 3: Verify Jagged Transform Sumcheck ============
+        // ============ STAGE 3: Verify Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
         let _r_stage3 = tracing::info_span!("verify_recursion_stage3").in_scope(|| {
-            tracing::info!("Verifying Stage 3: Jagged transform sumcheck");
+            tracing::info!("Verifying Stage 3: Jagged transform sumcheck + Jagged Assist");
             self.verify_stage3(
                 &proof.stage3_proof,
+                &proof.stage3b_proof,
                 transcript,
                 &mut accumulator,
                 &r_stage1,
@@ -132,7 +136,7 @@ impl<F: JoltField> RecursionVerifier<F> {
             )
         })?;
 
-        // // ============ PCS OPENING VERIFICATION ============
+        // ============ PCS OPENING VERIFICATION ============
         tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
             tracing::info!("Verifying PCS opening proof");
             // Verify opening proof using PCS
@@ -306,11 +310,12 @@ impl<F: JoltField> RecursionVerifier<F> {
         Ok(r_stage2)
     }
 
-    /// Verify Stage 3: Jagged transform sumcheck
+    /// Verify Stage 3: Jagged transform sumcheck + Stage 3b: Jagged Assist
     #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage3")]
     fn verify_stage3<T: Transcript>(
         &self,
-        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+        stage3_proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+        stage3b_proof: &super::stage3::jagged_assist::JaggedAssistProof<F, T>,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
         r_stage1: &[<F as crate::field::JoltField>::Challenge],
@@ -343,7 +348,6 @@ impl<F: JoltField> RecursionVerifier<F> {
 
         let _dense_size_span = tracing::info_span!("stage3_compute_dense_size").entered();
         // Calculate number of dense variables based on the true dense size
-        // The dense polynomial now only includes unique values (no padding redundancy)
         let dense_size = <VarCountJaggedBijection as crate::zkvm::recursion::bijection::JaggedTransform<Fq>>::dense_size(&self.input.jagged_bijection);
         let num_dense_vars = dense_size.next_power_of_two().trailing_zeros() as usize;
         drop(_dense_size_span);
@@ -357,28 +361,76 @@ impl<F: JoltField> RecursionVerifier<F> {
         );
         drop(_create_params_span);
 
+        // Convert per-polynomial claimed evaluations to per-row claimed evaluations
+        // stage3b_proof.claimed_evaluations[k] = v_k = ĝ(r_x, r_dense, t_{k-1}, t_k)
+        // We need: claimed_evaluations[y] = Σ_{k: matrix_row[k]==y} v_k
+        let _poly_to_row_span = tracing::info_span!(
+            "stage3_poly_to_row_conversion",
+            num_polys = stage3b_proof.claimed_evaluations.len()
+        )
+        .entered();
+        let num_rows = 1usize << self.input.num_s_vars;
+        let mut claimed_evaluations = vec![F::zero(); num_rows];
+
+        for (poly_idx, claimed_eval) in stage3b_proof.claimed_evaluations.iter().enumerate() {
+            let matrix_row = self.input.matrix_rows[poly_idx];
+            if matrix_row < num_rows {
+                claimed_evaluations[matrix_row] += *claimed_eval;
+            }
+        }
+        drop(_poly_to_row_span);
+
         let _create_verifier_span = tracing::info_span!(
             "stage3_create_verifier",
             num_polys = self.input.jagged_bijection.num_polynomials(),
             num_matrix_rows = self.input.matrix_rows.len()
         )
         .entered();
-        // Create jagged sumcheck verifier
-        // NOTE: We pass references instead of cloning to avoid expensive copies
+        // Create jagged sumcheck verifier with claimed evaluations for cheap f̂_jagged
         let verifier = JaggedSumcheckVerifier::new(
-            (r_s_final, r_x_prev),
+            (r_s_final.clone(), r_x_prev.clone()),
             sparse_claim,
             self.input.jagged_bijection.clone(),
             self.input.jagged_mapping.clone(),
             self.input.matrix_rows.clone(),
             params,
+            claimed_evaluations,
         );
         drop(_create_verifier_span);
 
         let _batched_sumcheck_span =
             tracing::info_span!("stage3_batched_sumcheck_verify").entered();
-        let r_stage3 = BatchedSumcheck::verify(proof, vec![&verifier], accumulator, transcript)?;
+        let r_stage3 = BatchedSumcheck::verify(stage3_proof, vec![&verifier], accumulator, transcript)?;
         drop(_batched_sumcheck_span);
+
+        // ============ STAGE 3b: Verify Jagged Assist (Batch MLE Verification) ============
+        let _stage3b_span = tracing::info_span!("stage3b_jagged_assist_verify").entered();
+
+        // Convert r_stage3 (dense challenges) to F
+        let r_dense: Vec<F> = r_stage3.iter().map(|c| (*c).into()).collect();
+
+        // Compute num_bits for branching program
+        let num_bits = std::cmp::max(self.input.num_constraint_vars, num_dense_vars);
+
+        // Create Jagged Assist verifier - iterates over K polynomials (not rows!)
+        let assist_verifier = JaggedAssistVerifier::<F, T>::new(
+            stage3b_proof.claimed_evaluations.clone(),
+            r_x_prev,
+            r_dense,
+            &self.input.jagged_bijection,
+            num_bits,
+            transcript,
+        );
+
+        // Verify Jagged Assist sumcheck
+        let _r_assist = BatchedSumcheck::verify(
+            &stage3b_proof.sumcheck_proof,
+            vec![&assist_verifier],
+            accumulator,
+            transcript,
+        )?;
+
+        drop(_stage3b_span);
 
         Ok(r_stage3)
     }

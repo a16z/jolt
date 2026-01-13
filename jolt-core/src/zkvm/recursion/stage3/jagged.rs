@@ -48,8 +48,6 @@ use rayon::prelude::*;
 
 use crate::zkvm::recursion::bijection::{ConstraintMapping, VarCountJaggedBijection};
 
-use super::branching_program::{JaggedBranchingProgram, Point};
-
 /// Parameters for Stage 3 jagged sumcheck
 #[derive(Clone)]
 pub struct JaggedSumcheckParams {
@@ -328,7 +326,12 @@ pub struct JaggedSumcheckVerifier<F: JoltField> {
 
     /// Precomputed cumulative sizes for each matrix row
     /// row_cumulative_sizes[i] = total size of all polynomials in rows 0..i
-    row_cumulative_sizes: Vec<usize>,
+    pub row_cumulative_sizes: Vec<usize>,
+
+    /// Claimed evaluations from Jagged Assist (Stage 3b)
+    /// Used for O(K) f̂_jagged computation instead of O(K × branching_program)
+    /// claimed_evaluations[y] = v_y = ĝ(r_x, r_dense, t_{y-1}, t_y)
+    pub claimed_evaluations: Vec<F>,
 }
 
 impl<F: JoltField> JaggedSumcheckVerifier<F> {
@@ -339,6 +342,7 @@ impl<F: JoltField> JaggedSumcheckVerifier<F> {
         mapping: ConstraintMapping,
         matrix_rows: Vec<usize>,
         params: JaggedSumcheckParams,
+        claimed_evaluations: Vec<F>,
     ) -> Self {
         let _new_span = tracing::info_span!("JaggedSumcheckVerifier::new",
             num_polys = bijection.num_polynomials(),
@@ -379,6 +383,7 @@ impl<F: JoltField> JaggedSumcheckVerifier<F> {
             mapping,
             matrix_rows,
             row_cumulative_sizes,
+            claimed_evaluations,
         }
     }
 
@@ -403,91 +408,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
     fn expected_output_claim(
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
+        _sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let _span = tracing::info_span!("jagged_expected_output_claim",
-            round = sumcheck_challenges.len()
-        ).entered();
+        let _span = tracing::info_span!("jagged_expected_output_claim").entered();
 
-        let _get_claim_span = tracing::info_span!("get_dense_claim").entered();
         // Get the dense polynomial opening claim from the accumulator
         let (_, dense_claim) = accumulator
             .get_committed_polynomial_opening(self.params.polynomial, self.params.sumcheck_id);
-        drop(_get_claim_span);
 
-        let _convert_challenges_span = tracing::info_span!("convert_sumcheck_challenges").entered();
-        // Convert challenges to field elements, reversing to match high-to-low order
-        // (sumcheck produces low-to-high, but we need high-to-low for polynomial evaluation)
-        let r_dense: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
-        drop(_convert_challenges_span);
+        // f̂_jagged = Σ_y eq(r_s, y) · v_y = v̂(r_s)
+        // This is just evaluating the MLE of claimed_evaluations at sparse_opening_point_s
+        // Note: EqPolynomial::evals uses big-endian bit ordering, but index_to_binary_vec
+        // uses little-endian, so we reverse the point to match.
+        let r_s_reversed: Vec<F> = self.sparse_opening_point_s.iter().rev().cloned().collect();
+        let eq_evals = EqPolynomial::<F>::evals(&r_s_reversed);
 
-        // Following the paper's Claim 3.2.1, adapted for row-based jaggedness:
-        // Original formula: ˆft(zr, zc, i) = Σ_{y∈{0,1}^k} eq(zc, y) · ĝ(zr, i, t_{y-1}, t_y)
-        // where g(a, b, c, d) = 1 if and only if b < d and b = a + c
+        let f_jagged_at_r_dense: F = eq_evals
+            .iter()
+            .zip(self.claimed_evaluations.iter())
+            .map(|(eq, v)| *eq * *v)
+            .sum();
 
-        // Key adaptation: The paper assumes column-based jaggedness (different columns have
-        // different heights), but our system has row-based jaggedness (different rows have
-        // different widths). So we adapt the formula by:
-        // - Iterating y over rows (polynomials) instead of columns
-        // - Using row cumulative sizes instead of column cumulative heights
-        // - Swapping the role of row/column indices in the eq polynomials
-        //
-        // Our adapted formula: ˆft(zr, zc, i) = Σ_{y∈rows} eq(zr, y) · ĝ(zc, i, t_{y-1}, t_y)
-        // where:
-        // - zr = self.sparse_opening_point_s (polynomial/row challenge)
-        // - zc = self.sparse_opening_point_x (evaluation/column challenge)
-        // - i = r_dense (the field element from sumcheck)
-        // - y iterates over all polynomials (rows)
-
-        let mut f_jagged_at_r_dense = F::zero();
-
-        // Add fine-grained tracing for performance analysis
-        let num_rows = 1 << self.params.num_s_vars; // 2^num_s_vars
-        let _row_loop_span = tracing::info_span!("jagged_row_loop",
-            num_rows = num_rows
-        ).entered();
-
-        let _setup_span = tracing::info_span!("setup_branching_program").entered();
-        // Create branching program once, reuse for all rows
-        let num_bits = std::cmp::max(self.params.num_constraint_vars, self.params.num_dense_vars);
-        let branching_program = JaggedBranchingProgram::new(num_bits);
-
-        // Create points once, reuse in loop
-        let za = Point::from_slice(&self.sparse_opening_point_x);
-        let zb = Point::from_slice(&r_dense);
-        drop(_setup_span);
-
-        // Sum over all y ∈ {0,1}^k (all possible rows)
-        for row_idx in 0..num_rows {
-            // Get t_{y-1} and t_y from precomputed cumulative sizes
-            let t_prev = self.row_cumulative_sizes[row_idx];
-            let t_curr = self.row_cumulative_sizes[row_idx + 1];
-
-            // Skip if this row has no polynomials (t_prev == t_curr)
-            if t_prev == t_curr {
-                continue;
-            }
-
-            // Compute eq(sparse_opening_point_s, binary(row_idx))
-            let row_binary = index_to_binary_vec::<F>(row_idx, self.params.num_s_vars);
-            let eq_zr_y = EqPolynomial::mle(&row_binary, &self.sparse_opening_point_s);
-
-            // Compute ĝ(sparse_x, r_dense, t_prev, t_curr) directly
-            // This gives us the MLE of g evaluated at our challenge points
-            let zc = Point::from_usize(t_prev, num_bits);
-            let zd = Point::from_usize(t_curr, num_bits);
-
-            let g_mle = branching_program.eval_multilinear(&za, &zb, &zc, &zd);
-
-            // Add eq(zr, y) * ĝ contribution
-            f_jagged_at_r_dense += eq_zr_y * g_mle;
-        }
-
-        drop(_row_loop_span);
-
-        let _final_span = tracing::info_span!("final_computation").entered();
-
-        // Return q(r_dense) * f̂_jagged(r_s, r_x, r_dense)
         dense_claim * f_jagged_at_r_dense
     }
 

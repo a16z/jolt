@@ -394,8 +394,8 @@ where
         // Stage 10: Build constraint system and extract metadata
         let recursion_constraint_metadata = self.prove_stage10(&recursion_prover);
 
-        // Stage 11: Run recursion sumchecks (stages 1-3)
-        let (stage1_proof, stage2_m_eval, _r_stage1, _r_stage2, stage3_proof, accumulator) =
+        // Stage 11: Run recursion sumchecks (stages 1-3 + 3b)
+        let (stage1_proof, stage2_m_eval, _r_stage1, _r_stage2, stage3_proof, stage3b_proof, accumulator) =
             self.prove_stage11(&recursion_prover);
 
         // Stage 12: Build dense polynomial and commit
@@ -412,6 +412,7 @@ where
             stage1_proof,
             stage2_m_eval,
             stage3_proof,
+            stage3b_proof,
             opening_proof: hyrax_proof,
             gamma,
             delta,
@@ -1506,6 +1507,7 @@ where
         Vec<<Fq as JoltField>::Challenge>,
         Vec<<Fq as JoltField>::Challenge>,
         crate::subprotocols::sumcheck::SumcheckInstanceProof<Fq, ProofTranscript>,
+        crate::zkvm::recursion::stage3::jagged_assist::JaggedAssistProof<Fq, ProofTranscript>,
         ProverOpeningAccumulator<Fq>,
     ) {
         tracing::info!("Stage 11: Running recursion sumchecks");
@@ -1534,9 +1536,9 @@ where
                 .expect("Failed to run stage 2 evaluation")
         });
 
-        // Stage 3: Jagged transform sumcheck
-        let (stage3_proof, _r_stage3) = tracing::info_span!("recursion_stage11_3_jagged").in_scope(|| {
-            tracing::info!("Running Stage 11.3: Jagged transform sumcheck");
+        // Stage 3: Jagged transform sumcheck + Stage 3b: Jagged Assist
+        let (stage3_proof, stage3b_proof, _r_stage3) = tracing::info_span!("recursion_stage11_3_jagged").in_scope(|| {
+            tracing::info!("Running Stage 11.3: Jagged transform sumcheck + Jagged Assist");
             recursion_prover
                 .prove_stage3(&mut self.transcript, &mut accumulator, &r_stage1, &r_stage2)
                 .expect("Failed to run stage 3 sumcheck")
@@ -1548,6 +1550,7 @@ where
             r_stage1,
             r_stage2,
             stage3_proof,
+            stage3b_proof,
             accumulator,
         )
     }
