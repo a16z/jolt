@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1768258667183,
+  "lastUpdate": 1768341339301,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -45358,6 +45358,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 372300,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5ff5fbc562c37c5519ff99fce293ed289c532c58",
+          "message": "fix(secp256k1): soundness fixes for inline field division (#1200)\n\n* secp256k1: fix inline division soundness\n\n- Reject div-by-zero in Fq/Fr inline div (prevents 0/0 from accepting arbitrary advice)\n\n- Enforce canonical quotient by full limb comparison against modulus\n\n* secp256k1: harden div inline soundness checks\n\n* fix: use arkworks MODULUS constants for secp256k1 canonical checks\n\n- Replace hardcoded modulus values with Fq::MODULUS and Fr::MODULUS\n- Add specialized is_fq_non_canonical and is_fr_non_canonical checks\n- Add test to verify modulus limb assumptions\n- Fix incorrect Fq modulus limb[0] (was 0xFFFFFFFFFFFFFC2F, correct is 0xFFFFFFFEFFFFFC2F)\n\n* fix(secp256k1): correct Fq modulus check and add ECDSA spec-compliant x_R mod n reduction\n\n- Fix subtle bug in is_fq_non_canonical: use correct low limb 0xFFFFFFFEFFFFFC2F (was 0xFFFFFFFFFFFFFC2F)\n- Add is_fr_non_canonical with specialized limb comparison for Fr modulus\n- Implement ECDSA verification step 4 per FIPS 186-5 Section 6.4.2: verify r == x_R mod n\n- Add conditional subtraction for x_R mod n (since p < 2n for secp256k1)\n- Refactor div into div/div_unchecked with explicit 0/0 spoil-proof handling\n- Add is_not_equal helper for limb comparison",
+          "timestamp": "2026-01-13T16:09:45-05:00",
+          "tree_id": "284fa57740a32143994d647a9ce260823616a696",
+          "url": "https://github.com/a16z/jolt/commit/5ff5fbc562c37c5519ff99fce293ed289c532c58"
+        },
+        "date": 1768341337682,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0138,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 383380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 404420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5854,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 385816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5557,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 385848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.3645,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 385764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4938,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 383672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3464,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 385500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7719,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 383500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 385408,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 17.051,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 611752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 85.743,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2714984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 383652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 383664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 372012,
             "unit": "KB",
             "extra": ""
           }
