@@ -29,7 +29,7 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use ark_bn254::Fq;
+use ark_bn254::{Fq, Fq12};
 use ark_grumpkin::Projective as GrumpkinProjective;
 
 /// Constraint metadata for the recursion verifier
@@ -74,6 +74,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     // ============ Stage 8: Dory Batch Opening ============
     /// Dory polynomial commitment opening proof
     pub stage8_opening_proof: PCS::Proof,
+    /// Hint for combine_commitments offloading (the combined GT element)
+    pub stage8_combine_hint: Option<Fq12>,
 
     // ============ Stage 9: Recursion Witness Generation ============
     /// PCS hint for recursion witness generation (not serialized)
@@ -141,6 +143,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.stage8_opening_proof
             .serialize_with_mode(&mut writer, compress)?;
+        self.stage8_combine_hint
+            .serialize_with_mode(&mut writer, compress)?;
         // Skip stage9_pcs_hint - it's not serializable
         self.stage10_recursion_metadata
             .serialize_with_mode(&mut writer, compress)?;
@@ -179,6 +183,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.stage6_sumcheck_proof.serialized_size(compress)
             + self.stage7_sumcheck_proof.serialized_size(compress)
             + self.stage8_opening_proof.serialized_size(compress)
+            + self.stage8_combine_hint.serialized_size(compress)
             // Skip stage9_pcs_hint
             + self.stage10_recursion_metadata.serialized_size(compress)
             + self.recursion_proof.serialized_size(compress)
@@ -264,6 +269,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 compress,
                 validate,
             )?,
+            stage8_combine_hint: Option::deserialize_with_mode(&mut reader, compress, validate)?,
             stage9_pcs_hint: None, // Always None when deserializing
             stage10_recursion_metadata: RecursionConstraintMetadata::deserialize_with_mode(
                 &mut reader,

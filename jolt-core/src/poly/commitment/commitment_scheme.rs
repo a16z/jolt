@@ -7,6 +7,7 @@ use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
+    zkvm::recursion::witness::GTCombineWitness,
 };
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
@@ -155,6 +156,8 @@ pub trait RecursionExt<F: JoltField>: CommitmentScheme<Field = F> {
     type Witness;
     /// hints for efficient verification
     type Hint;
+    /// Hint for combine_commitments offloading (the final combined commitment)
+    type CombineHint;
 
     /// Generate witnesses and convert them to hints
     /// Returns both the full witnesses (for proving) and hints (for verification)
@@ -177,4 +180,24 @@ pub trait RecursionExt<F: JoltField>: CommitmentScheme<Field = F> {
         commitment: &Self::Commitment,
         hint: &Self::Hint,
     ) -> Result<(), ProofVerifyError>;
+
+    /// Generate witness for combine_commitments offloading.
+    ///
+    /// Computes `result = sum_i(coeff_i * commitment_i)` while capturing
+    /// intermediate witnesses for GT exp/mul operations.
+    ///
+    /// Returns the witness (for recursion proving) and hint (the final result).
+    fn generate_combine_witness<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
+        coeffs: &[F],
+    ) -> (GTCombineWitness, Self::CombineHint);
+
+    /// Use precomputed hint instead of computing combine_commitments directly.
+    fn combine_with_hint(hint: &Self::CombineHint) -> Self::Commitment;
+
+    /// Extract the underlying Fq12 from the combine hint for serialization.
+    fn combine_hint_to_fq12(hint: &Self::CombineHint) -> ark_bn254::Fq12;
+
+    /// Reconstruct commitment from serialized Fq12 hint.
+    fn combine_with_hint_fq12(hint: &ark_bn254::Fq12) -> Self::Commitment;
 }

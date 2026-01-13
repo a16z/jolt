@@ -22,6 +22,7 @@ use super::{
 };
 use crate::poly::commitment::commitment_scheme::RecursionExt;
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::recursion::witness::{GTCombineWitness, GTExpOpWitness, GTMulOpWitness};
 
 /// Jolt witness backend implementation for dory recursion
 #[derive(Debug, Clone)]
@@ -256,6 +257,7 @@ impl WitnessGenerator<JoltWitness, BN254> for JoltWitnessGenerator {
 impl RecursionExt<Fr> for DoryCommitmentScheme {
     type Witness = dory::recursion::WitnessCollection<JoltWitness>;
     type Hint = HintMap<BN254>;
+    type CombineHint = ArkGT;
 
     fn witness_gen<ProofTranscript: crate::transcripts::Transcript>(
         proof: &ArkDoryProof,
@@ -350,5 +352,75 @@ impl RecursionExt<Fr> for DoryCommitmentScheme {
         .map_err(|_| ProofVerifyError::default())?;
 
         Ok(())
+    }
+
+    fn generate_combine_witness<C: std::borrow::Borrow<Self::Commitment>>(
+        commitments: &[C],
+        coeffs: &[Fr],
+    ) -> (GTCombineWitness, Self::CombineHint) {
+        assert!(!commitments.is_empty(), "commitments cannot be empty");
+        assert_eq!(
+            commitments.len(),
+            coeffs.len(),
+            "commitments and coeffs must have same length"
+        );
+
+        // Step 1: Generate exponentiation witnesses for each coeff * commitment
+        let exp_witnesses: Vec<GTExpOpWitness> = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(comm, coeff)| {
+                let comm_fq12 = comm.borrow().0;
+                let exp_steps = ExponentiationSteps::new(comm_fq12, *coeff);
+
+                GTExpOpWitness {
+                    base: exp_steps.base,
+                    exponent: exp_steps.exponent,
+                    result: exp_steps.result,
+                    rho_mles: exp_steps.rho_mles,
+                    quotient_mles: exp_steps.quotient_mles,
+                    bits: exp_steps.bits,
+                }
+            })
+            .collect();
+
+        // Step 2: Linear fold with multiplication witnesses
+        let mut mul_witnesses = Vec::with_capacity(exp_witnesses.len().saturating_sub(1));
+        let mut accumulator = exp_witnesses[0].result;
+
+        for exp_wit in &exp_witnesses[1..] {
+            let mul_steps = MultiplicationSteps::new(accumulator, exp_wit.result);
+
+            mul_witnesses.push(GTMulOpWitness {
+                lhs: mul_steps.lhs,
+                rhs: mul_steps.rhs,
+                result: mul_steps.result,
+                quotient_mle: mul_steps.quotient_mle,
+            });
+
+            accumulator = mul_steps.result;
+        }
+
+        let witness = GTCombineWitness {
+            exp_witnesses,
+            mul_witnesses,
+        };
+
+        // The hint is the final accumulated result
+        let hint = ArkGT(accumulator);
+
+        (witness, hint)
+    }
+
+    fn combine_with_hint(hint: &Self::CombineHint) -> Self::Commitment {
+        *hint
+    }
+
+    fn combine_hint_to_fq12(hint: &Self::CombineHint) -> Fq12 {
+        hint.0
+    }
+
+    fn combine_with_hint_fq12(hint: &Fq12) -> Self::Commitment {
+        ArkGT(*hint)
     }
 }

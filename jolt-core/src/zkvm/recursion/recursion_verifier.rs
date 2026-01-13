@@ -182,20 +182,21 @@ impl<F: JoltField> RecursionVerifier<F> {
         let mut g1_scalar_mul_base_points = Vec::new();
         let mut g1_scalar_mul_indices = Vec::new();
 
-        for constraint in &self.input.constraint_types {
+        // Use enumeration index as global constraint index (matches prover's indexing)
+        for (global_idx, constraint) in self.input.constraint_types.iter().enumerate() {
             match constraint {
                 ConstraintType::GtExp { bit } => {
                     gt_exp_bits.push(*bit);
-                    gt_exp_indices.push(num_gt_exp);
+                    gt_exp_indices.push(global_idx);
                     num_gt_exp += 1;
                 }
                 ConstraintType::GtMul => {
-                    gt_mul_indices.push(num_gt_exp + num_gt_mul);
+                    gt_mul_indices.push(global_idx);
                     num_gt_mul += 1;
                 }
                 ConstraintType::G1ScalarMul { base_point } => {
                     g1_scalar_mul_base_points.push(*base_point);
-                    g1_scalar_mul_indices.push(num_gt_exp + num_gt_mul + num_g1_scalar_mul);
+                    g1_scalar_mul_indices.push(global_idx);
                     num_g1_scalar_mul += 1;
                 }
             }

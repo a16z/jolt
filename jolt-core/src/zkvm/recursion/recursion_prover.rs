@@ -89,6 +89,7 @@ impl RecursionProver<Fq> {
         witness_collection: &dory::recursion::WitnessCollection<
             crate::poly::commitment::dory::recursion::JoltWitness,
         >,
+        combine_witness: Option<crate::zkvm::recursion::witness::GTCombineWitness>,
         gamma: Fq,
         delta: Fq,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -99,12 +100,13 @@ impl RecursionProver<Fq> {
         );
 
         // Convert witness collection to DoryRecursionWitness
-        let recursion_witness = Self::witnesses_to_dory_recursion(&witness_collection)?;
+        let recursion_witness = Self::witnesses_to_dory_recursion(&witness_collection, combine_witness.clone())?;
 
         // Build constraint system from witness collection using DoryMatrixBuilder
         let build_cs_span = tracing::info_span!("build_constraint_system").entered();
         let constraint_system = Self::build_constraint_system(
             &witness_collection,
+            recursion_witness.combine_witness.as_ref(),
             recursion_witness.gt_exp_witness.g_poly.clone(),
         )?;
         drop(build_cs_span);
@@ -137,8 +139,8 @@ impl RecursionProver<Fq> {
             commitment,
         )?;
 
-        // Delegate to new_from_witnesses
-        Self::new_from_witnesses(&witness_collection, gamma, delta)
+        // Delegate to new_from_witnesses (no combine_witness from direct Dory proof)
+        Self::new_from_witnesses(&witness_collection, None, gamma, delta)
     }
 
     /// Convert Dory witness collection to DoryRecursionWitness
@@ -146,6 +148,7 @@ impl RecursionProver<Fq> {
         witnesses: &dory::recursion::WitnessCollection<
             crate::poly::commitment::dory::recursion::JoltWitness,
         >,
+        combine_witness: Option<crate::zkvm::recursion::witness::GTCombineWitness>,
     ) -> Result<DoryRecursionWitness, Box<dyn std::error::Error>> {
         let _span = tracing::info_span!("witnesses_to_dory_recursion").entered();
 
@@ -308,10 +311,19 @@ impl RecursionProver<Fq> {
             t_is_infinity_mles,
         };
 
+        if let Some(ref cw) = combine_witness {
+            tracing::info!(
+                "[Homomorphic Combine] Merging combine_witness: {} exp ops, {} mul ops",
+                cw.exp_witnesses.len(),
+                cw.mul_witnesses.len()
+            );
+        }
+
         Ok(DoryRecursionWitness {
             gt_exp_witness,
             gt_mul_witness,
             g1_scalar_mul_witness,
+            combine_witness,
         })
     }
 
@@ -320,6 +332,7 @@ impl RecursionProver<Fq> {
         witness_collection: &dory::recursion::WitnessCollection<
             crate::poly::commitment::dory::recursion::JoltWitness,
         >,
+        combine_witness: Option<&crate::zkvm::recursion::witness::GTCombineWitness>,
         g_poly: DensePolynomial<Fq>,
     ) -> Result<ConstraintSystem, Box<dyn std::error::Error>> {
         use super::constraints_sys::DoryMatrixBuilder;
@@ -327,7 +340,7 @@ impl RecursionProver<Fq> {
         // Use DoryMatrixBuilder with 8 variables for uniform matrix structure
         let mut builder = DoryMatrixBuilder::new(8);
 
-        // Add GT exp witnesses
+        // Add GT exp witnesses from Dory proof verification
         let gt_exp_span = tracing::info_span!("add_gt_exp_witnesses",
             count = witness_collection.gt_exp.len()).entered();
         for (_op_id, witness) in witness_collection.gt_exp.iter() {
@@ -335,7 +348,7 @@ impl RecursionProver<Fq> {
         }
         drop(gt_exp_span);
 
-        // Add GT mul witnesses
+        // Add GT mul witnesses from Dory proof verification
         let gt_mul_span = tracing::info_span!("add_gt_mul_witnesses",
             count = witness_collection.gt_mul.len()).entered();
         for (_op_id, witness) in witness_collection.gt_mul.iter() {
@@ -350,6 +363,22 @@ impl RecursionProver<Fq> {
             builder.add_g1_scalar_mul_witness(witness);
         }
         drop(g1_scalar_mul_span);
+
+        // Add combine_commitments witnesses (homomorphic combine offloading)
+        if let Some(cw) = combine_witness {
+            let pre_count = builder.constraint_count();
+            tracing::info!(
+                "[Homomorphic Combine] Adding {} GT exp + {} GT mul constraints (pre-count: {})",
+                cw.exp_witnesses.len(),
+                cw.mul_witnesses.len(),
+                pre_count
+            );
+            builder.add_combine_witness(cw);
+            tracing::info!(
+                "[Homomorphic Combine] Post-add constraint count: {}",
+                builder.constraint_count()
+            );
+        }
 
         let build_matrix_span = tracing::info_span!("build_matrix").entered();
         let (matrix, constraints) = builder.build();

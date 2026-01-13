@@ -15,6 +15,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::errors::ProofVerifyError,
+    zkvm::recursion::witness::{GTCombineWitness, GTExpOpWitness, GTMulOpWitness},
 };
 use ark_bn254::{Fq, Fr};
 use ark_ff::{One, Zero};
@@ -276,6 +277,11 @@ impl DoryMatrixBuilder {
             ],
             constraint_types: Vec::new(),
         }
+    }
+
+    /// Get the current number of constraints added to the builder
+    pub fn constraint_count(&self) -> usize {
+        self.constraint_types.len()
     }
 
     /// Pad a 4-variable MLE to 8 variables by repeating the values.
@@ -563,6 +569,154 @@ impl DoryMatrixBuilder {
         self.constraint_types.push(ConstraintType::G1ScalarMul {
             base_point: (witness.point_base.x, witness.point_base.y),
         });
+    }
+
+    /// Add constraints from a per-operation GT exponentiation witness (from combine_commitments).
+    /// This is the same as `add_gt_exp_witness` but accepts `GTExpOpWitness` type.
+    pub fn add_gt_exp_op_witness(&mut self, witness: &GTExpOpWitness) {
+        let n = witness.bits.len();
+
+        // Skip witnesses with no steps (e.g., when exponent is 0 or 1)
+        if n == 0 || witness.quotient_mles.is_empty() || witness.rho_mles.len() < n + 1 {
+            tracing::debug!(
+                "[Homomorphic Combine] Skipping GT exp witness with no steps (bits={}, quotient_mles={}, rho_mles={})",
+                n,
+                witness.quotient_mles.len(),
+                witness.rho_mles.len()
+            );
+            return;
+        }
+
+        let base_mle_4var = fq12_to_multilinear_evals(&witness.base);
+        assert_eq!(
+            base_mle_4var.len(),
+            16,
+            "GT exp witness should have 4-variable MLEs"
+        );
+
+        for step in 0..n {
+            let (base_row, rho_prev, rho_curr, quotient) = if self.num_constraint_vars == 8 {
+                (
+                    Self::pad_4var_to_8var_zero_padding(&base_mle_4var),
+                    Self::pad_4var_to_8var_zero_padding(&witness.rho_mles[step]),
+                    Self::pad_4var_to_8var_zero_padding(&witness.rho_mles[step + 1]),
+                    Self::pad_4var_to_8var_zero_padding(&witness.quotient_mles[step]),
+                )
+            } else if self.num_constraint_vars == 4 {
+                (
+                    base_mle_4var.clone(),
+                    witness.rho_mles[step].clone(),
+                    witness.rho_mles[step + 1].clone(),
+                    witness.quotient_mles[step].clone(),
+                )
+            } else {
+                panic!(
+                    "Unsupported number of constraint variables: {}",
+                    self.num_constraint_vars
+                );
+            };
+
+            self.rows_by_type[PolyType::Base as usize].push(base_row);
+
+            assert_eq!(rho_prev.len(), 1 << self.num_constraint_vars);
+            self.rows_by_type[PolyType::RhoPrev as usize].push(rho_prev);
+
+            assert_eq!(rho_curr.len(), 1 << self.num_constraint_vars);
+            self.rows_by_type[PolyType::RhoCurr as usize].push(rho_curr);
+
+            assert_eq!(quotient.len(), 1 << self.num_constraint_vars);
+            self.rows_by_type[PolyType::Quotient as usize].push(quotient);
+
+            let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
+            self.rows_by_type[PolyType::MulLhs as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::MulRhs as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::MulResult as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::MulQuotient as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(zero_row.clone());
+            self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(zero_row);
+
+            self.constraint_types.push(ConstraintType::GtExp {
+                bit: witness.bits[step],
+            });
+        }
+    }
+
+    /// Add constraint from a per-operation GT multiplication witness (from combine_commitments).
+    /// This is the same as `add_gt_mul_witness` but accepts `GTMulOpWitness` type.
+    pub fn add_gt_mul_op_witness(&mut self, witness: &GTMulOpWitness) {
+        // Skip witnesses with empty quotient MLEs
+        if witness.quotient_mle.is_empty() {
+            tracing::debug!(
+                "[Homomorphic Combine] Skipping GT mul witness with empty quotient_mle"
+            );
+            return;
+        }
+
+        let lhs_mle_4var = fq12_to_multilinear_evals(&witness.lhs);
+        let rhs_mle_4var = fq12_to_multilinear_evals(&witness.rhs);
+        let result_mle_4var = fq12_to_multilinear_evals(&witness.result);
+        let quotient_mle_4var = witness.quotient_mle.clone();
+
+        assert_eq!(lhs_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
+        assert_eq!(rhs_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
+        assert_eq!(result_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
+        assert_eq!(quotient_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
+
+        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 8 {
+            (
+                Self::pad_4var_to_8var_zero_padding(&lhs_mle_4var),
+                Self::pad_4var_to_8var_zero_padding(&rhs_mle_4var),
+                Self::pad_4var_to_8var_zero_padding(&result_mle_4var),
+                Self::pad_4var_to_8var_zero_padding(&quotient_mle_4var),
+            )
+        } else if self.num_constraint_vars == 4 {
+            (lhs_mle_4var, rhs_mle_4var, result_mle_4var, quotient_mle_4var)
+        } else {
+            panic!(
+                "Unsupported number of constraint variables: {}",
+                self.num_constraint_vars
+            );
+        };
+
+        assert_eq!(lhs_mle.len(), 1 << self.num_constraint_vars);
+        assert_eq!(rhs_mle.len(), 1 << self.num_constraint_vars);
+        assert_eq!(result_mle.len(), 1 << self.num_constraint_vars);
+        assert_eq!(quotient_mle.len(), 1 << self.num_constraint_vars);
+
+        self.rows_by_type[PolyType::MulLhs as usize].push(lhs_mle);
+        self.rows_by_type[PolyType::MulRhs as usize].push(rhs_mle);
+        self.rows_by_type[PolyType::MulResult as usize].push(result_mle);
+        self.rows_by_type[PolyType::MulQuotient as usize].push(quotient_mle);
+
+        let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
+        self.rows_by_type[PolyType::Base as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::RhoCurr as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::Quotient as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(zero_row);
+
+        self.constraint_types.push(ConstraintType::GtMul);
+    }
+
+    /// Add all constraints from a GTCombineWitness (homomorphic combine offloading).
+    pub fn add_combine_witness(&mut self, witness: &GTCombineWitness) {
+        for exp_wit in &witness.exp_witnesses {
+            self.add_gt_exp_op_witness(exp_wit);
+        }
+        for mul_wit in &witness.mul_witnesses {
+            self.add_gt_mul_op_witness(mul_wit);
+        }
     }
 
     pub fn build(self) -> (DoryMultilinearMatrix, Vec<MatrixConstraint>) {

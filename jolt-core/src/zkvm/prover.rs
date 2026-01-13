@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::poly::commitment::hyrax::Hyrax;
-use ark_bn254::{Fq, Fr};
+use ark_bn254::{Fq, Fq12, Fr};
 use ark_grumpkin::Projective as GrumpkinProjective;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
@@ -155,6 +155,8 @@ pub struct Stage8ProofData<
     pub opening_state: DoryOpeningState<F>,
     /// The witnesses from the first witness_gen call
     pub witnesses: <PCS as RecursionExt<F>>::Witness,
+    /// Witness for combine_commitments offloading
+    pub combine_witness: Option<crate::zkvm::recursion::witness::GTCombineWitness>,
 }
 
 /// Jolt CPU prover for RV64IMAC.
@@ -380,7 +382,7 @@ where
         let stage7_sumcheck_proof = self.prove_stage7();
 
         // Stage 8: Dory batch opening proof with hint generation
-        let (joint_opening_proof, stage8_pcs_hint, stage8_proof_data) =
+        let (joint_opening_proof, stage8_pcs_hint, stage8_proof_data, stage8_combine_hint) =
             self.prove_stage8(opening_proof_hints, true);
         let stage8_pcs_hint = stage8_pcs_hint.expect("Stage 8 hint required for recursion");
         let stage8_proof_data =
@@ -457,6 +459,7 @@ where
             untrusted_advice_val_final_proof,
             stage7_sumcheck_proof,
             stage8_opening_proof: joint_opening_proof,
+            stage8_combine_hint,
             stage9_pcs_hint: Some(Box::new(stage8_pcs_hint) as Box<dyn std::any::Any + Send + Sync>),
             stage10_recursion_metadata: recursion_constraint_metadata,
             recursion_proof,
@@ -1230,6 +1233,7 @@ where
         PCS::Proof,
         Option<<PCS as RecursionExt<F>>::Hint>,
         Option<Stage8ProofData<F, PCS, ProofTranscript>>,
+        Option<Fq12>, // combine_hint for homomorphic combining offload
     )
     where
         PCS: RecursionExt<F>,
@@ -1358,7 +1362,7 @@ where
         );
 
         // Generate recursion hint if requested
-        let (stage8_hint, proof_data) = if generate_recursion_hint {
+        let (stage8_hint, proof_data, stage8_combine_hint) = if generate_recursion_hint {
             // Compute claim: Σ γ_i · claim_i using shared utility
             let joint_claim = compute_joint_claim(&gamma_powers, &claims);
 
@@ -1383,7 +1387,17 @@ where
                 .into_iter()
                 .map(|(poly, coeff)| (coeff, commitments_map.remove(&poly).unwrap()))
                 .unzip();
-            let joint_commitment = PCS::combine_commitments(&comms, &coeffs);
+
+            // Generate combine witness for homomorphic combining offload
+            let (combine_witness, combine_hint) =
+                PCS::generate_combine_witness(&comms, &coeffs);
+            tracing::info!(
+                "[Homomorphic Combine] Generated witness: {} GT exp ops, {} GT mul ops",
+                combine_witness.exp_witnesses.len(),
+                combine_witness.mul_witnesses.len()
+            );
+            // combine_witness will be passed to Stage 9 via proof_data
+            let joint_commitment = PCS::combine_with_hint(&combine_hint);
 
             // Generate a hint for verifying the opening proof (via the PCS's recursion extension).
             let verifier_setup = PCS::setup_verifier(&self.preprocessing.generators);
@@ -1405,14 +1419,18 @@ where
                 witness_gen_transcript: witness_gen_transcript.unwrap(),
                 opening_state: state.clone(),
                 witnesses,
+                combine_witness: Some(combine_witness),
             };
 
-            (Some(stage8_hint), Some(proof_data))
+            // Extract the Fq12 from combine_hint for serialization
+            let combine_hint_fq12 = PCS::combine_hint_to_fq12(&combine_hint);
+
+            (Some(stage8_hint), Some(proof_data), Some(combine_hint_fq12))
         } else {
-            (None, None)
+            (None, None, None)
         };
 
-        (opening_proof, stage8_hint, proof_data)
+        (opening_proof, stage8_hint, proof_data, stage8_combine_hint)
     }
 
     /// Stage 9: Generate recursion witness and create RecursionProver
@@ -1467,7 +1485,12 @@ where
 
         // Create RecursionProver using pre-generated witnesses
         let recursion_prover = tracing::info_span!("create_recursion_prover").in_scope(|| {
-            let prover = RecursionProver::<Fq>::new_from_witnesses(witness_collection, gamma, delta)?;
+            let prover = RecursionProver::<Fq>::new_from_witnesses(
+                witness_collection,
+                proof_data.combine_witness.clone(),
+                gamma,
+                delta,
+            )?;
             tracing::info!("Created RecursionProver from witnesses");
             Ok::<_, Box<dyn std::error::Error>>(prover)
         })?;

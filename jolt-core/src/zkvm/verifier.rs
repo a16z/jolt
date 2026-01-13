@@ -658,17 +658,23 @@ where
             polynomial_claims,
         };
 
-        // Build commitments map
-        let mut commitments_map = HashMap::new();
-        for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
-            .into_iter()
-            .zip_eq(&self.proof.commitments)
-        {
-            commitments_map.insert(polynomial, commitment.clone());
-        }
-
         // Compute joint commitment: Σ γ_i · C_i
-        let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state);
+        // Use precomputed hint if available, otherwise compute directly
+        let joint_commitment = if let Some(combine_hint) = &self.proof.stage8_combine_hint {
+            // Use the precomputed hint (recursion-offloaded path)
+            tracing::info!("[Homomorphic Combine] Verifier using precomputed combine_hint");
+            PCS::combine_with_hint_fq12(combine_hint)
+        } else {
+            // Build commitments map and compute directly
+            let mut commitments_map = HashMap::new();
+            for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
+                .into_iter()
+                .zip_eq(&self.proof.commitments)
+            {
+                commitments_map.insert(polynomial, commitment.clone());
+            }
+            self.compute_joint_commitment(&mut commitments_map, &state)
+        };
 
         // Compute joint claim: Σ γ_i · claim_i
         let joint_claim: F = gamma_powers

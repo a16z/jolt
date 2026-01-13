@@ -641,4 +641,171 @@ mod tests {
             "Verification should also succeed with direct commitment: {result2:?}"
         );
     }
+
+    #[test]
+    #[serial]
+    fn test_combine_witness_matches_direct() {
+        use crate::poly::commitment::commitment_scheme::RecursionExt;
+
+        DoryGlobals::reset();
+
+        let num_vars = 8;
+        let num_coeffs = 1 << num_vars;
+        let num_polys = 5;
+
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
+
+        let mut rng = thread_rng();
+
+        // Generate random polynomials
+        let polys: Vec<MultilinearPolynomial<Fr>> = (0..num_polys)
+            .map(|_| {
+                let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+                MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs))
+            })
+            .collect();
+
+        let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
+
+        // Commit to each polynomial
+        let commitments: Vec<_> = polys
+            .iter()
+            .map(|poly| {
+                let (commitment, _) = DoryCommitmentScheme::commit(poly, &prover_setup);
+                commitment
+            })
+            .collect();
+
+        // Generate random coefficients
+        let coeffs: Vec<Fr> = (0..num_polys).map(|_| Fr::rand(&mut rng)).collect();
+
+        // Compute via direct method
+        let direct_result = DoryCommitmentScheme::combine_commitments(&commitments, &coeffs);
+
+        // Compute via witness generation
+        let (witness, hint) =
+            DoryCommitmentScheme::generate_combine_witness(&commitments, &coeffs);
+        let witness_result = DoryCommitmentScheme::combine_with_hint(&hint);
+
+        // Results should match
+        assert_eq!(
+            direct_result, witness_result,
+            "combine_with_hint result should match combine_commitments"
+        );
+
+        // Verify witness structure: n exp witnesses, n-1 mul witnesses
+        assert_eq!(
+            witness.exp_witnesses.len(),
+            num_polys,
+            "Should have n exponentiation witnesses"
+        );
+        assert_eq!(
+            witness.mul_witnesses.len(),
+            num_polys - 1,
+            "Should have n-1 multiplication witnesses"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_combine_witness_structure() {
+        use crate::poly::commitment::commitment_scheme::RecursionExt;
+
+        DoryGlobals::reset();
+
+        let num_vars = 8;
+        let num_coeffs = 1 << num_vars;
+        let num_polys = 4;
+
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
+
+        let mut rng = thread_rng();
+
+        // Generate random polynomials
+        let polys: Vec<MultilinearPolynomial<Fr>> = (0..num_polys)
+            .map(|_| {
+                let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+                MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs))
+            })
+            .collect();
+
+        let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
+
+        let commitments: Vec<_> = polys
+            .iter()
+            .map(|poly| {
+                let (commitment, _) = DoryCommitmentScheme::commit(poly, &prover_setup);
+                commitment
+            })
+            .collect();
+
+        let coeffs: Vec<Fr> = (0..num_polys).map(|_| Fr::rand(&mut rng)).collect();
+
+        let (witness, _hint) =
+            DoryCommitmentScheme::generate_combine_witness(&commitments, &coeffs);
+
+        // Verify chain consistency: exp outputs feed into mul inputs
+        // First exp result is the initial accumulator
+        let mut expected_acc = witness.exp_witnesses[0].result;
+
+        for (i, mul_wit) in witness.mul_witnesses.iter().enumerate() {
+            // LHS should be the current accumulator
+            assert_eq!(
+                mul_wit.lhs, expected_acc,
+                "mul_witness[{i}].lhs should equal current accumulator"
+            );
+
+            // RHS should be the next exp result
+            assert_eq!(
+                mul_wit.rhs, witness.exp_witnesses[i + 1].result,
+                "mul_witness[{i}].rhs should equal exp_witness[{}].result",
+                i + 1
+            );
+
+            // Update accumulator to mul result
+            expected_acc = mul_wit.result;
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_combine_single_commitment() {
+        use crate::poly::commitment::commitment_scheme::RecursionExt;
+
+        DoryGlobals::reset();
+
+        let num_vars = 8;
+        let num_coeffs = 1 << num_vars;
+
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
+
+        let mut rng = thread_rng();
+
+        // Single polynomial
+        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+            (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect(),
+        ));
+
+        let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
+        let (commitment, _) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+
+        let coeff = Fr::rand(&mut rng);
+
+        // Direct computation
+        let direct_result = DoryCommitmentScheme::combine_commitments(&[commitment], &[coeff]);
+
+        // Via witness
+        let (witness, hint) =
+            DoryCommitmentScheme::generate_combine_witness(&[commitment], &[coeff]);
+        let witness_result = DoryCommitmentScheme::combine_with_hint(&hint);
+
+        assert_eq!(direct_result, witness_result);
+
+        // Single commitment: 1 exp witness, 0 mul witnesses
+        assert_eq!(witness.exp_witnesses.len(), 1);
+        assert_eq!(witness.mul_witnesses.len(), 0);
+
+        // Result should equal the exp result directly
+        assert_eq!(witness.exp_witnesses[0].result, hint.0);
+    }
 }
