@@ -947,27 +947,27 @@ pub fn ecdsa_verify(
     ];
     // 3.4: perform the 4x128-bit scalar multiplication
     let r_claim = secp256k1_4x128_scalar_mul(scalars, points);
-    // step 4: check that R.x == r.
+    // step 4: check that r == R.x mod n.
     //
-    // NOTE (ECDSA spec nuance):
-    // Standard ECDSA verification checks `r == x_R mod n`, where:
-    // - `x_R` is the *integer* x-coordinate of `R` in the base field (mod p),
-    // - `n` is the group order (the scalar field modulus).
-    //
-    // Here we do a *stronger* check: `x_R == r` as integers (no reduction mod n).
-    // This is still sound (no false accepts): if `x_R == r` and `r < n`, then
-    // automatically `x_R mod n == r`.
-    //
-    // The tradeoff is completeness: a valid ECDSA signature can (rarely) have
-    // `x_R >= n` with `x_R mod n == r`, which this code would reject. For secp256k1
-    // this is astronomically unlikely because `p - n` is about 2^128, so
-    // Pr[x_R >= n] ≈ 2^-128 under typical distributions.
-    //
-    // If strict spec compliance is required, replace this with a reduction of `x_R`
-    // modulo `n` before comparison.
-    let r_claim_x_bigint = r_claim.x.e.into_bigint();
+    // We implement the `mod n` as a single conditional subtraction on the bigint:
+    // for secp256k1, `0 <= x_R < p` and `p < 2n`, so `x_R mod n` is either `x_R` or `x_R - n`.
+    let mut r1_mod_n = r_claim.x.e.into_bigint();
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    if is_fr_non_canonical(&r1_mod_n.0) {
+        r1_mod_n -= Fr::MODULUS;
+    }
+    #[cfg(any(
+        feature = "host",
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    if r1_mod_n >= Fr::MODULUS {
+        r1_mod_n -= Fr::MODULUS;
+    }
     let r_bigint = r.e.into_bigint();
-    if r_claim_x_bigint != r_bigint {
+    if r1_mod_n != r_bigint {
         return Result::Err(Secp256k1Error::RxMismatch);
     }
     // if all checks passed, return Ok(())
