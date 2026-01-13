@@ -1821,6 +1821,7 @@ mod tests {
     #[test]
     #[serial]
     fn sha2_e2e_dory_with_unused_advice() {
+        DoryGlobals::reset();
         // SHA2 guest does not consume advice, but providing both trusted and untrusted advice
         // should still work correctly through the full pipeline:
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
@@ -1881,6 +1882,7 @@ mod tests {
     #[test]
     #[serial]
     fn max_advice_with_small_trace() {
+        DoryGlobals::reset();
         // Tests that max-sized advice (4KB = 512 words) works with a minimal trace.
         // With balanced dims (sigma_a=5, nu_a=4 for 512 words), the minimum padded trace
         // (256 cycles -> total_vars=12) is sufficient to embed advice.
@@ -1941,6 +1943,7 @@ mod tests {
     #[test]
     #[serial]
     fn advice_e2e_dory() {
+        DoryGlobals::reset();
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _) = program.decode();
@@ -2000,6 +2003,7 @@ mod tests {
     #[test]
     #[serial]
     fn advice_opening_point_derives_from_unified_point() {
+        DoryGlobals::reset();
         // Tests that advice opening points are correctly derived from the unified main opening
         // point using Dory's balanced dimension policy.
         //

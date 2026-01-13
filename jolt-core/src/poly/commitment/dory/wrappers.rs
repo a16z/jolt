@@ -139,10 +139,18 @@ where
     let result: Vec<ArkG1> = match poly {
         MultilinearPolynomial::U64Scalars(poly) => match dory_layout {
             DoryLayout::CycleMajor => {
-                let affine_bases: Vec<_> = g1_slice.par_iter().map(|g| g.0.into_affine()).collect();
+                // Only the first `row_len` bases correspond to the current matrix width.
+                // (The universal setup can be larger than the polynomial being committed.)
+                let affine_bases: Vec<_> = g1_slice
+                    .par_iter()
+                    .take(row_len)
+                    .map(|g| g.0.into_affine())
+                    .collect();
                 poly.coeffs
                     .par_chunks(row_len)
-                    .map(|row| ArkG1(VariableBaseMSM::msm_u64(&affine_bases, row).unwrap()))
+                    .map(|row| {
+                        ArkG1(VariableBaseMSM::msm_u64(&affine_bases[..row.len()], row).unwrap())
+                    })
                     .collect()
             }
             DoryLayout::AddressMajor => {
@@ -157,16 +165,25 @@ where
                     .collect();
                 poly.coeffs
                     .par_chunks(cycles_per_row)
-                    .map(|row| ArkG1(VariableBaseMSM::msm_u64(&affine_bases, row).unwrap()))
+                    .map(|row| {
+                        ArkG1(VariableBaseMSM::msm_u64(&affine_bases[..row.len()], row).unwrap())
+                    })
                     .collect()
             }
         },
         MultilinearPolynomial::I128Scalars(poly) => match dory_layout {
             DoryLayout::CycleMajor => {
-                let affine_bases: Vec<_> = g1_slice.par_iter().map(|g| g.0.into_affine()).collect();
+                // Only the first `row_len` bases correspond to the current matrix width.
+                let affine_bases: Vec<_> = g1_slice
+                    .par_iter()
+                    .take(row_len)
+                    .map(|g| g.0.into_affine())
+                    .collect();
                 poly.coeffs
                     .par_chunks(row_len)
-                    .map(|row| ArkG1(VariableBaseMSM::msm_i128(&affine_bases, row).unwrap()))
+                    .map(|row| {
+                        ArkG1(VariableBaseMSM::msm_i128(&affine_bases[..row.len()], row).unwrap())
+                    })
                     .collect()
             }
             DoryLayout::AddressMajor => {
@@ -181,7 +198,9 @@ where
                     .collect();
                 poly.coeffs
                     .par_chunks(cycles_per_row)
-                    .map(|row| ArkG1(VariableBaseMSM::msm_i128(&affine_bases, row).unwrap()))
+                    .map(|row| {
+                        ArkG1(VariableBaseMSM::msm_i128(&affine_bases[..row.len()], row).unwrap())
+                    })
                     .collect()
             }
         },
