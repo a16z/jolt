@@ -2369,4 +2369,66 @@ mod tests {
             .verify()
             .expect("verification failed");
     }
+
+    #[test]
+    #[serial]
+    fn advice_e2e_dory_address_major() {
+        DoryGlobals::reset();
+        DoryGlobals::set_layout(DoryLayout::AddressMajor);
+
+        // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
+        let mut program = host::Program::new("merkle-tree-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+
+        // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
+        let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
+        let untrusted_advice = postcard::to_stdvec(&[8u8; 32]).unwrap();
+        let mut trusted_advice = postcard::to_stdvec(&[6u8; 32]).unwrap();
+        trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
+
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
+
+        let (trusted_commitment, trusted_hint) =
+            commit_trusted_advice_preprocessing_only(&prover_preprocessing, &trusted_advice);
+
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            &elf_contents,
+            &inputs,
+            &untrusted_advice,
+            &trusted_advice,
+            Some(trusted_commitment),
+            Some(trusted_hint),
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            Some(trusted_commitment),
+            debug_info,
+        )
+        .expect("Failed to create verifier")
+        .verify()
+        .expect("Verification failed");
+
+        // Expected merkle root for leaves [5;32], [6;32], [7;32], [8;32]
+        let expected_output = &[
+            0xb4, 0x37, 0x0f, 0x3a, 0xb, 0x3d, 0x38, 0xa8, 0x7a, 0x6c, 0x4c, 0x46, 0x9, 0xe7, 0x83,
+            0xb3, 0xcc, 0xb7, 0x1c, 0x30, 0x1f, 0xf8, 0x54, 0xd, 0xf7, 0xdd, 0xc8, 0x42, 0x32,
+            0xbb, 0x16, 0xd7,
+        ];
+        assert_eq!(io_device.outputs, expected_output);
+    }
 }
