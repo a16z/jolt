@@ -225,38 +225,25 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
     }
 }
 
-/// Check if commitment opening is valid.
-#[allow(dead_code)]
-pub fn verify_commitment_opening<F: JoltField, C: JoltCurve>(
-    gens: &PedersenGenerators<C>,
-    commitment: &C::G1,
-    values: &[F],
-    blinding: &F,
-) -> bool {
-    let expected = gens.commit(values, blinding);
-    *commitment == expected
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::{Bn254Curve, Bn254G1};
+    use crate::curve::Bn254Curve;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::StageConfig;
     use ark_bn254::Fr;
     use ark_std::{One, UniformRand, Zero};
+
     use rand::thread_rng;
 
-    fn mock_generators(n: usize) -> PedersenGenerators<Bn254Curve> {
-        let mut rng = thread_rng();
-        let generators: Vec<Bn254G1> = (0..n)
-            .map(|_| {
-                use ark_bn254::G1Projective;
-                Bn254G1(G1Projective::rand(&mut rng))
-            })
-            .collect();
-        PedersenGenerators::<Bn254Curve>::new(generators)
+    fn verify_commitment_opening<F: JoltField, C: JoltCurve>(
+        gens: &PedersenGenerators<C>,
+        commitment: &C::G1,
+        values: &[F],
+        blinding: &F,
+    ) -> bool {
+        gens.commit(values, blinding) == *commitment
     }
 
     #[test]
@@ -291,7 +278,7 @@ mod tests {
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
         // Create generators (need enough for the witness size)
-        let gens = mock_generators(witness.len() + 10);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(witness.len() + 10);
 
         // Create non-relaxed instance
         let (instance, relaxed_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
@@ -420,7 +407,7 @@ mod tests {
         let mut rng = thread_rng();
         type F = Fr;
 
-        let gens = mock_generators(20);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(20);
 
         // Create two instances
         let x1: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();
@@ -476,7 +463,7 @@ mod tests {
         let mut rng = thread_rng();
         type F = Fr;
 
-        let gens = mock_generators(20);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(20);
 
         // Create two witness vectors
         let w1: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();

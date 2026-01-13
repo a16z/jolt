@@ -114,94 +114,16 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     (instance, witness, z)
 }
 
-/// Verify that the cross-term was computed correctly.
-///
-/// This is primarily for testing - the protocol doesn't need this check
-/// because the prover commits to T and the verifier uses the commitment.
-#[allow(dead_code)]
-pub fn verify_cross_term<F: JoltField>(
-    r1cs: &VerifierR1CS<F>,
-    z1: &[F],
-    u1: F,
-    z2: &[F],
-    u2: F,
-    T: &[F],
-) -> bool {
-    let expected = compute_cross_term(r1cs, z1, u1, z2, u2);
-    T == expected
-}
-
-/// Verify that folding preserves satisfiability.
-///
-/// If (u₁, w₁) satisfies with E₁ and (u₂, w₂) satisfies with E₂,
-/// then the folded (u', w') satisfies with E' = E₁ + r*T + r²*E₂.
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
-pub fn verify_folding_preserves_satisfaction<F: JoltField>(
-    r1cs: &VerifierR1CS<F>,
-    z1: &[F],
-    w1: &RelaxedR1CSWitness<F>,
-    u1: F,
-    z2: &[F],
-    w2: &RelaxedR1CSWitness<F>,
-    u2: F,
-    T: &[F],
-    r: F,
-) -> bool {
-    // Compute folded values
-    let r_sq = r * r;
-
-    // Z' = Z₁ + r*Z₂
-    let z_folded: Vec<F> = z1.iter().zip(z2).map(|(a, b)| *a + r * *b).collect();
-
-    // u' = u₁ + r*u₂
-    let u_folded = u1 + r * u2;
-
-    // E' = E₁ + r*T + r²*E₂
-    let E_folded: Vec<F> =
-        w1.E.iter()
-            .zip(T.iter())
-            .zip(&w2.E)
-            .map(|((e1, t), e2)| *e1 + r * *t + r_sq * *e2)
-            .collect();
-
-    // Check: (AZ') ∘ (BZ') = u'*(CZ') + E'
-    let az = r1cs.a.mul_vector(&z_folded);
-    let bz = r1cs.b.mul_vector(&z_folded);
-    let cz = r1cs.c.mul_vector(&z_folded);
-
-    for i in 0..r1cs.num_constraints {
-        let lhs = az[i] * bz[i];
-        let rhs = u_folded * cz[i] + E_folded[i];
-        if lhs != rhs {
-            return false;
-        }
-    }
-
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::{Bn254Curve, Bn254G1, JoltGroupElement};
+    use crate::curve::{Bn254Curve, JoltGroupElement};
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::StageConfig;
     use ark_bn254::Fr;
     use ark_std::{One, UniformRand, Zero};
     use rand::thread_rng;
-
-    fn mock_generators(n: usize) -> PedersenGenerators<Bn254Curve> {
-        let mut rng = thread_rng();
-        let generators: Vec<Bn254G1> = (0..n)
-            .map(|_| {
-                use ark_bn254::G1Projective;
-                Bn254G1(G1Projective::rand(&mut rng))
-            })
-            .collect();
-        PedersenGenerators::<Bn254Curve>::new(generators)
-    }
 
     #[test]
     fn test_cross_term_computation() {
@@ -274,7 +196,7 @@ mod tests {
         let r1cs = builder.build();
 
         // Need enough generators for witness
-        let gens = mock_generators(r1cs.num_vars + 10);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 10);
 
         // Sample random satisfying pair
         let (instance, witness, z) = sample_random_satisfying_pair(&gens, &r1cs, &mut rng);
@@ -312,7 +234,7 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs);
         let r1cs = builder.build();
 
-        let gens = mock_generators(r1cs.num_vars + 10);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 10);
 
         // Create two satisfying pairs
         // Pair 1: non-relaxed (u=1, E=0)
@@ -348,11 +270,28 @@ mod tests {
 
         // Choose random folding challenge
         let r = F::rand(&mut rng);
+        let r_sq = r * r;
 
-        // Verify folding preserves satisfaction
-        assert!(verify_folding_preserves_satisfaction(
-            &r1cs, &z1, &w1, u1, &z2, &w2, u2, &T, r
-        ));
+        // Compute folded values
+        let z_folded: Vec<F> = z1.iter().zip(&z2).map(|(a, b)| *a + r * *b).collect();
+        let u_folded = u1 + r * u2;
+        let E_folded: Vec<F> =
+            w1.E.iter()
+                .zip(T.iter())
+                .zip(&w2.E)
+                .map(|((e1, t), e2)| *e1 + r * *t + r_sq * *e2)
+                .collect();
+
+        // Verify (AZ') ∘ (BZ') = u'*(CZ') + E'
+        let az = r1cs.a.mul_vector(&z_folded);
+        let bz = r1cs.b.mul_vector(&z_folded);
+        let cz = r1cs.c.mul_vector(&z_folded);
+
+        for i in 0..r1cs.num_constraints {
+            let lhs = az[i] * bz[i];
+            let rhs = u_folded * cz[i] + E_folded[i];
+            assert_eq!(lhs, rhs, "Folding broke constraint {i}");
+        }
     }
 
     #[test]
@@ -364,7 +303,7 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs);
         let r1cs = builder.build();
 
-        let gens = mock_generators(r1cs.num_vars + 10);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 10);
 
         // Create two random satisfying pairs
         let (inst1, wit1, _) = sample_random_satisfying_pair(&gens, &r1cs, &mut rng);

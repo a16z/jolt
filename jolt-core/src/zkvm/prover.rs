@@ -1865,36 +1865,22 @@ mod tests {
     #[test]
     #[serial]
     fn blindfold_protocol_e2e() {
-        use crate::curve::{Bn254Curve, Bn254G1};
+        use crate::curve::Bn254Curve;
         use crate::poly::commitment::pedersen::PedersenGenerators;
         use crate::subprotocols::blindfold::{
             BlindFoldProver, BlindFoldVerifier, BlindFoldWitness, RelaxedR1CSInstance,
             RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
         };
         use crate::transcripts::{KeccakTranscript, Transcript};
-        use ark_std::UniformRand;
         use rand::thread_rng;
 
         let mut rng = thread_rng();
 
-        fn mock_generators(n: usize) -> PedersenGenerators<Bn254Curve> {
-            let mut rng = thread_rng();
-            let generators: Vec<Bn254G1> = (0..n)
-                .map(|_| {
-                    use ark_bn254::G1Projective;
-                    Bn254G1(G1Projective::rand(&mut rng))
-                })
-                .collect();
-            PedersenGenerators::<Bn254Curve>::new(generators)
-        }
-
-        // Create a simple R1CS (2 rounds, degree 3)
         let configs = [StageConfig::new(2, 3)];
         let builder = VerifierR1CSBuilder::<Fr>::new(&configs);
         let r1cs = builder.build();
 
-        // Create generators
-        let gens = mock_generators(r1cs.num_vars + 100);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
 
         // Create valid multi-round witness
         // Round 1: 2*c0 + c1 + c2 + c3 = 55

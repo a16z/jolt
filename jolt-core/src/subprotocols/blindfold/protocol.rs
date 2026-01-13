@@ -260,7 +260,7 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::{Bn254Curve, Bn254G1};
+    use crate::curve::Bn254Curve;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::StageConfig;
@@ -268,17 +268,6 @@ mod tests {
     use ark_bn254::Fr;
     use ark_std::UniformRand;
     use rand::thread_rng;
-
-    fn mock_generators(n: usize) -> PedersenGenerators<Bn254Curve> {
-        let mut rng = thread_rng();
-        let generators: Vec<Bn254G1> = (0..n)
-            .map(|_| {
-                use ark_bn254::G1Projective;
-                Bn254G1(G1Projective::rand(&mut rng))
-            })
-            .collect();
-        PedersenGenerators::<Bn254Curve>::new(generators)
-    }
 
     #[test]
     fn test_blindfold_protocol_completeness() {
@@ -290,8 +279,7 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs);
         let r1cs = builder.build();
 
-        // Create Pedersen generators
-        let gens = mock_generators(r1cs.num_vars + 100);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
 
         // Create a valid witness
         let round = RoundWitness::new(
@@ -354,7 +342,7 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs);
         let r1cs = builder.build();
 
-        let gens = mock_generators(r1cs.num_vars + 100);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
 
         // Create valid instance
         let round = RoundWitness::new(
@@ -418,7 +406,7 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs);
         let r1cs = builder.build();
 
-        let gens = mock_generators(r1cs.num_vars + 100);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
 
         // Create valid multi-round witness
         // Round 1

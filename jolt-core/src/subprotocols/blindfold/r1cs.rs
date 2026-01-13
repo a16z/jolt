@@ -183,20 +183,6 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
     }
 
-    /// Allocate a new witness variable
-    #[allow(dead_code)]
-    fn alloc_var(&mut self) -> Variable {
-        let var = Variable::new(self.next_var);
-        self.next_var += 1;
-        var
-    }
-
-    /// Allocate multiple witness variables
-    #[allow(dead_code)]
-    fn alloc_vars(&mut self, count: usize) -> Vec<Variable> {
-        (0..count).map(|_| self.alloc_var()).collect()
-    }
-
     /// Add a constraint: a * b = c
     fn add_constraint(
         &mut self,
