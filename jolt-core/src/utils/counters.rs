@@ -59,27 +59,22 @@ pub static MONT_REDUCE_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Count of Barrett reductions.
 pub static BARRETT_REDUCE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Reset inverse count.
 pub fn reset_inverse_count() {
     INVERSE_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read inverse count.
 pub fn get_inverse_count() -> usize {
     INVERSE_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset modular multiplication count.
 pub fn reset_mult_count() {
     MULT_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read modular multiplication count.
 pub fn get_mult_count() -> usize {
     MULT_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset conversion counts.
 pub fn reset_from_counts() {
     FROM_BOOL_COUNT.store(0, Ordering::Relaxed);
     FROM_U8_COUNT.store(0, Ordering::Relaxed);
@@ -92,159 +87,126 @@ pub fn reset_from_counts() {
     FROM_BYTES_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read `from_bool` count.
 pub fn get_from_bool_count() -> usize {
     FROM_BOOL_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_u8` count.
 pub fn get_from_u8_count() -> usize {
     FROM_U8_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_u16` count.
 pub fn get_from_u16_count() -> usize {
     FROM_U16_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_u32` count.
 pub fn get_from_u32_count() -> usize {
     FROM_U32_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_u64` count.
 pub fn get_from_u64_count() -> usize {
     FROM_U64_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_i64` count.
 pub fn get_from_i64_count() -> usize {
     FROM_I64_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_i128` count.
 pub fn get_from_i128_count() -> usize {
     FROM_I128_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_u128` count.
 pub fn get_from_u128_count() -> usize {
     FROM_U128_COUNT.load(Ordering::Relaxed)
 }
-/// Read `from_bytes` count.
 pub fn get_from_bytes_count() -> usize {
     FROM_BYTES_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset addition count.
 pub fn reset_add_count() {
     ADD_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read addition count.
 pub fn get_add_count() -> usize {
     ADD_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset subtraction count.
 pub fn reset_sub_count() {
     SUB_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read subtraction count.
 pub fn get_sub_count() -> usize {
     SUB_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset square count.
 pub fn reset_square_count() {
     SQUARE_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read square count.
 pub fn get_square_count() -> usize {
     SQUARE_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset mul-by-u64 count.
 pub fn reset_mul_u64_count() {
     MUL_U64_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read mul-by-u64 count.
 pub fn get_mul_u64_count() -> usize {
     MUL_U64_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset mul-by-i64 count.
 pub fn reset_mul_i64_count() {
     MUL_I64_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read mul-by-i64 count.
 pub fn get_mul_i64_count() -> usize {
     MUL_I64_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset mul-by-u128 count.
 pub fn reset_mul_u128_count() {
     MUL_U128_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read mul-by-u128 count.
 pub fn get_mul_u128_count() -> usize {
     MUL_U128_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset mul-by-i128 count.
 pub fn reset_mul_i128_count() {
     MUL_I128_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read mul-by-i128 count.
 pub fn get_mul_i128_count() -> usize {
     MUL_I128_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset unreduced-mul count.
 pub fn reset_mul_unred_count() {
     MUL_UNRED_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read unreduced-mul count.
 pub fn get_mul_unred_count() -> usize {
     MUL_UNRED_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset unreduced u64-mul count.
 pub fn reset_mul_u64_unred_count() {
     MUL_U64_UNRED_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read unreduced u64-mul count.
 pub fn get_mul_u64_unred_count() -> usize {
     MUL_U64_UNRED_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset unreduced u128-mul count.
 pub fn reset_mul_u128_unred_count() {
     MUL_U128_UNRED_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read unreduced u128-mul count.
 pub fn get_mul_u128_unred_count() -> usize {
     MUL_U128_UNRED_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset Montgomery reduction count.
 pub fn reset_mont_reduce_count() {
     MONT_REDUCE_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read Montgomery reduction count.
 pub fn get_mont_reduce_count() -> usize {
     MONT_REDUCE_COUNT.load(Ordering::Relaxed)
 }
 
-/// Reset Barrett reduction count.
 pub fn reset_barrett_reduce_count() {
     BARRETT_REDUCE_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// Read Barrett reduction count.
 pub fn get_barrett_reduce_count() -> usize {
     BARRETT_REDUCE_COUNT.load(Ordering::Relaxed)
 }

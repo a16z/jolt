@@ -444,10 +444,6 @@ fn compute_all_G_impl<F: JoltField>(
         )
 }
 
-// ============================================================================
-// SharedRaPolynomials - Shared eq table for all RA polynomials
-// ============================================================================
-
 /// Shared RA polynomials that use a single eq table for all polynomials.
 ///
 /// Instead of N separate `RaPolynomial` each with their own eq table copy,

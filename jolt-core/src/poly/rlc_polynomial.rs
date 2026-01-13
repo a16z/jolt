@@ -607,10 +607,6 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
     }
 }
 
-// ============================================================================
-// VMV Helper Types - Preprocessed data for streaming vector-matrix product
-// ============================================================================
-
 /// Precomputed tables for the one-hot VMV fast path.
 /// Each polynomial type has its own Vec<F> of length k_chunk.
 struct FoldedOneHotTables<F: JoltField> {

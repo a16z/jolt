@@ -72,10 +72,6 @@ use crate::zkvm::witness::CommittedPolynomial;
 
 const DEGREE_BOUND: usize = 2;
 
-// ============================================================================
-// PARAMS
-// ============================================================================
-
 #[derive(Allocative, Clone)]
 pub struct IncClaimReductionSumcheckParams<F: JoltField> {
     /// γ, γ², γ³ for batching
@@ -182,10 +178,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
     }
 }
 
-// ============================================================================
-// PROVER
-// ============================================================================
-
 #[derive(Allocative)]
 pub struct IncClaimReductionSumcheckProver<F: JoltField> {
     phase: IncClaimReductionPhase<F>,
@@ -285,10 +277,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         flamegraph.visit_root(self);
     }
 }
-
-// ============================================================================
-// PHASE 1: Prefix-Suffix Sumcheck
-// ============================================================================
 
 #[derive(Allocative)]
 struct IncClaimReductionPhase1State<F: JoltField> {
@@ -479,10 +467,6 @@ impl<F: JoltField> IncClaimReductionPhase1State<F> {
     }
 }
 
-// ============================================================================
-// PHASE 2: Standard Sumcheck
-// ============================================================================
-
 #[derive(Allocative)]
 struct IncClaimReductionPhase2State<F: JoltField> {
     ram_inc: MultilinearPolynomial<F>,
@@ -653,10 +637,6 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
         self.eq_rd.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 }
-
-// ============================================================================
-// VERIFIER
-// ============================================================================
 
 pub struct IncClaimReductionSumcheckVerifier<F: JoltField> {
     params: IncClaimReductionSumcheckParams<F>,

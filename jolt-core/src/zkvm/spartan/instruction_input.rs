@@ -100,7 +100,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
     }
 }
 
-/// Sumcheck prover for [`InstructionInputSumcheckVerifier`].
 // TODO: do 3 round compression SVO on each of the 8 multilinears, then bind directly
 #[derive(Allocative)]
 pub struct InstructionInputSumcheckProver<F: JoltField> {

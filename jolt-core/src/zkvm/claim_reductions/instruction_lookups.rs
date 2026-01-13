@@ -89,7 +89,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
     }
 }
 
-/// Sumcheck prover for [`InstructionLookupsClaimReductionSumcheckVerifier`].
 #[derive(Allocative)]
 pub struct InstructionLookupsClaimReductionSumcheckProver<F: JoltField> {
     phase: InstructionLookupsClaimReductionPhase<F>,

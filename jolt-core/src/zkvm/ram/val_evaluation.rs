@@ -177,7 +177,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValEvaluationSumcheckParams<F> 
     }
 }
 
-/// Sumcheck prover for [`ValEvaluationSumcheckVerifier`].
 #[derive(Allocative)]
 pub struct ValEvaluationSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,

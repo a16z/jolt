@@ -83,7 +83,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheck
     }
 }
 
-/// Sumcheck prover for [`RegistersClaimReductionSumcheckVerifier`].
 #[derive(Allocative)]
 pub struct RegistersClaimReductionSumcheckProver<F: JoltField> {
     phase: RegistersClaimReductionPhase<F>,

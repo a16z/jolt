@@ -603,14 +603,10 @@ impl<F: JoltField> BarrettReduce<F> for Acc7S<F> {
     }
 }
 
-// ------------------------------
-// 8-limb Montgomery accumulators (Acc8U/Acc8S) for SVO / round-compression
-// NOTE:
-// - reduce() uses Montgomery reduction (faster than Barrett) and yields canonical field elements.
-// - Accumulator safety: fmadd_trunc performs bounded modular folding. Ensure the
-//   number of fmadd calls per accumulator instance matches the bounds guaranteed
-//   by the implementation; otherwise periodically reduce and re-accumulate.
-// ------------------------------
+// NOTE: reduce() uses Montgomery reduction (faster than Barrett) and yields canonical field elements.
+// WARNING: fmadd_trunc performs bounded modular folding. Ensure the number of fmadd calls
+// per accumulator instance matches the bounds guaranteed by the implementation;
+// otherwise periodically reduce and re-accumulate.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc8U<F: JoltField> {
