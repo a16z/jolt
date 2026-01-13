@@ -9,9 +9,9 @@ use crate::{
     },
     transcripts::{AppendToTranscript, Transcript},
 };
-use ark_ff::Zero;
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
+use ark_ff::Zero;
 use dory::{
     error::DoryError,
     primitives::{
@@ -134,7 +134,10 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
                         }
                         *dest = sum;
                     });
-                result.into_iter().map(|v| jolt_to_ark(&v)).collect::<Vec<_>>()
+                result
+                    .into_iter()
+                    .map(|v| jolt_to_ark(&v))
+                    .collect::<Vec<_>>()
             }};
         }
 
@@ -157,9 +160,15 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
                     });
                 result.into_iter().map(|v| jolt_to_ark(&v)).collect()
             }
-            MultilinearPolynomial::BoolScalars(poly) => vmp_row_major!(&poly.coeffs, |b: &bool, l: Fr| {
-                if *b { l } else { Fr::zero() }
-            }),
+            MultilinearPolynomial::BoolScalars(poly) => {
+                vmp_row_major!(&poly.coeffs, |b: &bool, l: Fr| {
+                    if *b {
+                        l
+                    } else {
+                        Fr::zero()
+                    }
+                })
+            }
             MultilinearPolynomial::U8Scalars(poly) => {
                 vmp_row_major!(&poly.coeffs, |s: &u8, l: Fr| s.field_mul(l))
             }
@@ -182,7 +191,8 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
                 vmp_row_major!(&poly.coeffs, |s: &i128, l: Fr| s.field_mul(l))
             }
             MultilinearPolynomial::S128Scalars(poly) => {
-                vmp_row_major!(&poly.coeffs, |s: &ark_ff::biginteger::S128, l: Fr| s.field_mul(l))
+                vmp_row_major!(&poly.coeffs, |s: &ark_ff::biginteger::S128, l: Fr| s
+                    .field_mul(l))
             }
             MultilinearPolynomial::OneHot(poly) => {
                 let mut result = vec![Fr::zero(); num_cols];
