@@ -72,12 +72,13 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub kind: AdviceKind,
     pub gamma: F,
     pub advice_vars: usize,
-    pub sigma_a: usize, // number of advice columns
-    pub nu_a: usize,    // number of advice rows
+    pub advice_cols: usize,
+    pub advice_rows: usize,
     pub single_opening: bool,
     pub log_k_chunk: usize,
     pub log_t: usize,
-    pub sigma_main: usize, // number of main columns
+    /// Number of columns in the main Dory matrix
+    pub main_cols: usize,
     pub nu_a_cycle: usize, // number of advice rows that come from the cycle variables
     pub nu_a_addr: usize,  // number of advice rows that come from the address variables
     /// Dummy rounds are within the Phase 1 local round index space.
@@ -85,6 +86,14 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub dummy_rounds: Range<usize>,
     pub r_val_eval: OpeningPoint<BIG_ENDIAN, F>,
     pub r_val_final: Option<OpeningPoint<BIG_ENDIAN, F>>,
+}
+
+fn advice_index_to_address(advice_index: usize) -> usize {
+    todo!()
+}
+
+fn advice_index_to_cycle(advice_index: usize) -> usize {
+    todo!()
 }
 
 impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
@@ -103,8 +112,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
-        println!("sigma_main: {sigma_main}, nu_main: {nu_main}");
+        let (main_cols, _main_rows) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
         let r_val_eval = accumulator
             .get_advice_opening(kind, SumcheckId::RamValEvaluation)
@@ -120,42 +128,37 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 
         let gamma: F = transcript.challenge_scalar();
 
-        let (sigma_a, nu_a) = DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
-        println!("sigma_a: {sigma_a}, nu_a: {nu_a}");
-        let advice_vars = sigma_a + nu_a;
+        let (advice_cols, advice_rows) =
+            DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
+        let advice_vars = advice_cols + advice_rows;
 
-        let row_cycle = DoryGlobals::cycle_row_len(log_t, sigma_main);
-        let nu_a_cycle = std::cmp::min(nu_a, row_cycle);
-        let nu_a_addr = nu_a - nu_a_cycle;
+        let row_cycle = DoryGlobals::cycle_row_len(log_t, main_cols);
+        let nu_a_cycle = std::cmp::min(advice_rows, row_cycle);
+        let nu_a_addr = advice_rows - nu_a_cycle;
 
         // Phase 1 only needs to traverse the cycle gap if we actually need cycle-derived row bits.
         let dummy_rounds = if nu_a_cycle == 0 {
             0..0
         } else {
-            sigma_a..sigma_main
+            advice_cols..main_cols
         };
 
         Some(Self {
             kind,
             gamma,
             advice_vars,
-            sigma_a,
-            nu_a,
+            advice_cols,
+            advice_rows,
             single_opening,
             log_k_chunk,
             log_t,
-            sigma_main,
+            main_cols,
             nu_a_cycle,
             nu_a_addr,
             dummy_rounds,
             r_val_eval,
             r_val_final,
         })
-    }
-
-    #[inline]
-    fn is_dummy_round(&self, local_round: usize) -> bool {
-        self.dummy_rounds.contains(&local_round)
     }
 }
 
@@ -184,10 +187,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase1Param
     fn num_rounds(&self) -> usize {
         if self.nu_a_cycle == 0 {
             // Only need the low column bits; no need to traverse the cycle gap.
-            self.sigma_a
+            self.advice_cols
         } else {
             // Need to reach cycle row bits at index sigma_main.
-            self.sigma_main + self.nu_a_cycle
+            self.main_cols + self.nu_a_cycle
         }
     }
 
@@ -284,11 +287,6 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
         UniPoly::from_evals_and_hint(previous_claim_unscaled, &evals)
     }
 
-    fn bind_real_var(&mut self, r_j: F::Challenge) {
-        self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-    }
-
     fn step_dummy(&mut self) {
         // Each dummy internal round halves the running claim; equivalently, we multiply the
         // scaling factor by 1/2.
@@ -305,7 +303,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        if self.params.is_dummy_round(round) {
+        if self.params.dummy_rounds.contains(&round) {
             // Dummy internal variable: constant univariate with H(0)=H(1)=previous_claim/2.
             UniPoly::from_coeff(vec![previous_claim * self.two_inv])
         } else {
@@ -318,10 +316,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        if self.params.is_dummy_round(round) {
+        if self.params.dummy_rounds.contains(&round) {
             self.step_dummy();
         } else {
-            self.bind_real_var(r_j);
+            self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
 
@@ -368,12 +367,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         if self.params.nu_a_addr == 0 {
             let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);
             // col bits are the first sigma_a cycle coords
-            advice_le.extend_from_slice(&sumcheck_challenges[0..self.params.sigma_a]);
+            advice_le.extend_from_slice(&sumcheck_challenges[0..self.params.advice_cols]);
             // row bits (from cycle) start at sigma_main
             if self.params.nu_a_cycle > 0 {
                 advice_le.extend_from_slice(
                     &sumcheck_challenges
-                        [self.params.sigma_main..self.params.sigma_main + self.params.nu_a_cycle],
+                        [self.params.main_cols..self.params.main_cols + self.params.nu_a_cycle],
                 );
             }
             let advice_point: OpeningPoint<BIG_ENDIAN, F> =
@@ -496,11 +495,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // Populate its opening point now so downstream stages can extract it.
         if self.params.nu_a_addr == 0 {
             let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);
-            advice_le.extend_from_slice(&sumcheck_challenges[0..self.params.sigma_a]);
+            advice_le.extend_from_slice(&sumcheck_challenges[0..self.params.advice_cols]);
             if self.params.nu_a_cycle > 0 {
                 advice_le.extend_from_slice(
                     &sumcheck_challenges
-                        [self.params.sigma_main..self.params.sigma_main + self.params.nu_a_cycle],
+                        [self.params.main_cols..self.params.main_cols + self.params.nu_a_cycle],
                 );
             }
             let advice_point: OpeningPoint<BIG_ENDIAN, F> =
@@ -532,12 +531,12 @@ pub struct AdviceClaimReductionPhase2Params<F: JoltField> {
     pub kind: AdviceKind,
     pub gamma: F,
     pub advice_vars: usize,
-    pub sigma_a: usize, // number of advice columns
-    pub nu_a: usize,    // number of advice rows
+    pub advice_cols: usize,
+    pub advice_rows: usize,
     pub single_opening: bool,
     pub log_k_chunk: usize,
     pub log_t: usize,
-    pub sigma_main: usize, // number of main columns
+    pub main_cols: usize,
     pub nu_a_cycle: usize, // number of advice rows that come from the cycle variables
     pub nu_a_addr: usize,  // number of advice rows that come from the address variables
     /// Constant scaling factor carried from Phase 1 (equals 2^{-gap_len}).
@@ -565,7 +564,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         };
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (sigma_main, _nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+        let (main_cols, _main_rows) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
         let r_val_eval = accumulator
             .get_advice_opening(kind, SumcheckId::RamValEvaluation)
@@ -579,12 +578,13 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         };
         let (r_val_eval, r_val_final) = (r_val_eval, r_val_final);
 
-        let (sigma_a, nu_a) = DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
-        let advice_vars = sigma_a + nu_a;
+        let (advice_cols, advice_rows) =
+            DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
+        let advice_vars = advice_cols + advice_rows;
 
-        let row_cycle = DoryGlobals::cycle_row_len(log_t, sigma_main);
-        let nu_a_cycle = std::cmp::min(nu_a, row_cycle);
-        let nu_a_addr = nu_a - nu_a_cycle;
+        let row_cycle = DoryGlobals::cycle_row_len(log_t, main_cols);
+        let nu_a_cycle = std::cmp::min(advice_rows, row_cycle);
+        let nu_a_addr = advice_rows - nu_a_cycle;
 
         // If no address-derived advice vars, Phase 2 is not needed.
         if nu_a_addr == 0 {
@@ -595,7 +595,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         let gap_len = if nu_a_cycle == 0 {
             0
         } else {
-            sigma_main.saturating_sub(sigma_a)
+            main_cols.saturating_sub(advice_cols)
         };
 
         let two_inv = F::from_u64(2).inverse().unwrap();
@@ -611,24 +611,24 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         let mut cycle_le = r_cycle_be.to_vec();
         cycle_le.reverse();
 
-        let mut cycle_bind_le = Vec::with_capacity(sigma_a + nu_a_cycle);
+        let mut cycle_bind_le = Vec::with_capacity(advice_cols + nu_a_cycle);
         // col bits: cycle_le[0..sigma_a]
-        cycle_bind_le.extend_from_slice(&cycle_le[0..sigma_a]);
+        cycle_bind_le.extend_from_slice(&cycle_le[0..advice_cols]);
         // row cycle bits: cycle_le[sigma_main .. sigma_main+nu_a_cycle]
         if nu_a_cycle > 0 {
-            cycle_bind_le.extend_from_slice(&cycle_le[sigma_main..sigma_main + nu_a_cycle]);
+            cycle_bind_le.extend_from_slice(&cycle_le[main_cols..main_cols + nu_a_cycle]);
         }
 
         Some(Self {
             kind,
             gamma,
             advice_vars,
-            sigma_a,
-            nu_a,
+            advice_cols,
+            advice_rows,
             single_opening,
             log_k_chunk,
             log_t,
-            sigma_main,
+            main_cols,
             nu_a_cycle,
             nu_a_addr,
             scale,
@@ -752,11 +752,6 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
 
         UniPoly::from_evals_and_hint(previous_claim_unscaled, &evals)
     }
-
-    fn bind_real_var(&mut self, r_j: F::Challenge) {
-        self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
@@ -775,7 +770,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        self.bind_real_var(r_j);
+        self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn cache_openings(
@@ -789,7 +785,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         debug_assert_eq!(sumcheck_challenges.len(), self.params.nu_a_addr);
         debug_assert_eq!(
             self.params.cycle_bind_le.len(),
-            self.params.sigma_a + self.params.nu_a_cycle
+            self.params.advice_cols + self.params.nu_a_cycle
         );
 
         let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);

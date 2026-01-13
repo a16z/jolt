@@ -231,8 +231,8 @@ where
     //     DoryContext::TrustedAdvice | DoryContext::UntrustedAdvice
     // ) && dory_layout == DoryLayout::AddressMajor
     // {
-    //     println!("here");
-    //     let (num_rows, _) = DoryGlobals::matrix_shape();
+    //     let (num_rows, num_cols) = DoryGlobals::matrix_shape();
+    //     println!("{dory_context:?} {num_rows}, {num_cols}");
     //     debug_assert_eq!(num_rows * row_len, poly.original_len());
     //     let affine_bases: Vec<_> = g1_slice
     //         .par_iter()
