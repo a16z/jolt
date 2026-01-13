@@ -186,13 +186,15 @@ impl<
                 .append_serializable(trusted_advice_commitment);
         }
 
-        self.verify_stage1()?;
-        self.verify_stage2()?;
-        self.verify_stage3()?;
-        self.verify_stage4()?;
-        self.verify_stage5()?;
-        self.verify_stage6()?;
-        self.verify_blindfold()?;
+        let r_stage1 = self.verify_stage1()?;
+        let r_stage2 = self.verify_stage2()?;
+        let r_stage3 = self.verify_stage3()?;
+        let r_stage4 = self.verify_stage4()?;
+        let r_stage5 = self.verify_stage5()?;
+        let r_stage6 = self.verify_stage6()?;
+
+        let sumcheck_challenges = [r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6];
+        self.verify_blindfold(&sumcheck_challenges)?;
         self.verify_trusted_advice_opening_proofs()?;
         self.verify_untrusted_advice_opening_proofs()?;
         self.verify_stage7()?;
@@ -200,7 +202,7 @@ impl<
         Ok(())
     }
 
-    fn verify_stage1(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage1(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let spartan_outer_uni_skip_state = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
@@ -215,7 +217,7 @@ impl<
             self.spartan_key,
         );
 
-        let _r_stage1 = BatchedSumcheck::verify(
+        let r_stage1 = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
             vec![&spartan_outer_remaining],
             &mut self.opening_accumulator,
@@ -223,10 +225,10 @@ impl<
         )
         .context("Stage 1")?;
 
-        Ok(())
+        Ok(r_stage1)
     }
 
-    fn verify_stage2(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage2(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let product_virtual_uni_skip_state = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &self.spartan_key,
@@ -253,7 +255,7 @@ impl<
         let ram_output_check =
             OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
 
-        let _r_stage2 = BatchedSumcheck::verify(
+        let r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             vec![
                 &spartan_product_virtual_remainder,
@@ -266,10 +268,10 @@ impl<
         )
         .context("Stage 2")?;
 
-        Ok(())
+        Ok(r_stage2)
     }
 
-    fn verify_stage3(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage3(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
@@ -278,7 +280,7 @@ impl<
         let spartan_instruction_input =
             InstructionInputSumcheckVerifier::new(&self.opening_accumulator, &mut self.transcript);
 
-        let _r_stage3 = BatchedSumcheck::verify(
+        let r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
                 &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
@@ -289,10 +291,10 @@ impl<
         )
         .context("Stage 3")?;
 
-        Ok(())
+        Ok(r_stage3)
     }
 
-    fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage4(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
             self.proof.twist_sumcheck_switch_index,
             self.proof.trace_length.log_2(),
@@ -332,7 +334,7 @@ impl<
             &self.opening_accumulator,
         );
 
-        let _r_stage4 = BatchedSumcheck::verify(
+        let r_stage4 = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             vec![
                 &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
@@ -345,10 +347,10 @@ impl<
         )
         .context("Stage 4")?;
 
-        Ok(())
+        Ok(r_stage4)
     }
 
-    fn verify_stage5(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage5(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let registers_val_evaluation = RegistersValEvaluationSumcheckVerifier::new(n_cycle_vars);
         let ram_hamming_booleanity = HammingBooleanitySumcheckVerifier::new(n_cycle_vars);
@@ -361,7 +363,7 @@ impl<
         let lookups_read_raf =
             LookupsReadRafSumcheckVerifier::new(n_cycle_vars, &mut self.transcript);
 
-        let _r_stage5 = BatchedSumcheck::verify(
+        let r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             vec![
                 &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
@@ -374,10 +376,10 @@ impl<
         )
         .context("Stage 5")?;
 
-        Ok(())
+        Ok(r_stage5)
     }
 
-    fn verify_stage6(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage6(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
             &self.preprocessing.bytecode,
@@ -402,7 +404,7 @@ impl<
                 &mut self.transcript,
             );
 
-        let _r_stage6 = BatchedSumcheck::verify(
+        let r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
             vec![
                 &bytecode_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
@@ -418,10 +420,13 @@ impl<
         )
         .context("Stage 6")?;
 
-        Ok(())
+        Ok(r_stage6)
     }
 
-    fn verify_blindfold(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_blindfold(
+        &mut self,
+        sumcheck_challenges: &[Vec<F::Challenge>; 6],
+    ) -> Result<(), anyhow::Error> {
         // Build stage configurations by examining the proof's sumcheck rounds
         // Each round becomes its own "stage" to support variable polynomial degrees.
         // The first round of each logical Jolt stage (except stage 0) starts a new chain.
@@ -455,8 +460,25 @@ impl<
         let builder = VerifierR1CSBuilder::new(&stage_configs);
         let r1cs = builder.build();
 
-        // Verify that the initial claims in the BlindFold proof match those in the Jolt proof.
+        // SECURITY: Verify that challenges in BlindFold proof match those derived from main transcript.
         // Public inputs in real_instance.x are laid out as: [challenges..., initial_claims...]
+        // This binding ensures BlindFold proves the correct sumcheck relation, not an unrelated one.
+        let mut challenge_idx = 0;
+        for (stage_idx, stage_challenges) in sumcheck_challenges.iter().enumerate() {
+            for (round_idx, expected_challenge) in stage_challenges.iter().enumerate() {
+                let expected_field: F = (*expected_challenge).into();
+                let actual_field = self.proof.blindfold_proof.real_instance.x[challenge_idx];
+                if expected_field != actual_field {
+                    return Err(anyhow::anyhow!(
+                        "BlindFold challenge mismatch at stage {stage_idx} round {round_idx}: \
+                         expected {expected_field:?}, got {actual_field:?}"
+                    ));
+                }
+                challenge_idx += 1;
+            }
+        }
+
+        // Verify that the initial claims in the BlindFold proof match those in the Jolt proof.
         // Initial claims start at index total_rounds (after all challenges).
         let num_chains = 6; // Jolt has 6 independent sumcheck stages
         let initial_claims_in_blindfold =

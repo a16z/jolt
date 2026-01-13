@@ -171,19 +171,6 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
         Self { E, r_E, W, r_W }
     }
 
-    /// Build the full Z vector for R1CS satisfaction checking.
-    ///
-    /// Z = [1, x..., W...]
-    /// where x is the public inputs and W is the private witness.
-    pub fn to_z_vector(&self, u: F, x: &[F]) -> Vec<F> {
-        let mut z = Vec::with_capacity(1 + x.len() + self.W.len());
-        z.push(F::one()); // Constant 1
-        z.extend_from_slice(x); // Public inputs
-        z.push(u); // The u scalar is part of Z for relaxed R1CS
-        z.extend_from_slice(&self.W); // Private witness
-        z
-    }
-
     /// Check if the witness satisfies the relaxed R1CS.
     ///
     /// Verifies: (A·Z) ∘ (B·Z) = u·(C·Z) + E

@@ -32,7 +32,7 @@ use crate::{
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof, UniSkipFirstRoundProof},
         sumcheck_prover::SumcheckInstanceProver,
     },
-    transcripts::{AppendToTranscript, Transcript},
+    transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
@@ -303,16 +303,24 @@ impl<
         let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
-        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, stage1_initial_claim) =
-            self.prove_stage1();
-        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof, stage2_initial_claim) =
-            self.prove_stage2();
-        let (stage3_sumcheck_proof, stage3_initial_claim) = self.prove_stage3();
-        let (stage4_sumcheck_proof, stage4_initial_claim) = self.prove_stage4();
-        let (stage5_sumcheck_proof, stage5_initial_claim) = self.prove_stage5();
-        let (stage6_sumcheck_proof, stage6_initial_claim) = self.prove_stage6();
+        let (
+            stage1_uni_skip_first_round_proof,
+            stage1_sumcheck_proof,
+            r_stage1,
+            stage1_initial_claim,
+        ) = self.prove_stage1();
+        let (
+            stage2_uni_skip_first_round_proof,
+            stage2_sumcheck_proof,
+            r_stage2,
+            stage2_initial_claim,
+        ) = self.prove_stage2();
+        let (stage3_sumcheck_proof, r_stage3, stage3_initial_claim) = self.prove_stage3();
+        let (stage4_sumcheck_proof, r_stage4, stage4_initial_claim) = self.prove_stage4();
+        let (stage5_sumcheck_proof, r_stage5, stage5_initial_claim) = self.prove_stage5();
+        let (stage6_sumcheck_proof, r_stage6, stage6_initial_claim) = self.prove_stage6();
 
-        // Collect initial claims for BlindFold
+        // Collect initial claims and challenges for BlindFold
         let initial_claims = [
             stage1_initial_claim,
             stage2_initial_claim,
@@ -321,6 +329,8 @@ impl<
             stage5_initial_claim,
             stage6_initial_claim,
         ];
+
+        let sumcheck_challenges = [r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6];
 
         // BlindFold protocol to make sumcheck proofs zero-knowledge
         let blindfold_proof = self.prove_blindfold(
@@ -331,6 +341,7 @@ impl<
             &stage5_sumcheck_proof,
             &stage6_sumcheck_proof,
             &initial_claims,
+            &sumcheck_challenges,
         );
 
         tracing::info!("Stage 7 proving");
@@ -528,13 +539,15 @@ impl<
             .append_serializable(self.advice.trusted_advice_commitment.as_ref().unwrap());
     }
 
-    /// Returns (uni_skip_proof, sumcheck_proof, initial_claim)
+    /// Returns (uni_skip_proof, sumcheck_proof, challenges, initial_claim)
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all)]
     fn prove_stage1(
         &mut self,
     ) -> (
         UniSkipFirstRoundProof<F, ProofTranscript>,
         SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
         F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -555,7 +568,7 @@ impl<
         );
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage1, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage1, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             vec![&mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -563,16 +576,18 @@ impl<
             &mut rng,
         );
 
-        (first_round_proof, sumcheck_proof, initial_claim)
+        (first_round_proof, sumcheck_proof, r_stage1, initial_claim)
     }
 
-    /// Returns (uni_skip_proof, sumcheck_proof, initial_claim)
+    /// Returns (uni_skip_proof, sumcheck_proof, challenges, initial_claim)
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all)]
     fn prove_stage2(
         &mut self,
     ) -> (
         UniSkipFirstRoundProof<F, ProofTranscript>,
         SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
         F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -634,7 +649,7 @@ impl<
         tracing::info!("Stage 2 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage2, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage2, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -646,12 +661,18 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (first_round_proof, sumcheck_proof, initial_claim)
+        (first_round_proof, sumcheck_proof, r_stage2, initial_claim)
     }
 
-    /// Returns (sumcheck_proof, initial_claim)
+    /// Returns (sumcheck_proof, challenges, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage3(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
+    fn prove_stage3(
+        &mut self,
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
+        F,
+    ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
 
@@ -684,7 +705,7 @@ impl<
         tracing::info!("Stage 3 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage3, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage3, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -695,12 +716,18 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, initial_claim)
+        (sumcheck_proof, r_stage3, initial_claim)
     }
 
-    /// Returns (sumcheck_proof, initial_claim)
+    /// Returns (sumcheck_proof, challenges, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage4(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
+    fn prove_stage4(
+        &mut self,
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
+        F,
+    ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
@@ -764,7 +791,7 @@ impl<
         tracing::info!("Stage 4 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage4, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage4, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -775,12 +802,18 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, initial_claim)
+        (sumcheck_proof, r_stage4, initial_claim)
     }
 
-    /// Returns (sumcheck_proof, initial_claim)
+    /// Returns (sumcheck_proof, challenges, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage5(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
+    fn prove_stage5(
+        &mut self,
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
+        F,
+    ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
 
@@ -831,7 +864,7 @@ impl<
         tracing::info!("Stage 5 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage5, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage5, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -842,12 +875,18 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, initial_claim)
+        (sumcheck_proof, r_stage5, initial_claim)
     }
 
-    /// Returns (sumcheck_proof, initial_claim)
+    /// Returns (sumcheck_proof, challenges, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage6(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
+    fn prove_stage6(
+        &mut self,
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
+        F,
+    ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6 baseline");
 
@@ -923,7 +962,7 @@ impl<
         tracing::info!("Stage 6 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage6, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage6, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -934,14 +973,14 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, initial_claim)
+        (sumcheck_proof, r_stage6, initial_claim)
     }
 
     /// Prove BlindFold protocol to make sumcheck proofs zero-knowledge.
     ///
-    /// This method extracts the sumcheck witness from all 6 stages, builds the
-    /// verifier R1CS, and generates a BlindFold proof that masks the witness
-    /// while proving it satisfies the R1CS constraints.
+    /// This method uses the actual sumcheck challenges from the main transcript
+    /// (not replayed from polynomial coefficients) to ensure the BlindFold R1CS
+    /// is properly bound to the sumcheck verification flow.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all)]
     fn prove_blindfold(
@@ -953,6 +992,7 @@ impl<
         stage5_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         stage6_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         initial_claims: &[F; 6],
+        sumcheck_challenges: &[Vec<F::Challenge>; 6],
     ) -> BlindFoldProof<F, C> {
         tracing::info!("BlindFold proving");
 
@@ -980,13 +1020,12 @@ impl<
             // Start with the stage's initial claim
             let mut current_claim = initial_claims[stage_idx];
 
-            // Create a fresh transcript to replay challenges
-            let mut replay_transcript = ProofTranscript::new(b"BlindFold_replay");
+            // Use actual challenges from the main sumcheck transcript
+            let stage_challenges = &sumcheck_challenges[stage_idx];
 
             for (round_idx, compressed_poly) in proof.compressed_polys.iter().enumerate() {
-                // Append to transcript and derive challenge
-                compressed_poly.append_to_transcript(&mut replay_transcript);
-                let challenge: F = replay_transcript.challenge_scalar_optimized::<F>().into();
+                // Use the actual challenge from the main transcript
+                let challenge: F = stage_challenges[round_idx].into();
 
                 // Extract compressed coefficients [c0, c2, c3, ...]
                 // The length gives us the polynomial degree
