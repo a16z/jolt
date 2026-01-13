@@ -79,7 +79,7 @@ use tracer::JoltDevice;
 pub struct JoltVerifier<
     'a,
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: RecursionExt<F>,
     ProofTranscript: Transcript,
 > {
     pub trusted_advice_commitment: Option<PCS::Commitment>,
@@ -727,28 +727,13 @@ where
         <PCS as RecursionExt<F>>::Hint: Clone,
     {
         // 1. Verify Dory proof with hints
-        // First check if hint exists and downcast it
-        let hint_exists = self.proof.stage9_pcs_hint.is_some();
-        if !hint_exists {
-            return Err(anyhow::anyhow!(
-                "stage9_pcs_hint is required for recursion verification"
-            ));
-        }
-
-        // Now safely get and downcast the hint
         let hint = self
             .proof
             .stage9_pcs_hint
-            .as_ref()
-            .unwrap()
-            .downcast_ref::<<PCS as RecursionExt<F>>::Hint>()
-            .ok_or_else(|| anyhow::anyhow!("Failed to downcast stage9_pcs_hint"))?;
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("stage9_pcs_hint is required for recursion verification"))?;
 
-        // Store hint data we need before mutable borrow
-        let hint_clone = hint.clone();
-
-        // Now we can safely call the mutable method
-        self.verify_stage8_with_pcs_hint(&hint_clone)?;
+        self.verify_stage8_with_pcs_hint(&hint)?;
 
         // 2. Extract data for RecursionVerifier
         let recursion_proof = &self.proof.recursion_proof;

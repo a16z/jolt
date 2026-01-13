@@ -154,8 +154,8 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
 pub trait RecursionExt<F: JoltField>: CommitmentScheme<Field = F> {
     /// verifier computations
     type Witness;
-    /// hints for efficient verification
-    type Hint;
+    /// hints for efficient verification (must be serializable for proof transport)
+    type Hint: CanonicalSerialize + CanonicalDeserialize + Clone + Send + Sync;
     /// Hint for combine_commitments offloading (the final combined commitment)
     type CombineHint;
 

@@ -460,7 +460,7 @@ where
             stage7_sumcheck_proof,
             stage8_opening_proof: joint_opening_proof,
             stage8_combine_hint,
-            stage9_pcs_hint: Some(Box::new(stage8_pcs_hint) as Box<dyn std::any::Any + Send + Sync>),
+            stage9_pcs_hint: Some(stage8_pcs_hint),
             stage10_recursion_metadata: recursion_constraint_metadata,
             recursion_proof,
             trace_length: self.trace.len(),

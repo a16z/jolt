@@ -123,11 +123,11 @@ impl GuestProgram {
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 20000000, // Increased to 20MB
+                        max_input_size: 200000000, // 200MB (10x headroom)
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 33554432,
+                        memory_size: 335544320, // 320MB (10x headroom)
                         stack_size: 33554432,
                         program_size: None,
                     }
@@ -146,11 +146,11 @@ impl GuestProgram {
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 20000000, // Increased to 20MB
+                        max_input_size: 200000000, // 200MB (10x headroom)
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 33554432,
+                        memory_size: 335544320, // 320MB (10x headroom)
                         stack_size: 33554432,
                         program_size: None,
                     }

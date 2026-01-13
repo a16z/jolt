@@ -13,7 +13,7 @@ use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::{commitment_scheme::CommitmentScheme, hyrax::Hyrax},
+        commitment::{commitment_scheme::RecursionExt, hyrax::Hyrax},
         opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -43,7 +43,7 @@ pub struct RecursionConstraintMetadata {
 }
 
 /// Jolt proof structure organized by verification stages
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltProof<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> {
     // ============ Shared Data ============
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
@@ -78,8 +78,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage8_combine_hint: Option<Fq12>,
 
     // ============ Stage 9: Recursion Witness Generation ============
-    /// PCS hint for recursion witness generation (not serialized)
-    pub stage9_pcs_hint: Option<Box<dyn std::any::Any + Send + Sync>>,
+    /// PCS hint for recursion witness generation
+    pub stage9_pcs_hint: Option<<PCS as RecursionExt<F>>::Hint>,
 
     // ============ Stage 10: Constraint System Metadata ============
     /// Constraint metadata extracted from recursion prover
@@ -111,7 +111,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub one_hot_config: OneHotConfig,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
+impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> CanonicalSerialize
     for JoltProof<F, PCS, FS>
 {
     fn serialize_with_mode<W: Write>(
@@ -145,7 +145,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.stage8_combine_hint
             .serialize_with_mode(&mut writer, compress)?;
-        // Skip stage9_pcs_hint - it's not serializable
+        self.stage9_pcs_hint
+            .serialize_with_mode(&mut writer, compress)?;
         self.stage10_recursion_metadata
             .serialize_with_mode(&mut writer, compress)?;
         self.recursion_proof
@@ -184,7 +185,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.stage7_sumcheck_proof.serialized_size(compress)
             + self.stage8_opening_proof.serialized_size(compress)
             + self.stage8_combine_hint.serialized_size(compress)
-            // Skip stage9_pcs_hint
+            + self.stage9_pcs_hint.serialized_size(compress)
             + self.stage10_recursion_metadata.serialized_size(compress)
             + self.recursion_proof.serialized_size(compress)
             + self.trusted_advice_val_evaluation_proof.serialized_size(compress)
@@ -200,7 +201,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> Valid
     for JoltProof<F, PCS, FS>
 {
     fn check(&self) -> Result<(), SerializationError> {
@@ -208,7 +209,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
+impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> CanonicalDeserialize
     for JoltProof<F, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
@@ -270,7 +271,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 validate,
             )?,
             stage8_combine_hint: Option::deserialize_with_mode(&mut reader, compress, validate)?,
-            stage9_pcs_hint: None, // Always None when deserializing
+            stage9_pcs_hint: Option::deserialize_with_mode(&mut reader, compress, validate)?,
             stage10_recursion_metadata: RecursionConstraintMetadata::deserialize_with_mode(
                 &mut reader,
                 compress,
