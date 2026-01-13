@@ -6,7 +6,10 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 use crate::{
-    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
+    poly::{
+        commitment::dory::DoryGlobals,
+        rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
+    },
     zkvm::{claim_reductions::AdviceKind, config::OneHotParams},
 };
 use allocative::Allocative;
@@ -686,13 +689,11 @@ pub fn compute_advice_lagrange_factor<F: JoltField>(
 
     // Derive main matrix dimensions from the unified point length
     let total_vars = r_le.len();
-    let (sigma_main, _nu_main) =
-        crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(total_vars);
+    let (sigma_main, _nu_main) = DoryGlobals::balanced_sigma_nu(total_vars);
     let (r_cols, r_rows) = r_le.split_at(sigma_main);
 
     // Advice dimensions (balanced policy)
-    let (sigma_a, nu_a) =
-        crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(advice_vars);
+    let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
 
     // Row factor: eq(r_rows[nu_a..], [0, 0, ...]) = ∏(1 - r_rows[i]) for i >= nu_a
     // This selects the "zero" vertex in the row dimension beyond the advice region

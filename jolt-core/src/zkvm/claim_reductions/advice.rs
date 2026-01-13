@@ -38,6 +38,8 @@
 //! dimensions).
 //!
 
+use std::ops::Range;
+
 use crate::field::JoltField;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::eq_poly::EqPolynomial;
@@ -78,9 +80,9 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub sigma_main: usize, // number of main columns
     pub nu_a_cycle: usize, // number of advice rows that come from the cycle variables
     pub nu_a_addr: usize,  // number of advice rows that come from the address variables
-    /// Dummy rounds are `[dummy_start, dummy_end)` within the Phase 1 local round index space.
-    pub dummy_start: usize,
-    pub dummy_end: usize,
+    /// Dummy rounds are within the Phase 1 local round index space.
+    #[allocative(skip)]
+    pub dummy_rounds: Range<usize>,
     pub r_val_eval: OpeningPoint<BIG_ENDIAN, F>,
     pub r_val_final: Option<OpeningPoint<BIG_ENDIAN, F>>,
 }
@@ -125,10 +127,10 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
         let nu_a_addr = nu_a - nu_a_cycle;
 
         // Phase 1 only needs to traverse the cycle gap if we actually need cycle-derived row bits.
-        let (dummy_start, dummy_end) = if nu_a_cycle == 0 {
-            (0, 0)
+        let dummy_rounds = if nu_a_cycle == 0 {
+            0..0
         } else {
-            (sigma_a, sigma_main)
+            sigma_a..sigma_main
         };
 
         Some(Self {
@@ -143,8 +145,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             sigma_main,
             nu_a_cycle,
             nu_a_addr,
-            dummy_start,
-            dummy_end,
+            dummy_rounds,
             r_val_eval,
             r_val_final,
         })
@@ -152,9 +153,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 
     #[inline]
     fn is_dummy_round(&self, local_round: usize) -> bool {
-        self.dummy_start < self.dummy_end
-            && local_round >= self.dummy_start
-            && local_round < self.dummy_end
+        self.dummy_rounds.contains(&local_round)
     }
 }
 
