@@ -74,7 +74,7 @@ impl CachedPointRef {
             ChallengePart::Address if point.len() > n_vars => point.split_at(n_vars).0,
             // Take cycle part to be final elements of challenge point
             ChallengePart::Cycle if point.len() > n_vars => {
-                point.split_at(point.len() - n_vars - 1).1
+                point.split_at(point.len() - n_vars).1
             }
             _ => point,
         };
