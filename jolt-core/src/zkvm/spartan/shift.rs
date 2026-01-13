@@ -128,7 +128,6 @@ fn normalize_opening_point<F: JoltField>(
     OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
 }
 
-/// Sumcheck prover for [`ShiftSumcheckVerifier`].
 #[derive(Allocative)]
 pub struct ShiftSumcheckProver<F: JoltField> {
     phase: ShiftSumcheckPhase<F>,

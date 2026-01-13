@@ -87,7 +87,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
     }
 }
 
-/// Sumcheck prover for [`OutputSumcheckVerifier`].
 #[derive(Allocative)]
 pub struct OutputSumcheckProver<F: JoltField> {
     /// Val(k, 0)

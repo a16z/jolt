@@ -137,7 +137,6 @@ impl<F: JoltField> EqPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        // TODO: implement parallel version & determine switchover point
         Self::evals_serial_cached(r, None)
     }
 
