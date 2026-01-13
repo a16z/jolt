@@ -245,6 +245,7 @@ impl DoryGlobals {
 
     /// Get the current Dory matrix layout
     pub fn get_layout() -> DoryLayout {
+        // CURRENT_LAYOUT.load(Ordering::SeqCst).into()
         if Self::current_context() == DoryContext::Main {
             CURRENT_LAYOUT.load(Ordering::SeqCst).into()
         } else {

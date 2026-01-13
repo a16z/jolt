@@ -364,19 +364,6 @@ where
         self.openings.get(&key).unwrap().1
     }
 
-    pub fn get_advice_opening(
-        &self,
-        kind: AdviceKind,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let opening_id = match kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
-            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
-        };
-        let (point, claim) = self.openings.get(&opening_id)?;
-        Some((point.clone(), *claim))
-    }
-
     /// Adds an opening of a dense polynomial to the accumulator.
     /// The given `polynomial` is opened at `opening_point`, yielding the claimed
     /// evaluation `claim`.
@@ -545,19 +532,6 @@ where
     #[cfg(test)]
     pub fn compare_to(&mut self, prover_openings: ProverOpeningAccumulator<F>) {
         self.prover_opening_accumulator = Some(prover_openings);
-    }
-
-    pub fn get_advice_opening(
-        &self,
-        kind: AdviceKind,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let opening_id = match kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
-            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
-        };
-        let (point, claim) = self.openings.get(&opening_id)?;
-        Some((point.clone(), *claim))
     }
 
     /// Adds an opening of a dense polynomial the accumulator.

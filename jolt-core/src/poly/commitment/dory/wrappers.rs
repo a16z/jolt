@@ -4,7 +4,7 @@ use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
     poly::{
-        commitment::dory::{DoryGlobals, DoryLayout},
+        commitment::dory::{DoryContext, DoryGlobals, DoryLayout},
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
     transcripts::{AppendToTranscript, Transcript},
@@ -223,21 +223,53 @@ where
         std::slice::from_raw_parts(g1_generators.as_ptr() as *const ArkG1, g1_generators.len())
     };
 
+    let dory_context = DoryGlobals::current_context();
     let dory_layout = DoryGlobals::get_layout();
+
+    // if matches!(
+    //     dory_context,
+    //     DoryContext::TrustedAdvice | DoryContext::UntrustedAdvice
+    // ) && dory_layout == DoryLayout::AddressMajor
+    // {
+    //     println!("here");
+    //     let (num_rows, _) = DoryGlobals::matrix_shape();
+    //     debug_assert_eq!(num_rows * row_len, poly.original_len());
+    //     let affine_bases: Vec<_> = g1_slice
+    //         .par_iter()
+    //         .take(row_len)
+    //         .map(|g| g.0.into_affine())
+    //         .collect();
+
+    //     let result: Vec<ArkG1> = match poly {
+    //         MultilinearPolynomial::U64Scalars(poly) => {
+    //             let transpose: Vec<_> = (0..poly.len())
+    //                 .map(|i| {
+    //                     let row_idx = i / row_len;
+    //                     let col_idx = i % row_len;
+    //                     poly.coeffs[col_idx * num_rows + row_idx]
+    //                 })
+    //                 .collect();
+    //             transpose
+    //                 .par_chunks(row_len)
+    //                 .map(|row| {
+    //                     ArkG1(VariableBaseMSM::msm_u64(&affine_bases[..row.len()], row).unwrap())
+    //                 })
+    //                 .collect()
+    //         }
+    //         _ => unimplemented!("Advice polynomials always have u64 coefficients"),
+    //     };
+    //     #[allow(clippy::missing_transmute_annotations)]
+    //     unsafe {
+    //         return Ok(std::mem::transmute(result));
+    //     }
+    // }
 
     // Dense polynomials (all scalar variants except OneHot/RLC) are committed row-wise.
     // Under AddressMajor, dense coefficients occupy evenly-spaced columns, so each row
     // commitment uses `cycles_per_row` bases (one per occupied column).
-    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = match dory_layout {
-        DoryLayout::CycleMajor => (
-            g1_slice
-                .par_iter()
-                .take(row_len)
-                .map(|g| g.0.into_affine())
-                .collect(),
-            row_len,
-        ),
-        DoryLayout::AddressMajor => {
+    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = match (dory_context, dory_layout)
+    {
+        (DoryContext::Main, DoryLayout::AddressMajor) => {
             let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
             let bases: Vec<_> = g1_slice
                 .par_iter()
@@ -247,6 +279,14 @@ where
                 .collect();
             (bases, cycles_per_row)
         }
+        _ => (
+            g1_slice
+                .par_iter()
+                .take(row_len)
+                .map(|g| g.0.into_affine())
+                .collect(),
+            row_len,
+        ),
     };
 
     let result: Vec<ArkG1> = match poly {

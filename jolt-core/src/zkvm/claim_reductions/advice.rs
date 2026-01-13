@@ -103,7 +103,8 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (sigma_main, _nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+        let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+        println!("sigma_main: {sigma_main}, nu_main: {nu_main}");
 
         let r_val_eval = accumulator
             .get_advice_opening(kind, SumcheckId::RamValEvaluation)
@@ -120,6 +121,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
         let gamma: F = transcript.challenge_scalar();
 
         let (sigma_a, nu_a) = DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
+        println!("sigma_a: {sigma_a}, nu_a: {nu_a}");
         let advice_vars = sigma_a + nu_a;
 
         let row_cycle = DoryGlobals::cycle_row_len(log_t, sigma_main);
@@ -791,8 +793,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         );
 
         let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);
-        advice_le.extend_from_slice(&self.params.cycle_bind_le[0..self.params.sigma_a]);
-        advice_le.extend_from_slice(&self.params.cycle_bind_le[self.params.sigma_a..]);
+        advice_le.extend_from_slice(&self.params.cycle_bind_le);
         advice_le.extend_from_slice(sumcheck_challenges);
 
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
@@ -868,8 +869,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // Build the full advice opening point in BIG_ENDIAN for eq computations.
         debug_assert_eq!(sumcheck_challenges.len(), self.params.nu_a_addr);
         let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);
-        advice_le.extend_from_slice(&self.params.cycle_bind_le[0..self.params.sigma_a]);
-        advice_le.extend_from_slice(&self.params.cycle_bind_le[self.params.sigma_a..]);
+        advice_le.extend_from_slice(&self.params.cycle_bind_le);
         advice_le.extend_from_slice(sumcheck_challenges);
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
@@ -904,8 +904,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) {
         debug_assert_eq!(sumcheck_challenges.len(), self.params.nu_a_addr);
         let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);
-        advice_le.extend_from_slice(&self.params.cycle_bind_le[0..self.params.sigma_a]);
-        advice_le.extend_from_slice(&self.params.cycle_bind_le[self.params.sigma_a..]);
+        advice_le.extend_from_slice(&self.params.cycle_bind_le);
         advice_le.extend_from_slice(sumcheck_challenges);
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
