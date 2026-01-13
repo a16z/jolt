@@ -903,18 +903,20 @@ mod tests {
         let vmp_result = rlc_poly.vector_matrix_product(&left_vec);
 
         let mut expected = vec![Fr::zero(); num_columns];
+        let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
 
-        // Dense contribution: uses standard row-major layout (cycle-major)
-        // Commitment chunks coefficients by row_len without considering DoryLayout
-        for (global_idx, &coeff) in rlc_dense.iter().enumerate() {
-            let row = global_idx / num_columns;
-            let col = global_idx % num_columns;
-            if row < num_rows {
+        // Dense contribution for AddressMajor layout:
+        // Dense coefficients occupy evenly-spaced columns (every K-th column).
+        // Coefficient i maps to: row = i / cycles_per_row, col = (i % cycles_per_row) * K
+        for (i, &coeff) in rlc_dense.iter().enumerate() {
+            let row = i / cycles_per_row;
+            let col = (i % cycles_per_row) * K;
+            if row < num_rows && col < num_columns {
                 expected[col] += left_vec[row] * coeff;
             }
         }
 
-        // One-hot contribution
+        // One-hot contribution: uses AddressMajor layout
         for (cycle, k_opt) in nonzero_indices.iter().enumerate() {
             if let Some(k) = k_opt {
                 let k = *k as usize;
