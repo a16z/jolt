@@ -957,7 +957,7 @@ where
             .map(|opening| opening as &mut _)
             .collect();
 
-        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(
+        let (sumcheck_proof, r_sumcheck, _initial_claim) = BatchedSumcheck::prove(
             instances,
             &mut ProverOpeningAccumulator::new(self.log_T),
             transcript,

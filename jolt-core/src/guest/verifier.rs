@@ -1,3 +1,4 @@
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
@@ -33,11 +34,16 @@ pub fn preprocess(
     JoltVerifierPreprocessing::from(&prover_preprocessing)
 }
 
-pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
+pub fn verify<
+    F: JoltField,
+    C: JoltCurve,
+    PCS: StreamingCommitmentScheme<Field = F>,
+    FS: Transcript,
+>(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
-    proof: JoltProof<F, PCS, FS>,
+    proof: JoltProof<F, C, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
 ) -> Result<(), ProofVerifyError> {
     use common::jolt_device::JoltDevice;

@@ -3,7 +3,10 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
+use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::pedersen::PedersenGenerators;
+use crate::subprotocols::blindfold::{BlindFoldVerifier, StageConfig, VerifierR1CSBuilder};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
@@ -56,25 +59,32 @@ use tracer::JoltDevice;
 pub struct JoltVerifier<
     'a,
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
-    pub proof: JoltProof<F, PCS, ProofTranscript>,
+    pub proof: JoltProof<F, C, PCS, ProofTranscript>,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
+    pub pedersen_generators: PedersenGenerators<C>,
 }
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
-    JoltVerifier<'a, F, PCS, ProofTranscript>
+impl<
+        'a,
+        F: JoltField,
+        C: JoltCurve,
+        PCS: CommitmentScheme<Field = F>,
+        ProofTranscript: Transcript,
+    > JoltVerifier<'a, F, C, PCS, ProofTranscript>
 {
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
-        proof: JoltProof<F, PCS, ProofTranscript>,
+        proof: JoltProof<F, C, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
@@ -124,6 +134,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let one_hot_params =
             OneHotParams::new_with_log_k_chunk(proof.log_k_chunk, proof.bytecode_K, proof.ram_K);
 
+        // Use deterministic Pedersen generators for BlindFold verification
+        // This ensures prover and verifier use the same generators
+        let pedersen_generators = PedersenGenerators::<C>::deterministic(4096);
+
         Ok(Self {
             trusted_advice_commitment,
             program_io,
@@ -133,6 +147,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             opening_accumulator,
             spartan_key,
             one_hot_params,
+            pedersen_generators,
         })
     }
 
@@ -177,6 +192,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_stage4()?;
         self.verify_stage5()?;
         self.verify_stage6()?;
+        self.verify_blindfold()?;
         self.verify_trusted_advice_opening_proofs()?;
         self.verify_untrusted_advice_opening_proofs()?;
         self.verify_stage7()?;
@@ -401,6 +417,77 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         )
         .context("Stage 6")?;
+
+        Ok(())
+    }
+
+    fn verify_blindfold(&mut self) -> Result<(), anyhow::Error> {
+        // Build stage configurations by examining the proof's sumcheck rounds
+        // Each round becomes its own "stage" to support variable polynomial degrees.
+        // The first round of each logical Jolt stage (except stage 0) starts a new chain.
+        let stage_proofs = [
+            &self.proof.stage1_sumcheck_proof,
+            &self.proof.stage2_sumcheck_proof,
+            &self.proof.stage3_sumcheck_proof,
+            &self.proof.stage4_sumcheck_proof,
+            &self.proof.stage5_sumcheck_proof,
+            &self.proof.stage6_sumcheck_proof,
+        ];
+
+        let mut stage_configs = Vec::new();
+        let mut total_rounds = 0usize;
+        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+            for (round_idx, compressed_poly) in proof.compressed_polys.iter().enumerate() {
+                let poly_degree = compressed_poly.coeffs_except_linear_term.len();
+                // Mark first round of each logical Jolt stage (except stage 0) as starting a new chain
+                let starts_new_chain = round_idx == 0 && stage_idx > 0;
+                let config = if starts_new_chain {
+                    StageConfig::new_chain(1, poly_degree)
+                } else {
+                    StageConfig::new(1, poly_degree)
+                };
+                stage_configs.push(config);
+                total_rounds += 1;
+            }
+        }
+
+        // Build the verifier R1CS with the same structure as the prover
+        let builder = VerifierR1CSBuilder::new(&stage_configs);
+        let r1cs = builder.build();
+
+        // Verify that the initial claims in the BlindFold proof match those in the Jolt proof.
+        // Public inputs in real_instance.x are laid out as: [challenges..., initial_claims...]
+        // Initial claims start at index total_rounds (after all challenges).
+        let num_chains = 6; // Jolt has 6 independent sumcheck stages
+        let initial_claims_in_blindfold =
+            &self.proof.blindfold_proof.real_instance.x[total_rounds..total_rounds + num_chains];
+
+        for (i, (expected, actual)) in self
+            .proof
+            .blindfold_initial_claims
+            .iter()
+            .zip(initial_claims_in_blindfold.iter())
+            .enumerate()
+        {
+            if expected != actual {
+                return Err(anyhow::anyhow!(
+                    "BlindFold initial claim mismatch at stage {i}: expected {expected:?}, got {actual:?}"
+                ));
+            }
+        }
+
+        // Create BlindFold verifier and verify the proof
+        let verifier = BlindFoldVerifier::new(&self.pedersen_generators, &r1cs);
+        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+
+        verifier
+            .verify(&self.proof.blindfold_proof, &mut blindfold_transcript)
+            .map_err(|e| anyhow::anyhow!("BlindFold verification failed: {e:?}"))?;
+
+        tracing::debug!(
+            "BlindFold verification passed: {} R1CS constraints",
+            r1cs.num_constraints
+        );
 
         Ok(())
     }

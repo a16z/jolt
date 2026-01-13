@@ -1509,7 +1509,7 @@ mod tests {
         let mut prover_sumcheck =
             ReadRafSumcheckProver::gen(&trace, &prover_opening_accumulator, prover_transcript);
 
-        let (proof, r_sumcheck) = BatchedSumcheck::prove(
+        let (proof, r_sumcheck, _initial_claim) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],
             &mut prover_opening_accumulator,
             prover_transcript,

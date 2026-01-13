@@ -25,10 +25,14 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
+        blindfold::{
+            BlindFoldProof, BlindFoldProver, BlindFoldWitness, RelaxedR1CSInstance, RoundWitness,
+            StageConfig, StageWitness, VerifierR1CSBuilder,
+        },
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof, UniSkipFirstRoundProof},
         sumcheck_prover::SumcheckInstanceProver,
     },
-    transcripts::Transcript,
+    transcripts::{AppendToTranscript, Transcript},
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         config::{get_log_k_chunk, OneHotParams},
@@ -245,9 +249,9 @@ impl<
         let (initial_ram_state, final_ram_state) =
             gen_ram_memory_states::<F>(ram_K, &preprocessing.ram, &program_io, &final_memory_state);
 
-        let mut rng = rand::thread_rng();
-        let generators: Vec<C::G1> = (0..64).map(|_| C::random_g1(&mut rng)).collect();
-        let pedersen_generators = PedersenGenerators::<C>::new(generators);
+        // Use deterministic Pedersen generators for BlindFold protocol
+        // This ensures prover and verifier use the same generators
+        let pedersen_generators = PedersenGenerators::<C>::deterministic(4096);
 
         Self {
             preprocessing,
@@ -281,7 +285,7 @@ impl<
     pub fn prove(
         mut self,
     ) -> (
-        JoltProof<F, PCS, ProofTranscript>,
+        JoltProof<F, C, PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
         let _pprof_prove = pprof_scope!("prove");
@@ -299,12 +303,36 @@ impl<
         let (commitments, opening_proof_hints) = self.generate_and_commit_witness_polynomials();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
-        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
-        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof) = self.prove_stage2();
-        let stage3_sumcheck_proof = self.prove_stage3();
-        let stage4_sumcheck_proof = self.prove_stage4();
-        let stage5_sumcheck_proof = self.prove_stage5();
-        let stage6_sumcheck_proof = self.prove_stage6();
+        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, stage1_initial_claim) =
+            self.prove_stage1();
+        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof, stage2_initial_claim) =
+            self.prove_stage2();
+        let (stage3_sumcheck_proof, stage3_initial_claim) = self.prove_stage3();
+        let (stage4_sumcheck_proof, stage4_initial_claim) = self.prove_stage4();
+        let (stage5_sumcheck_proof, stage5_initial_claim) = self.prove_stage5();
+        let (stage6_sumcheck_proof, stage6_initial_claim) = self.prove_stage6();
+
+        // Collect initial claims for BlindFold
+        let initial_claims = [
+            stage1_initial_claim,
+            stage2_initial_claim,
+            stage3_initial_claim,
+            stage4_initial_claim,
+            stage5_initial_claim,
+            stage6_initial_claim,
+        ];
+
+        // BlindFold protocol to make sumcheck proofs zero-knowledge
+        let blindfold_proof = self.prove_blindfold(
+            &stage1_sumcheck_proof,
+            &stage2_sumcheck_proof,
+            &stage3_sumcheck_proof,
+            &stage4_sumcheck_proof,
+            &stage5_sumcheck_proof,
+            &stage6_sumcheck_proof,
+            &initial_claims,
+        );
+
         tracing::info!("Stage 7 proving");
         let trusted_advice_proof = self.prove_trusted_advice();
         let untrusted_advice_proof = self.prove_untrusted_advice();
@@ -341,6 +369,8 @@ impl<
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
             stage6_sumcheck_proof,
+            blindfold_proof,
+            blindfold_initial_claims: initial_claims,
             trusted_advice_proof,
             untrusted_advice_proof,
             reduced_opening_proof,
@@ -498,12 +528,14 @@ impl<
             .append_serializable(self.advice.trusted_advice_commitment.as_ref().unwrap());
     }
 
+    /// Returns (uni_skip_proof, sumcheck_proof, initial_claim)
     #[tracing::instrument(skip_all)]
     fn prove_stage1(
         &mut self,
     ) -> (
         UniSkipFirstRoundProof<F, ProofTranscript>,
         SumcheckInstanceProof<F, ProofTranscript>,
+        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 1 baseline");
@@ -523,7 +555,7 @@ impl<
         );
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage1) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, _r_stage1, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             vec![&mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -531,15 +563,17 @@ impl<
             &mut rng,
         );
 
-        (first_round_proof, sumcheck_proof)
+        (first_round_proof, sumcheck_proof, initial_claim)
     }
 
+    /// Returns (uni_skip_proof, sumcheck_proof, initial_claim)
     #[tracing::instrument(skip_all)]
     fn prove_stage2(
         &mut self,
     ) -> (
         UniSkipFirstRoundProof<F, ProofTranscript>,
         SumcheckInstanceProof<F, ProofTranscript>,
+        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 2 baseline");
@@ -600,7 +634,7 @@ impl<
         tracing::info!("Stage 2 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage2) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, _r_stage2, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -612,11 +646,12 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (first_round_proof, sumcheck_proof)
+        (first_round_proof, sumcheck_proof, initial_claim)
     }
 
+    /// Returns (sumcheck_proof, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage3(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+    fn prove_stage3(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
 
@@ -649,7 +684,7 @@ impl<
         tracing::info!("Stage 3 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage3) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, _r_stage3, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -660,11 +695,12 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        sumcheck_proof
+        (sumcheck_proof, initial_claim)
     }
 
+    /// Returns (sumcheck_proof, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage4(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+    fn prove_stage4(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
@@ -728,7 +764,7 @@ impl<
         tracing::info!("Stage 4 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage4) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, _r_stage4, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -739,11 +775,12 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        sumcheck_proof
+        (sumcheck_proof, initial_claim)
     }
 
+    /// Returns (sumcheck_proof, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage5(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+    fn prove_stage5(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
 
@@ -794,7 +831,7 @@ impl<
         tracing::info!("Stage 5 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage5) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, _r_stage5, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -805,11 +842,12 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        sumcheck_proof
+        (sumcheck_proof, initial_claim)
     }
 
+    /// Returns (sumcheck_proof, initial_claim)
     #[tracing::instrument(skip_all)]
-    fn prove_stage6(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+    fn prove_stage6(&mut self) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6 baseline");
 
@@ -885,7 +923,7 @@ impl<
         tracing::info!("Stage 6 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, _r_stage6) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, _r_stage6, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -896,7 +934,140 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        sumcheck_proof
+        (sumcheck_proof, initial_claim)
+    }
+
+    /// Prove BlindFold protocol to make sumcheck proofs zero-knowledge.
+    ///
+    /// This method extracts the sumcheck witness from all 6 stages, builds the
+    /// verifier R1CS, and generates a BlindFold proof that masks the witness
+    /// while proving it satisfies the R1CS constraints.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all)]
+    fn prove_blindfold(
+        &mut self,
+        stage1_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        stage2_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        stage3_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        stage4_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        stage5_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        stage6_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        initial_claims: &[F; 6],
+    ) -> BlindFoldProof<F, C> {
+        tracing::info!("BlindFold proving");
+
+        let mut rng = rand::thread_rng();
+
+        // Collect all stage proofs with their initial claims
+        let stage_proofs = [
+            stage1_proof,
+            stage2_proof,
+            stage3_proof,
+            stage4_proof,
+            stage5_proof,
+            stage6_proof,
+        ];
+
+        // Build stage configurations with per-round degree support
+        // Each compressed polynomial may have a different degree, so we create
+        // one "stage" per round to allow variable degrees.
+        // The first round of each logical Jolt stage (stage_idx > 0) starts a new chain
+        // with its own initial claim.
+        let mut stage_configs = Vec::new();
+        let mut stage_witnesses = Vec::new();
+
+        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+            // Start with the stage's initial claim
+            let mut current_claim = initial_claims[stage_idx];
+
+            // Create a fresh transcript to replay challenges
+            let mut replay_transcript = ProofTranscript::new(b"BlindFold_replay");
+
+            for (round_idx, compressed_poly) in proof.compressed_polys.iter().enumerate() {
+                // Append to transcript and derive challenge
+                compressed_poly.append_to_transcript(&mut replay_transcript);
+                let challenge: F = replay_transcript.challenge_scalar_optimized::<F>().into();
+
+                // Extract compressed coefficients [c0, c2, c3, ...]
+                // The length gives us the polynomial degree
+                let compressed = &compressed_poly.coeffs_except_linear_term;
+                let poly_degree = compressed.len();
+                let c0 = compressed[0];
+                let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
+
+                // Compute c1 from sumcheck relation: claimed_sum = 2*c0 + c1 + c2 + c3 + ...
+                // Use the actual current_claim (which chains from the stage's initial claim)
+                let claimed_sum = current_claim;
+                let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
+
+                // Build full coefficients [c0, c1, c2, c3, ...]
+                let mut coeffs = vec![c0, c1];
+                coeffs.extend_from_slice(&compressed[1..]);
+
+                // Evaluate the polynomial at challenge to get next claim
+                // g(r) = c0 + c1*r + c2*r^2 + ... using Horner's method
+                let mut next_claim = coeffs[coeffs.len() - 1];
+                for i in (0..coeffs.len() - 1).rev() {
+                    next_claim = coeffs[i] + challenge * next_claim;
+                }
+
+                // Create one "stage" with one round for this polynomial.
+                // Mark the first round of each logical Jolt stage (except stage 0)
+                // as starting a new chain with its own initial claim.
+                let starts_new_chain = round_idx == 0 && stage_idx > 0;
+                let config = if starts_new_chain {
+                    StageConfig::new_chain(1, poly_degree)
+                } else {
+                    StageConfig::new(1, poly_degree)
+                };
+                stage_configs.push(config);
+                stage_witnesses.push(StageWitness::new(vec![RoundWitness::with_claimed_sum(
+                    coeffs,
+                    challenge,
+                    claimed_sum,
+                )]));
+
+                // Chain: this round's evaluation becomes next round's claimed_sum
+                current_claim = next_claim;
+            }
+        }
+
+        // Build verifier R1CS from configurations
+        let builder = VerifierR1CSBuilder::<F>::new(&stage_configs);
+        let r1cs = builder.build();
+
+        // Use all 6 initial claims for the BlindFoldWitness
+        let blindfold_witness =
+            BlindFoldWitness::with_multiple_claims(initial_claims.to_vec(), stage_witnesses);
+
+        // Assign witness to get Z vector
+        let z = blindfold_witness.assign(&r1cs);
+
+        // Extract components for relaxed R1CS
+        let witness_start = 1 + r1cs.num_public_inputs;
+        let witness: Vec<F> = z[witness_start..].to_vec();
+        let public_inputs: Vec<F> = z[1..witness_start].to_vec();
+
+        // Create non-relaxed instance and witness
+        let (real_instance, real_witness) = RelaxedR1CSInstance::<F, C>::new_non_relaxed(
+            &self.pedersen_generators,
+            &witness,
+            public_inputs,
+            r1cs.num_constraints,
+            &mut rng,
+        );
+
+        // Run BlindFold protocol
+        let prover = BlindFoldProver::new(&self.pedersen_generators, &r1cs);
+        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+
+        prover.prove(
+            &real_instance,
+            &real_witness,
+            &z,
+            &mut blindfold_transcript,
+            &mut rng,
+        )
     }
 
     #[tracing::instrument(skip_all)]
@@ -1536,11 +1707,17 @@ mod tests {
         // Process all 6 stages and verify each one
         let stage_proofs: Vec<(&str, &SumcheckInstanceProof<Fr, _>)> = vec![
             ("Stage 1 (Spartan Outer)", &jolt_proof.stage1_sumcheck_proof),
-            ("Stage 2 (Product Virtual)", &jolt_proof.stage2_sumcheck_proof),
+            (
+                "Stage 2 (Product Virtual)",
+                &jolt_proof.stage2_sumcheck_proof,
+            ),
             ("Stage 3 (Instruction)", &jolt_proof.stage3_sumcheck_proof),
             ("Stage 4 (Registers+RAM)", &jolt_proof.stage4_sumcheck_proof),
             ("Stage 5 (Value+Lookup)", &jolt_proof.stage5_sumcheck_proof),
-            ("Stage 6 (OneHot+Hamming)", &jolt_proof.stage6_sumcheck_proof),
+            (
+                "Stage 6 (OneHot+Hamming)",
+                &jolt_proof.stage6_sumcheck_proof,
+            ),
         ];
 
         let mut total_rounds = 0;
@@ -1553,7 +1730,7 @@ mod tests {
             let rounds = process_stage(stage_name, proof, &mut stage_transcript);
 
             if rounds.is_empty() {
-                println!("  {} - 0 rounds, skipping", stage_name);
+                println!("  {stage_name} - 0 rounds, skipping");
                 continue;
             }
 
@@ -1588,16 +1765,15 @@ mod tests {
             }
 
             println!(
-                "  {} - {} rounds, {} constraints - SATISFIED",
-                stage_name, stage_rounds, stage_constraints
+                "  {stage_name} - {stage_rounds} rounds, {stage_constraints} constraints - SATISFIED"
             );
             total_rounds += stage_rounds;
             total_constraints += stage_constraints;
         }
 
         println!("\n=== Summary ===");
-        println!("Total rounds across all stages: {}", total_rounds);
-        println!("Total constraints across all stages: {}", total_constraints);
+        println!("Total rounds across all stages: {total_rounds}");
+        println!("Total constraints across all stages: {total_constraints}");
         println!("All 6 stages satisfied!\n");
 
         // Ensure we processed a meaningful amount
@@ -1684,5 +1860,116 @@ mod tests {
         let verifier =
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn blindfold_protocol_e2e() {
+        use crate::curve::{Bn254Curve, Bn254G1};
+        use crate::poly::commitment::pedersen::PedersenGenerators;
+        use crate::subprotocols::blindfold::{
+            BlindFoldProver, BlindFoldVerifier, BlindFoldWitness, RelaxedR1CSInstance,
+            RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
+        };
+        use crate::transcripts::{KeccakTranscript, Transcript};
+        use ark_std::UniformRand;
+        use rand::thread_rng;
+
+        let mut rng = thread_rng();
+
+        fn mock_generators(n: usize) -> PedersenGenerators<Bn254Curve> {
+            let mut rng = thread_rng();
+            let generators: Vec<Bn254G1> = (0..n)
+                .map(|_| {
+                    use ark_bn254::G1Projective;
+                    Bn254G1(G1Projective::rand(&mut rng))
+                })
+                .collect();
+            PedersenGenerators::<Bn254Curve>::new(generators)
+        }
+
+        // Create a simple R1CS (2 rounds, degree 3)
+        let configs = [StageConfig::new(2, 3)];
+        let builder = VerifierR1CSBuilder::<Fr>::new(&configs);
+        let r1cs = builder.build();
+
+        // Create generators
+        let gens = mock_generators(r1cs.num_vars + 100);
+
+        // Create valid multi-round witness
+        // Round 1: 2*c0 + c1 + c2 + c3 = 55
+        let round1 = RoundWitness::new(
+            vec![
+                Fr::from(20u64),
+                Fr::from(5u64),
+                Fr::from(7u64),
+                Fr::from(3u64),
+            ],
+            Fr::from(2u64),
+        );
+        let next1 = round1.evaluate(Fr::from(2u64));
+
+        // Round 2: 2*c0 + c1 + c2 + c3 = next1
+        let c0_2 = Fr::from(30u64);
+        let c2_2 = Fr::from(10u64);
+        let c3_2 = Fr::from(5u64);
+        let c1_2 = next1 - Fr::from(75u64);
+        let round2 = RoundWitness::new(vec![c0_2, c1_2, c2_2, c3_2], Fr::from(4u64));
+
+        let initial_claim = Fr::from(55u64);
+        let blindfold_witness =
+            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
+        let z = blindfold_witness.assign(&r1cs);
+
+        // Verify standard R1CS is satisfied
+        assert!(r1cs.is_satisfied(&z));
+
+        // Extract components for relaxed R1CS
+        let witness_start = 1 + r1cs.num_public_inputs;
+        let witness: Vec<Fr> = z[witness_start..].to_vec();
+        let public_inputs: Vec<Fr> = z[1..witness_start].to_vec();
+
+        // Create non-relaxed instance and witness
+        let (real_instance, real_witness) = RelaxedR1CSInstance::<Fr, Bn254Curve>::new_non_relaxed(
+            &gens,
+            &witness,
+            public_inputs,
+            r1cs.num_constraints,
+            &mut rng,
+        );
+
+        // Run BlindFold protocol
+        let prover = BlindFoldProver::new(&gens, &r1cs);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+
+        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
+        let proof = prover.prove(
+            &real_instance,
+            &real_witness,
+            &z,
+            &mut prover_transcript,
+            &mut rng,
+        );
+
+        // Verify the proof
+        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_E2E");
+        let result = verifier.verify(&proof, &mut verifier_transcript);
+
+        assert!(
+            result.is_ok(),
+            "BlindFold protocol verification failed: {result:?}"
+        );
+
+        println!("\n=== BlindFold Protocol E2E Test ===");
+        println!(
+            "R1CS size: {} constraints, {} variables",
+            r1cs.num_constraints, r1cs.num_vars
+        );
+        println!("Witness size: {} field elements", witness.len());
+        println!(
+            "Folded error vector size: {} field elements",
+            proof.folded_witness.E.len()
+        );
+        println!("Protocol verification: SUCCESS");
     }
 }

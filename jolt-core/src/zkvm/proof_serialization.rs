@@ -9,6 +9,7 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
+use crate::curve::JoltCurve;
 use crate::zkvm::{config::OneHotParams, witness::AllCommittedPolynomials};
 use crate::{
     field::JoltField,
@@ -16,12 +17,15 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
     },
-    subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
+    subprotocols::{
+        blindfold::BlindFoldProof,
+        sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
+    },
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
@@ -32,6 +36,9 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub blindfold_proof: BlindFoldProof<F, C>,
+    /// Initial claims for each of the 6 sumcheck stages (needed for BlindFold verification)
+    pub blindfold_initial_claims: [F; 6],
     pub trusted_advice_proof: Option<PCS::Proof>,
     pub untrusted_advice_proof: Option<PCS::Proof>,
     pub reduced_opening_proof: ReducedOpeningProof<F, PCS, FS>, // Stage 7
@@ -43,8 +50,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub twist_sumcheck_switch_index: usize,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalSerialize for JoltProof<F, C, PCS, FS>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -82,6 +89,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.stage6_sumcheck_proof
             .serialize_with_mode(&mut writer, compress)?;
+        self.blindfold_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.blindfold_initial_claims
+            .serialize_with_mode(&mut writer, compress)?;
         self.trusted_advice_proof
             .serialize_with_mode(&mut writer, compress)?;
         self.untrusted_advice_proof
@@ -110,6 +121,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.stage4_sumcheck_proof.serialized_size(compress)
             + self.stage5_sumcheck_proof.serialized_size(compress)
             + self.stage6_sumcheck_proof.serialized_size(compress)
+            + self.blindfold_proof.serialized_size(compress)
+            + self.blindfold_initial_claims.serialized_size(compress)
             + self.trusted_advice_proof.serialized_size(compress)
             + self.untrusted_advice_proof.serialized_size(compress)
             + self.reduced_opening_proof.serialized_size(compress)
@@ -121,8 +134,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for JoltProof<F, C, PCS, FS>
 {
     fn check(&self) -> Result<(), SerializationError> {
         self.opening_claims.check()?;
@@ -136,6 +149,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
         self.stage4_sumcheck_proof.check()?;
         self.stage5_sumcheck_proof.check()?;
         self.stage6_sumcheck_proof.check()?;
+        self.blindfold_proof.check()?;
+        self.blindfold_initial_claims.check()?;
         self.trusted_advice_proof.check()?;
         self.untrusted_advice_proof.check()?;
         self.reduced_opening_proof.check()?;
@@ -148,8 +163,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalDeserialize for JoltProof<F, C, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -176,6 +191,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let stage4_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let stage5_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let stage6_sumcheck_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let blindfold_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let blindfold_initial_claims = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trusted_advice_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let untrusted_advice_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
         let reduced_opening_proof = <_>::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -196,6 +213,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
             stage6_sumcheck_proof,
+            blindfold_proof,
+            blindfold_initial_claims,
             trusted_advice_proof,
             untrusted_advice_proof,
             reduced_opening_proof,

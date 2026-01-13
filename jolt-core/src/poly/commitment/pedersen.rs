@@ -68,6 +68,49 @@ impl<C: JoltCurve> PedersenGenerators<C> {
     }
 }
 
+impl<C: JoltCurve> PedersenGenerators<C> {
+    /// Create deterministic Pedersen generators using hash-to-curve.
+    ///
+    /// This ensures prover and verifier use the same generators without
+    /// needing a trusted setup. The generators are derived by hashing
+    /// a domain separator with an index.
+    pub fn deterministic(count: usize) -> Self {
+        use sha3::{Digest, Sha3_256};
+
+        let generators: Vec<C::G1> = (0..count)
+            .map(|i| {
+                let mut hasher = Sha3_256::new();
+                hasher.update(b"jolt_pedersen_generator_v1");
+                hasher.update((i as u64).to_le_bytes());
+                let hash = hasher.finalize();
+
+                // Convert hash to a deterministic point using the curve's method
+                // We use the hash as a seed for scalar multiplication of the generator
+                let mut scalar_bytes = [0u8; 32];
+                scalar_bytes.copy_from_slice(&hash[..32]);
+
+                // Derive point: we start from the curve generator and multiply by hash
+                let base = C::g1_generator();
+                let mut result = C::G1::zero();
+                let mut current = base;
+
+                for byte in scalar_bytes.iter() {
+                    for bit in 0..8 {
+                        if (byte >> bit) & 1 == 1 {
+                            result += current;
+                        }
+                        current = current.double();
+                    }
+                }
+
+                result
+            })
+            .collect();
+
+        Self::new(generators)
+    }
+}
+
 /// Derive the blinding generator H from the first message generator.
 ///
 /// Uses a simple approach: H = hash_scalar * G₀ where hash_scalar is derived

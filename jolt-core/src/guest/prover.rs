@@ -41,7 +41,7 @@ pub fn prove<
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
 ) -> (
-    JoltProof<F, PCS, FS>,
+    JoltProof<F, C, PCS, FS>,
     JoltDevice,
     Option<ProverDebugInfo<F, FS, PCS>>,
 ) {

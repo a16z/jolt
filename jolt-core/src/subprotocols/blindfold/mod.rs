@@ -12,10 +12,16 @@
 //! - [`SumcheckRoundGadget`]: Constraint generation for a single sumcheck round
 //! - [`BlindFoldWitness`]: Witness assignment for the verifier circuit
 
+mod folding;
+mod protocol;
 mod r1cs;
+mod relaxed_r1cs;
 mod witness;
 
+pub use folding::{compute_cross_term, sample_random_satisfying_pair};
+pub use protocol::{BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifyError};
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
+pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 pub use witness::{BlindFoldWitness, RoundWitness, StageWitness};
 
 use crate::field::JoltField;
@@ -27,6 +33,10 @@ pub struct StageConfig {
     pub num_rounds: usize,
     /// Degree of the round polynomials (typically 3 for cubic)
     pub poly_degree: usize,
+    /// Whether this stage starts a new independent chain with its own initial claim.
+    /// When true, the first round of this stage uses a separate initial_claim
+    /// rather than chaining from the previous stage's last round.
+    pub starts_new_chain: bool,
 }
 
 impl StageConfig {
@@ -34,6 +44,16 @@ impl StageConfig {
         Self {
             num_rounds,
             poly_degree,
+            starts_new_chain: false,
+        }
+    }
+
+    /// Create a stage config that starts a new independent chain.
+    pub fn new_chain(num_rounds: usize, poly_degree: usize) -> Self {
+        Self {
+            num_rounds,
+            poly_degree,
+            starts_new_chain: true,
         }
     }
 }
@@ -52,16 +72,21 @@ pub fn jolt_stage_configs(num_rounds_per_stage: usize) -> [StageConfig; 6] {
 
 /// Variable index in the witness vector Z
 ///
-/// Z is laid out as: [1, public_inputs..., witness...]
-/// - Index 0 is always the constant 1
+/// For relaxed R1CS, Z is laid out as: [u, public_inputs..., witness...]
+/// - Index 0 is the scalar u (u=1 for non-relaxed, u=u1+r*u2 for folded)
 /// - Public inputs follow (challenges, initial claim)
 /// - Witness variables come last (coefficients, intermediates)
+///
+/// This layout allows proper folding: when Z' = Z1 + r*Z2, the u position
+/// naturally becomes u1 + r*u2 = u', which is the folded scalar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Variable(pub usize);
 
 impl Variable {
-    /// The constant 1 variable (always at index 0)
-    pub const ONE: Variable = Variable(0);
+    /// The u scalar variable (at index 0)
+    /// For non-relaxed instances, u = 1. For folded instances, u = u1 + r*u2.
+    /// In constraints, use this instead of constants.
+    pub const U: Variable = Variable(0);
 
     /// Create a new variable with the given index
     pub const fn new(idx: usize) -> Self {
@@ -106,9 +131,12 @@ impl<F: JoltField> LinearCombination<F> {
         Self { terms: Vec::new() }
     }
 
+    /// Create a linear combination representing `value * u` where u is the relaxation scalar.
+    /// For non-relaxed instances (u=1), this evaluates to `value`.
+    /// For relaxed instances, this evaluates to `value * u`.
     pub fn constant(value: F) -> Self {
         Self {
-            terms: vec![Term::new(Variable::ONE, value)],
+            terms: vec![Term::new(Variable::U, value)],
         }
     }
 

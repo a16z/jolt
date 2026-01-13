@@ -24,11 +24,16 @@ use std::marker::PhantomData;
 /// We do what they describe as "front-loaded" batch sumcheck.
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
+    /// Returns (proof, challenges, initial_batched_claim)
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
+        F,
+    ) {
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -56,12 +61,15 @@ impl BatchedSumcheck {
             })
             .collect();
 
-        #[cfg(test)]
-        let mut batched_claim: F = individual_claims
+        // Compute the initial batched claim (needed for BlindFold)
+        let initial_batched_claim: F = individual_claims
             .iter()
             .zip(batching_coeffs.iter())
             .map(|(claim, coeff)| *claim * coeff)
             .sum();
+
+        #[cfg(test)]
+        let mut batched_claim: F = initial_batched_claim;
 
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
@@ -165,7 +173,11 @@ impl BatchedSumcheck {
             sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
         }
 
-        (SumcheckInstanceProof::new(compressed_polys), r_sumcheck)
+        (
+            SumcheckInstanceProof::new(compressed_polys),
+            r_sumcheck,
+            initial_batched_claim,
+        )
     }
 
     /// Prove a batched sumcheck with Pedersen commitments (ZK mode).
@@ -173,13 +185,19 @@ impl BatchedSumcheck {
     /// Instead of appending raw polynomial coefficients to the transcript,
     /// this appends Pedersen commitments. The proof still contains the
     /// coefficients for verification until BlindFold is implemented.
+    ///
+    /// Returns (proof, challenges, initial_batched_claim)
     pub fn prove_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript, R: CryptoRngCore>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
         pedersen_gens: &PedersenGenerators<C>,
         rng: &mut R,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
+        F,
+    ) {
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -197,6 +215,13 @@ impl BatchedSumcheck {
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
+
+        // Compute the initial batched claim (needed for BlindFold)
+        let initial_batched_claim: F = individual_claims
+            .iter()
+            .zip(batching_coeffs.iter())
+            .map(|(claim, coeff)| *claim * coeff)
+            .sum();
 
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
@@ -288,6 +313,7 @@ impl BatchedSumcheck {
         (
             SumcheckInstanceProof::new_zk(compressed_polys, round_commitments),
             r_sumcheck,
+            initial_batched_claim,
         )
     }
 

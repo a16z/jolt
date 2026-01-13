@@ -128,8 +128,8 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     next_var: usize,
     /// Challenge variable indices (public inputs)
     challenge_vars: Vec<Variable>,
-    /// Initial claim variable (public input)
-    initial_claim_var: Variable,
+    /// Initial claim variables (public inputs) - one per independent chain
+    initial_claim_vars: Vec<Variable>,
     /// Stage configurations
     stage_configs: Vec<StageConfig>,
     /// Mapping from (stage, round) to the round's variables
@@ -156,19 +156,28 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
     pub fn new(stage_configs: &[StageConfig]) -> Self {
         let total_rounds: usize = stage_configs.iter().map(|s| s.num_rounds).sum();
 
-        // Allocate public inputs: challenges + initial claim
-        // Index 0 is the constant 1
+        // Count independent chains (first stage + stages with starts_new_chain)
+        let num_chains = 1 + stage_configs
+            .iter()
+            .skip(1)
+            .filter(|s| s.starts_new_chain)
+            .count();
+
+        // Allocate public inputs: challenges + initial claims (one per chain)
+        // Index 0 is the constant 1 (u scalar)
         // Indices 1..=total_rounds are challenges
-        // Index total_rounds+1 is the initial claim
+        // Indices total_rounds+1..=total_rounds+num_chains are initial claims
         let challenge_vars: Vec<Variable> = (1..=total_rounds).map(Variable::new).collect();
-        let initial_claim_var = Variable::new(total_rounds + 1);
-        let next_var = total_rounds + 2; // Start witness allocation after public inputs
+        let initial_claim_vars: Vec<Variable> = (0..num_chains)
+            .map(|i| Variable::new(total_rounds + 1 + i))
+            .collect();
+        let next_var = total_rounds + 1 + num_chains; // Start witness allocation after public inputs
 
         Self {
             constraints: Vec::new(),
             next_var,
             challenge_vars,
-            initial_claim_var,
+            initial_claim_vars,
             stage_configs: stage_configs.to_vec(),
             round_vars: Vec::new(),
         }
@@ -303,13 +312,20 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
     /// Build the complete verifier R1CS
     pub fn build(mut self) -> VerifierR1CS<F> {
         let mut challenge_idx = 0;
-        let mut current_claim = self.initial_claim_var;
+        let mut chain_idx = 0;
+        let mut current_claim = self.initial_claim_vars[chain_idx];
 
         // Clone stage configs to avoid borrow conflict
         let stage_configs = self.stage_configs.clone();
 
         // Allocate variables and build constraints for each stage/round
-        for config in &stage_configs {
+        for (stage_idx, config) in stage_configs.iter().enumerate() {
+            // Check if this stage starts a new chain
+            if stage_idx > 0 && config.starts_new_chain {
+                chain_idx += 1;
+                current_claim = self.initial_claim_vars[chain_idx];
+            }
+
             let mut stage_rounds = Vec::with_capacity(config.num_rounds);
 
             for _round in 0..config.num_rounds {
@@ -359,7 +375,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
 
         let num_constraints = self.constraints.len();
         let num_vars = self.next_var;
-        let num_public_inputs = self.challenge_vars.len() + 1; // challenges + initial_claim
+        let num_public_inputs = self.challenge_vars.len() + self.initial_claim_vars.len(); // challenges + initial_claims
 
         // Build sparse matrices
         let mut a = SparseR1CSMatrix::new(num_constraints, num_vars);
@@ -394,9 +410,9 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         &self.round_vars
     }
 
-    /// Get the initial claim variable index
-    pub fn initial_claim_var(&self) -> Variable {
-        self.initial_claim_var
+    /// Get the initial claim variable indices (one per chain)
+    pub fn initial_claim_vars(&self) -> &[Variable] {
+        &self.initial_claim_vars
     }
 
     /// Get the challenge variable indices

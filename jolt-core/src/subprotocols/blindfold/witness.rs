@@ -24,8 +24,7 @@ pub struct RoundWitness<F> {
 impl<F: JoltField> RoundWitness<F> {
     pub fn new(coeffs: Vec<F>, challenge: F) -> Self {
         // Compute claimed_sum from coefficients: 2*c0 + c1 + c2 + ...
-        let claimed_sum = F::from_u64(2) * coeffs[0]
-            + coeffs[1..].iter().copied().sum::<F>();
+        let claimed_sum = F::from_u64(2) * coeffs[0] + coeffs[1..].iter().copied().sum::<F>();
         Self {
             coeffs,
             challenge,
@@ -108,16 +107,27 @@ impl<F: JoltField> StageWitness<F> {
 /// Complete witness for the BlindFold verifier circuit
 #[derive(Clone, Debug)]
 pub struct BlindFoldWitness<F> {
-    /// Initial claimed sum (public input)
-    pub initial_claim: F,
+    /// Initial claimed sums for each independent chain (public inputs).
+    /// Stages with `starts_new_chain: true` use their corresponding initial claim.
+    pub initial_claims: Vec<F>,
     /// Witness data for each stage
     pub stages: Vec<StageWitness<F>>,
 }
 
 impl<F: JoltField> BlindFoldWitness<F> {
+    /// Create a new BlindFold witness with a single initial claim (legacy API).
     pub fn new(initial_claim: F, stages: Vec<StageWitness<F>>) -> Self {
         Self {
-            initial_claim,
+            initial_claims: vec![initial_claim],
+            stages,
+        }
+    }
+
+    /// Create a new BlindFold witness with multiple initial claims.
+    /// Each initial claim corresponds to an independent chain in the R1CS.
+    pub fn with_multiple_claims(initial_claims: Vec<F>, stages: Vec<StageWitness<F>>) -> Self {
+        Self {
+            initial_claims,
             stages,
         }
     }
@@ -126,24 +136,38 @@ impl<F: JoltField> BlindFoldWitness<F> {
     ///
     /// The Z vector layout is:
     /// ```text
-    /// Z = [1, challenges..., initial_claim, witness_vars...]
+    /// Z = [u, challenges..., initial_claim, witness_vars...]
     /// ```
+    /// For non-relaxed instances, u = 1.
     pub fn assign(&self, r1cs: &VerifierR1CS<F>) -> Vec<F> {
-        let mut z = vec![F::zero(); r1cs.num_vars];
-        z[0] = F::one(); // Constant 1
+        self.assign_with_u(r1cs, F::one())
+    }
 
-        // Compute total rounds and build variable indices
+    /// Assign with a specific u value (for relaxed R1CS)
+    pub fn assign_with_u(&self, r1cs: &VerifierR1CS<F>, u: F) -> Vec<F> {
+        let mut z = vec![F::zero(); r1cs.num_vars];
+        z[0] = u; // u scalar (1 for non-relaxed)
+
+        // Compute total rounds and number of chains
         let total_rounds: usize = r1cs.stage_configs.iter().map(|s| s.num_rounds).sum();
+        let num_chains = 1 + r1cs
+            .stage_configs
+            .iter()
+            .skip(1)
+            .filter(|s| s.starts_new_chain)
+            .count();
 
         // Public input layout:
         // - Indices 1..=total_rounds are challenges
-        // - Index total_rounds+1 is initial_claim
+        // - Indices total_rounds+1..=total_rounds+num_chains are initial_claims
         let challenge_start = 1;
-        let initial_claim_idx = total_rounds + 1;
-        let witness_start = initial_claim_idx + 1;
+        let initial_claims_start = total_rounds + 1;
+        let witness_start = initial_claims_start + num_chains;
 
-        // Assign initial claim
-        z[initial_claim_idx] = self.initial_claim;
+        // Assign initial claims
+        for (i, claim) in self.initial_claims.iter().enumerate() {
+            z[initial_claims_start + i] = *claim;
+        }
 
         let mut challenge_idx = challenge_start;
         let mut witness_idx = witness_start;
@@ -307,10 +331,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
             rounds.push(round_witness);
         }
 
-        let witness = Self::new(
-            initial_claim,
-            vec![StageWitness::new(rounds)],
-        );
+        let witness = Self::new(initial_claim, vec![StageWitness::new(rounds)]);
 
         (witness, challenges)
     }
@@ -440,11 +461,7 @@ mod tests {
         // For g(x) = c0 + c1*x + c2*x^2 + c3*x^3
         // claimed_sum = g(0) + g(1) = 2*c0 + c1 + c2 + c3 = 100
         // If [c0, c2, c3] = [40, 10, 5], then c1 = 100 - 2*40 - 10 - 5 = 5
-        let compressed_coeffs = vec![vec![vec![
-            F::from_u64(40),
-            F::from_u64(10),
-            F::from_u64(5),
-        ]]];
+        let compressed_coeffs = vec![vec![vec![F::from_u64(40), F::from_u64(10), F::from_u64(5)]]];
         let challenges = vec![vec![F::from_u64(3)]];
         let configs = [StageConfig::new(1, 3)];
 
