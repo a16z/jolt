@@ -1601,6 +1601,7 @@ mod tests {
     #[test]
     #[serial]
     fn fib_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
@@ -1645,6 +1646,7 @@ mod tests {
     #[test]
     #[serial]
     fn small_trace_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
@@ -1699,6 +1701,7 @@ mod tests {
     #[test]
     #[serial]
     fn sha3_e2e_dory() {
+        DoryGlobals::reset();
         // Ensure SHA3 inline library is linked and auto-registered
         #[cfg(feature = "host")]
         use jolt_inlines_keccak256 as _;
@@ -1761,6 +1764,7 @@ mod tests {
     #[test]
     #[serial]
     fn sha2_e2e_dory() {
+        DoryGlobals::reset();
         // Ensure SHA2 inline library is linked and auto-registered
         #[cfg(feature = "host")]
         use jolt_inlines_sha2 as _;
@@ -2102,6 +2106,7 @@ mod tests {
     #[test]
     #[serial]
     fn memory_ops_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
@@ -2146,6 +2151,7 @@ mod tests {
     #[test]
     #[serial]
     fn btreemap_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
@@ -2191,6 +2197,7 @@ mod tests {
     #[test]
     #[serial]
     fn muldiv_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
