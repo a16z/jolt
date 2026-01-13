@@ -91,11 +91,13 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let T_bar = self.gens.commit(&T, &r_T);
 
         // Step 4: Append data to transcript for Fiat-Shamir
-        // Append random instance
+        // SECURITY: real_instance must be bound to prevent adaptive attacks
+        transcript.append_message(b"BlindFold_real_instance");
+        append_instance_to_transcript(real_instance, transcript);
+
         transcript.append_message(b"BlindFold_random_instance");
         append_instance_to_transcript(&random_instance, transcript);
 
-        // Append cross-term commitment
         transcript.append_message(b"BlindFold_cross_term");
         append_g1_to_transcript::<C>(&T_bar, transcript);
 
@@ -109,17 +111,23 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         // Step 7: Fold witnesses
         let folded_witness = real_witness.fold(&random_witness, &T, r_T, r_field);
 
-        // Sanity check: verify commitment opens correctly
-        debug_assert!(self.gens.verify(
-            &folded_instance.W_bar,
-            &folded_witness.W,
-            &folded_witness.r_W
-        ));
-        debug_assert!(self.gens.verify(
-            &folded_instance.E_bar,
-            &folded_witness.E,
-            &folded_witness.r_E
-        ));
+        // Verify commitment consistency before returning proof
+        assert!(
+            self.gens.verify(
+                &folded_instance.W_bar,
+                &folded_witness.W,
+                &folded_witness.r_W
+            ),
+            "Internal error: W commitment mismatch"
+        );
+        assert!(
+            self.gens.verify(
+                &folded_instance.E_bar,
+                &folded_witness.E,
+                &folded_witness.r_E
+            ),
+            "Internal error: E commitment mismatch"
+        );
 
         BlindFoldProof {
             real_instance: real_instance.clone(),
@@ -167,6 +175,10 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         transcript: &mut T,
     ) -> Result<(), BlindFoldVerifyError> {
         // Step 1: Replay transcript to get challenge
+        // SECURITY: real_instance must be bound to prevent adaptive attacks
+        transcript.append_message(b"BlindFold_real_instance");
+        append_instance_to_transcript(&proof.real_instance, transcript);
+
         transcript.append_message(b"BlindFold_random_instance");
         append_instance_to_transcript(&proof.random_instance, transcript);
 

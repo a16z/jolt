@@ -86,6 +86,13 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
 
     /// Generate a random G1 element
     fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1;
+
+    /// Hash to a G1 curve point with unknown discrete log.
+    ///
+    /// SECURITY: The returned point must have an unknown discrete log relationship
+    /// to the standard generator and any other points derived from scalar multiplication.
+    /// This is critical for Pedersen commitment security.
+    fn hash_to_g1(domain: &[u8]) -> Self::G1;
 }
 
 // ============================================================================
@@ -333,6 +340,51 @@ impl JoltCurve for Bn254Curve {
         use ark_std::UniformRand;
         Bn254G1(G1Projective::rand(rng))
     }
+
+    fn hash_to_g1(domain: &[u8]) -> Self::G1 {
+        bn254_hash_to_g1(domain)
+    }
+}
+
+/// BN254 hash-to-curve using try-and-increment.
+///
+/// For BN254 G1, curve equation is y² = x³ + 3.
+/// Repeatedly hashes domain with counter until finding valid curve point.
+fn bn254_hash_to_g1(domain: &[u8]) -> Bn254G1 {
+    use ark_bn254::Fq;
+    use ark_ff::{BigInteger, Field};
+    use sha3::{Digest, Sha3_512};
+
+    let b = Fq::from(3u64);
+
+    for counter in 0u64.. {
+        let mut hasher = Sha3_512::new();
+        hasher.update(domain);
+        hasher.update(counter.to_le_bytes());
+        let hash = hasher.finalize();
+
+        let mut x_bytes = [0u8; 32];
+        x_bytes.copy_from_slice(&hash[..32]);
+        let sign_bit = (hash[32] & 1) == 1;
+
+        let x = Fq::from_le_bytes_mod_order(&x_bytes);
+        let x_cubed = x * x * x;
+        let y_squared = x_cubed + b;
+
+        if let Some(y) = y_squared.sqrt() {
+            let y_final = if sign_bit == y.into_bigint().is_odd() {
+                y
+            } else {
+                -y
+            };
+
+            let point = G1Affine::new_unchecked(x, y_final);
+            if point.is_on_curve() && !point.is_zero() {
+                return Bn254G1(point.into());
+            }
+        }
+    }
+    unreachable!("Hash-to-curve should find a valid point")
 }
 
 /// Convert a JoltField element to BN254 Fr.
