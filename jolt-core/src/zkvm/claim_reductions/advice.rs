@@ -38,10 +38,11 @@
 //! dimensions).
 //!
 
+use std::cmp::Ordering;
 use std::ops::Range;
 
 use crate::field::JoltField;
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
@@ -79,6 +80,7 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub log_t: usize,
     /// Number of columns in the main Dory matrix
     pub main_cols: usize,
+    pub main_rows: usize,
     pub nu_a_cycle: usize, // number of advice rows that come from the cycle variables
     pub nu_a_addr: usize,  // number of advice rows that come from the address variables
     /// Dummy rounds are within the Phase 1 local round index space.
@@ -86,14 +88,6 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub dummy_rounds: Range<usize>,
     pub r_val_eval: OpeningPoint<BIG_ENDIAN, F>,
     pub r_val_final: Option<OpeningPoint<BIG_ENDIAN, F>>,
-}
-
-fn advice_index_to_address(advice_index: usize) -> usize {
-    todo!()
-}
-
-fn advice_index_to_cycle(advice_index: usize) -> usize {
-    todo!()
 }
 
 impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
@@ -112,7 +106,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (main_cols, _main_rows) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+        let (main_cols, main_rows) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
         let r_val_eval = accumulator
             .get_advice_opening(kind, SumcheckId::RamValEvaluation)
@@ -153,6 +147,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             log_k_chunk,
             log_t,
             main_cols,
+            main_rows,
             nu_a_cycle,
             nu_a_addr,
             dummy_rounds,
@@ -240,6 +235,46 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
                 .collect();
             MultilinearPolynomial::from(combined)
         };
+
+        let row_col_to_address_cycle = |row: usize, col: usize| -> (usize, usize) {
+            match DoryGlobals::get_layout() {
+                DoryLayout::CycleMajor => {
+                    let global_index = row as u128 * params.main_cols as u128 + col as u128;
+                    let address = global_index / (1 << params.log_t);
+                    let cycle = global_index % (1 << params.log_t);
+                    (address as usize, cycle as usize)
+                }
+                DoryLayout::AddressMajor => {
+                    let address = col % params.log_k_chunk;
+                    let cycle = (col / params.log_k_chunk) * params.main_rows + row;
+                    (address as usize, cycle as usize)
+                }
+            }
+        };
+
+        let advice_index_to_address_cycle = |index: usize| -> (usize, usize) {
+            let row = index / params.advice_cols;
+            let col = index % params.advice_cols;
+            row_col_to_address_cycle(row, col)
+        };
+
+        let mut advice_vec: Vec<(usize, u64)> = match advice_poly {
+            MultilinearPolynomial::U64Scalars(poly) => {
+                poly.coeffs.into_par_iter().enumerate().collect()
+            }
+            _ => panic!("Advice should have u64 coefficients"),
+        };
+        advice_vec.par_sort_by(|&(index_a, _), &(index_b, _)| {
+            let (address_a, cycle_a) = advice_index_to_address_cycle(index_a);
+            let (address_b, cycle_b) = advice_index_to_address_cycle(index_b);
+            match address_a.cmp(&address_b) {
+                Ordering::Less => Ordering::Less,
+                Ordering::Greater => Ordering::Greater,
+                Ordering::Equal => cycle_a.cmp(&cycle_b),
+            }
+        });
+        let advice_vec: Vec<u64> = advice_vec.into_par_iter().map(|(_, coeff)| coeff).collect();
+        let advice_poly = advice_vec.into();
 
         let two_inv = F::from_u64(2).inverse().unwrap();
         let dummy_after = params.log_t.saturating_sub(params.num_rounds());
