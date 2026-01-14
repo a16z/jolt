@@ -502,6 +502,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
+        println!(
+            "self.advice_reduction_gamma_trusted: {:?}",
+            self.advice_reduction_gamma_trusted
+        );
+        println!(
+            "self.advice_reduction_gamma_untrusted: {:?}",
+            self.advice_reduction_gamma_untrusted
+        );
+
         // 3. Verify Stage 7 batched sumcheck (address rounds only).
         // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
         let trusted_advice_phase2 = self.advice_reduction_gamma_trusted.and_then(|gamma| {
@@ -532,9 +541,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
             vec![&hw_verifier];
         if let Some(ref v) = trusted_advice_phase2 {
+            println!("here");
             instances.push(v);
         }
         if let Some(ref v) = untrusted_advice_phase2 {
+            println!("here");
             instances.push(v);
         }
         let _r_address_stage7 = BatchedSumcheck::verify(
