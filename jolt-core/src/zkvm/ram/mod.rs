@@ -19,7 +19,7 @@
 //! | RamReadWriteChecking | `ra(r_address_rw, r_cycle_rw)` | Stage 2 |
 //! | RamRafEvaluation | `ra(r_address_raf, r_cycle_raf)` | Stage 2 |
 //! | RamValEvaluation | `ra(r_address_rw, r_cycle_val)` | Stage 4 |
-//! | RamValFinal | `ra(r_address_raf, r_cycle_val)` | Stage 4 |
+//! | RamValFinalEvaluation | `ra(r_address_raf, r_cycle_val)` | Stage 4 |
 //!
 //! The following equalities must hold:
 //! - `r_address_raf = r_address_val_final`
@@ -33,12 +33,13 @@
 //! 1. **OutputCheck and RafEvaluation** MUST be in the same batched sumcheck (currently Stage 2),
 //!    and both must use challenges `[0 .. log_K]` for `r_address`.
 //!
-//! 2. **ValEvaluation and ValFinal** MUST be in the same batched sumcheck (currently Stage 4),
-//!    and have the same `num_rounds = log_T`.
+//! 2. **Stage 4** MUST cache both `RamValEvaluation` and `RamValFinalEvaluation` openings using the
+//!    same `r_cycle_val` challenge vector (length = log_T). This is currently done by the fused
+//!    RAM value sumcheck (`val_fused.rs`).
 //!
 //! 3. **ValEvaluation** MUST read `r_address` from RamReadWriteChecking's opening.
 //!
-//! 4. **ValFinal** MUST read `r_address` from OutputCheck's opening.
+//! 4. **ValFinalEvaluation** MUST read `r_address` from OutputCheck's opening.
 //!
 //! Violating these constraints will cause the RA reduction sumcheck to fail with
 //! mismatched challenge vectors.
@@ -75,8 +76,6 @@ pub mod output_check;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
-pub mod val_evaluation;
-pub mod val_final;
 pub mod val_fused;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -174,8 +173,8 @@ pub fn populate_memory_states(
 /// - Only opens at `r_address_rw` (the two points are identical)
 ///
 /// Otherwise opens at TWO points:
-/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
-/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
+/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used for `SumcheckId::RamValEvaluation`
+/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used for `SumcheckId::RamValFinalEvaluation`
 pub fn prover_accumulate_advice<F: JoltField>(
     untrusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     trusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
@@ -207,7 +206,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
     if let Some(ref untrusted_advice_poly) = untrusted_advice_polynomial {
         let max_size = memory_layout.max_untrusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Opening at r_address_rw (for RamValEvaluation)
         let (point_rw, eval_rw) =
             compute_advice_opening(untrusted_advice_poly, &r_address_rw, max_size);
         opening_accumulator.append_untrusted_advice(
@@ -217,7 +216,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
             eval_rw,
         );
 
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        // Opening at r_address_raf (for RamValFinalEvaluation) - only if points differ
         if !single_opening {
             let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
@@ -237,7 +236,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
     if let Some(ref trusted_advice_poly) = trusted_advice_polynomial {
         let max_size = memory_layout.max_trusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Opening at r_address_rw (for RamValEvaluation)
         let (point_rw, eval_rw) =
             compute_advice_opening(trusted_advice_poly, &r_address_rw, max_size);
         opening_accumulator.append_trusted_advice(
@@ -247,7 +246,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
             eval_rw,
         );
 
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
+        // Opening at r_address_raf (for RamValFinalEvaluation) - only if points differ
         if !single_opening {
             let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,

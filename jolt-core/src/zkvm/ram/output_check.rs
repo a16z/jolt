@@ -194,7 +194,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         } = self;
 
         // We bind Val_init here despite the fact that it is not used in `compute_message`
-        // because we'll need Val_init(r) in `ValFinalSumcheck`
+        // because we'll need Val_init(r) later when constructing the Stage 4 RAM value sumcheck.
         val_init.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_final.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_io.bind_parallel(r_j, BindingOrder::LowToHigh);
