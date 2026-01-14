@@ -517,7 +517,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for G1ScalarMulPr
             append_g1_scalar_mul_virtual_claims(
                 accumulator,
                 transcript,
-                self.constraint_indices[i], // Use global constraint index
+                i,  // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
                 self.x_a_claims[i],
@@ -612,7 +612,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for G1ScalarMul
                 t_is_infinity_claim,
             ) = get_g1_scalar_mul_virtual_claims(
                 accumulator,
-                self.constraint_indices[i],
+                i,  // Use local index, not global constraint index
                 self.params.sumcheck_id,
             );
 
@@ -687,7 +687,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for G1ScalarMul
             append_g1_scalar_mul_virtual_openings(
                 accumulator,
                 transcript,
-                self.constraint_indices[i],
+                i,  // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
             );

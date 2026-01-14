@@ -15,12 +15,12 @@ use crate::{
         },
         dense_mlpoly::DensePolynomial,
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{Openings, ProverOpeningAccumulator},
+        opening_proof::{OpeningAccumulator, Openings, ProverOpeningAccumulator, SumcheckId},
     },
     transcripts::Transcript,
     zkvm::{
         recursion::witness::{DoryRecursionWitness, G1ScalarMulWitness},
-        witness::CommittedPolynomial,
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use ark_bn254::{Fq, Fr};
@@ -29,12 +29,14 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::backends::arkworks::ArkGT;
 use std::collections::HashMap;
 
+use crate::zkvm::recursion::DoryMatrixBuilder;
+
 use super::{
     constraints_sys::{ConstraintSystem, ConstraintType},
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
         gt_mul::{GtMulParams, GtMulProver},
-        square_and_multiply::{SquareAndMultiplyParams, SquareAndMultiplyProver},
+        packed_gt_exp::{PackedGtExpParams, PackedGtExpProver},
     },
     stage2::virtualization::{
         DirectEvaluationParams, DirectEvaluationProver,
@@ -81,7 +83,6 @@ pub struct RecursionProver<F: JoltField = Fq> {
     /// Delta value for batching within constraints
     pub delta: F,
 }
-
 
 impl RecursionProver<Fq> {
     /// Create a new recursion prover from pre-generated witnesses
@@ -166,10 +167,14 @@ impl RecursionProver<Fq> {
 
         // Calculate total sizes for preallocation
         let total_bits = witnesses.gt_exp.iter().map(|(_, w)| w.bits.len()).sum();
-        let total_rho_elements: usize = witnesses.gt_exp.iter()
+        let total_rho_elements: usize = witnesses
+            .gt_exp
+            .iter()
             .map(|(_, w)| w.rho_mles.iter().map(|mle| mle.len()).sum::<usize>())
             .sum();
-        let total_quotient_elements: usize = witnesses.gt_exp.iter()
+        let total_quotient_elements: usize = witnesses
+            .gt_exp
+            .iter()
             .map(|(_, w)| w.quotient_mles.iter().map(|mle| mle.len()).sum::<usize>())
             .sum();
 
@@ -229,7 +234,9 @@ impl RecursionProver<Fq> {
         // Extract GT mul witness data with preallocation
         let gt_mul_span = tracing::info_span!("process_gt_mul_witnesses").entered();
 
-        let total_mul_quotient_elements: usize = witnesses.gt_mul.iter()
+        let total_mul_quotient_elements: usize = witnesses
+            .gt_mul
+            .iter()
             .map(|(_, w)| w.quotient_mle.len())
             .sum();
 
@@ -264,7 +271,9 @@ impl RecursionProver<Fq> {
         let g1_scalar_mul_span = tracing::info_span!("process_g1_scalar_mul_witnesses").entered();
 
         let num_g1_witnesses = witnesses.g1_scalar_mul.len();
-        let total_bits: usize = witnesses.g1_scalar_mul.iter()
+        let total_bits: usize = witnesses
+            .g1_scalar_mul
+            .iter()
             .map(|(_, w)| w.bits.len())
             .sum();
 
@@ -336,29 +345,60 @@ impl RecursionProver<Fq> {
         g_poly: DensePolynomial<Fq>,
     ) -> Result<ConstraintSystem, Box<dyn std::error::Error>> {
         use super::constraints_sys::DoryMatrixBuilder;
+        use super::stage1::packed_gt_exp::PackedGtExpWitness;
+        use jolt_optimizations::fq12_to_multilinear_evals;
 
         // Use DoryMatrixBuilder with 12 variables for uniform matrix structure (packed GT exp)
         let mut builder = DoryMatrixBuilder::new(12);
 
-        // Add GT exp witnesses from Dory proof verification
-        let gt_exp_span = tracing::info_span!("add_gt_exp_witnesses",
-            count = witness_collection.gt_exp.len()).entered();
+        // Build packed GT exp witnesses and add to matrix
+        tracing::info!(
+            "[build_constraint_system] Processing {} direct GT exp witnesses",
+            witness_collection.gt_exp.len()
+        );
+        let packed_gt_exp_span = tracing::info_span!(
+            "build_packed_gt_exp_witnesses",
+            count = witness_collection.gt_exp.len()
+        )
+        .entered();
+        let mut packed_gt_exp_witnesses = Vec::with_capacity(witness_collection.gt_exp.len());
         for (_op_id, witness) in witness_collection.gt_exp.iter() {
-            builder.add_gt_exp_witness(witness);
-        }
-        drop(gt_exp_span);
+            // Convert base ArkGT to 4-var MLE
+            let base_mle = fq12_to_multilinear_evals(&witness.base);
 
-        // Add GT mul witnesses from Dory proof verification
-        let gt_mul_span = tracing::info_span!("add_gt_mul_witnesses",
-            count = witness_collection.gt_mul.len()).entered();
+            // Create packed witness
+            let packed = PackedGtExpWitness::from_steps(
+                &witness.rho_mles,
+                &witness.quotient_mles,
+                &witness.bits,
+                &base_mle,
+            );
+
+            // Add to matrix (ONE constraint per packed GT exp)
+            builder.add_packed_gt_exp_witness(&packed);
+
+            // Keep for Stage 1 prover
+            packed_gt_exp_witnesses.push(packed);
+        }
+        drop(packed_gt_exp_span);
+
+        // Add GT mul witnesses
+        let gt_mul_span = tracing::info_span!(
+            "add_gt_mul_witnesses",
+            count = witness_collection.gt_mul.len()
+        )
+        .entered();
         for (_op_id, witness) in witness_collection.gt_mul.iter() {
             builder.add_gt_mul_witness(witness);
         }
         drop(gt_mul_span);
 
         // Add G1 scalar mul witnesses
-        let g1_scalar_mul_span = tracing::info_span!("add_g1_scalar_mul_witnesses",
-            count = witness_collection.g1_scalar_mul.len()).entered();
+        let g1_scalar_mul_span = tracing::info_span!(
+            "add_g1_scalar_mul_witnesses",
+            count = witness_collection.g1_scalar_mul.len()
+        )
+        .entered();
         for (_op_id, witness) in witness_collection.g1_scalar_mul.iter() {
             builder.add_g1_scalar_mul_witness(witness);
         }
@@ -373,11 +413,19 @@ impl RecursionProver<Fq> {
                 cw.mul_witnesses.len(),
                 pre_count
             );
-            builder.add_combine_witness(cw);
+            let combined_packed_witnesses = builder.add_combine_witness(cw);
             tracing::info!(
-                "[Homomorphic Combine] Post-add constraint count: {}",
-                builder.constraint_count()
+                "[Homomorphic Combine] Post-add constraint count: {}, packed witnesses: {}",
+                builder.constraint_count(),
+                combined_packed_witnesses.len()
             );
+            // Add the combined witnesses to our list
+            tracing::info!(
+                "[Homomorphic Combine] Before extend: {} witnesses, adding {} more",
+                packed_gt_exp_witnesses.len(),
+                combined_packed_witnesses.len()
+            );
+            packed_gt_exp_witnesses.extend(combined_packed_witnesses);
         }
 
         let build_matrix_span = tracing::info_span!("build_matrix").entered();
@@ -388,6 +436,7 @@ impl RecursionProver<Fq> {
             constraints,
             matrix,
             g_poly,
+            packed_gt_exp_witnesses,
         })
     }
 }
@@ -503,7 +552,7 @@ impl<F: JoltField> RecursionProver<F> {
             panic!("Recursion SNARK constraint system requires F = Fq");
         }
 
-        // Convert g_poly once for all provers
+        // Convert g_poly for GT mul (uses zero padding layout: s * 16 + x)
         let g_poly_f = unsafe {
             std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
                 self.constraint_system.g_poly.clone(),
@@ -513,29 +562,26 @@ impl<F: JoltField> RecursionProver<F> {
         // Create provers for each constraint type
         let mut provers: Vec<Box<dyn SumcheckInstanceProver<F, T>>> = Vec::new();
 
-        // Add GT exp prover if we have GT exp constraints
-        let gt_exp_constraints = self.constraint_system.extract_constraint_polynomials();
-        if !gt_exp_constraints.is_empty() {
-            let params = SquareAndMultiplyParams::new(gt_exp_constraints.len());
-
-            // Convert Fq constraints to F (safe because we checked F = Fq)
-            let gt_exp_constraints_f = unsafe {
-                std::mem::transmute::<
-                    Vec<
-                        crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials<
-                            Fq,
-                        >,
-                    >,
-                    Vec<
-                        crate::zkvm::recursion::stage1::square_and_multiply::ConstraintPolynomials<
-                            F,
-                        >,
-                    >,
-                >(gt_exp_constraints)
+        // Add packed GT exp prover (single prover handles all witnesses with gamma batching)
+        let packed_witnesses = &self.constraint_system.packed_gt_exp_witnesses;
+        if !packed_witnesses.is_empty() {
+            // Packed GT exp uses layout x * 256 + s (s in low bits), so g needs replication
+            // Extract 4-var g from the zero-padded version and replicate across s
+            let g_4var: Vec<Fq> = self.constraint_system.g_poly.evals()[0..16].to_vec();
+            let g_replicated = DoryMatrixBuilder::pad_4var_to_12var_replicated(&g_4var);
+            let g_poly_replicated_f = unsafe {
+                std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
+                    DensePolynomial::new(g_replicated),
+                )
             };
 
+            let params = PackedGtExpParams::new();
+            tracing::info!(
+                "[Stage 1] Creating PackedGtExpProver with {} witnesses",
+                packed_witnesses.len()
+            );
             let prover =
-                SquareAndMultiplyProver::new(params, gt_exp_constraints_f, g_poly_f.clone(), transcript);
+                PackedGtExpProver::new(params, packed_witnesses, g_poly_replicated_f, transcript);
             provers.push(Box::new(prover));
         }
 
@@ -569,7 +615,8 @@ impl<F: JoltField> RecursionProver<F> {
                 >(gt_mul_constraints_fq)
             };
 
-            let prover = GtMulProver::new(params, gt_mul_constraints_f, g_poly_f.clone(), transcript);
+            let prover =
+                GtMulProver::new(params, gt_mul_constraints_f, g_poly_f.clone(), transcript);
             provers.push(Box::new(prover));
         }
 
@@ -730,14 +777,11 @@ impl<F: JoltField> RecursionProver<F> {
             panic!("Recursion SNARK constraint system requires F = Fq");
         }
 
-        // Get the opening claim from Stage 2 (the last claim in the accumulator)
-        let stage2_opening = accumulator
-            .openings
-            .values()
-            .last()
-            .ok_or("No opening claim from Stage 2")?
-            .clone();
-        let sparse_claim_value = stage2_opening.1;
+        // Get the opening claim from Stage 2 using explicit key lookup (not .last() which depends on insertion order)
+        let (_, sparse_claim_value) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::DorySparseConstraintMatrix,
+            SumcheckId::RecursionVirtualization,
+        );
 
         // Build dense polynomial, bijection, and mapping
         let (dense_poly_fq, bijection, mapping) = self.constraint_system.build_dense_polynomial();
@@ -797,13 +841,8 @@ impl<F: JoltField> RecursionProver<F> {
         let num_bits = std::cmp::max(num_constraint_vars, num_dense_vars);
 
         // Create Jagged Assist prover - iterates over K polynomials (not rows!)
-        let mut assist_prover = JaggedAssistProver::<F, T>::new(
-            r_x_prev,
-            r_dense,
-            &bijection,
-            num_bits,
-            transcript,
-        );
+        let mut assist_prover =
+            JaggedAssistProver::<F, T>::new(r_x_prev, r_dense, &bijection, num_bits, transcript);
 
         // Run Jagged Assist sumcheck
         let (stage3b_sumcheck_proof, _r_assist) =
@@ -818,4 +857,3 @@ impl<F: JoltField> RecursionProver<F> {
         Ok((stage3_proof, stage3b_proof, r_stage3))
     }
 }
-

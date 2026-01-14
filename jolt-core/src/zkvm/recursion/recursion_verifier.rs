@@ -24,7 +24,7 @@ use super::{
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier},
         gt_mul::{GtMulParams, GtMulVerifier},
-        square_and_multiply::{SquareAndMultiplyParams, SquareAndMultiplyVerifier},
+        packed_gt_exp::{PackedGtExpParams, PackedGtExpVerifier},
     },
     stage2::virtualization::{
         DirectEvaluationParams, DirectEvaluationVerifier,
@@ -176,8 +176,6 @@ impl<F: JoltField> RecursionVerifier<F> {
         let mut num_g1_scalar_mul = 0;
 
         // Collect constraint information
-        let mut gt_exp_bits = Vec::new();
-        let mut gt_exp_indices = Vec::new();
         let mut gt_mul_indices = Vec::new();
         let mut g1_scalar_mul_base_points = Vec::new();
         let mut g1_scalar_mul_indices = Vec::new();
@@ -185,9 +183,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         // Use enumeration index as global constraint index (matches prover's indexing)
         for (global_idx, constraint) in self.input.constraint_types.iter().enumerate() {
             match constraint {
-                ConstraintType::GtExp { bit } => {
-                    gt_exp_bits.push(*bit);
-                    gt_exp_indices.push(global_idx);
+                ConstraintType::PackedGtExp => {
                     num_gt_exp += 1;
                 }
                 ConstraintType::GtMul => {
@@ -202,11 +198,11 @@ impl<F: JoltField> RecursionVerifier<F> {
             }
         }
 
-        // Add GT exp verifier if we have GT exp constraints
+        // Add packed GT exp verifier if we have packed GT exp constraints
+        // Each PackedGtExp constraint = 1 witness (covers all 254 steps)
         if num_gt_exp > 0 {
-            let params = SquareAndMultiplyParams::new(num_gt_exp);
-            let verifier =
-                SquareAndMultiplyVerifier::new(params, gt_exp_bits, gt_exp_indices, transcript);
+            let params = PackedGtExpParams::new();
+            let verifier = PackedGtExpVerifier::new(params, num_gt_exp, transcript);
             verifiers.push(Box::new(verifier));
         }
 
@@ -401,7 +397,8 @@ impl<F: JoltField> RecursionVerifier<F> {
 
         let _batched_sumcheck_span =
             tracing::info_span!("stage3_batched_sumcheck_verify").entered();
-        let r_stage3 = BatchedSumcheck::verify(stage3_proof, vec![&verifier], accumulator, transcript)?;
+        let r_stage3 =
+            BatchedSumcheck::verify(stage3_proof, vec![&verifier], accumulator, transcript)?;
         drop(_batched_sumcheck_span);
 
         // ============ STAGE 3b: Verify Jagged Assist (Batch MLE Verification) ============

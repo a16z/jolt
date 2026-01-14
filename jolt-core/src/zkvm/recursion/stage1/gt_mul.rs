@@ -342,7 +342,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for GtMulProver<F
             append_gt_mul_virtual_claims(
                 accumulator,
                 transcript,
-                self.constraint_indices[i],
+                i,  // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
                 self.lhs_claims[i],
@@ -455,7 +455,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
         for i in 0..self.num_constraints {
             let (lhs_claim, rhs_claim, result_claim, quotient_claim) = get_gt_mul_virtual_claims(
                 accumulator,
-                self.constraint_indices[i],
+                i,  // Use local index, not global constraint index
                 self.params.sumcheck_id,
             );
 
@@ -481,7 +481,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
             append_gt_mul_virtual_openings(
                 accumulator,
                 transcript,
-                self.constraint_indices[i],
+                i,  // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
             );

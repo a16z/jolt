@@ -11,7 +11,7 @@ use crate::{
     },
     transcripts::{Blake2bTranscript, Transcript},
     zkvm::recursion::{
-        bijection::{JaggedPolynomial, VarCountJaggedBijection},
+        bijection::{JaggedPolynomial, JaggedTransform, VarCountJaggedBijection},
         stage3::{
             branching_program::{JaggedBranchingProgram, Point},
             jagged_assist::{JaggedAssistProver, JaggedAssistVerifier},
@@ -333,6 +333,7 @@ fn test_many_polynomials() {
     // All fit within 5 bits (max value 31)
     let sizes: Vec<usize> = vec![2; num_polynomials];
     let bijection = create_test_bijection(&sizes);
+    let r_dense: Vec<Fq> = (0..num_bits).map(|_| Fq::rand(&mut rng)).collect();
 
     let mut prover_transcript: Blake2bTranscript = Transcript::new(b"test_many_polys");
     let mut prover = JaggedAssistProver::<Fq, Blake2bTranscript>::new(

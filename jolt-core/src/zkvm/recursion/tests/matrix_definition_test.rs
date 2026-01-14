@@ -24,32 +24,33 @@ fn test_matrix_mle_definition_direct() {
     // Create a small test case with 1 constraint
     let num_constraints = 1;
     let num_constraints_padded = 1; // Already a power of 2
-    let num_poly_types = 15;
+    let num_poly_types = 16; // Updated for packed GT exp
 
     // Calculate num_s_vars: log2(num_poly_types * num_constraints_padded)
     let total_rows = num_poly_types * num_constraints_padded;
-    let num_s_vars = (total_rows as f64).log2().ceil() as usize; // log2(15) = 4
+    let num_s_vars = (total_rows as f64).log2().ceil() as usize; // log2(16) = 4
 
     // Create test virtual claims as a flat vector
-    // Order: for each constraint, all 15 poly types in order
+    // Order: for each constraint, all 16 poly types in order
     let mut virtual_claims = Vec::new();
     for _i in 0..num_constraints {
-        // Add claims for all 15 polynomial types in order
+        // Add claims for all 16 polynomial types in order
         virtual_claims.push(F::from(1u64)); // Base
         virtual_claims.push(F::from(2u64)); // RhoPrev
         virtual_claims.push(F::from(3u64)); // RhoCurr
         virtual_claims.push(F::from(4u64)); // Quotient
-        virtual_claims.push(F::from(5u64)); // MulLhs
-        virtual_claims.push(F::from(6u64)); // MulRhs
-        virtual_claims.push(F::from(7u64)); // MulResult
-        virtual_claims.push(F::from(8u64)); // MulQuotient
-        virtual_claims.push(F::from(9u64)); // G1ScalarMulXA
-        virtual_claims.push(F::from(10u64)); // G1ScalarMulYA
-        virtual_claims.push(F::from(11u64)); // G1ScalarMulXT
-        virtual_claims.push(F::from(12u64)); // G1ScalarMulYT
-        virtual_claims.push(F::from(13u64)); // G1ScalarMulXANext
-        virtual_claims.push(F::from(14u64)); // G1ScalarMulYANext
-        virtual_claims.push(F::from(15u64)); // G1ScalarMulIndicator
+        virtual_claims.push(F::from(5u64)); // Bit (new for packed GT exp)
+        virtual_claims.push(F::from(6u64)); // MulLhs
+        virtual_claims.push(F::from(7u64)); // MulRhs
+        virtual_claims.push(F::from(8u64)); // MulResult
+        virtual_claims.push(F::from(9u64)); // MulQuotient
+        virtual_claims.push(F::from(10u64)); // G1ScalarMulXA
+        virtual_claims.push(F::from(11u64)); // G1ScalarMulYA
+        virtual_claims.push(F::from(12u64)); // G1ScalarMulXT
+        virtual_claims.push(F::from(13u64)); // G1ScalarMulYT
+        virtual_claims.push(F::from(14u64)); // G1ScalarMulXANext
+        virtual_claims.push(F::from(15u64)); // G1ScalarMulYANext
+        virtual_claims.push(F::from(16u64)); // G1ScalarMulIndicator
     }
 
     // Build the matrix evaluations manually following the same layout
@@ -108,22 +109,22 @@ fn test_matrix_mle_with_multiple_constraints() {
     // Test with 2 constraints (padded to 2)
     let num_constraints = 2;
     let num_constraints_padded = 2;
-    let num_poly_types = 15;
+    let num_poly_types = 16; // Updated for packed GT exp
 
-    // Calculate num_s_vars: log2(15 * 2) = log2(30) = 5
+    // Calculate num_s_vars: log2(16 * 2) = log2(32) = 5
     let total_rows = num_poly_types * num_constraints_padded;
     let num_s_vars = (total_rows as f64).log2().ceil() as usize;
 
     // Create test virtual claims with distinct values for each constraint
     let mut virtual_claims = Vec::new();
 
-    // First constraint gets values 1-15
-    for i in 1..=15 {
+    // First constraint gets values 1-16
+    for i in 1..=16 {
         virtual_claims.push(F::from(i as u64));
     }
 
-    // Second constraint gets values 101-115
-    for i in 101..=115 {
+    // Second constraint gets values 101-116
+    for i in 101..=116 {
         virtual_claims.push(F::from(i as u64));
     }
 

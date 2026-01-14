@@ -67,13 +67,13 @@ use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 /// Number of polynomial types in the constraint system
-const NUM_POLY_TYPES: usize = 15;
+const NUM_POLY_TYPES: usize = 16;
 
 /// Helper function to compute the index in the virtual claims array
 ///
 /// Virtual claims are laid out as:
-/// [constraint_0_poly_0, constraint_0_poly_1, ..., constraint_0_poly_14,
-///  constraint_1_poly_0, constraint_1_poly_1, ..., constraint_1_poly_14, ...]
+/// [constraint_0_poly_0, constraint_0_poly_1, ..., constraint_0_poly_15,
+///  constraint_1_poly_0, constraint_1_poly_1, ..., constraint_1_poly_15, ...]
 ///
 /// So for constraint i and polynomial type j, the index is: i * NUM_POLY_TYPES + j
 #[inline]
@@ -327,100 +327,117 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
 ) -> Vec<F> {
     let mut claims = Vec::new();
 
+    // Track separate indices for each constraint type
+    let mut packed_gt_exp_idx = 0;
+    let mut gt_mul_idx = 0;
+    let mut g1_scalar_mul_idx = 0;
+
     // Process each constraint
     for (idx, constraint_type) in constraint_types.iter().enumerate() {
-        // For each constraint, we need to extract claims for all 15 polynomial types
-        // in the correct order matching the PolyType enum (0-14)
+        // For each constraint, we need to extract claims for all 16 polynomial types
+        // in the correct order matching the PolyType enum (0-15)
 
         let mut constraint_claims = vec![F::zero(); NUM_POLY_TYPES];
 
         match constraint_type {
-            ConstraintType::GtExp { .. } => {
-                // GT Exp uses polynomials 0-3 (Base, RhoPrev, RhoCurr, Quotient)
+            ConstraintType::PackedGtExp => {
+                // Packed GT Exp uses polynomials 0-4 (Base, RhoPrev, RhoCurr, Quotient, Bit)
+                tracing::debug!("[extract_constraint_claims] Getting PackedGtExpBase({}) opening for constraint {}", packed_gt_exp_idx, idx);
                 let (_, base) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionBase(idx),
-                    SumcheckId::SquareAndMultiply,
+                    VirtualPolynomial::PackedGtExpBase(packed_gt_exp_idx),
+                    SumcheckId::PackedGtExp,
                 );
                 let (_, rho_prev) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionRhoPrev(idx),
-                    SumcheckId::SquareAndMultiply,
+                    VirtualPolynomial::PackedGtExpRho(packed_gt_exp_idx),
+                    SumcheckId::PackedGtExp,
                 );
                 let (_, rho_curr) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionRhoCurr(idx),
-                    SumcheckId::SquareAndMultiply,
+                    VirtualPolynomial::PackedGtExpRhoNext(packed_gt_exp_idx),
+                    SumcheckId::PackedGtExp,
                 );
                 let (_, quotient) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionQuotient(idx),
-                    SumcheckId::SquareAndMultiply,
+                    VirtualPolynomial::PackedGtExpQuotient(packed_gt_exp_idx),
+                    SumcheckId::PackedGtExp,
+                );
+                let (_, bit) = accumulator.get_virtual_polynomial_opening(
+                    VirtualPolynomial::PackedGtExpBit(packed_gt_exp_idx),
+                    SumcheckId::PackedGtExp,
                 );
 
                 constraint_claims[0] = base;
                 constraint_claims[1] = rho_prev;
                 constraint_claims[2] = rho_curr;
                 constraint_claims[3] = quotient;
+                constraint_claims[4] = bit;
+
+                packed_gt_exp_idx += 1;
             }
             ConstraintType::GtMul { .. } => {
-                // GT Mul uses polynomials 4-7 (MulLhs, MulRhs, MulResult, MulQuotient)
+                // GT Mul uses polynomials 5-8 (MulLhs, MulRhs, MulResult, MulQuotient)
                 let (_, lhs) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionMulLhs(idx),
+                    VirtualPolynomial::RecursionMulLhs(gt_mul_idx),
                     SumcheckId::GtMul,
                 );
                 let (_, rhs) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionMulRhs(idx),
+                    VirtualPolynomial::RecursionMulRhs(gt_mul_idx),
                     SumcheckId::GtMul,
                 );
                 let (_, result) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionMulResult(idx),
+                    VirtualPolynomial::RecursionMulResult(gt_mul_idx),
                     SumcheckId::GtMul,
                 );
                 let (_, quotient) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionMulQuotient(idx),
+                    VirtualPolynomial::RecursionMulQuotient(gt_mul_idx),
                     SumcheckId::GtMul,
                 );
 
-                constraint_claims[4] = lhs;
-                constraint_claims[5] = rhs;
-                constraint_claims[6] = result;
-                constraint_claims[7] = quotient;
+                constraint_claims[5] = lhs;
+                constraint_claims[6] = rhs;
+                constraint_claims[7] = result;
+                constraint_claims[8] = quotient;
+
+                gt_mul_idx += 1;
             }
             ConstraintType::G1ScalarMul { .. } => {
-                // G1 Scalar Mul uses polynomials 8-14
+                // G1 Scalar Mul uses polynomials 9-15
                 let (_, x_a) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionG1ScalarMulXA(idx),
+                    VirtualPolynomial::RecursionG1ScalarMulXA(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
                 );
                 let (_, y_a) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionG1ScalarMulYA(idx),
+                    VirtualPolynomial::RecursionG1ScalarMulYA(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
                 );
                 let (_, x_t) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionG1ScalarMulXT(idx),
+                    VirtualPolynomial::RecursionG1ScalarMulXT(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
                 );
                 let (_, y_t) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionG1ScalarMulYT(idx),
+                    VirtualPolynomial::RecursionG1ScalarMulYT(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
                 );
                 let (_, x_a_next) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionG1ScalarMulXANext(idx),
+                    VirtualPolynomial::RecursionG1ScalarMulXANext(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
                 );
                 let (_, y_a_next) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionG1ScalarMulYANext(idx),
+                    VirtualPolynomial::RecursionG1ScalarMulYANext(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
                 );
                 let (_, indicator) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RecursionG1ScalarMulIndicator(idx),
+                    VirtualPolynomial::RecursionG1ScalarMulIndicator(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
                 );
 
-                constraint_claims[8] = x_a;
-                constraint_claims[9] = y_a;
-                constraint_claims[10] = x_t;
-                constraint_claims[11] = y_t;
-                constraint_claims[12] = x_a_next;
-                constraint_claims[13] = y_a_next;
-                constraint_claims[14] = indicator;
+                constraint_claims[9] = x_a;
+                constraint_claims[10] = y_a;
+                constraint_claims[11] = x_t;
+                constraint_claims[12] = y_t;
+                constraint_claims[13] = x_a_next;
+                constraint_claims[14] = y_a_next;
+                constraint_claims[15] = indicator;
+
+                g1_scalar_mul_idx += 1;
             }
         }
 

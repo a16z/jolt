@@ -658,11 +658,26 @@ impl CanonicalSerialize for VirtualPolynomial {
                 (*i as u32).serialize_with_mode(&mut writer, compress)
             }
             Self::DorySparseConstraintMatrix => 56u8.serialize_with_mode(&mut writer, compress),
-            Self::PackedGtExpRho => 57u8.serialize_with_mode(&mut writer, compress),
-            Self::PackedGtExpRhoNext => 58u8.serialize_with_mode(&mut writer, compress),
-            Self::PackedGtExpQuotient => 59u8.serialize_with_mode(&mut writer, compress),
-            Self::PackedGtExpBit => 60u8.serialize_with_mode(&mut writer, compress),
-            Self::PackedGtExpBase => 61u8.serialize_with_mode(&mut writer, compress),
+            Self::PackedGtExpRho(i) => {
+                57u8.serialize_with_mode(&mut writer, compress)?;
+                (*i as u32).serialize_with_mode(&mut writer, compress)
+            }
+            Self::PackedGtExpRhoNext(i) => {
+                58u8.serialize_with_mode(&mut writer, compress)?;
+                (*i as u32).serialize_with_mode(&mut writer, compress)
+            }
+            Self::PackedGtExpQuotient(i) => {
+                59u8.serialize_with_mode(&mut writer, compress)?;
+                (*i as u32).serialize_with_mode(&mut writer, compress)
+            }
+            Self::PackedGtExpBit(i) => {
+                60u8.serialize_with_mode(&mut writer, compress)?;
+                (*i as u32).serialize_with_mode(&mut writer, compress)
+            }
+            Self::PackedGtExpBase(i) => {
+                61u8.serialize_with_mode(&mut writer, compress)?;
+                (*i as u32).serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -705,12 +720,12 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RamValFinal
             | Self::RamHammingWeight
             | Self::UnivariateSkip
-            | Self::DorySparseConstraintMatrix
-            | Self::PackedGtExpRho
-            | Self::PackedGtExpRhoNext
-            | Self::PackedGtExpQuotient
-            | Self::PackedGtExpBit
-            | Self::PackedGtExpBase => 1,
+            | Self::DorySparseConstraintMatrix => 1,
+            Self::PackedGtExpRho(_)
+            | Self::PackedGtExpRhoNext(_)
+            | Self::PackedGtExpQuotient(_)
+            | Self::PackedGtExpBit(_)
+            | Self::PackedGtExpBase(_) => 5,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
@@ -866,11 +881,26 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     Self::RecursionG1ScalarMulIndicator(i as usize)
                 }
                 56 => Self::DorySparseConstraintMatrix,
-                57 => Self::PackedGtExpRho,
-                58 => Self::PackedGtExpRhoNext,
-                59 => Self::PackedGtExpQuotient,
-                60 => Self::PackedGtExpBit,
-                61 => Self::PackedGtExpBase,
+                57 => {
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::PackedGtExpRho(i as usize)
+                }
+                58 => {
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::PackedGtExpRhoNext(i as usize)
+                }
+                59 => {
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::PackedGtExpQuotient(i as usize)
+                }
+                60 => {
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::PackedGtExpBit(i as usize)
+                }
+                61 => {
+                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::PackedGtExpBase(i as usize)
+                }
                 _ => return Err(SerializationError::InvalidData),
             },
         )

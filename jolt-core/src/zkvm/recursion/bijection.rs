@@ -199,11 +199,12 @@ impl ConstraintSystemJaggedBuilder {
         let mut used_poly_types = std::collections::HashSet::new();
         for constraint in constraints.iter() {
             match &constraint.constraint_type {
-                ConstraintType::GtExp { .. } => {
+                ConstraintType::PackedGtExp => {
                     used_poly_types.insert(PolyType::Base);
                     used_poly_types.insert(PolyType::RhoPrev);
                     used_poly_types.insert(PolyType::RhoCurr);
                     used_poly_types.insert(PolyType::Quotient);
+                    used_poly_types.insert(PolyType::Bit);
                 }
                 ConstraintType::GtMul => {
                     used_poly_types.insert(PolyType::MulLhs);
@@ -232,18 +233,19 @@ impl ConstraintSystemJaggedBuilder {
             // For each constraint, check if it uses this polynomial type
             for (idx, constraint) in constraints.iter().enumerate() {
                 let num_vars = match &constraint.constraint_type {
-                    ConstraintType::GtExp { .. } => {
-                        // GT exp uses Base, RhoPrev, RhoCurr, Quotient
+                    ConstraintType::PackedGtExp => {
+                        // Packed GT exp uses Base, RhoPrev, RhoCurr, Quotient, Bit (all 12-var)
                         match poly_type {
                             PolyType::Base
                             | PolyType::RhoPrev
                             | PolyType::RhoCurr
-                            | PolyType::Quotient => Some(4),
+                            | PolyType::Quotient
+                            | PolyType::Bit => Some(12),
                             _ => None,
                         }
                     }
                     ConstraintType::GtMul => {
-                        // GT mul uses MulLhs, MulRhs, MulResult, MulQuotient
+                        // GT mul uses MulLhs, MulRhs, MulResult, MulQuotient (4-var padded to 12)
                         match poly_type {
                             PolyType::MulLhs
                             | PolyType::MulRhs
@@ -253,7 +255,7 @@ impl ConstraintSystemJaggedBuilder {
                         }
                     }
                     ConstraintType::G1ScalarMul { .. } => {
-                        // G1 scalar mul uses all G1ScalarMul* types
+                        // G1 scalar mul uses all G1ScalarMul* types (8-var padded to 12)
                         match poly_type {
                             PolyType::G1ScalarMulXA
                             | PolyType::G1ScalarMulYA
