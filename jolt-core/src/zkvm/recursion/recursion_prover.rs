@@ -20,7 +20,7 @@ use crate::{
     transcripts::Transcript,
     zkvm::{
         recursion::witness::{DoryRecursionWitness, G1ScalarMulWitness},
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::CommittedPolynomial,
     },
 };
 use ark_bn254::{Fq, Fr};
@@ -30,13 +30,16 @@ use dory::backends::arkworks::ArkGT;
 use std::collections::HashMap;
 
 use super::{
-    constraints_sys::ConstraintSystem,
+    constraints_sys::{ConstraintSystem, ConstraintType},
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
         gt_mul::{GtMulParams, GtMulProver},
         square_and_multiply::{SquareAndMultiplyParams, SquareAndMultiplyProver},
     },
-    stage2::virtualization::{RecursionVirtualizationParams, RecursionVirtualizationProver},
+    stage2::virtualization::{
+        DirectEvaluationParams, DirectEvaluationProver,
+        extract_virtual_claims_from_accumulator,
+    },
     stage3::jagged::JaggedSumcheckProver,
 };
 use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckInstanceProver};
@@ -46,8 +49,8 @@ use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckIn
 pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Field = F>> {
     /// Stage 1 constraint sumcheck proof
     pub stage1_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-    /// Stage 2 virtualization sumcheck proof
-    pub stage2_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+    /// Stage 2 direct evaluation result M(r_s, r_x)
+    pub stage2_m_eval: F,
     /// Stage 3 jagged transform sumcheck proof
     pub stage3_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
     /// PCS opening proof for the constraint matrix
@@ -393,7 +396,7 @@ impl<F: JoltField> RecursionProver<F> {
         tracing::info_span!("recursion_stage2_virtualization").in_scope(|| {
             tracing::info!("Starting Stage 2: Virtualization sumcheck");
         });
-        let (stage2_proof, r_stage2) =
+        let (stage2_m_eval, r_stage2) =
             self.prove_stage2(transcript, &mut accumulator, &r_stage1)?;
 
         // ============ STAGE 3: Jagged Transform Sumcheck ============
@@ -433,7 +436,7 @@ impl<F: JoltField> RecursionProver<F> {
         // Create final proof
         let proof = RecursionProof {
             stage1_proof,
-            stage2_proof,
+            stage2_m_eval,
             stage3_proof,
             opening_proof,
             gamma: self.gamma,
@@ -591,7 +594,7 @@ impl<F: JoltField> RecursionProver<F> {
         Ok((proof, r_stage1))
     }
 
-    /// Run Stage 2: Virtualization sumcheck
+    /// Run Stage 2: Direct evaluation protocol
     #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage2")]
     pub(crate) fn prove_stage2<T: Transcript>(
         &self,
@@ -600,7 +603,7 @@ impl<F: JoltField> RecursionProver<F> {
         r_stage1: &[<F as JoltField>::Challenge],
     ) -> Result<
         (
-            crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+            F, // Return m_eval instead of sumcheck proof
             Vec<<F as JoltField>::Challenge>,
         ),
         Box<dyn std::error::Error>,
@@ -611,32 +614,62 @@ impl<F: JoltField> RecursionProver<F> {
         if TypeId::of::<F>() != TypeId::of::<Fq>() {
             panic!("Recursion SNARK constraint system requires F = Fq");
         }
-        // Create virtualization parameters
-        let num_s_vars = self.constraint_system.num_s_vars();
-        let num_constraints = self.constraint_system.num_constraints();
-        let num_constraints_padded = self.constraint_system.matrix.num_constraints_padded;
 
-        let params = RecursionVirtualizationParams::new(
-            num_s_vars,
-            num_constraints,
-            num_constraints_padded,
-            VirtualPolynomial::DorySparseConstraintMatrix,
+        // Since we know F = Fq, we can work directly with Fq types
+        let accumulator_fq: &mut ProverOpeningAccumulator<Fq> = unsafe { std::mem::transmute(accumulator) };
+
+        // Convert r_stage1 challenges to Fq field elements
+        // SAFETY: We verified F = Fq above, so F::Challenge = Fq::Challenge
+        let r_x: Vec<Fq> = unsafe {
+            let r_stage1_fq: &[<Fq as JoltField>::Challenge] = std::mem::transmute(r_stage1);
+            r_stage1_fq.iter().map(|c| (*c).into()).collect()
+        };
+
+        // Extract virtual claims from Stage 1
+        let constraint_types: Vec<ConstraintType> = self.constraint_system.constraints
+            .iter()
+            .map(|c| c.constraint_type.clone())
+            .collect();
+        let virtual_claims = extract_virtual_claims_from_accumulator(
+            accumulator_fq,
+            &constraint_types,
         );
 
-        // Create virtualization prover
-        let mut prover = RecursionVirtualizationProver::new(
+        // Create parameters
+        let params = DirectEvaluationParams::new(
+            self.constraint_system.num_s_vars(),
+            self.constraint_system.num_constraints(),
+            self.constraint_system.matrix.num_constraints_padded,
+            self.constraint_system.matrix.num_constraint_vars,
+        );
+
+        // Create and run prover
+        let prover = DirectEvaluationProver::new(
             params,
-            &self.constraint_system,
-            transcript,
-            r_stage1.to_vec(),
-            accumulator,
-            self.gamma,
+            self.constraint_system.matrix.evaluations.clone(),
+            virtual_claims,
+            r_x.clone(),
         );
 
-        // Run virtualization sumcheck
-        let (proof, r_stage2) = BatchedSumcheck::prove(vec![&mut prover], accumulator, transcript);
+        let (r_s, m_eval) = prover.prove(transcript, accumulator_fq);
 
-        Ok((proof, r_stage2))
+        // Convert r_s to challenges for Stage 3 compatibility
+        // Stage 3 expects them in reverse order
+        // SAFETY: We verified F = Fq above
+        let r_stage2: Vec<<F as JoltField>::Challenge> = unsafe {
+            let r_s_challenges: Vec<<Fq as JoltField>::Challenge> = r_s
+                .into_iter()
+                .rev()
+                .map(|f| f.into())
+                .collect();
+            std::mem::transmute(r_s_challenges)
+        };
+
+        // Convert m_eval from Fq to F
+        // SAFETY: We verified F = Fq above
+        let m_eval_f: F = unsafe { std::mem::transmute_copy(&m_eval) };
+
+        Ok((m_eval_f, r_stage2))
     }
 
     /// Run Stage 3: Jagged Transform Sumcheck

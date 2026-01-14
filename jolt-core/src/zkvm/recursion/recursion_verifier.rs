@@ -26,7 +26,10 @@ use super::{
         gt_mul::{GtMulParams, GtMulVerifier},
         square_and_multiply::{SquareAndMultiplyParams, SquareAndMultiplyVerifier},
     },
-    stage2::virtualization::{RecursionVirtualizationParams, RecursionVirtualizationVerifier},
+    stage2::virtualization::{
+        DirectEvaluationParams, DirectEvaluationVerifier,
+        extract_virtual_claims_from_verifier_accumulator,
+    },
     stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
 };
 use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_verifier::SumcheckInstanceVerifier};
@@ -108,27 +111,26 @@ impl<F: JoltField> RecursionVerifier<F> {
 
         // ============ STAGE 2: Verify Virtualization Sumcheck ============
         let r_stage2 = tracing::info_span!("verify_recursion_stage2").in_scope(|| {
-            tracing::info!("Verifying Stage 2: Virtualization sumcheck");
+            tracing::info!("Verifying Stage 2: Direct evaluation");
             self.verify_stage2(
-                &proof.stage2_proof,
                 transcript,
                 &mut accumulator,
                 &r_stage1,
-                proof.gamma,
+                proof.stage2_m_eval,
             )
         })?;
 
-        // // ============ STAGE 3: Verify Jagged Transform Sumcheck ============
-        // let _r_stage3 = tracing::info_span!("verify_recursion_stage3").in_scope(|| {
-        //     tracing::info!("Verifying Stage 3: Jagged transform sumcheck");
-        //     self.verify_stage3(
-        //         &proof.stage3_proof,
-        //         transcript,
-        //         &mut accumulator,
-        //         &r_stage1,
-        //         &r_stage2,
-        //     )
-        // })?;
+        // ============ STAGE 3: Verify Jagged Transform Sumcheck ============
+        let _r_stage3 = tracing::info_span!("verify_recursion_stage3").in_scope(|| {
+            tracing::info!("Verifying Stage 3: Jagged transform sumcheck");
+            self.verify_stage3(
+                &proof.stage3_proof,
+                transcript,
+                &mut accumulator,
+                &r_stage1,
+                &r_stage2,
+            )
+        })?;
 
         // // ============ PCS OPENING VERIFICATION ============
         tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
@@ -235,15 +237,14 @@ impl<F: JoltField> RecursionVerifier<F> {
         Ok(r_stage1)
     }
 
-    /// Verify Stage 2: Virtualization sumcheck
+    /// Verify Stage 2: Direct evaluation protocol
     #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage2")]
     fn verify_stage2<T: Transcript>(
         &self,
-        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
         r_stage1: &[<F as crate::field::JoltField>::Challenge],
-        gamma: F,
+        stage2_m_eval: F,
     ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
         use std::any::TypeId;
 
@@ -251,25 +252,56 @@ impl<F: JoltField> RecursionVerifier<F> {
         if TypeId::of::<F>() != TypeId::of::<Fq>() {
             panic!("Recursion SNARK requires F = Fq");
         }
-        // Create virtualization parameters
-        let params = RecursionVirtualizationParams::new(
+
+        // Since we know F = Fq, we can work directly with Fq types
+        let accumulator_fq: &mut VerifierOpeningAccumulator<Fq> = unsafe { std::mem::transmute(accumulator) };
+
+        // Convert r_stage1 challenges to Fq field elements
+        // SAFETY: We verified F = Fq above, so F::Challenge = Fq::Challenge
+        let r_x: Vec<Fq> = unsafe {
+            let r_stage1_fq: &[<Fq as JoltField>::Challenge] = std::mem::transmute(r_stage1);
+            r_stage1_fq.iter().map(|c| (*c).into()).collect()
+        };
+
+        // Extract virtual claims from Stage 1
+        let virtual_claims = extract_virtual_claims_from_verifier_accumulator(
+            accumulator_fq,
+            &self.input.constraint_types,
+        );
+
+        // Create parameters
+        let params = DirectEvaluationParams::new(
             self.input.num_s_vars,
             self.input.num_constraints,
             self.input.num_constraints_padded,
-            VirtualPolynomial::DorySparseConstraintMatrix,
+            self.input.num_constraint_vars,
         );
 
-        // Create virtualization verifier
-        let verifier = RecursionVirtualizationVerifier::new(
+        // Create and run verifier
+        let verifier = DirectEvaluationVerifier::new(
             params,
-            self.input.constraint_types.clone(),
-            transcript,
-            r_stage1.to_vec(),
-            gamma,
+            virtual_claims,
+            r_x,
         );
 
-        // Run virtualization sumcheck verification
-        let r_stage2 = BatchedSumcheck::verify(proof, vec![&verifier], accumulator, transcript)?;
+        // Convert stage2_m_eval from F to Fq
+        // SAFETY: We verified F = Fq above
+        let m_eval_fq: Fq = unsafe { std::mem::transmute_copy(&stage2_m_eval) };
+
+        let r_s = verifier.verify(transcript, accumulator_fq, m_eval_fq)
+            .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+
+        // Convert r_s to challenges for Stage 3 compatibility
+        // Stage 3 expects them in reverse order
+        // SAFETY: We verified F = Fq above
+        let r_stage2: Vec<<F as JoltField>::Challenge> = unsafe {
+            let r_s_challenges: Vec<<Fq as JoltField>::Challenge> = r_s
+                .into_iter()
+                .rev()
+                .map(|f| f.into())
+                .collect();
+            std::mem::transmute(r_s_challenges)
+        };
 
         Ok(r_stage2)
     }
