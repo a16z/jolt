@@ -319,6 +319,38 @@ impl DoryMatrixBuilder {
         mle_8var
     }
 
+    /// Pad a 4-variable MLE to 12 variables using zero padding for true jaggedness.
+    /// For packed GT exp: 4 element vars + 8 step vars = 12 vars total.
+    pub fn pad_4var_to_12var_zero_padding(mle_4var: &[Fq]) -> Vec<Fq> {
+        assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
+        let mut mle_12var = Vec::with_capacity(4096);
+
+        // Copy original 16 values at the beginning
+        mle_12var.extend_from_slice(mle_4var);
+
+        // Pad with zeros for the remaining positions
+        mle_12var.resize(4096, Fq::zero());
+
+        assert_eq!(mle_12var.len(), 4096);
+        mle_12var
+    }
+
+    /// Pad an 8-variable MLE to 12 variables using zero padding.
+    /// For G1 scalar mul: 8 vars → 12 vars.
+    pub fn pad_8var_to_12var_zero_padding(mle_8var: &[Fq]) -> Vec<Fq> {
+        assert_eq!(mle_8var.len(), 256, "Input must be an 8-variable MLE");
+        let mut mle_12var = Vec::with_capacity(4096);
+
+        // Copy original 256 values at the beginning
+        mle_12var.extend_from_slice(mle_8var);
+
+        // Pad with zeros for the remaining positions
+        mle_12var.resize(4096, Fq::zero());
+
+        assert_eq!(mle_12var.len(), 4096);
+        mle_12var
+    }
+
     /// Add constraints from a GT exponentiation witness.
     /// Each step j creates one constraint using:
     /// - base: the base element a (replicated for each constraint)
@@ -336,8 +368,16 @@ impl DoryMatrixBuilder {
         let n = witness.bits.len();
 
         for step in 0..n {
-            // Handle padding from 4-var to 8-var if needed
-            let (base_row, rho_prev, rho_curr, quotient) = if self.num_constraint_vars == 8 {
+            // Handle padding from 4-var to target vars
+            let (base_row, rho_prev, rho_curr, quotient) = if self.num_constraint_vars == 12 {
+                // Pad 4-variable MLEs to 12 variables using zero padding
+                (
+                    Self::pad_4var_to_12var_zero_padding(&base_mle_4var),
+                    Self::pad_4var_to_12var_zero_padding(&witness.rho_mles[step]),
+                    Self::pad_4var_to_12var_zero_padding(&witness.rho_mles[step + 1]),
+                    Self::pad_4var_to_12var_zero_padding(&witness.quotient_mles[step]),
+                )
+            } else if self.num_constraint_vars == 8 {
                 // Pad 4-variable MLEs to 8 variables using zero padding
                 (
                     Self::pad_4var_to_8var_zero_padding(&base_mle_4var),
@@ -429,8 +469,16 @@ impl DoryMatrixBuilder {
             "GT mul witness should have 4-variable MLEs"
         );
 
-        // Handle padding from 4-var to 8-var if needed
-        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 8 {
+        // Handle padding from 4-var to target vars
+        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 12 {
+            // Pad 4-variable MLEs to 12 variables using zero padding
+            (
+                Self::pad_4var_to_12var_zero_padding(&lhs_mle_4var),
+                Self::pad_4var_to_12var_zero_padding(&rhs_mle_4var),
+                Self::pad_4var_to_12var_zero_padding(&result_mle_4var),
+                Self::pad_4var_to_12var_zero_padding(&quotient_mle_4var),
+            )
+        } else if self.num_constraint_vars == 8 {
             // Pad 4-variable MLEs to 8 variables using zero padding
             (
                 Self::pad_4var_to_8var_zero_padding(&lhs_mle_4var),
@@ -489,14 +537,6 @@ impl DoryMatrixBuilder {
         &mut self,
         witness: &crate::poly::commitment::dory::recursion::JoltG1ScalarMulWitness,
     ) {
-        // G1 scalar multiplication requires 8 constraint variables
-        if self.num_constraint_vars != 8 {
-            panic!(
-                "G1 scalar multiplication requires 8 constraint variables, but builder has {}",
-                self.num_constraint_vars
-            );
-        }
-
         let _n = witness.bits.len();
 
         // The witness MLEs contain all steps in one MLE
@@ -542,16 +582,43 @@ impl DoryMatrixBuilder {
             .collect();
         assert_eq!(t_is_infinity.len(), 1 << 8);
 
+        // Pad 8-var MLEs to target constraint vars if needed
+        let (x_a, y_a, x_t, y_t, x_a_next, y_a_next, indicator) = if self.num_constraint_vars == 12
+        {
+            (
+                Self::pad_8var_to_12var_zero_padding(&witness.x_a_mles[0]),
+                Self::pad_8var_to_12var_zero_padding(&witness.y_a_mles[0]),
+                Self::pad_8var_to_12var_zero_padding(&witness.x_t_mles[0]),
+                Self::pad_8var_to_12var_zero_padding(&witness.y_t_mles[0]),
+                Self::pad_8var_to_12var_zero_padding(&witness.x_a_next_mles[0]),
+                Self::pad_8var_to_12var_zero_padding(&witness.y_a_next_mles[0]),
+                Self::pad_8var_to_12var_zero_padding(&t_is_infinity),
+            )
+        } else if self.num_constraint_vars == 8 {
+            (
+                witness.x_a_mles[0].clone(),
+                witness.y_a_mles[0].clone(),
+                witness.x_t_mles[0].clone(),
+                witness.y_t_mles[0].clone(),
+                witness.x_a_next_mles[0].clone(),
+                witness.y_a_next_mles[0].clone(),
+                t_is_infinity,
+            )
+        } else {
+            panic!(
+                "G1 scalar multiplication requires 8 or 12 constraint variables, but builder has {}",
+                self.num_constraint_vars
+            );
+        };
+
         // Add the entire MLEs (one per variable type for this scalar multiplication)
-        self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(witness.x_a_mles[0].clone());
-        self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(witness.y_a_mles[0].clone());
-        self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(witness.x_t_mles[0].clone());
-        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(witness.y_t_mles[0].clone());
-        self.rows_by_type[PolyType::G1ScalarMulXANext as usize]
-            .push(witness.x_a_next_mles[0].clone());
-        self.rows_by_type[PolyType::G1ScalarMulYANext as usize]
-            .push(witness.y_a_next_mles[0].clone());
-        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(t_is_infinity);
+        self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(x_a);
+        self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(y_a);
+        self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(x_t);
+        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(y_t);
+        self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(x_a_next);
+        self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(y_a_next);
+        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(indicator);
 
         // Add empty rows for GT types to maintain consistent indexing
         let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
@@ -852,6 +919,9 @@ pub struct ConstraintSystem {
 
     /// Constraint metadata: maps constraint index to matrix rows it references
     pub constraints: Vec<MatrixConstraint>,
+
+    /// Packed GT exp witnesses for the optimized prover
+    pub packed_gt_exp_witnesses: Vec<super::stage1::packed_gt_exp::PackedGtExpWitness>,
 }
 
 impl ConstraintSystem {
@@ -862,7 +932,7 @@ impl ConstraintSystem {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // For now, create a simple matrix with padding
         let _num_constraints = constraint_types.len();
-        let num_constraint_vars = 8; // Using 8 for G1 scalar mul compatibility
+        let num_constraint_vars = 12; // Using 12 for packed GT exp compatibility
 
         let mut builder = DoryMatrixBuilder::new(num_constraint_vars);
 
@@ -960,9 +1030,9 @@ impl ConstraintSystem {
             proof, setup, transcript, point, evaluation, commitment,
         )?;
 
-        // Always use 8 variables for uniform matrix structure
-        // GT operations (4-var) will be padded to 8 vars
-        let mut builder = DoryMatrixBuilder::new(8);
+        // Always use 12 variables for uniform matrix structure
+        // GT operations (4-var) and G1 operations (8-var) will be padded to 12 vars
+        let mut builder = DoryMatrixBuilder::new(12);
 
         for (_op_id, witness) in witnesses.gt_exp.iter() {
             builder.add_gt_exp_witness(witness);
@@ -982,8 +1052,11 @@ impl ConstraintSystem {
         // Get the 4-variable g(x) polynomial
         let g_mle_4var = get_g_mle();
 
-        // Pad g(x) to 8 variables if needed
-        let g_poly = if matrix.num_constraint_vars == 8 {
+        // Pad g(x) to match constraint vars
+        let g_poly = if matrix.num_constraint_vars == 12 {
+            let padded_g = DoryMatrixBuilder::pad_4var_to_12var_zero_padding(&g_mle_4var);
+            DensePolynomial::new(padded_g)
+        } else if matrix.num_constraint_vars == 8 {
             let padded_g = DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var);
             DensePolynomial::new(padded_g)
         } else {

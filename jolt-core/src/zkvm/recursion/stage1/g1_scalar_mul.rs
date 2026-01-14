@@ -180,7 +180,7 @@ pub struct G1ScalarMulParams {
 impl G1ScalarMulParams {
     pub fn new(num_constraints: usize) -> Self {
         Self {
-            num_constraint_vars: 8, // Fixed for 256-bit scalars
+            num_constraint_vars: 12, // 12 vars for uniform matrix (8 scalar bits padded to 12)
             num_constraints,
             sumcheck_id: SumcheckId::G1ScalarMul,
         }

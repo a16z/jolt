@@ -171,6 +171,7 @@ pub enum SumcheckId {
     RecursionRhoCurr,
     RecursionQuotient,
     SquareAndMultiply,
+    PackedGtExp,
     GtMul,
     G1ScalarMul,
     RecursionVirtualization,

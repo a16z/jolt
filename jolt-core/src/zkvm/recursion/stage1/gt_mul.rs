@@ -106,7 +106,7 @@ pub struct GtMulParams {
 impl GtMulParams {
     pub fn new(num_constraints: usize) -> Self {
         Self {
-            num_constraint_vars: 8, // Fixed for Fq12
+            num_constraint_vars: 12, // 12 vars for uniform matrix (4 element + 8 step)
             num_constraints,
             sumcheck_id: SumcheckId::GtMul,
         }
@@ -432,16 +432,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
                 panic!("g polynomial evaluation requires F = Fq for recursion SNARK");
             }
 
-            // Get 4-var g polynomial and pad to 8 vars
+            // Get 4-var g polynomial and pad to match constraint vars
             let g_mle_4var = get_g_mle();
-            let g_mle_8var = if r_star_f.len() == 8 {
+            let g_mle_padded = if r_star_f.len() == 12 {
+                DoryMatrixBuilder::pad_4var_to_12var_zero_padding(&g_mle_4var)
+            } else if r_star_f.len() == 8 {
                 DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var)
             } else {
                 g_mle_4var
             };
             // SAFETY: We checked F = Fq above, so this transmute is safe
             let g_poly_fq =
-                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_8var));
+                MultilinearPolynomial::<Fq>::LargeScalars(DensePolynomial::new(g_mle_padded));
             let r_star_fq: &Vec<Fq> = unsafe { std::mem::transmute(&r_star_f) };
             let g_eval_fq = g_poly_fq.evaluate_dot_product(r_star_fq);
             unsafe { std::mem::transmute_copy(&g_eval_fq) }

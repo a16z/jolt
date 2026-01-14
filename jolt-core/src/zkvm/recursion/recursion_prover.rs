@@ -210,8 +210,8 @@ impl RecursionProver<Fq> {
 
         let g_mle_4var = get_g_mle();
 
-        // Pad g(x) to 8 variables (matching constraint system)
-        let g_poly_values = DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var);
+        // Pad g(x) to 12 variables (matching constraint system)
+        let g_poly_values = DoryMatrixBuilder::pad_4var_to_12var_zero_padding(&g_mle_4var);
         let g_poly = DensePolynomial::new(g_poly_values.clone());
         let g_values = g_poly_values;
         drop(g_poly_span);
@@ -337,8 +337,8 @@ impl RecursionProver<Fq> {
     ) -> Result<ConstraintSystem, Box<dyn std::error::Error>> {
         use super::constraints_sys::DoryMatrixBuilder;
 
-        // Use DoryMatrixBuilder with 8 variables for uniform matrix structure
-        let mut builder = DoryMatrixBuilder::new(8);
+        // Use DoryMatrixBuilder with 12 variables for uniform matrix structure (packed GT exp)
+        let mut builder = DoryMatrixBuilder::new(12);
 
         // Add GT exp witnesses from Dory proof verification
         let gt_exp_span = tracing::info_span!("add_gt_exp_witnesses",
