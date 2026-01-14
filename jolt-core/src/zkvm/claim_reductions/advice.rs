@@ -454,9 +454,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
 
-        // Append C_mid to transcript for explicit Fiat-Shamir binding (defensive).
-        // While C_mid is already implicitly determined by the sumcheck univariates,
-        // explicit transcript binding makes the security argument clearer.
         match self.params.kind {
             AdviceKind::Trusted => accumulator.append_trusted_advice(
                 transcript,
@@ -572,60 +569,56 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
-            .normalize_opening_point(sumcheck_challenges);
+        let advice_vars = self.params.advice_col_vars + self.params.advice_row_vars;
+        let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(advice_vars);
+        match DoryGlobals::get_layout() {
+            DoryLayout::CycleMajor => {
+                advice_le.extend_from_slice(
+                    &sumcheck_challenges[self.params.col_binding_rounds.clone()],
+                );
+                advice_le.extend_from_slice(
+                    &sumcheck_challenges[self.params.row_binding_rounds.clone()],
+                );
+            }
+            DoryLayout::AddressMajor => {
+                advice_le.extend_from_slice(
+                    &sumcheck_challenges[self.params.row_binding_rounds.clone()],
+                );
+                advice_le
+                    .extend_from_slice(&sumcheck_challenges[self.params.col_binding_rounds.clone()])
+            }
+        }
+        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
+            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
 
-        // Append C_mid to transcript for explicit Fiat-Shamir binding (defensive).
         match self.params.kind {
             AdviceKind::Trusted => accumulator.append_trusted_advice(
                 transcript,
                 SumcheckId::AdviceClaimReductionPhase1,
-                opening_point,
+                opening_point.clone(),
             ),
             AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                 transcript,
                 SumcheckId::AdviceClaimReductionPhase1,
-                opening_point,
+                opening_point.clone(),
             ),
         }
 
-        let advice_vars = self.params.advice_row_vars + self.params.advice_col_vars;
         // If Phase 2 is absent (nu_a_addr == 0), Phase 1 cached the final advice opening in Stage 6.
         // Populate its opening point now so downstream stages can extract it.
         if self.params.row_binding_rounds.len() + self.params.col_binding_rounds.len()
             == advice_vars
         {
-            let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(advice_vars);
-            match DoryGlobals::get_layout() {
-                DoryLayout::CycleMajor => {
-                    advice_le.extend_from_slice(
-                        &sumcheck_challenges[self.params.col_binding_rounds.clone()],
-                    );
-                    advice_le.extend_from_slice(
-                        &sumcheck_challenges[self.params.row_binding_rounds.clone()],
-                    );
-                }
-                DoryLayout::AddressMajor => {
-                    advice_le.extend_from_slice(
-                        &sumcheck_challenges[self.params.row_binding_rounds.clone()],
-                    );
-                    advice_le.extend_from_slice(
-                        &sumcheck_challenges[self.params.col_binding_rounds.clone()],
-                    )
-                }
-            }
-            let advice_point: OpeningPoint<BIG_ENDIAN, F> =
-                OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
                     SumcheckId::AdviceClaimReductionPhase2,
-                    advice_point,
+                    opening_point,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     transcript,
                     SumcheckId::AdviceClaimReductionPhase2,
-                    advice_point,
+                    opening_point,
                 ),
             }
         }
@@ -654,7 +647,7 @@ pub struct AdviceClaimReductionPhase2Params<F: JoltField> {
     pub scale: F,
     pub inv_scale: F,
     /// Cycle-derived prefix (Dory order) used to pre-bind advice vars in Phase 2
-    pub cycle_bind_le: Vec<F::Challenge>,
+    pub cycle_challenges: Vec<F::Challenge>,
     pub r_val_eval: OpeningPoint<BIG_ENDIAN, F>,
     pub r_val_final: Option<OpeningPoint<BIG_ENDIAN, F>>,
 }
@@ -734,7 +727,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
             main_row_vars,
             scale,
             inv_scale,
-            cycle_bind_le: r_cycle_le.r,
+            cycle_challenges: r_cycle_le.r,
             r_val_eval,
             r_val_final,
         })
@@ -850,8 +843,9 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
 
         // Pre-bind cycle-derived advice variables in Dory order:
         // [col_bits || row_cycle_bits].
-        for &r in params.cycle_bind_le.iter() {
+        for &r in params.cycle_challenges.iter() {
             advice_poly.bind_parallel(r, BindingOrder::LowToHigh);
+            println!("advice_poly.len() = {}", advice_poly.len());
             eq_poly.bind_parallel(r, BindingOrder::LowToHigh);
         }
 
@@ -930,7 +924,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     ) {
         // Build full advice opening point (little-endian Dory order):
         let mut advice_le: Vec<F::Challenge> = vec![];
-        advice_le.extend_from_slice(&self.params.cycle_bind_le);
+        advice_le.extend_from_slice(&self.params.cycle_challenges);
         advice_le.extend_from_slice(sumcheck_challenges);
 
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
@@ -1005,7 +999,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         // Build the full advice opening point in BIG_ENDIAN for eq computations.
         let mut advice_le: Vec<F::Challenge> = vec![];
-        advice_le.extend_from_slice(&self.params.cycle_bind_le);
+        advice_le.extend_from_slice(&self.params.cycle_challenges);
         advice_le.extend_from_slice(sumcheck_challenges);
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
@@ -1039,7 +1033,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) {
         let mut advice_le: Vec<F::Challenge> = vec![];
-        advice_le.extend_from_slice(&self.params.cycle_bind_le);
+        advice_le.extend_from_slice(&self.params.cycle_challenges);
         advice_le.extend_from_slice(sumcheck_challenges);
         let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
