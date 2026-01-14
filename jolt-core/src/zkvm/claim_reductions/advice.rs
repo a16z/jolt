@@ -219,21 +219,20 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
         advice_poly: MultilinearPolynomial<F>,
     ) -> Self {
         let gamma = params.gamma;
-        let eq_eval = EqPolynomial::evals(&params.r_val_eval.r);
-        let eq_poly = if params.single_opening {
-            MultilinearPolynomial::from(eq_eval)
+        let eq_evals = if params.single_opening {
+            EqPolynomial::evals(&params.r_val_eval.r)
         } else {
+            let evals = EqPolynomial::evals(&params.r_val_eval.r);
             let r_final = params
                 .r_val_final
                 .as_ref()
                 .expect("r_val_final must exist when !single_opening");
             let eq_final = EqPolynomial::evals_with_scaling(&r_final.r, Some(gamma));
-            let combined: Vec<F> = eq_eval
+            evals
                 .par_iter()
                 .zip(eq_final.par_iter())
                 .map(|(e1, e2)| *e1 + e2)
-                .collect();
-            MultilinearPolynomial::from(combined)
+                .collect()
         };
 
         let row_col_to_address_cycle = |row: usize, col: usize| -> (usize, usize) {
@@ -258,13 +257,16 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
             row_col_to_address_cycle(row, col)
         };
 
-        let mut advice_vec: Vec<(usize, u64)> = match advice_poly {
-            MultilinearPolynomial::U64Scalars(poly) => {
-                poly.coeffs.into_par_iter().enumerate().collect()
-            }
+        let mut permuted_coeffs: Vec<(usize, (u64, F))> = match advice_poly {
+            MultilinearPolynomial::U64Scalars(poly) => poly
+                .coeffs
+                .into_par_iter()
+                .zip(eq_evals.into_par_iter())
+                .enumerate()
+                .collect(),
             _ => panic!("Advice should have u64 coefficients"),
         };
-        advice_vec.par_sort_by(|&(index_a, _), &(index_b, _)| {
+        permuted_coeffs.par_sort_by(|&(index_a, _), &(index_b, _)| {
             let (address_a, cycle_a) = advice_index_to_address_cycle(index_a);
             let (address_b, cycle_b) = advice_index_to_address_cycle(index_b);
             match address_a.cmp(&address_b) {
@@ -273,8 +275,13 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
                 Ordering::Equal => cycle_a.cmp(&cycle_b),
             }
         });
-        let advice_vec: Vec<u64> = advice_vec.into_par_iter().map(|(_, coeff)| coeff).collect();
-        let advice_poly = advice_vec.into();
+
+        let (advice_coeffs, eq_coeffs): (Vec<_>, Vec<_>) = permuted_coeffs
+            .into_par_iter()
+            .map(|(_, coeffs)| coeffs)
+            .unzip();
+        let advice_poly = advice_coeffs.into();
+        let eq_poly = eq_coeffs.into();
 
         let two_inv = F::from_u64(2).inverse().unwrap();
         let dummy_after = params.log_t.saturating_sub(params.num_rounds());
@@ -572,6 +579,7 @@ pub struct AdviceClaimReductionPhase2Params<F: JoltField> {
     pub log_k_chunk: usize,
     pub log_t: usize,
     pub main_cols: usize,
+    pub main_rows: usize,
     pub nu_a_cycle: usize, // number of advice rows that come from the cycle variables
     pub nu_a_addr: usize,  // number of advice rows that come from the address variables
     /// Constant scaling factor carried from Phase 1 (equals 2^{-gap_len}).
@@ -599,7 +607,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         };
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (main_cols, _main_rows) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+        let (main_cols, main_rows) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
 
         let r_val_eval = accumulator
             .get_advice_opening(kind, SumcheckId::RamValEvaluation)
@@ -664,6 +672,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
             log_k_chunk,
             log_t,
             main_cols,
+            main_rows,
             nu_a_cycle,
             nu_a_addr,
             scale,
@@ -715,25 +724,72 @@ pub struct AdviceClaimReductionPhase2Prover<F: JoltField> {
 impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
     pub fn initialize(
         params: AdviceClaimReductionPhase2Params<F>,
-        mut advice_poly: MultilinearPolynomial<F>,
+        advice_poly: MultilinearPolynomial<F>,
     ) -> Self {
         let gamma = params.gamma;
-        let eq_eval = EqPolynomial::evals(&params.r_val_eval.r);
-        let mut eq_poly = if params.single_opening {
-            MultilinearPolynomial::from(eq_eval)
+        let eq_evals = if params.single_opening {
+            EqPolynomial::evals(&params.r_val_eval.r)
         } else {
+            let evals = EqPolynomial::evals(&params.r_val_eval.r);
             let r_final = params
                 .r_val_final
                 .as_ref()
                 .expect("r_val_final must exist when !single_opening");
             let eq_final = EqPolynomial::evals_with_scaling(&r_final.r, Some(gamma));
-            let combined: Vec<F> = eq_eval
+            evals
                 .par_iter()
                 .zip(eq_final.par_iter())
                 .map(|(e1, e2)| *e1 + e2)
-                .collect();
-            MultilinearPolynomial::from(combined)
+                .collect()
         };
+
+        let row_col_to_address_cycle = |row: usize, col: usize| -> (usize, usize) {
+            match DoryGlobals::get_layout() {
+                DoryLayout::CycleMajor => {
+                    let global_index = row as u128 * params.main_cols as u128 + col as u128;
+                    let address = global_index / (1 << params.log_t);
+                    let cycle = global_index % (1 << params.log_t);
+                    (address as usize, cycle as usize)
+                }
+                DoryLayout::AddressMajor => {
+                    let address = col % params.log_k_chunk;
+                    let cycle = (col / params.log_k_chunk) * params.main_rows + row;
+                    (address as usize, cycle as usize)
+                }
+            }
+        };
+
+        let advice_index_to_address_cycle = |index: usize| -> (usize, usize) {
+            let row = index / params.advice_cols;
+            let col = index % params.advice_cols;
+            row_col_to_address_cycle(row, col)
+        };
+
+        let mut permuted_coeffs: Vec<(usize, (u64, F))> = match advice_poly {
+            MultilinearPolynomial::U64Scalars(poly) => poly
+                .coeffs
+                .into_par_iter()
+                .zip(eq_evals.into_par_iter())
+                .enumerate()
+                .collect(),
+            _ => panic!("Advice should have u64 coefficients"),
+        };
+        permuted_coeffs.par_sort_by(|&(index_a, _), &(index_b, _)| {
+            let (address_a, cycle_a) = advice_index_to_address_cycle(index_a);
+            let (address_b, cycle_b) = advice_index_to_address_cycle(index_b);
+            match address_a.cmp(&address_b) {
+                Ordering::Less => Ordering::Less,
+                Ordering::Greater => Ordering::Greater,
+                Ordering::Equal => cycle_a.cmp(&cycle_b),
+            }
+        });
+
+        let (advice_coeffs, eq_coeffs): (Vec<_>, Vec<_>) = permuted_coeffs
+            .into_par_iter()
+            .map(|(_, coeffs)| coeffs)
+            .unzip();
+        let mut advice_poly: MultilinearPolynomial<F> = advice_coeffs.into();
+        let mut eq_poly: MultilinearPolynomial<F> = eq_coeffs.into();
 
         // Pre-bind cycle-derived advice variables in Dory order:
         // [col_bits || row_cycle_bits].
