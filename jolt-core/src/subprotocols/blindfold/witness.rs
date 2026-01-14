@@ -7,8 +7,6 @@ use super::r1cs::VerifierR1CS;
 use super::StageConfig;
 use crate::field::JoltField;
 use crate::poly::unipoly::CompressedUniPoly;
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-use crate::transcripts::{AppendToTranscript, Transcript};
 
 /// Witness data for a single sumcheck round
 #[derive(Clone, Debug)]
@@ -273,129 +271,6 @@ impl<F: JoltField> BlindFoldWitness<F> {
         }
 
         Self::new(initial_claim, stages)
-    }
-
-    /// Create witness from a sumcheck proof by replaying verification to extract challenges.
-    ///
-    /// This method extracts the round polynomials from the proof and replays the
-    /// transcript operations to derive the Fiat-Shamir challenges.
-    ///
-    /// Note: The transcript must be in the same state it was when the sumcheck
-    /// verification would begin (after appending all prior protocol messages).
-    pub fn from_sumcheck_proof<ProofTranscript: Transcript>(
-        initial_claim: F,
-        proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F::Challenge>) {
-        let num_rounds = proof.compressed_polys.len();
-        let degree = if num_rounds > 0 {
-            proof.compressed_polys[0].degree()
-        } else {
-            3 // Default to degree 3
-        };
-
-        let _configs = [StageConfig::new(num_rounds, degree)];
-        let mut current_claim = initial_claim;
-        let mut challenges = Vec::with_capacity(num_rounds);
-        let mut rounds = Vec::with_capacity(num_rounds);
-
-        for poly in &proof.compressed_polys {
-            // Replay transcript operations exactly as in verification
-            if let Some(ref commitments) = proof.round_commitments {
-                // ZK mode: append commitment
-                transcript.append_message(b"UniPolyCommitment");
-                transcript.append_bytes(&commitments[challenges.len()]);
-            } else {
-                // Non-ZK mode: append raw coefficients
-                poly.append_to_transcript(transcript);
-            }
-
-            // Derive challenge via Fiat-Shamir
-            let challenge: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-            challenges.push(challenge);
-
-            // Extract compressed coefficients and decompress
-            let compressed = &poly.coeffs_except_linear_term;
-            let c0 = compressed[0];
-            let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
-            let c1 = current_claim - c0 - c0 - sum_higher_coeffs;
-
-            let mut coeffs = vec![c0, c1];
-            coeffs.extend_from_slice(&compressed[1..]);
-
-            let round_witness = RoundWitness::new(coeffs, challenge.into());
-
-            // Compute next claim for chaining
-            current_claim = round_witness.evaluate(challenge.into());
-
-            rounds.push(round_witness);
-        }
-
-        let witness = Self::new(initial_claim, vec![StageWitness::new(rounds)]);
-
-        (witness, challenges)
-    }
-
-    /// Create witness from multiple sumcheck proofs (one per stage).
-    ///
-    /// This is useful for Jolt which has 6 sumcheck stages.
-    pub fn from_multiple_sumcheck_proofs<ProofTranscript: Transcript>(
-        initial_claims: &[F],
-        proofs: &[&SumcheckInstanceProof<F, ProofTranscript>],
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<Vec<F::Challenge>>) {
-        assert!(!proofs.is_empty());
-        assert_eq!(initial_claims.len(), proofs.len());
-
-        let mut all_stages = Vec::with_capacity(proofs.len());
-        let mut all_challenges = Vec::with_capacity(proofs.len());
-        let mut current_claim = initial_claims[0];
-
-        for (stage_idx, proof) in proofs.iter().enumerate() {
-            let num_rounds = proof.compressed_polys.len();
-            let mut stage_challenges = Vec::with_capacity(num_rounds);
-            let mut rounds = Vec::with_capacity(num_rounds);
-
-            // For batched sumchecks, the initial claim of subsequent stages
-            // is computed from the batching. For simplicity, we use the
-            // provided initial claims.
-            if stage_idx > 0 {
-                current_claim = initial_claims[stage_idx];
-            }
-
-            for poly in &proof.compressed_polys {
-                // Replay transcript operations
-                if let Some(ref commitments) = proof.round_commitments {
-                    transcript.append_message(b"UniPolyCommitment");
-                    transcript.append_bytes(&commitments[stage_challenges.len()]);
-                } else {
-                    poly.append_to_transcript(transcript);
-                }
-
-                let challenge: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-                stage_challenges.push(challenge);
-
-                // Decompress
-                let compressed = &poly.coeffs_except_linear_term;
-                let c0 = compressed[0];
-                let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
-                let c1 = current_claim - c0 - c0 - sum_higher_coeffs;
-
-                let mut coeffs = vec![c0, c1];
-                coeffs.extend_from_slice(&compressed[1..]);
-
-                let round_witness = RoundWitness::new(coeffs, challenge.into());
-                current_claim = round_witness.evaluate(challenge.into());
-
-                rounds.push(round_witness);
-            }
-
-            all_stages.push(StageWitness::new(rounds));
-            all_challenges.push(stage_challenges);
-        }
-
-        let witness = Self::new(initial_claims[0], all_stages);
-        (witness, all_challenges)
     }
 }
 

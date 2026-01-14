@@ -320,7 +320,7 @@ impl<
         let (stage5_sumcheck_proof, r_stage5, stage5_initial_claim) = self.prove_stage5();
         let (stage6_sumcheck_proof, r_stage6, stage6_initial_claim) = self.prove_stage6();
 
-        // Collect initial claims and challenges for BlindFold
+        // Collect initial claims for BlindFold verification (stored in proof)
         let initial_claims = [
             stage1_initial_claim,
             stage2_initial_claim,
@@ -330,19 +330,13 @@ impl<
             stage6_initial_claim,
         ];
 
-        let sumcheck_challenges = [r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6];
+        // Suppress warnings for unused challenge variables - they were used in prove_zk
+        // and stored in the accumulator for BlindFold
+        let _ = (r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6);
 
         // BlindFold protocol to make sumcheck proofs zero-knowledge
-        let blindfold_proof = self.prove_blindfold(
-            &stage1_sumcheck_proof,
-            &stage2_sumcheck_proof,
-            &stage3_sumcheck_proof,
-            &stage4_sumcheck_proof,
-            &stage5_sumcheck_proof,
-            &stage6_sumcheck_proof,
-            &initial_claims,
-            &sumcheck_challenges,
-        );
+        // ZK data (coefficients, challenges, initial claims) is retrieved from accumulator
+        let blindfold_proof = self.prove_blindfold();
 
         tracing::info!("Stage 7 proving");
         let trusted_advice_proof = self.prove_trusted_advice();
@@ -546,7 +540,7 @@ impl<
         &mut self,
     ) -> (
         UniSkipFirstRoundProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -586,7 +580,7 @@ impl<
         &mut self,
     ) -> (
         UniSkipFirstRoundProof<F, ProofTranscript>,
-        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -669,7 +663,7 @@ impl<
     fn prove_stage3(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -724,7 +718,7 @@ impl<
     fn prove_stage4(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -810,7 +804,7 @@ impl<
     fn prove_stage5(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -883,7 +877,7 @@ impl<
     fn prove_stage6(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
+        SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -978,35 +972,25 @@ impl<
 
     /// Prove BlindFold protocol to make sumcheck proofs zero-knowledge.
     ///
-    /// This method uses the actual sumcheck challenges from the main transcript
-    /// (not replayed from polynomial coefficients) to ensure the BlindFold R1CS
-    /// is properly bound to the sumcheck verification flow.
-    #[allow(clippy::too_many_arguments)]
+    /// This method retrieves ZK stage data (coefficients, challenges, initial claims)
+    /// from the opening accumulator where it was stored during prove_zk calls.
+    /// The coefficients and blinding factors are hidden from the verifier (who only
+    /// sees commitments), while BlindFold proves the R1CS constraints are satisfied.
     #[tracing::instrument(skip_all)]
-    fn prove_blindfold(
-        &mut self,
-        stage1_proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        stage2_proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        stage3_proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        stage4_proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        stage5_proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        stage6_proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        initial_claims: &[F; 6],
-        sumcheck_challenges: &[Vec<F::Challenge>; 6],
-    ) -> BlindFoldProof<F, C> {
+    fn prove_blindfold(&mut self) -> BlindFoldProof<F, C> {
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
 
-        // Collect all stage proofs with their initial claims
-        let stage_proofs = [
-            stage1_proof,
-            stage2_proof,
-            stage3_proof,
-            stage4_proof,
-            stage5_proof,
-            stage6_proof,
-        ];
+        // Retrieve ZK stage data from the accumulator
+        // This contains coefficients, challenges, and initial claims from all prove_zk calls
+        let zk_stages = self.opening_accumulator.take_zk_stage_data();
+        assert_eq!(
+            zk_stages.len(),
+            6,
+            "Expected 6 ZK stages, got {}",
+            zk_stages.len()
+        );
 
         // Build stage configurations with per-round degree support
         // Each compressed polynomial may have a different degree, so we create
@@ -1015,21 +999,22 @@ impl<
         // with its own initial claim.
         let mut stage_configs = Vec::new();
         let mut stage_witnesses = Vec::new();
+        let mut initial_claims = Vec::new();
 
-        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+        for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
             // Start with the stage's initial claim
-            let mut current_claim = initial_claims[stage_idx];
+            let mut current_claim = zk_data.initial_claim;
+            initial_claims.push(zk_data.initial_claim);
 
-            // Use actual challenges from the main sumcheck transcript
-            let stage_challenges = &sumcheck_challenges[stage_idx];
+            // Use actual challenges from the ZK stage data
+            let stage_challenges = &zk_data.challenges;
 
-            for (round_idx, compressed_poly) in proof.compressed_polys.iter().enumerate() {
-                // Use the actual challenge from the main transcript
+            for (round_idx, compressed) in zk_data.compressed_poly_coeffs.iter().enumerate() {
+                // Use the actual challenge from the transcript
                 let challenge: F = stage_challenges[round_idx].into();
 
                 // Extract compressed coefficients [c0, c2, c3, ...]
                 // The length gives us the polynomial degree
-                let compressed = &compressed_poly.coeffs_except_linear_term;
                 let poly_degree = compressed.len();
                 let c0 = compressed[0];
                 let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
@@ -1077,7 +1062,7 @@ impl<
 
         // Use all 6 initial claims for the BlindFoldWitness
         let blindfold_witness =
-            BlindFoldWitness::with_multiple_claims(initial_claims.to_vec(), stage_witnesses);
+            BlindFoldWitness::with_multiple_claims(initial_claims, stage_witnesses);
 
         // Assign witness to get Z vector
         let z = blindfold_witness.assign(&r1cs);
@@ -1668,59 +1653,106 @@ mod tests {
     #[test]
     #[serial]
     fn blindfold_r1cs_satisfaction() {
+        use crate::curve::Bn254Curve;
         use crate::subprotocols::blindfold::{
             BlindFoldWitness, RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
         };
         use crate::subprotocols::sumcheck::SumcheckInstanceProof;
         use crate::transcripts::{AppendToTranscript, KeccakTranscript, Transcript};
+        use ark_serialize::CanonicalSerialize;
 
         /// Helper to process a single stage's sumcheck proof.
         /// Returns a list of (RoundWitness, degree) for each round.
+        /// For ZK proofs, creates synthetic witnesses with correct degrees to test R1CS structure.
         fn process_stage<ProofTranscript: Transcript>(
             _stage_name: &str,
-            proof: &SumcheckInstanceProof<Fr, ProofTranscript>,
+            proof: &SumcheckInstanceProof<Fr, Bn254Curve, ProofTranscript>,
             transcript: &mut KeccakTranscript,
         ) -> Vec<(RoundWitness<Fr>, usize)> {
-            let compressed_polys = &proof.compressed_polys;
-            let num_rounds = compressed_polys.len();
+            match proof {
+                SumcheckInstanceProof::Standard(std_proof) => {
+                    // For Standard proofs, use actual polynomial coefficients
+                    let compressed_polys = &std_proof.compressed_polys;
+                    let num_rounds = compressed_polys.len();
 
-            if num_rounds == 0 {
-                return vec![];
+                    if num_rounds == 0 {
+                        return vec![];
+                    }
+
+                    let mut rounds = Vec::with_capacity(num_rounds);
+
+                    for compressed_poly in compressed_polys.iter() {
+                        compressed_poly.append_to_transcript(transcript);
+                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
+
+                        let compressed = &compressed_poly.coeffs_except_linear_term;
+                        let degree = compressed.len();
+
+                        let c0 = compressed[0];
+                        let sum_higher_coeffs: Fr = compressed[1..].iter().copied().sum();
+
+                        let claimed_sum = Fr::from(12345u64);
+                        let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
+
+                        let mut coeffs = vec![c0, c1];
+                        coeffs.extend_from_slice(&compressed[1..]);
+
+                        let round_witness =
+                            RoundWitness::with_claimed_sum(coeffs, challenge, claimed_sum);
+
+                        rounds.push((round_witness, degree));
+                    }
+
+                    rounds
+                }
+                SumcheckInstanceProof::Zk(zk_proof) => {
+                    // For ZK proofs, create synthetic witnesses with correct degrees.
+                    // This tests the R1CS structure without needing actual coefficients.
+                    let num_rounds = zk_proof.round_commitments.len();
+
+                    if num_rounds == 0 {
+                        return vec![];
+                    }
+
+                    let mut rounds = Vec::with_capacity(num_rounds);
+
+                    for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
+                        // Append commitment to transcript for challenge derivation
+                        let mut commitment_bytes = Vec::new();
+                        commitment
+                            .serialize_compressed(&mut commitment_bytes)
+                            .expect("Serialization should not fail");
+                        transcript.append_message(b"UniPolyCommitment");
+                        transcript.append_bytes(&commitment_bytes);
+                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
+
+                        let degree = zk_proof.poly_degrees[round_idx];
+
+                        // Create synthetic coefficients that satisfy sumcheck relation
+                        // g(x) = c0 + c1*x + c2*x^2 + ... has degree coefficients
+                        // claimed_sum = 2*c0 + c1 + c2 + ...
+                        let claimed_sum = Fr::from(12345u64);
+
+                        // Use simple synthetic values: c0 = 1, c2..cd = 1, compute c1
+                        let c0 = Fr::from(1u64);
+                        let num_higher_coeffs = degree.saturating_sub(1);
+                        let sum_higher_coeffs = Fr::from(num_higher_coeffs as u64);
+                        let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
+
+                        let mut coeffs = vec![c0, c1];
+                        for _ in 0..num_higher_coeffs {
+                            coeffs.push(Fr::from(1u64));
+                        }
+
+                        let round_witness =
+                            RoundWitness::with_claimed_sum(coeffs, challenge, claimed_sum);
+
+                        rounds.push((round_witness, degree));
+                    }
+
+                    rounds
+                }
             }
-
-            let mut rounds = Vec::with_capacity(num_rounds);
-
-            for compressed_poly in compressed_polys.iter() {
-                // Append to transcript and derive challenge
-                compressed_poly.append_to_transcript(transcript);
-                let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
-
-                // Extract compressed coefficients [c0, c2, c3, ...]
-                // The degree is len of compressed (since c1 is omitted)
-                let compressed = &compressed_poly.coeffs_except_linear_term;
-                let degree = compressed.len();
-
-                let c0 = compressed[0];
-                let sum_higher_coeffs: Fr = compressed[1..].iter().copied().sum();
-
-                // For each round, we use its own claimed_sum
-                // claimed_sum = 2*c0 + c1 + c2 + ... (sum check)
-                // We can pick any claimed_sum, compute c1 from it, and the round will be valid
-                // Use a fixed value for simplicity
-                let claimed_sum = Fr::from(12345u64);
-                let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
-
-                // Build full coefficients [c0, c1, c2, c3, ...]
-                let mut coeffs = vec![c0, c1];
-                coeffs.extend_from_slice(&compressed[1..]);
-
-                // Create round witness with the computed claimed_sum
-                let round_witness = RoundWitness::with_claimed_sum(coeffs, challenge, claimed_sum);
-
-                rounds.push((round_witness, degree));
-            }
-
-            rounds
         }
 
         // Run muldiv prover to get a real proof
@@ -1744,7 +1776,7 @@ mod tests {
         println!("\n=== BlindFold R1CS Satisfaction Test (All 6 Stages) ===\n");
 
         // Process all 6 stages and verify each one
-        let stage_proofs: Vec<(&str, &SumcheckInstanceProof<Fr, _>)> = vec![
+        let stage_proofs: Vec<(&str, &SumcheckInstanceProof<Fr, Bn254Curve, _>)> = vec![
             ("Stage 1 (Spartan Outer)", &jolt_proof.stage1_sumcheck_proof),
             (
                 "Stage 2 (Product Virtual)",

@@ -41,7 +41,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
+        sumcheck::{BatchedSumcheck, StandardSumcheckProof},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
@@ -518,6 +518,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
+/// ZK data collected during prove_zk for later use by BlindFold.
+///
+/// When ZK sumcheck is used, this stores the polynomial coefficients and
+/// blinding factors that are needed to construct the BlindFold witness.
+/// The commitments are stored as serialized bytes to keep the accumulator
+/// curve-agnostic.
+#[derive(Clone, Debug)]
+pub struct ZkStageData<F: JoltField> {
+    /// Initial batched claim for this sumcheck stage
+    pub initial_claim: F,
+    /// Pedersen commitments to round polynomials (serialized G1 points)
+    pub round_commitments: Vec<Vec<u8>>,
+    /// Compressed polynomial coefficients (coeffs_except_linear_term for each round)
+    pub compressed_poly_coeffs: Vec<Vec<F>>,
+    /// Blinding factors used for Pedersen commitments (one per round)
+    pub blinding_factors: Vec<F>,
+    /// Challenges derived during this sumcheck
+    pub challenges: Vec<F::Challenge>,
+}
+
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
 #[derive(Clone, Allocative)]
@@ -532,6 +552,10 @@ where
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
     log_T: usize,
+    /// ZK auxiliary data for BlindFold, populated by BatchedSumcheck::prove_zk.
+    /// Each entry corresponds to one sumcheck stage.
+    #[allocative(skip)]
+    zk_stage_data: Vec<ZkStageData<F>>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -569,7 +593,7 @@ pub struct ReducedOpeningProof<
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub sumcheck_proof: StandardSumcheckProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     joint_opening_proof: PCS::Proof,
     #[cfg(test)]
@@ -636,9 +660,24 @@ where
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
-            // #[cfg(test)]
-            // joint_commitment: None,
+            zk_stage_data: vec![],
         }
+    }
+
+    /// Push ZK stage data collected during prove_zk for later use by BlindFold.
+    pub fn push_zk_stage_data(&mut self, data: ZkStageData<F>) {
+        self.zk_stage_data.push(data);
+    }
+
+    /// Take all ZK stage data, leaving the accumulator's storage empty.
+    /// Called by prove_blindfold to retrieve all collected ZK data.
+    pub fn take_zk_stage_data(&mut self) -> Vec<ZkStageData<F>> {
+        std::mem::take(&mut self.zk_stage_data)
+    }
+
+    /// Get a reference to the ZK stage data without taking ownership.
+    pub fn zk_stage_data(&self) -> &[ZkStageData<F>] {
+        &self.zk_stage_data
     }
 
     pub fn len(&self) -> usize {
@@ -939,7 +978,7 @@ where
         &mut self,
         transcript: &mut ProofTranscript,
     ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
+        StandardSumcheckProof<F, ProofTranscript>,
         Vec<F::Challenge>,
         Vec<F>,
     ) {
@@ -1283,7 +1322,7 @@ where
     /// Verifies the sumcheck proven in `ProverOpeningAccumulator::prove_batch_opening_reduction`.
     fn verify_batch_opening_reduction<ProofTranscript: Transcript>(
         &self,
-        sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        sumcheck_proof: &StandardSumcheckProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = self
@@ -1294,7 +1333,7 @@ where
                 instance
             })
             .collect();
-        BatchedSumcheck::verify(
+        BatchedSumcheck::verify_standard(
             sumcheck_proof,
             instances,
             &mut VerifierOpeningAccumulator::new(self.log_T),

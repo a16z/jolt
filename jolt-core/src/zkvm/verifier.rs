@@ -450,8 +450,19 @@ impl<
         let mut stage_configs = Vec::new();
         let mut total_rounds = 0usize;
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
-            for (round_idx, compressed_poly) in proof.compressed_polys.iter().enumerate() {
-                let poly_degree = compressed_poly.coeffs_except_linear_term.len();
+            let num_rounds = proof.num_rounds();
+            for round_idx in 0..num_rounds {
+                // Extract polynomial degree from the proof variant
+                let poly_degree = match proof {
+                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Standard(std_proof) => {
+                        std_proof.compressed_polys[round_idx]
+                            .coeffs_except_linear_term
+                            .len()
+                    }
+                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) => {
+                        zk_proof.poly_degrees[round_idx]
+                    }
+                };
                 // Mark first round of each logical Jolt stage (except stage 0) as starting a new chain
                 let starts_new_chain = round_idx == 0 && stage_idx > 0;
                 let config = if starts_new_chain {

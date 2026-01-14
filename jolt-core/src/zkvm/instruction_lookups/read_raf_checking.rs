@@ -1548,12 +1548,12 @@ mod tests {
             OpeningPoint::new(r_cycle_branch.clone()),
         );
 
-        let mut verifier_sumcheck =
+        let verifier_sumcheck =
             ReadRafSumcheckVerifier::new(trace.len().log_2(), verifier_transcript);
 
-        let r_sumcheck_verif = BatchedSumcheck::verify(
+        let r_sumcheck_verif = BatchedSumcheck::verify_standard(
             &proof,
-            vec![&mut verifier_sumcheck],
+            vec![&verifier_sumcheck],
             &mut verifier_opening_accumulator,
             verifier_transcript,
         )
