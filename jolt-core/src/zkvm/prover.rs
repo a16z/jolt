@@ -396,12 +396,12 @@ where
         // Stage 10: Build constraint system and extract metadata
         let recursion_constraint_metadata = self.prove_stage10(&recursion_prover);
 
-        // Stage 11: Run recursion sumchecks (stages 1-3 + 3b)
-        let (stage1_proof, stage2_m_eval, _r_stage1, _r_stage2, stage3_proof, stage3b_proof, accumulator) =
-            self.prove_stage11(&recursion_prover);
+        // Stage 11: Build dense polynomial and commit (must happen BEFORE sumchecks for soundness)
+        let (_dense_poly, dense_commitment, dense_mlpoly) = self.prove_stage11(&recursion_prover);
 
-        // Stage 12: Build dense polynomial and commit
-        let (_dense_poly, dense_commitment, dense_mlpoly) = self.prove_stage12(&recursion_prover);
+        // Stage 12: Run recursion sumchecks (stages 1-3 + 3b) - verify the committed polynomial
+        let (stage1_proof, stage2_m_eval, _r_stage1, _r_stage2, stage3_proof, stage3b_proof, accumulator) =
+            self.prove_stage12(&recursion_prover);
 
         // Stage 13: Generate Hyrax opening proof
         let (hyrax_proof, opening_claims) = self.prove_stage13(dense_mlpoly, accumulator);
@@ -1519,9 +1519,9 @@ where
         })
     }
 
-    /// Stage 11: Run recursion sumchecks (3 stages)
+    /// Stage 12: Run recursion sumchecks (3 stages) - verify the committed polynomial
     #[tracing::instrument(skip_all)]
-    fn prove_stage11(
+    fn prove_stage12(
         &mut self,
         recursion_prover: &RecursionProver<Fq>,
     ) -> (
@@ -1533,7 +1533,7 @@ where
         crate::zkvm::recursion::stage3::jagged_assist::JaggedAssistProof<Fq, ProofTranscript>,
         ProverOpeningAccumulator<Fq>,
     ) {
-        tracing::info!("Stage 11: Running recursion sumchecks");
+        tracing::info!("Stage 12: Running recursion sumchecks");
 
         // Initialize opening accumulator
         let log_T = recursion_prover.constraint_system.num_vars();
@@ -1578,9 +1578,9 @@ where
         )
     }
 
-    /// Stage 12: Build and commit to dense polynomial
+    /// Stage 11: Build and commit to dense polynomial (must happen BEFORE sumchecks for soundness)
     #[tracing::instrument(skip_all)]
-    fn prove_stage12(
+    fn prove_stage11(
         &mut self,
         recursion_prover: &RecursionProver<Fq>,
     ) -> (
@@ -1588,7 +1588,7 @@ where
         <Hyrax<1, GrumpkinProjective> as CommitmentScheme>::Commitment,
         MultilinearPolynomial<Fq>,
     ) {
-        tracing::info!("Stage 12: Building and committing to dense polynomial");
+        tracing::info!("Stage 11: Building and committing to dense polynomial");
 
         type HyraxPCS = Hyrax<1, GrumpkinProjective>;
 
@@ -1620,6 +1620,9 @@ where
             tracing::info!("Generated Hyrax commitment to dense polynomial");
             commitment
         });
+
+        // Add commitment to transcript for Fiat-Shamir soundness
+        self.transcript.append_serializable(&dense_commitment);
 
         (dense_poly, dense_commitment, dense_mlpoly)
     }

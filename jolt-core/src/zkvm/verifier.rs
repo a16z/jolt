@@ -861,6 +861,9 @@ where
         let hyrax_verifier_setup =
             <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
 
+        // Add dense commitment to transcript (must match prover's order)
+        self.transcript.append_serializable(&recursion_proof.dense_commitment);
+
         let verification_result = recursion_verifier
             .verify::<ProofTranscript, HyraxPCS>(
                 recursion_proof,
