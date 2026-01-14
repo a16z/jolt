@@ -28,7 +28,7 @@ use super::{
     },
     stage2::virtualization::{
         DirectEvaluationParams, DirectEvaluationVerifier,
-        extract_virtual_claims_from_verifier_accumulator,
+        extract_virtual_claims_from_accumulator,
     },
     stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
 };
@@ -264,7 +264,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         };
 
         // Extract virtual claims from Stage 1
-        let virtual_claims = extract_virtual_claims_from_verifier_accumulator(
+        let virtual_claims = extract_virtual_claims_from_accumulator(
             accumulator_fq,
             &self.input.constraint_types,
         );

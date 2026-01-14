@@ -51,7 +51,7 @@ pub use stage1::{
 };
 pub use stage2::virtualization::{
     DirectEvaluationParams, DirectEvaluationProver, DirectEvaluationVerifier,
-    extract_virtual_claims_from_accumulator, extract_virtual_claims_from_verifier_accumulator,
+    extract_virtual_claims_from_accumulator,
 };
 pub use stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckProver, JaggedSumcheckVerifier};
 pub use witness::{

@@ -7,6 +7,7 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         dense_mlpoly::DensePolynomial,
     },
+    zkvm::recursion::stage2::virtualization::{virtual_claim_index, matrix_s_index},
 };
 use ark_bn254::Fq;
 use ark_ff::{UniformRand, Zero};
@@ -59,8 +60,8 @@ fn test_matrix_mle_definition_direct() {
     // Fill according to matrix layout: poly_type * num_constraints_padded + constraint_idx
     for constraint_idx in 0..num_constraints {
         for poly_idx in 0..num_poly_types {
-            let claim_idx = constraint_idx * num_poly_types + poly_idx;
-            let s_idx = poly_idx * num_constraints_padded + constraint_idx;
+            let claim_idx = virtual_claim_index(constraint_idx, poly_idx);
+            let s_idx = matrix_s_index(poly_idx, constraint_idx, num_constraints_padded);
             mu_evals[s_idx] = virtual_claims[claim_idx];
         }
     }
@@ -133,8 +134,8 @@ fn test_matrix_mle_with_multiple_constraints() {
     // Fill matrix with proper layout
     for constraint_idx in 0..num_constraints {
         for poly_idx in 0..num_poly_types {
-            let claim_idx = constraint_idx * num_poly_types + poly_idx;
-            let s_idx = poly_idx * num_constraints_padded + constraint_idx;
+            let claim_idx = virtual_claim_index(constraint_idx, poly_idx);
+            let s_idx = matrix_s_index(poly_idx, constraint_idx, num_constraints_padded);
             mu_evals[s_idx] = virtual_claims[claim_idx];
         }
     }
