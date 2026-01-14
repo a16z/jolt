@@ -17,6 +17,9 @@ use ark_serialize::*;
 use rand_core::CryptoRngCore;
 use std::marker::PhantomData;
 
+// Re-export UniSkipFirstRoundProof from univariate_skip to avoid type duplication
+pub use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
+
 /// Implements the standard technique for batching parallel sumchecks to reduce
 /// verifier cost and proof size.
 ///
@@ -41,6 +44,12 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -57,7 +66,6 @@ impl BatchedSumcheck {
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
@@ -74,6 +82,7 @@ impl BatchedSumcheck {
 
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
+        let two_inv = F::from_u64(2).inverse().unwrap();
 
         for round in 0..max_num_rounds {
             #[cfg(not(target_arch = "wasm32"))]
@@ -82,26 +91,19 @@ impl BatchedSumcheck {
                 print_current_memory_usage(label.as_str());
             }
 
-            let remaining_rounds = max_num_rounds - round;
-
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
                 .iter_mut()
                 .zip(individual_claims.iter())
                 .map(|(sumcheck, previous_claim)| {
                     let num_rounds = sumcheck.num_rounds();
-                    if remaining_rounds > num_rounds {
-                        // We haven't gotten to this sumcheck's variables yet, so
-                        // the univariate polynomial is just a constant equal to
-                        // the input claim, scaled by a power of 2.
-                        let num_rounds = sumcheck.num_rounds();
-                        let scaled_input_claim = sumcheck
-                            .input_claim(opening_accumulator)
-                            .mul_pow_2(remaining_rounds - num_rounds - 1);
-                        // Constant polynomial
-                        UniPoly::from_coeff(vec![scaled_input_claim])
-                    } else {
-                        let offset = max_num_rounds - sumcheck.num_rounds();
+                    let offset = sumcheck.round_offset(max_num_rounds);
+                    let active = round >= offset && round < offset + num_rounds;
+                    if active {
                         sumcheck.compute_message(round - offset, *previous_claim)
+                    } else {
+                        // Variable is "dummy" for this instance: polynomial is independent of it,
+                        // so the round univariate is constant with H(0)=H(1)=previous_claim/2.
+                        UniPoly::from_coeff(vec![*previous_claim * two_inv])
                     }
                 })
                 .collect();
@@ -143,16 +145,22 @@ impl BatchedSumcheck {
             }
 
             for sumcheck in sumcheck_instances.iter_mut() {
-                // If a sumcheck instance has fewer than `max_num_rounds`,
-                // we wait until there are <= `sumcheck.num_rounds()` left
-                // before binding its variables.
-                if remaining_rounds <= sumcheck.num_rounds() {
-                    let offset = max_num_rounds - sumcheck.num_rounds();
+                let num_rounds = sumcheck.num_rounds();
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let active = round >= offset && round < offset + num_rounds;
+                if active {
                     sumcheck.ingest_challenge(r_j, round - offset);
                 }
             }
 
             compressed_polys.push(compressed_poly);
+        }
+
+        // Allow each sumcheck instance to perform any end-of-protocol work (e.g. flushing
+        // delayed bindings) after the final challenge has been ingested and before we cache
+        // openings.
+        for sumcheck in sumcheck_instances.iter_mut() {
+            sumcheck.finalize();
         }
 
         let max_num_rounds = sumcheck_instances
@@ -162,12 +170,9 @@ impl BatchedSumcheck {
             .unwrap();
 
         for sumcheck in sumcheck_instances.iter() {
-            // If a sumcheck instance has fewer than `max_num_rounds`,
-            // we wait until there are <= `sumcheck.num_rounds()` left
-            // before binding its variables.
-            // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
-            // values of `r_sumcheck`.
-            let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+            // Instance-local slice can start at a custom global offset.
+            let offset = sumcheck.round_offset(max_num_rounds);
+            let r_slice = &r_sumcheck[offset..offset + sumcheck.num_rounds()];
 
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
@@ -211,6 +216,12 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript BEFORE deriving batching coefficients
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         let mut individual_claims: Vec<F> = sumcheck_instances
@@ -218,7 +229,6 @@ impl BatchedSumcheck {
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
@@ -358,6 +368,12 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -375,7 +391,6 @@ impl BatchedSumcheck {
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
@@ -391,12 +406,8 @@ impl BatchedSumcheck {
             .iter()
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
-                // If a sumcheck instance has fewer than `max_num_rounds`,
-                // we wait until there are <= `sumcheck.num_rounds()` left
-                // before binding its variables.
-                // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
-                // values of `r_sumcheck`.
-                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let r_slice = &r_sumcheck[offset..offset + sumcheck.num_rounds()];
 
                 // Cache polynomial opening claims, to be proven using either an
                 // opening proof or sumcheck (in the case of virtual polynomials).
@@ -730,61 +741,5 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
             Self::Standard(proof) => proof.compressed_polys.len(),
             Self::Zk(proof) => proof.round_commitments.len(),
         }
-    }
-}
-
-/// The sumcheck proof for a univariate skip round
-/// Consists of the (single) univariate polynomial sent in that round, no omission of any coefficient
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct UniSkipFirstRoundProof<F: JoltField, ProofTranscript: Transcript> {
-    pub uni_poly: UniPoly<F>,
-    _marker: PhantomData<ProofTranscript>,
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofTranscript> {
-    pub fn new(uni_poly: UniPoly<F>) -> Self {
-        Self {
-            uni_poly,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Verify only the univariate-skip first round.
-    ///
-    /// Params
-    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
-    /// - `const FIRST_ROUND_POLY_NUM_COEFFS`: number of coefficients in the first-round polynomial
-    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
-    /// - `transcript`: Fiat-Shamir transcript
-    ///
-    /// Returns `(r0, next_claim)` where `r0` is the verifier challenge for the first round
-    /// and `next_claim` is the claimed evaluation at `r0` to be used by remaining rounds.
-    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
-        &self,
-        degree_bound_first: usize,
-        claim: F,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(F::Challenge, F), ProofVerifyError> {
-        // Degree check for the high-degree first polynomial
-        if self.uni_poly.degree() > degree_bound_first {
-            return Err(ProofVerifyError::InvalidInputLength(
-                degree_bound_first,
-                self.uni_poly.degree(),
-            ));
-        }
-
-        // Append full polynomial and derive r0
-        self.uni_poly.append_to_transcript(transcript);
-        let r0 = transcript.challenge_scalar_optimized::<F>();
-
-        // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
-        let (ok, next_claim) = self
-            .uni_poly
-            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&claim, &r0);
-        if !ok {
-            return Err(ProofVerifyError::UniSkipVerificationError);
-        }
-
-        Ok((r0, next_claim))
     }
 }

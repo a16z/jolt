@@ -234,6 +234,24 @@ impl Program {
         }
     }
 
+    /// Load an ELF binary from the given path.
+    pub fn load_elf(&mut self, path: &str) {
+        self.elf = Some(PathBuf::from_str(path).expect("invalid path"));
+    }
+
+    /// Returns the current memory configuration.
+    pub fn get_memory_config(&self) -> MemoryConfig {
+        MemoryConfig {
+            memory_size: self.memory_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_trusted_advice_size: self.max_trusted_advice_size,
+            max_untrusted_advice_size: self.max_untrusted_advice_size,
+            max_output_size: self.max_output_size,
+            program_size: None,
+        }
+    }
+
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
         if let Some(elf) = &self.elf {
             let mut elf_file =

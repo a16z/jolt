@@ -14,14 +14,16 @@ pub struct VirtualRegisterAllocator {
     allocated: Arc<Mutex<[bool; NUM_VIRTUAL_REGISTERS]>>,
     /// At the end of the inline execution all registers have to be reset to 0
     /// This variable tracks which registers were allocated during inline execution
-    pending_clearing_inline: Arc<Mutex<Vec<u8>>>,
+    /// when a register is allocated, this is set to true
+    /// when a register is deallocated, this is not set to false (since it still needs to be reset)
+    pending_clearing_inline: Arc<Mutex<[bool; NUM_VIRTUAL_REGISTERS]>>,
 }
 
 impl VirtualRegisterAllocator {
     pub fn new() -> Self {
         Self {
             allocated: Arc::new(Mutex::new([false; NUM_VIRTUAL_REGISTERS])),
-            pending_clearing_inline: Arc::new(Mutex::new(Vec::new())),
+            pending_clearing_inline: Arc::new(Mutex::new([false; NUM_VIRTUAL_REGISTERS])),
         }
     }
 
@@ -61,8 +63,7 @@ impl VirtualRegisterAllocator {
                 *allocated = true;
                 self.pending_clearing_inline
                     .lock()
-                    .expect("Failed to lock virtual register allocator")
-                    .push(i as u8 + RISCV_REGISTER_BASE);
+                    .expect("Failed to lock virtual register allocator")[i] = true;
                 return VirtualRegisterGuard {
                     index: i as u8 + RISCV_REGISTER_BASE,
                     allocator: self.clone(),
@@ -83,13 +84,19 @@ impl VirtualRegisterAllocator {
                 .all(|allocated| !*allocated),
             "All allocated virtual registers have to be dropped before inline finalization"
         );
-
-        std::mem::take(
-            &mut self
-                .pending_clearing_inline
-                .lock()
-                .expect("Failed to lock virtual register allocator"),
-        )
+        // Return the list of registers that need to be reset and clear the pending array
+        let mut pending = self
+            .pending_clearing_inline
+            .lock()
+            .expect("Failed to lock virtual register allocator");
+        let result = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| **p)
+            .map(|(i, _)| i as u8 + RISCV_REGISTER_BASE)
+            .collect::<Vec<u8>>();
+        *pending = [false; NUM_VIRTUAL_REGISTERS];
+        result
     }
 
     fn deallocate(&self, index: u8) {

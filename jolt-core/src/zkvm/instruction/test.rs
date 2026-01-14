@@ -152,8 +152,12 @@ where
         let normalized_operands = normalized_instr.operands;
 
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
-        cpu.x[normalized_operands.rs1 as usize] = random_cycle.register_state.rs1_value() as i64;
-        cpu.x[normalized_operands.rs2 as usize] = random_cycle.register_state.rs2_value() as i64;
+        if let Some(rs1_val) = random_cycle.register_state.rs1_value() {
+            cpu.x[normalized_operands.rs1.unwrap() as usize] = rs1_val as i64;
+        }
+        if let Some(rs2_val) = random_cycle.register_state.rs2_value() {
+            cpu.x[normalized_operands.rs2.unwrap() as usize] = rs2_val as i64;
+        }
 
         random_cycle.instruction.trace(&mut cpu, None);
         let lookup_result = LookupQuery::<XLEN>::to_lookup_output(&random_cycle);
@@ -164,8 +168,8 @@ where
         if is_jal || is_jalr {
             let cpu_pc = cpu.read_pc();
             assert_eq!(cpu_pc, lookup_result, "{random_cycle:?}");
-        } else {
-            let cpu_result = cpu.x[normalized_operands.rd as usize] as u64;
+        } else if let Some(rd) = normalized_operands.rd {
+            let cpu_result = cpu.x[rd as usize] as u64;
             assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
         }
     }

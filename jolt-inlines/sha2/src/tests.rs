@@ -215,4 +215,49 @@ mod sdk_tests {
 
         assert_eq!(result, expected, "SHA256 SDK failed for long message");
     }
+
+    #[test]
+    fn test_sha256_aligned_vs_unaligned() {
+        use sha2::{Digest, Sha256 as RefSha256};
+
+        // Test various sizes including block boundary (64 bytes)
+        let test_sizes = [
+            0, 1, 3, 4, 7, 8, 31, 32, 55, 56, 63, 64, 65, 100, 128, 256, 512, 1024, 2048,
+        ];
+
+        for &size in &test_sizes {
+            // Create aligned buffer
+            let aligned: Vec<u8> = (0..size).map(|i| (i * 37 + 11) as u8).collect();
+
+            // Create unaligned buffer by adding 1-byte offset
+            let mut unaligned_buf = vec![0u8; size + 1];
+            unaligned_buf[1..].copy_from_slice(&aligned);
+            let unaligned = &unaligned_buf[1..];
+
+            // Verify alignment difference
+            if size > 0 {
+                assert_ne!(
+                    aligned.as_ptr() as usize % 4,
+                    unaligned.as_ptr() as usize % 4,
+                    "Test setup error: pointers should have different alignment"
+                );
+            }
+
+            // Both should produce identical results
+            let aligned_result = Sha256::digest(&aligned);
+            let unaligned_result = Sha256::digest(unaligned);
+
+            assert_eq!(
+                aligned_result, unaligned_result,
+                "SHA256: aligned vs unaligned mismatch at size {size}"
+            );
+
+            // Also verify against reference implementation
+            let expected: [u8; 32] = RefSha256::digest(&aligned).into();
+            assert_eq!(
+                aligned_result, expected,
+                "SHA256: result doesn't match reference at size {size}"
+            );
+        }
+    }
 }

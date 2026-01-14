@@ -16,6 +16,7 @@ pub fn init_inlines() -> Result<(), String> {
         BLAKE3_FUNCT7,
         BLAKE3_NAME,
         std::boxed::Box::new(sequence_builder::blake3_inline_sequence_builder),
+        None,
     )?;
 
     register_inline(
@@ -24,6 +25,7 @@ pub fn init_inlines() -> Result<(), String> {
         BLAKE3_FUNCT7,
         BLAKE3_KEYED64_NAME,
         std::boxed::Box::new(sequence_builder::blake3_keyed64_inline_sequence_builder),
+        None,
     )?;
 
     Ok(())
@@ -75,12 +77,12 @@ pub fn store_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        eprintln!("Failed to register BLAKE3 inlines: {e}");
+        tracing::error!("Failed to register BLAKE3 inlines: {e}");
     }
 
     if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
         if let Err(e) = store_inlines() {
-            eprintln!("Failed to store BLAKE3 inline traces: {e}");
+            tracing::error!("Failed to store BLAKE3 inline traces: {e}");
         }
     }
 }

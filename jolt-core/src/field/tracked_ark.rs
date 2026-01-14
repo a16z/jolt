@@ -452,10 +452,10 @@ impl JoltField for TrackedFr {
 }
 
 impl TrackedFr {
-    #[inline]
-    pub fn mul_hi_bigint_u128(&self, n: [u64; 4]) -> Self {
+    #[inline(always)]
+    pub fn mul_by_hi_2limbs(&self, limb_lo: u64, limb_hi: u64) -> Self {
         MUL_U128_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_hi_bigint_u128(n))
+        TrackedFr(self.0.mul_by_hi_2limbs(limb_lo, limb_hi))
     }
 }
 

@@ -140,7 +140,6 @@ impl<F: JoltField> DensePolynomial<F> {
         let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
 
         for i in 0..n {
-            // let low' = low + r * (high - low)
             let low = self.Z[i];
             let high = self.Z[i + n];
             if !(low.is_zero() && high.is_zero()) {
@@ -164,8 +163,7 @@ impl<F: JoltField> DensePolynomial<F> {
         let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
 
         for i in 0..n {
-            // let low' = low + r * (high - low)
-            // Special truth table here
+            // Special truth table here:
             //         high 0   high 1
             // low 0     0        r
             // low 1   (1-r)      1

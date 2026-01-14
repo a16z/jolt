@@ -60,6 +60,8 @@ use super::constraints::{
     NUM_PRODUCT_VIRTUAL, OUTER_UNIVARIATE_SKIP_DEGREE, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
     PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
+#[cfg(test)]
+use super::constraints::{R1CS_CONSTRAINTS_FIRST_GROUP, R1CS_CONSTRAINTS_SECOND_GROUP};
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
 
 pub(crate) const UNISKIP_TARGETS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] =
@@ -138,6 +140,29 @@ pub struct AzFirstGroup {
     pub must_start_sequence: bool, // NextIsVirtual && !NextIsFirstInSequence
 }
 
+impl AzFirstGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `az_at_r_first_group`
+    /// but keeps the result in an `Acc5U` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc5U<F>,
+    ) {
+        acc.fmadd(&w[0], &self.not_load_store);
+        acc.fmadd(&w[1], &self.load_a);
+        acc.fmadd(&w[2], &self.load_b);
+        acc.fmadd(&w[3], &self.store);
+        acc.fmadd(&w[4], &self.add_sub_mul);
+        acc.fmadd(&w[5], &self.not_add_sub_mul);
+        acc.fmadd(&w[6], &self.assert_flag);
+        acc.fmadd(&w[7], &self.should_jump);
+        acc.fmadd(&w[8], &self.virtual_instruction);
+        acc.fmadd(&w[9], &self.must_start_sequence);
+    }
+}
+
 /// Magnitudes for the first group (kept small: bool/u64/S64)
 #[derive(Clone, Copy, Debug)]
 pub struct BzFirstGroup {
@@ -151,6 +176,29 @@ pub struct BzFirstGroup {
     pub next_unexp_pc_minus_lookup_output: S64,      // NextUnexpandedPC - LookupOutput
     pub next_pc_minus_pc_plus_one: S64,              // NextPC - (PC + 1)
     pub one_minus_do_not_update_unexpanded_pc: bool, // 1 - DoNotUpdateUnexpandedPC
+}
+
+impl BzFirstGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `bz_at_r_first_group`
+    /// but keeps the result in an `Acc6S` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc6S<F>,
+    ) {
+        acc.fmadd(&w[0], &self.ram_addr);
+        acc.fmadd(&w[1], &self.ram_read_minus_ram_write);
+        acc.fmadd(&w[2], &self.ram_read_minus_rd_write);
+        acc.fmadd(&w[3], &self.rs2_minus_ram_write);
+        acc.fmadd(&w[4], &self.left_lookup);
+        acc.fmadd(&w[5], &self.left_lookup_minus_left_input);
+        acc.fmadd(&w[6], &self.lookup_output_minus_one);
+        acc.fmadd(&w[7], &self.next_unexp_pc_minus_lookup_output);
+        acc.fmadd(&w[8], &self.next_pc_minus_pc_plus_one);
+        acc.fmadd(&w[9], &self.one_minus_do_not_update_unexpanded_pc);
+    }
 }
 
 /// Guards for the second group (all booleans except two u8 flags)
@@ -167,6 +215,28 @@ pub struct AzSecondGroup {
     pub not_jump_or_branch: bool,     // !(Jump || ShouldBranch)
 }
 
+impl AzSecondGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `az_at_r_second_group`
+    /// but keeps the result in an `Acc5U` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc5U<F>,
+    ) {
+        acc.fmadd(&w[0], &self.load_or_store);
+        acc.fmadd(&w[1], &self.add);
+        acc.fmadd(&w[2], &self.sub);
+        acc.fmadd(&w[3], &self.mul);
+        acc.fmadd(&w[4], &self.not_add_sub_mul_advice);
+        acc.fmadd(&w[5], &self.write_lookup_to_rd);
+        acc.fmadd(&w[6], &self.write_pc_to_rd);
+        acc.fmadd(&w[7], &self.should_branch);
+        acc.fmadd(&w[8], &self.not_jump_or_branch);
+    }
+}
+
 /// Magnitudes for the second group (mixed precision up to S160)
 #[derive(Clone, Copy, Debug)]
 pub struct BzSecondGroup {
@@ -179,6 +249,28 @@ pub struct BzSecondGroup {
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
     pub next_unexp_pc_minus_pc_plus_imm: i128, // NextUnexpandedPC - (UnexpandedPC + Imm)
     pub next_unexp_pc_minus_expected: S64, // NextUnexpandedPC - (UnexpandedPC + const)
+}
+
+impl BzSecondGroup {
+    /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
+    /// over the univariate-skip base window. This mirrors `bz_at_r_second_group`
+    /// but keeps the result in an `Acc7S` accumulator without reducing.
+    #[inline(always)]
+    pub fn fmadd_at_r<F: JoltField>(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc: &mut Acc7S<F>,
+    ) {
+        acc.fmadd(&w[0], &self.ram_addr_minus_rs1_plus_imm);
+        acc.fmadd(&w[1], &self.right_lookup_minus_add_result);
+        acc.fmadd(&w[2], &self.right_lookup_minus_sub_result);
+        acc.fmadd(&w[3], &self.right_lookup_minus_product);
+        acc.fmadd(&w[4], &self.right_lookup_minus_right_input);
+        acc.fmadd(&w[5], &self.rd_write_minus_lookup_output);
+        acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
+        acc.fmadd(&w[7], &self.next_unexp_pc_minus_pc_plus_imm);
+        acc.fmadd(&w[8], &self.next_unexp_pc_minus_expected);
+    }
 }
 
 /// Unified evaluator wrapper with typed accessors for both groups
@@ -196,8 +288,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             _m: core::marker::PhantomData,
         }
     }
-
-    // ---------- First group ----------
 
     #[inline]
     pub fn eval_az_first_group(&self) -> AzFirstGroup {
@@ -293,8 +383,27 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.barrett_reduce()
     }
 
+    /// Fused accumulate of first-group Az and Bz into unreduced accumulators using
+    /// Lagrange weights `w`. This keeps everything in unreduced form; callers are
+    /// responsible for reducing at the end.
+    #[inline]
+    pub fn fmadd_first_group_at_r(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc_az: &mut Acc5U<F>,
+        acc_bz: &mut Acc6S<F>,
+    ) {
+        let az = self.eval_az_first_group();
+        az.fmadd_at_r(w, acc_az);
+        let bz = self.eval_bz_first_group();
+        bz.fmadd_at_r(w, acc_bz);
+    }
+
     /// Product Az·Bz at the j-th extended uniskip target for the first group (uses precomputed weights).
     pub fn extended_azbz_product_first_group(&self, j: usize) -> S192 {
+        #[cfg(test)]
+        self.assert_constraints_first_group();
+
         let coeffs_i32: &[i32; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = &COEFFS_PER_J[j];
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
@@ -377,21 +486,58 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[cfg(test)]
+    fn assert_constraint_first_group(&self, index: usize, guard: bool, satisfied: bool) {
+        if guard && !satisfied {
+            let mut constraint_string = String::new();
+            let _ = R1CS_CONSTRAINTS_FIRST_GROUP[index]
+                .pretty_fmt_with_row(&mut constraint_string, self.row);
+            println!("{constraint_string}");
+            panic!(
+                "First group constraint {} ({:?}) violated",
+                index, R1CS_CONSTRAINTS_FIRST_GROUP[index].label
+            );
+        }
+    }
+
+    #[cfg(test)]
     pub fn assert_constraints_first_group(&self) {
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
-        debug_assert!((!az.not_load_store) || bz.ram_addr == 0);
-        debug_assert!((!az.load_a) || bz.ram_read_minus_ram_write.to_i128() == 0);
-        debug_assert!((!az.load_b) || bz.ram_read_minus_rd_write.to_i128() == 0);
-        debug_assert!((!az.store) || bz.rs2_minus_ram_write.to_i128() == 0);
-        debug_assert!((!az.add_sub_mul) || bz.left_lookup == 0);
-        debug_assert!((!az.not_add_sub_mul) || bz.left_lookup_minus_left_input.to_i128() == 0);
-        debug_assert!((!az.assert_flag) || bz.lookup_output_minus_one.to_i128() == 0);
-        debug_assert!((!az.should_jump) || bz.next_unexp_pc_minus_lookup_output.to_i128() == 0);
-        debug_assert!((!az.virtual_instruction) || bz.next_pc_minus_pc_plus_one.to_i128() == 0);
-        debug_assert!((!az.must_start_sequence) || bz.one_minus_do_not_update_unexpanded_pc);
+        self.assert_constraint_first_group(0, az.not_load_store, bz.ram_addr == 0);
+        self.assert_constraint_first_group(
+            1,
+            az.load_a,
+            bz.ram_read_minus_ram_write.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(2, az.load_b, bz.ram_read_minus_rd_write.to_i128() == 0);
+        self.assert_constraint_first_group(3, az.store, bz.rs2_minus_ram_write.to_i128() == 0);
+        self.assert_constraint_first_group(4, az.add_sub_mul, bz.left_lookup == 0);
+        self.assert_constraint_first_group(
+            5,
+            az.not_add_sub_mul,
+            bz.left_lookup_minus_left_input.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            6,
+            az.assert_flag,
+            bz.lookup_output_minus_one.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            7,
+            az.should_jump,
+            bz.next_unexp_pc_minus_lookup_output.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            8,
+            az.virtual_instruction,
+            bz.next_pc_minus_pc_plus_one.to_i128() == 0,
+        );
+        self.assert_constraint_first_group(
+            9,
+            az.must_start_sequence,
+            !bz.one_minus_do_not_update_unexpanded_pc,
+        );
     }
-    // ---------- Second group ----------
 
     #[inline]
     pub fn eval_az_second_group(&self) -> AzSecondGroup {
@@ -519,6 +665,22 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.barrett_reduce()
     }
 
+    /// Fused accumulate of second-group Az and Bz into unreduced accumulators
+    /// using Lagrange weights `w`. This keeps everything in unreduced form; callers
+    /// are responsible for reducing at the end.
+    #[inline]
+    pub fn fmadd_second_group_at_r(
+        &self,
+        w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        acc_az: &mut Acc5U<F>,
+        acc_bz: &mut Acc7S<F>,
+    ) {
+        let az = self.eval_az_second_group();
+        az.fmadd_at_r(w, acc_az);
+        let bz = self.eval_bz_second_group();
+        bz.fmadd_at_r(w, acc_bz);
+    }
+
     /// Product Az·Bz at the j-th extended uniskip target for the second group (uses precomputed weights).
     pub fn extended_azbz_product_second_group(&self, j: usize) -> S192 {
         #[cfg(test)]
@@ -599,18 +761,56 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[cfg(test)]
+    fn assert_constraint_second_group(&self, index: usize, guard: bool, satisfied: bool) {
+        if guard && !satisfied {
+            let mut constraint_string = String::new();
+            let _ = R1CS_CONSTRAINTS_SECOND_GROUP[index]
+                .pretty_fmt_with_row(&mut constraint_string, self.row);
+            println!("{constraint_string}");
+            panic!(
+                "Second group constraint {} ({:?}) violated",
+                index, R1CS_CONSTRAINTS_SECOND_GROUP[index].label
+            );
+        }
+    }
+
+    #[cfg(test)]
     pub fn assert_constraints_second_group(&self) {
         let az = self.eval_az_second_group();
         let bz = self.eval_bz_second_group();
-        debug_assert!((!az.load_or_store) || bz.ram_addr_minus_rs1_plus_imm == 0i128);
-        debug_assert!((!az.add) || bz.right_lookup_minus_add_result.is_zero());
-        debug_assert!((!az.sub) || bz.right_lookup_minus_sub_result.is_zero());
-        debug_assert!((!az.mul) || bz.right_lookup_minus_product.is_zero());
-        debug_assert!((!az.not_add_sub_mul_advice) || bz.right_lookup_minus_right_input.is_zero());
-        debug_assert!((!az.write_lookup_to_rd) || bz.rd_write_minus_lookup_output.is_zero());
-        debug_assert!((!az.write_pc_to_rd) || bz.rd_write_minus_pc_plus_const.is_zero());
-        debug_assert!((!az.should_branch) || bz.next_unexp_pc_minus_pc_plus_imm == 0);
-        debug_assert!((!az.not_jump_or_branch) || bz.next_unexp_pc_minus_expected.is_zero());
+        self.assert_constraint_second_group(
+            0,
+            az.load_or_store,
+            bz.ram_addr_minus_rs1_plus_imm == 0i128,
+        );
+        self.assert_constraint_second_group(1, az.add, bz.right_lookup_minus_add_result.is_zero());
+        self.assert_constraint_second_group(2, az.sub, bz.right_lookup_minus_sub_result.is_zero());
+        self.assert_constraint_second_group(3, az.mul, bz.right_lookup_minus_product.is_zero());
+        self.assert_constraint_second_group(
+            4,
+            az.not_add_sub_mul_advice,
+            bz.right_lookup_minus_right_input.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            5,
+            az.write_lookup_to_rd,
+            bz.rd_write_minus_lookup_output.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            6,
+            az.write_pc_to_rd,
+            bz.rd_write_minus_pc_plus_const.is_zero(),
+        );
+        self.assert_constraint_second_group(
+            7,
+            az.should_branch,
+            bz.next_unexp_pc_minus_pc_plus_imm == 0,
+        );
+        self.assert_constraint_second_group(
+            8,
+            az.not_jump_or_branch,
+            bz.next_unexp_pc_minus_expected.is_zero(),
+        );
     }
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
