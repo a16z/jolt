@@ -134,7 +134,7 @@ pub struct AzFirstGroup {
     pub not_add_sub_mul: bool,     // !(Add || Sub || Mul)
     pub assert_flag: bool,         // Assert
     pub should_jump: bool,              // ShouldJump
-    pub virtual_instruction_active: bool, // VirtualInstructionActive = VirtualInstruction && !NextIsNoop
+    pub virtual_sequence_active: bool, // VirtualSequenceActive && !IsLastInSequence
     pub must_start_sequence: bool,      // NextIsVirtual && !NextIsFirstInSequence
 }
 
@@ -208,6 +208,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let sub = flags[CircuitFlags::SubtractOperands];
         let mul = flags[CircuitFlags::MultiplyOperands];
         let assert_flag = flags[CircuitFlags::Assert];
+        let is_last = flags[CircuitFlags::IsLastInSequence];
 
         AzFirstGroup {
             not_load_store: !(ld || st),
@@ -218,7 +219,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             not_add_sub_mul: !(add || sub || mul),
             assert_flag,
             should_jump: self.row.should_jump,
-            virtual_instruction_active: self.row.virtual_instruction_active,
+            virtual_sequence_active: self.row.virtual_sequence_active && !is_last,
             must_start_sequence: self.row.next_is_virtual && !self.row.next_is_first_in_sequence,
         }
     }
@@ -270,7 +271,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[5], &az.not_add_sub_mul);
         acc.fmadd(&w[6], &az.assert_flag);
         acc.fmadd(&w[7], &az.should_jump);
-        acc.fmadd(&w[8], &az.virtual_instruction_active);
+        acc.fmadd(&w[8], &az.virtual_sequence_active);
         acc.fmadd(&w[9], &az.must_start_sequence);
         acc.barrett_reduce()
     }
@@ -359,7 +360,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         }
 
         let c8_i32 = coeffs_i32[8];
-        if az.virtual_instruction_active {
+        if az.virtual_sequence_active {
             az_eval_i32 += c8_i32;
         } else {
             bz_eval_s128.fmadd(&c8_i32, &bz.next_pc_minus_pc_plus_one);
@@ -418,7 +419,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         );
         self.assert_constraint_first_group(
             8,
-            az.virtual_instruction_active,
+            az.virtual_sequence_active,
             bz.next_pc_minus_pc_plus_one.to_i128() == 0,
         );
         self.assert_constraint_first_group(
@@ -762,7 +763,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc_next_pc.fmadd(&e_in, &row.next_pc);
                     acc_lookup_output.fmadd(&e_in, &row.lookup_output);
                     acc_sj_flag.fmadd(&e_in, &row.should_jump);
-                    acc_via_flag.fmadd(&e_in, &row.virtual_instruction_active);
+                    acc_via_flag.fmadd(&e_in, &row.virtual_sequence_active);
                     acc_next_is_virtual.fmadd(&e_in, &row.next_is_virtual);
                     acc_next_is_first_in_sequence.fmadd(&e_in, &row.next_is_first_in_sequence);
                     for flag in CircuitFlags::iter() {
@@ -814,7 +815,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());
                 out_unr[JoltR1CSInputs::ShouldJump.to_index()] =
                     eq1_val.mul_unreduced::<9>(acc_sj_flag.barrett_reduce());
-                out_unr[JoltR1CSInputs::VirtualInstructionActive.to_index()] =
+                out_unr[JoltR1CSInputs::VirtualSequenceActive.to_index()] =
                     eq1_val.mul_unreduced::<9>(acc_via_flag.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsVirtual.to_index()] =
                     eq1_val.mul_unreduced::<9>(acc_next_is_virtual.barrett_reduce());
@@ -846,7 +847,7 @@ pub struct ProductVirtualEval;
 
 impl ProductVirtualEval {
     /// Compute both fused left and right factors at r0 weights for a single cycle row.
-    /// Expected order of weights: [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump, VirtualInstructionActive]
+    /// Expected order of weights: [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump, VirtualSequenceActive]
     #[inline]
     pub fn fused_left_right_at_r<F: JoltField>(
         row: &ProductCycleInputs,
@@ -912,7 +913,7 @@ impl ProductVirtualEval {
         left_w[4] = if row.jump_flag { c[4] as i128 } else { 0 };
         right_w[4] = if row.not_next_noop { c[4] as i128 } else { 0 };
 
-        // 5: VirtualInstructionActive (VirtualInstruction_flag × (1 − NextIsNoop))
+        // 5: VirtualSequenceActive (VirtualInstruction_flag × (1 − NextIsNoop))
         left_w[5] = if row.virtual_instruction_flag { c[5] as i128 } else { 0 };
         right_w[5] = if row.not_next_noop { c[5] as i128 } else { 0 };
 

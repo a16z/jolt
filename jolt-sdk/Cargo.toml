@@ -33,6 +33,7 @@ guest-std = [
     "serde/std",
     "dep:zeroos-runtime-musl",
     "dep:linked_list_allocator",
+    "dep:zeroos-jolt-platform",
 ]
 guest-verifier = [
     "guest-std",
@@ -44,6 +45,7 @@ guest-verifier = [
 malloc-shim = ["jolt-platform/malloc-shim"]
 
 [dependencies]
+# Use jolt-platform for non-std (minimal platform support)
 jolt-platform.workspace = true
 postcard.workspace = true
 serde = { version = "1.0", default-features = false, features = ["derive"] }
@@ -57,7 +59,10 @@ jolt-core = { workspace = true, default-features = false, optional = true }
 tracer = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 
-# Guest std boot code dependencies (from ZeroOS)
+# Guest std boot code dependencies (from ZeroOS) - RISC-V target only
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+# Use ZeroOS jolt-platform for guest-std (provides __platform_bootstrap, jolt_syscall, etc.)
+zeroos-jolt-platform = { package = "jolt-platform", path = "/Users/sdhawan/Work/ZeroOS/platforms/jolt-platform", default-features = false, features = ["os-linux"], optional = true }
 zeroos-runtime-musl = { path = "/Users/sdhawan/Work/ZeroOS/crates/zeroos-runtime-musl", optional = true }
 linked_list_allocator = { version = "0.10", default-features = false, features = ["use_spin_nightly"], optional = true }
 

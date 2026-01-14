@@ -69,7 +69,7 @@ pub const PRODUCT_VIRTUAL_TERMS: [VirtualPolynomial; NUM_PRODUCT_VIRTUAL] = [
     VirtualPolynomial::WritePCtoRD,              // WritePCtoRD
     VirtualPolynomial::ShouldBranch,             // ShouldBranch
     VirtualPolynomial::ShouldJump,               // ShouldJump
-    VirtualPolynomial::VirtualInstructionActive, // VirtualInstructionActive
+    VirtualPolynomial::VirtualSequenceActive, // VirtualSequenceActive
 ];
 
 pub const NUM_PRODUCT_VIRTUAL: usize = 6;
@@ -251,7 +251,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstanceProver<F> {
                             right_w[4] = (c[4] as i128)
                                 * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
 
-                            // VirtualInstructionActive: VirtualInstruction_flag × (1 − NextIsNoop)
+                            // VirtualSequenceActive: VirtualInstruction_flag × (1 − NextIsNoop)
                             // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
                             left_w[5] = (c[5] as i128)
                                 * (if row.virtual_instruction_flag { 1i32 } else { 0i32 } as i128);

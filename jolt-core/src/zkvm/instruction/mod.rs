@@ -71,6 +71,9 @@ pub enum CircuitFlags {
     IsCompressed,
     /// Is instruction the first in a virtual sequence
     IsFirstInSequence,
+    /// Is instruction at the end of a virtual sequence (virtual_sequence_remaining == Some(0)).
+    /// Used to skip NextPCEqPCPlusOneIfInline for ECALL sequences that may jump to trap handlers.
+    IsLastInSequence,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints

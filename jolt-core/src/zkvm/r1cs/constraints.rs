@@ -376,14 +376,16 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
                 - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
                 - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
-    // if Inline && !NextIsNoop {
+    // if Inline && !NextIsNoop && !IsLastInSequence {
     //     assert!(NextPC == PC + 1)
     // }
-    // Uses VirtualInstructionActive = VirtualInstruction * (1 - NextIsNoop)
-    // This avoids enforcing PC + 1 when the inline sequence is followed by NoOp padding
+    // Uses VirtualSequenceActive = VirtualInstruction * (1 - NextIsNoop)
+    // This avoids enforcing PC + 1 when the inline sequence is followed by NoOp padding.
+    // We also subtract IsLastInSequence to skip the constraint when JALR terminates
+    // a virtual sequence and may jump to a trap handler (NextPC != PC + 1).
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::NextPCEqPCPlusOneIfInline,
-        if { { JoltR1CSInputs::VirtualInstructionActive } }
+        if { { JoltR1CSInputs::VirtualSequenceActive } - { JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
     ),
     // if NextIsVirtual && !NextIsFirstInSequence {
@@ -532,7 +534,7 @@ pub enum ProductConstraintLabel {
     WritePCtoRD,
     ShouldBranch,
     ShouldJump,
-    VirtualInstructionActive,
+    VirtualSequenceActive,
 }
 
 /// Number of product virtualization constraints
@@ -602,13 +604,13 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
         output: VirtualPolynomial::ShouldJump,
     },
-    // 5: VirtualInstructionActive = OpFlags(VirtualInstruction) · (1 − NextIsNoop)
+    // 5: VirtualSequenceActive = OpFlags(VirtualInstruction) · (1 − NextIsNoop)
     // Used to guard NextPCEqPCPlusOneIfInline: only enforce PC + 1 when not followed by NoOp
     ProductConstraint {
-        label: ProductConstraintLabel::VirtualInstructionActive,
+        label: ProductConstraintLabel::VirtualSequenceActive,
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction)),
         right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
-        output: VirtualPolynomial::VirtualInstructionActive,
+        output: VirtualPolynomial::VirtualSequenceActive,
     },
 ];
 

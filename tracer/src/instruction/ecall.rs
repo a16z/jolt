@@ -11,7 +11,6 @@ use crate::{
 
 use super::{
     addi::ADDI,
-    auipc::AUIPC,
     format::format_i::FormatI,
     jalr::JALR,
     virtual_advice::VirtualAdvice,
@@ -48,20 +47,45 @@ impl RISCVTrace for ECALL {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // First, execute the ECALL to trigger trap handling.
         // This calls cpu.raise_trap() -> handle_trap() -> handle_syscall()
-        // which sets cpu.pending_syscall_result with the syscall return value.
+        // which sets cpu.pending_csr_result with the syscall return value.
         let mut ram_access = ();
         self.execute(cpu, &mut ram_access);
 
         // Get syscall result that was stored by cpu.handle_syscall()
-        let syscall_result = cpu.pending_syscall_result.take().unwrap_or(0) as u64;
+        let syscall_result = cpu.pending_csr_result.take().unwrap_or(0) as u64;
+
+        // After trap handling, CPU's PC is either:
+        // - mtvec (if trap was taken, e.g., for Linux syscalls with ZeroOS)
+        // - self.address + 4 (if trap was not taken, e.g., for Jolt-specific ECALLs)
+        // We need the inline sequence to jump to wherever CPU's PC is now.
+        let target_pc = cpu.read_pc();
+
+        // Return address for trap handler: ECALL_addr + 4 (ECALL is always 4 bytes)
+        // This is passed in t1 so the trap handler can return without using mepc.
+        let return_addr = self.address + 4;
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // Fill in the advice value for VirtualAdvice instruction
+        // Fill in the advice values:
+        // - Index 0: syscall result (for a0)
+        // - Index 2: return address (for t1, used by trap handler to return)
+        // - Index 4: target PC (for JALR)
         if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = syscall_result;
         } else {
-            panic!("Expected VirtualAdvice instruction");
+            panic!("Expected VirtualAdvice instruction at index 0, got {:?}", inline_sequence[0]);
+        }
+
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[2] {
+            instr.advice = return_addr;
+        } else {
+            panic!("Expected VirtualAdvice instruction at index 2, got {:?}", inline_sequence[2]);
+        }
+
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[4] {
+            instr.advice = target_pc;
+        } else {
+            panic!("Expected VirtualAdvice instruction at index 4, got {:?}", inline_sequence[4]);
         }
 
         let mut trace = trace;
@@ -71,11 +95,19 @@ impl RISCVTrace for ECALL {
     }
 
     /// ECALL inline sequence: use VirtualAdvice to write syscall return value to a0,
-    /// then JALR to the next instruction.
+    /// return address to t1, and target PC for JALR, then JALR to the target.
     ///
     /// Syscalls return their result in a0 (register 10), but ECALL's encoding has rd=0.
     /// We use VirtualAdvice to provide the syscall result as untrusted advice,
     /// which gets written to a0.
+    ///
+    /// The return address (ECALL_addr+4) is passed in t1 (register 6). For trap-taking
+    /// ECALLs, the trap handler saves t1 and uses it to return, eliminating the need
+    /// for mepc CSR operations.
+    ///
+    /// The target PC is also provided via VirtualAdvice. This allows the inline sequence
+    /// to jump to either ECALL_addr+4 (for non-trap-taking ECALLs) or mtvec (for trap-taking
+    /// ECALLs handled by ZeroOS).
     ///
     /// The sequence ends with JALR to avoid the NextUnexpPCUpdateOtherwise constraint
     /// failing when the inline sequence is followed by NoOp padding. JALR has Jump=true,
@@ -86,7 +118,8 @@ impl RISCVTrace for ECALL {
         xlen: Xlen,
     ) -> Vec<Instruction> {
         let syscall_result = allocator.allocate(); // temporary for syscall result
-        let next_pc = allocator.allocate(); // temporary for next PC calculation
+        let return_addr = allocator.allocate(); // temporary for return address
+        let next_pc = allocator.allocate(); // temporary for target PC
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
@@ -96,14 +129,17 @@ impl RISCVTrace for ECALL {
         // Move result to a0 (register 10)
         asm.emit_i::<ADDI>(10, *syscall_result, 0);
 
-        // Calculate address of instruction after ECALL:
-        // AUIPC gives us the ECALL address (all inline instructions share this address)
-        asm.emit_u::<AUIPC>(*next_pc, 0);
+        // Get return address (ECALL_addr+4) as advice and write to temp register
+        asm.emit_j::<VirtualAdvice>(*return_addr, 0);
 
-        // Add 4 bytes (ECALL is always 4 bytes, never compressed)
-        asm.emit_i::<ADDI>(*next_pc, *next_pc, 4);
+        // Move return address to t1 (register 6) for trap handler to use
+        asm.emit_i::<ADDI>(6, *return_addr, 0);
 
-        // Jump to next instruction. JALR has Jump=true, so the NextUnexpPCUpdateOtherwise
+        // Get target PC as advice and write to temp register
+        // This handles both trap-taking (PC = mtvec) and non-trap-taking (PC = ECALL_addr + 4) cases
+        asm.emit_j::<VirtualAdvice>(*next_pc, 0);
+
+        // Jump to target PC. JALR has Jump=true, so the NextUnexpPCUpdateOtherwise
         // constraint won't fire (guard is !(ShouldBranch || Jump) which is false).
         // Using rd=0 means we don't save the return address.
         asm.emit_i::<JALR>(0, *next_pc, 0);

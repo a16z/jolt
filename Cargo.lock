@@ -1956,7 +1956,7 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
- "jolt-platform",
+ "jolt-platform 0.1.0",
  "lazy_static",
  "memory-stats",
  "num",
@@ -2072,6 +2072,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-platform"
+version = "0.2.0"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "zeroos",
+ "zeroos-debug",
+ "zeroos-foundation",
+]
+
+[[package]]
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
@@ -2080,7 +2091,8 @@ dependencies = [
  "common",
  "hex-literal",
  "jolt-core",
- "jolt-platform",
+ "jolt-platform 0.1.0",
+ "jolt-platform 0.2.0",
  "jolt-sdk-macros",
  "linked_list_allocator",
  "postcard",
@@ -4178,7 +4190,7 @@ dependencies = [
  "derive_more 2.0.1",
  "fnv",
  "itertools 0.10.5",
- "jolt-platform",
+ "jolt-platform 0.1.0",
  "lazy_static",
  "object 0.36.7",
  "paste",
@@ -5079,6 +5091,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroos"
+version = "0.1.0"
+dependencies = [
+ "zeroos-debug",
+ "zeroos-foundation",
+ "zeroos-macros",
+ "zeroos-os-linux",
+ "zeroos-runtime-nostd",
+]
+
+[[package]]
 name = "zeroos-debug"
 version = "0.1.0"
 dependencies = [
@@ -5095,10 +5118,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroos-macros"
+version = "0.1.0"
+
+[[package]]
+name = "zeroos-os-linux"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "zeroos-foundation",
+]
+
+[[package]]
 name = "zeroos-runtime-musl"
 version = "0.1.0"
 dependencies = [
  "zeroos-debug",
+ "zeroos-foundation",
+]
+
+[[package]]
+name = "zeroos-runtime-nostd"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
  "zeroos-foundation",
 ]
 

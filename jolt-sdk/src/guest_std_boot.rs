@@ -36,6 +36,22 @@ extern "C" {
     static __stack_top: u8;
     static __stack_bottom: u8;
     static __ehdr_start: u8;
+
+    /// Platform bootstrap function from jolt-platform.
+    /// Initializes ZeroOS (registers syscall handlers, VFS, etc.)
+    fn __platform_bootstrap();
+
+    /// Syscall handler from jolt-platform.
+    /// Routes syscalls through ZeroOS's Linux syscall infrastructure.
+    fn jolt_syscall(
+        a0: usize,
+        a1: usize,
+        a2: usize,
+        a3: usize,
+        a4: usize,
+        a5: usize,
+        nr: usize,
+    ) -> isize;
 }
 
 use zeroos_runtime_musl::build_musl_stack;
@@ -73,31 +89,32 @@ fn jolt_exit(_code: u32) -> ! {
 
 /// Platform trap handler for Jolt guests.
 ///
-/// Handles syscalls that need special processing, particularly exit syscalls
-/// which must use the JOLT_EXIT_ECALL mechanism to properly terminate the tracer.
+/// Routes syscalls through ZeroOS's syscall infrastructure (jolt_syscall),
+/// which is proven as part of the guest execution. Exit syscalls are handled
+/// specially to terminate the emulator via infinite loop (prev_pc == pc detection).
 #[no_mangle]
 pub extern "C" fn trap_handler(
     arg0: usize,
-    _arg1: usize,
-    _arg2: usize,
-    _arg3: usize,
-    _arg4: usize,
-    _arg5: usize,
+    arg1: usize,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+    arg5: usize,
     _arg6: usize,
     syscall_nr: usize,
-    _mcause: usize,
 ) -> isize {
     const SYS_EXIT: usize = 93;
     const SYS_EXIT_GROUP: usize = 94;
 
     match syscall_nr {
         SYS_EXIT | SYS_EXIT_GROUP => {
-            // Convert Linux exit syscall to Jolt's EXIT ECALL
+            // Exit syscalls need special handling to terminate the emulator
             jolt_exit(arg0 as u32);
         }
         _ => {
-            // Other syscalls are handled by the emulator directly
-            0
+            // Route all other syscalls through ZeroOS's syscall infrastructure
+            // This is proven as part of the guest execution
+            unsafe { jolt_syscall(arg0, arg1, arg2, arg3, arg4, arg5, syscall_nr) }
         }
     }
 }
@@ -109,15 +126,20 @@ pub extern "C" fn trap_handler(
 ///
 /// Key differences from ZeroOS's version:
 /// - ZeroOS uses csrr/csrw which don't clobber registers
-/// - We use ECALL which clobbers a0-a3 (and returns in a0)
-/// - So we must save/restore a0-a7 around the ECALLs
-/// - Uses RET ECALL (0x524554) instead of mret to return from trap
+/// - Return address is passed in t1 by ECALL inline sequence (no mepc needed)
+/// - Returns via JALR t1 instead of RET ECALL
+/// - No CSR operations needed (mcause was unused, mepc replaced by t1)
 #[unsafe(naked)]
 #[no_mangle]
 pub unsafe extern "C" fn _trap_handler() {
     naked_asm!(
-        // Allocate stack frame for: mcause + ra + a0-a7 (8 slots) = 80 bytes
+        // Entry: t1 contains return address (ECALL_addr+4), passed by ECALL inline sequence
+
+        // Allocate stack frame for: t1 + ra + a0-a7 = 80 bytes
         "   addi    sp, sp, -80",
+
+        // Save t1 (return address) FIRST - it's caller-saved and will be clobbered
+        "   sd      t1, 0(sp)",
 
         // Save ra and argument registers (a0-a7)
         "   sd      ra, 8(sp)",
@@ -130,60 +152,22 @@ pub unsafe extern "C" fn _trap_handler() {
         "   sd      a6, 64(sp)",
         "   sd      a7, 72(sp)",
 
-        // Read mcause via ECALL (clobbers a0-a3)
-        "   li      a0, 0x435352",  // CSR_ECALL_NUM
-        "   li      a1, 1",          // CSR_OP_READ
-        "   li      a2, 0x342",      // CSR_MCAUSE
-        "   li      a3, 0",
-        "   ecall",
-        "   sd      a0, 0(sp)",      // Save mcause at sp+0 (9th arg for trap_handler)
-
-        // Read mepc via ECALL
-        "   li      a0, 0x435352",  // CSR_ECALL_NUM
-        "   li      a1, 1",          // CSR_OP_READ
-        "   li      a2, 0x341",      // CSR_MEPC
-        "   li      a3, 0",
-        "   ecall",
-        "   mv      t0, a0",         // Save mepc in t0
-
-        // Increment mepc by 4 (ecall is always 32-bit)
-        "   addi    t0, t0, 4",
-
-        // Write mepc via ECALL
-        "   li      a0, 0x435352",  // CSR_ECALL_NUM
-        "   li      a1, 2",          // CSR_OP_WRITE
-        "   li      a2, 0x341",      // CSR_MEPC
-        "   mv      a3, t0",
-        "   ecall",
-
-        // Restore argument registers a0-a7
-        "   ld      a0, 16(sp)",
-        "   ld      a1, 24(sp)",
-        "   ld      a2, 32(sp)",
-        "   ld      a3, 40(sp)",
-        "   ld      a4, 48(sp)",
-        "   ld      a5, 56(sp)",
-        "   ld      a6, 64(sp)",
-        "   ld      a7, 72(sp)",
-
-        // Call trap_handler with a0-a7 as args, mcause at sp+0 as 9th arg
+        // Call trap_handler with a0-a7 as args
+        // No mcause needed - it was never used
         "   call    {handler}",
 
-        // Save trap_handler return value (syscall result) in t0
-        "   mv      t0, a0",
+        // a0 now contains syscall result - keep it there
 
-        // Restore ra, deallocate frame
+        // Restore ra and t1 (return address)
         "   ld      ra, 8(sp)",
+        "   ld      t1, 0(sp)",
+
+        // Deallocate frame
         "   addi    sp, sp, 80",
 
-        // Return from trap using RET ECALL (instead of mret)
-        // mepc was already updated by the trap handler
-        "   li      a0, 0x524554",  // "RET" in ASCII - return from trap
-        "   li      a7, 0",          // Clear a7 so this is treated as special ecall, not syscall
-        "   ecall",
-
-        // After RET ECALL returns, restore the syscall result to a0
-        "   mv      a0, t0",
+        // Return to caller via JALR (no RET ECALL needed!)
+        // a0 already contains the syscall result
+        "   jalr    x0, t1, 0",
 
         handler = sym trap_handler,
     )
@@ -250,15 +234,20 @@ fn init_heap() {
     }
 }
 
-/// Kernel main: Initialize heap and musl, then call __libc_start_main
+/// Kernel main: Initialize platform, heap, and musl, then call __libc_start_main
 ///
 /// This function:
-/// 1. Initializes the heap allocator
-/// 2. Builds a musl-compatible stack with argc/argv/envp/auxv
-/// 3. Calls musl's __libc_start_main which will eventually call the user's main()
+/// 1. Initializes the platform (ZeroOS syscall handlers, VFS, etc.)
+/// 2. Initializes the heap allocator
+/// 3. Builds a musl-compatible stack with argc/argv/envp/auxv
+/// 4. Calls musl's __libc_start_main which will eventually call the user's main()
 #[no_mangle]
 extern "C" fn kernel_main() -> ! {
     unsafe {
+        // Initialize the platform first - this registers ZeroOS syscall handlers,
+        // sets up VFS with console file descriptors, etc.
+        __platform_bootstrap();
+
         // Initialize the heap allocator before musl starts
         init_heap();
 

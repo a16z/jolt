@@ -21,6 +21,10 @@ impl Flags for JALR {
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed] = self.is_compressed;
+        // Set IsLastInSequence when JALR terminates a virtual sequence (remaining=0).
+        // This skips the NextPCEqPCPlusOneIfInline constraint for ECALL sequences
+        // that may jump to trap handlers (NextPC != PC + 1).
+        flags[CircuitFlags::IsLastInSequence] = self.virtual_sequence_remaining == Some(0);
         flags
     }
 

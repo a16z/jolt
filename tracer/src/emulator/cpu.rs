@@ -118,8 +118,8 @@ pub struct Cpu {
     call_stack: VecDeque<CallFrame>,
     /// Exit code set by EXIT ECALL, None means program hasn't exited yet
     pub exit_code: Option<u32>,
-    /// Pending syscall result to be written to a0 via VirtualAdvice in ECALL trace
-    pub pending_syscall_result: Option<i64>,
+    /// Pending csr result to be written to a0 via VirtualAdvice in ECALL trace
+    pub pending_csr_result: Option<i64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -285,7 +285,7 @@ impl Cpu {
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
             exit_code: None,
-            pending_syscall_result: None,
+            pending_csr_result: None,
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -407,11 +407,6 @@ impl Cpu {
             instr.execute(self);
             self.trace_len += 1;
         } else {
-            // Debug: print LRW/SCW instructions being traced
-            let instr_name: &'static str = (&instr).into();
-            if instr_name == "LRW" || instr_name == "SCW" {
-                println!("DEBUG cpu.run: {} at 0x{:x}", instr_name, instruction_address);
-            }
             instr.trace(self, trace);
             self.trace_len += instr.inline_sequence(&self.vr_allocator, self.xlen).len();
         }
@@ -573,78 +568,38 @@ impl Cpu {
 
                 return false;
             } else if call_id == JOLT_CSR_ECALL_NUM {
-                // CSR operations via ECALL
-                const CSR_OP_READ: u32 = 1;
+                // CSR operations via ECALL - only mtvec write is supported
+                // Other CSR operations are ignored for soundness (CSR state is not proven)
                 const CSR_OP_WRITE: u32 = 2;
-                const CSR_OP_SET: u32 = 3;
-                const CSR_OP_CLEAR: u32 = 4;
 
                 let op = self.x[11] as u32;      // a1: operation type
                 let csr_addr = self.x[12] as u16; // a2: CSR address
                 let value = self.x[13] as u64;    // a3: value (for write ops)
 
-                match op {
-                    CSR_OP_READ => {
-                        let result = self.read_csr_raw(csr_addr);
-                        self.x[10] = result as i64; // Return in a0
-                    }
-                    CSR_OP_WRITE => {
-                        self.write_csr_raw(csr_addr, value);
-                    }
-                    CSR_OP_SET => {
-                        let old_value = self.read_csr_raw(csr_addr);
-                        self.write_csr_raw(csr_addr, old_value | value);
-                        self.x[10] = old_value as i64; // Return old value in a0
-                    }
-                    CSR_OP_CLEAR => {
-                        let old_value = self.read_csr_raw(csr_addr);
-                        self.write_csr_raw(csr_addr, old_value & !value);
-                        self.x[10] = old_value as i64; // Return old value in a0
-                    }
-                    _ => {
-                        // Unknown CSR operation, ignore
-                    }
+                // Only allow mtvec write - other CSRs are not proven and would be unsound
+                if op == CSR_OP_WRITE && csr_addr == CSR_MTVEC_ADDRESS {
+                    self.write_csr_raw(csr_addr, value);
                 }
+                // All other CSR operations are silently ignored
+                // (mcause reads, mepc ops, etc. are no longer needed)
+                self.pending_csr_result = Some(0);
 
                 // PC is already advanced by tick_operate after fetch, so we don't need to advance it again
 
                 return false; // we don't take the trap
-            } else if call_id == JOLT_RET_ECALL_NUM {
-                // Return from trap - read mepc and jump to it
-                let mepc = self.read_csr_raw(CSR_MEPC_ADDRESS);
-                self.pc = mepc;
-                return false; // we don't take the trap
-            } else {
-                    // Check if this is a Linux syscall (syscall number in a7)
-                    let syscall_nr = self.x[17] as i64; // a7
-
-                    if syscall_nr != 0 {
-                        // This is a Linux syscall - handle it in the emulator
-                        // tracing::warn!("ECALL detected: a0={:#x} a7={} (syscall_nr)", self.x[10], syscall_nr);
-
-                        let result = self.handle_syscall(
-                            syscall_nr,
-                            self.x[10] as usize,  // a0
-                            self.x[11] as usize,  // a1
-                            self.x[12] as usize,  // a2
-                            self.x[13] as usize,  // a3
-                            self.x[14] as usize,  // a4
-                            self.x[15] as usize,  // a5
-                        );
-
-                        // tracing::info!("SYSCALL nr={} (a7) with args: a0={:#x} a1={:#x} a2={:#x}",
-                        //     syscall_nr, self.x[10], self.x[11], self.x[12]);
-                        // tracing::info!("SYSCALL nr={} returned: {}", syscall_nr, result);
-
-                        // Store syscall result for later - ECALL trace will handle writing to a0
-                        // via VirtualAdvice instruction to properly capture in the trace
-                        self.pending_syscall_result = Some(result);
-
-                        // PC is already advanced by tick_operate after fetch
-                        return false; // we don't take the trap
-                    }
-                    // For non-syscall ECALLs (CSR operations), continue to take the trap
             }
+
+            // RET ECALL is no longer needed - trap handler returns via JALR t1
+            // The return address is passed in t1 by the ECALL inline sequence.
+            // } else if call_id == JOLT_RET_ECALL_NUM {
+            //     // Return from trap - read mepc and jump to it
+            //     let mepc = self.read_csr_raw(CSR_MEPC_ADDRESS);
+            //     self.pc = mepc;
+            //     return false; // we don't take the trap
+            // }
+
+            // All other ECALLs (Linux syscalls) fall through to take the trap.
+            // With ZeroOS, the guest's trap handler handles them.
         }
 
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
