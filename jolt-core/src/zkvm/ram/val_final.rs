@@ -33,6 +33,25 @@ use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::{instruction::Cycle, JoltDevice};
 
+// RAM value finalization sumcheck
+//
+// Proves the relation:
+//   Val_final(r_address) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(j) · wa(r_address, j)
+// where:
+// - r_address is the random address challenge opened under `SumcheckId::RamOutputCheck`.
+// - Val_init(r_address) is the initial memory value at address r_address (including any
+//   advice-memory contributions).
+// - Val_final(r_address) is the final memory value at address r_address.
+// - inc(j) is the per-cycle value delta written at cycle j (0 if there is no RAM write at cycle j).
+// - wa(r_address, j) is the write-to-address indicator: it evaluates to 1 on cycles whose (remapped)
+//   RAM address equals r_address, and 0 otherwise.
+//
+// Intuition: this is a “write-log replay” check—final memory equals initial memory plus the sum of
+// all deltas written to that address across the entire trace.
+//
+// This sumcheck runs over the log(T) cycle variables. It publishes openings for `RamInc` at r_cycle′
+// and `RamRa` at (r_address, r_cycle′) under `SumcheckId::RamValFinalEvaluation`.
+
 /// Degree bound of the sumcheck round polynomials in [`ValFinalSumcheckVerifier`].
 const VAL_FINAL_SUMCHECK_DEGREE_BOUND: usize = 2;
 

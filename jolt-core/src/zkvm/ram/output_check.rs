@@ -37,13 +37,6 @@ use tracer::JoltDevice;
 //   - io_mask is the MLE of the I/O-region indicator (1 on matching {0,1}-points).
 //   - Val_final(k) is the final memory value at address k.
 //   - Val_io(k) is the publicly claimed output value at address k.
-//
-// ValFinalSumcheck:
-//   Proves the relation
-//     Val_final(r_address) − Val_init(r_address) = Σ_j inc(r_address, j) ⋅ wa(r_address, j),
-//   where:
-//   - Val_init(r_address) is the initial memory value at r_address.
-//   - inc is the MLE of the per-cycle increment; wa is the MLE of the write indicator.
 
 /// Degree bonud of the sumcheck round polynomials in [`OutputSumcheckVerifier`].
 const OUTPUT_SUMCHECK_DEGREE_BOUND: usize = 3;
