@@ -880,12 +880,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-            &self.rw_config,
-        );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
             &self.advice.trusted_advice_polynomial,
@@ -895,6 +889,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
             self.rw_config
                 .needs_single_advice_opening(self.trace.len().log_2()),
+        );
+
+        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+            &self.rw_config,
         );
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
