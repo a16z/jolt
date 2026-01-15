@@ -59,6 +59,15 @@ enum Commands {
         #[arg(short = 'd', long = "disk", default_value_t = false)]
         trace_to_file: bool,
     },
+    /// Debug proof deserialization
+    Debug {
+        /// Example to debug (fibonacci or muldiv)
+        #[arg(long, value_name = "EXAMPLE")]
+        example: String,
+        /// Working directory containing proof files
+        #[arg(long, value_name = "DIRECTORY", default_value = "output")]
+        workdir: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -113,22 +122,22 @@ impl GuestProgram {
             GuestProgram::Fibonacci => {
                 if use_embed {
                     MemoryConfig {
-                        max_input_size: 4096,
+                        max_input_size: 67108864, // 64MB
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 134217728,
-                        stack_size: 33554432,
+                        memory_size: 134217728, // 128MB
+                        stack_size: 134217728, // 128MB (total 256MB)
                         program_size: None,
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 200000000, // 200MB (10x headroom)
+                        max_input_size: 67108864, // 64MB
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 335544320, // 320MB (10x headroom)
-                        stack_size: 33554432,
+                        memory_size: 134217728, // 128MB
+                        stack_size: 134217728, // 128MB (total 256MB)
                         program_size: None,
                     }
                 }
@@ -136,22 +145,22 @@ impl GuestProgram {
             GuestProgram::Muldiv => {
                 if use_embed {
                     MemoryConfig {
-                        max_input_size: 1024,
+                        max_input_size: 67108864, // 64MB
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 134217728,
-                        stack_size: 33554432,
+                        memory_size: 134217728, // 128MB
+                        stack_size: 134217728, // 128MB (total 256MB)
                         program_size: None,
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 200000000, // 200MB (10x headroom)
+                        max_input_size: 67108864, // 64MB
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 335544320, // 320MB (10x headroom)
-                        stack_size: 33554432,
+                        memory_size: 134217728, // 128MB
+                        stack_size: 134217728, // 128MB (total 256MB)
                         program_size: None,
                     }
                 }
@@ -365,6 +374,105 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     info!("Total prove time: {total_prove_time:.3}s");
     info!("Total data size: {} bytes", all_groups_data.len());
     all_groups_data
+}
+
+fn debug_deserialize_proof_fields(proof_file: &Path) {
+    use ark_serialize::CanonicalDeserialize;
+    use jolt_sdk::{JoltDevice, RV64IMACProof};
+
+    info!("Starting detailed field-by-field deserialization debug...");
+
+    let proof_data = std::fs::read(proof_file).unwrap();
+    let mut cursor = std::io::Cursor::new(&proof_data);
+
+    // First deserialize the verifier preprocessing and count
+    info!("Step 1: Deserializing verifier preprocessing...");
+    match jolt_sdk::JoltVerifierPreprocessing::<jolt_sdk::F, jolt_sdk::PCS>::deserialize_compressed(&mut cursor) {
+        Ok(preprocessing) => {
+            let bytes = preprocessing.serialize_to_bytes().unwrap();
+            info!("✓ Verifier preprocessing OK ({} bytes)", bytes.len());
+        }
+        Err(e) => {
+            panic!("✗ FAILED at verifier preprocessing: {:?}", e);
+        }
+    }
+
+    info!("Step 2: Deserializing proof count...");
+    let n = match u32::deserialize_compressed(&mut cursor) {
+        Ok(count) => {
+            info!("✓ Proof count: {}", count);
+            count
+        }
+        Err(e) => {
+            panic!("✗ FAILED at proof count: {:?}", e);
+        }
+    };
+
+    // Check cursor position
+    let position = cursor.position() as usize;
+    info!("Current cursor position after preprocessing + count: {} bytes", position);
+
+    info!("Step 3: Attempting to deserialize {} proof(s)...", n);
+    for i in 0..n {
+        info!("Proof {}: Starting JoltProof deserialization at position {}...", i, cursor.position());
+
+        // Try to deserialize the entire JoltProof
+        match RV64IMACProof::deserialize_compressed(&mut cursor) {
+            Ok(proof) => {
+                info!("✓ Proof {} deserialized successfully", i);
+                info!("  Trace length: {}", proof.trace_length);
+                info!("  RAM K: {}", proof.ram_K);
+                info!("  Bytecode K: {}", proof.bytecode_K);
+            }
+            Err(e) => {
+                error!("✗ FAILED to deserialize proof {} at position {}: {:?}", i, cursor.position(), e);
+
+                // Try to read some bytes at current position to debug
+                let current_pos = cursor.position() as usize;
+                let bytes = cursor.get_ref();
+                if current_pos < bytes.len() {
+                    let next_bytes = &bytes[current_pos..current_pos.min(current_pos + 32)];
+                    error!("  Next {} bytes at position {}: {:?}", next_bytes.len(), current_pos, next_bytes);
+
+                    // Try to interpret as length
+                    if next_bytes.len() >= 8 {
+                        let mut length_bytes = [0u8; 8];
+                        length_bytes.copy_from_slice(&next_bytes[0..8]);
+                        let length = u64::from_le_bytes(length_bytes);
+                        error!("  Interpreted as u64 length: {} (0x{:x})", length, length);
+                        if length > 1_000_000_000_000 {
+                            error!("  WARNING: This looks like an unreasonably large value!");
+                        }
+                    }
+                }
+                panic!("Cannot continue after proof deserialization failure");
+            }
+        }
+
+        info!("Proof {}: Attempting JoltDevice deserialization at position {}...", i, cursor.position());
+        match JoltDevice::deserialize_compressed(&mut cursor) {
+            Ok(device) => {
+                info!("✓ Device {} deserialized successfully", i);
+                info!("  Memory layout size: {:?}", device.memory_layout.memory_size);
+                info!("  Panic state: {:?}", device.panic);
+            }
+            Err(e) => {
+                error!("✗ FAILED to deserialize device {} at position {}: {:?}", i, cursor.position(), e);
+                panic!("Cannot continue after device deserialization failure");
+            }
+        }
+    }
+
+    let final_position = cursor.position() as usize;
+    let total_bytes = cursor.get_ref().len();
+    info!("Final cursor position: {} / {} bytes", final_position, total_bytes);
+    info!("Remaining bytes: {}", total_bytes - final_position);
+
+    if final_position < total_bytes {
+        error!("WARNING: {} bytes remain unread!", total_bytes - final_position);
+    }
+
+    info!("Debug deserialization complete!");
 }
 
 fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_dir: &Path) {
@@ -676,6 +784,17 @@ fn main() {
                 RunConfig::Trace
             };
             verify_proofs(guest, embed.is_some(), workdir, &output_dir, run_config);
+        }
+        Some(Commands::Debug { example, workdir }) => {
+            let guest = match GuestProgram::from_str(example) {
+                Some(guest) => guest,
+                None => {
+                    info!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
+                    return;
+                }
+            };
+            let proof_file = workdir.join(format!("{}_proofs.bin", guest.name()));
+            debug_deserialize_proof_fields(&proof_file);
         }
         None => {
             info!("No subcommand specified. Available commands:");

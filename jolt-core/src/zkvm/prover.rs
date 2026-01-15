@@ -400,8 +400,15 @@ where
         let (_dense_poly, dense_commitment, dense_mlpoly) = self.prove_stage11(&recursion_prover);
 
         // Stage 12: Run recursion sumchecks (stages 1-3 + 3b) - verify the committed polynomial
-        let (stage1_proof, stage2_m_eval, _r_stage1, _r_stage2, stage3_proof, stage3b_proof, accumulator) =
-            self.prove_stage12(&recursion_prover);
+        let (
+            stage1_proof,
+            stage2_m_eval,
+            _r_stage1,
+            _r_stage2,
+            stage3_proof,
+            stage3b_proof,
+            accumulator,
+        ) = self.prove_stage12(&recursion_prover);
 
         // Stage 13: Generate Hyrax opening proof
         let (hyrax_proof, opening_claims) = self.prove_stage13(dense_mlpoly, accumulator);
@@ -1389,8 +1396,7 @@ where
                 .unzip();
 
             // Generate combine witness for homomorphic combining offload
-            let (combine_witness, combine_hint) =
-                PCS::generate_combine_witness(&comms, &coeffs);
+            let (combine_witness, combine_hint) = PCS::generate_combine_witness(&comms, &coeffs);
             tracing::info!(
                 "[Homomorphic Combine] Generated witness: {} GT exp ops, {} GT mul ops",
                 combine_witness.exp_witnesses.len(),
@@ -1508,8 +1514,10 @@ where
 
         // Use the RecursionMetadataBuilder to extract metadata
         tracing::info_span!("extract_constraint_metadata").in_scope(|| {
-            let metadata = RecursionMetadataBuilder::from_constraint_system(recursion_prover.constraint_system.clone())
-                .build();
+            let metadata = RecursionMetadataBuilder::from_constraint_system(
+                recursion_prover.constraint_system.clone(),
+            )
+            .build();
             tracing::info!(
                 "Extracted metadata for {} constraints, {} polynomial types",
                 metadata.constraint_types.len(),
@@ -1544,28 +1552,33 @@ where
         });
 
         // Stage 1: Constraint sumchecks
-        let (stage1_proof, r_stage1) = tracing::info_span!("recursion_stage11_1_constraints").in_scope(|| {
-            tracing::info!("Running Stage 11.1: Constraint sumchecks (GT exp, GT mul, G1 scalar mul)");
-            recursion_prover
-                .prove_stage1(&mut self.transcript, &mut accumulator)
-                .expect("Failed to run stage 1 sumchecks")
-        });
+        let (stage1_proof, r_stage1) = tracing::info_span!("recursion_stage11_1_constraints")
+            .in_scope(|| {
+                tracing::info!(
+                    "Running Stage 11.1: Constraint sumchecks (GT exp, GT mul, G1 scalar mul)"
+                );
+                recursion_prover
+                    .prove_stage1(&mut self.transcript, &mut accumulator)
+                    .expect("Failed to run stage 1 sumchecks")
+            });
 
         // Stage 2: Virtualization direct evaluation
-        let (stage2_m_eval, r_stage2) = tracing::info_span!("recursion_stage11_2_virtualization").in_scope(|| {
-            tracing::info!("Running Stage 11.2: Virtualization direct evaluation");
-            recursion_prover
-                .prove_stage2(&mut self.transcript, &mut accumulator, &r_stage1)
-                .expect("Failed to run stage 2 evaluation")
-        });
+        let (stage2_m_eval, r_stage2) = tracing::info_span!("recursion_stage11_2_virtualization")
+            .in_scope(|| {
+                tracing::info!("Running Stage 11.2: Virtualization direct evaluation");
+                recursion_prover
+                    .prove_stage2(&mut self.transcript, &mut accumulator, &r_stage1)
+                    .expect("Failed to run stage 2 evaluation")
+            });
 
         // Stage 3: Jagged transform sumcheck + Stage 3b: Jagged Assist
-        let (stage3_proof, stage3b_proof, _r_stage3) = tracing::info_span!("recursion_stage11_3_jagged").in_scope(|| {
-            tracing::info!("Running Stage 11.3: Jagged transform sumcheck + Jagged Assist");
-            recursion_prover
-                .prove_stage3(&mut self.transcript, &mut accumulator, &r_stage1, &r_stage2)
-                .expect("Failed to run stage 3 sumcheck")
-        });
+        let (stage3_proof, stage3b_proof, _r_stage3) =
+            tracing::info_span!("recursion_stage11_3_jagged").in_scope(|| {
+                tracing::info!("Running Stage 11.3: Jagged transform sumcheck + Jagged Assist");
+                recursion_prover
+                    .prove_stage3(&mut self.transcript, &mut accumulator, &r_stage1, &r_stage2)
+                    .expect("Failed to run stage 3 sumcheck")
+            });
 
         (
             stage1_proof,
@@ -1595,7 +1608,10 @@ where
         // Build dense polynomial
         let (dense_poly, _, _) = tracing::info_span!("build_dense_polynomial").in_scope(|| {
             let poly = recursion_prover.constraint_system.build_dense_polynomial();
-            tracing::info!("Built dense polynomial with {} variables", poly.0.get_num_vars());
+            tracing::info!(
+                "Built dense polynomial with {} variables",
+                poly.0.get_num_vars()
+            );
             poly
         });
         let dense_num_vars = dense_poly.get_num_vars();
@@ -1603,7 +1619,10 @@ where
         // Setup Hyrax
         let hyrax_prover_setup = tracing::info_span!("hyrax_setup").in_scope(|| {
             let setup = <HyraxPCS as CommitmentScheme>::setup_prover(dense_num_vars);
-            tracing::info!("Initialized Hyrax prover setup for {} variables", dense_num_vars);
+            tracing::info!(
+                "Initialized Hyrax prover setup for {} variables",
+                dense_num_vars
+            );
             setup
         });
 
@@ -1616,7 +1635,8 @@ where
 
         // Commit to dense polynomial
         let (dense_commitment, _) = tracing::info_span!("hyrax_commit").in_scope(|| {
-            let commitment = <HyraxPCS as CommitmentScheme>::commit(&dense_mlpoly, &hyrax_prover_setup);
+            let commitment =
+                <HyraxPCS as CommitmentScheme>::commit(&dense_mlpoly, &hyrax_prover_setup);
             tracing::info!("Generated Hyrax commitment to dense polynomial");
             commitment
         });
@@ -1655,7 +1675,10 @@ where
                 .len()
                 .log_2();
             let setup = <HyraxPCS as CommitmentScheme>::setup_prover(dense_num_vars);
-            tracing::info!("Set up Hyrax prover for opening proof with {} variables", dense_num_vars);
+            tracing::info!(
+                "Set up Hyrax prover for opening proof with {} variables",
+                dense_num_vars
+            );
             setup
         });
 
