@@ -1,6 +1,8 @@
 //! This file implements the Hyrax polynomial commitment scheme used in snark composition
 use super::commitment_scheme::CommitmentScheme;
 use crate::field::JoltField;
+use ark_bn254;
+use ark_grumpkin;
 use crate::msm::VariableBaseMSM;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -76,11 +78,135 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         assert_eq!(L_size * R_size, n);
 
         let gens = &generators.generators[..R_size];
-        let row_commitments = poly
-            .Z
-            .chunks(R_size)
-            .map(|row| G::msm_unchecked(gens, row))
-            .collect();
+
+        // Single-threaded Pippenger MSM closure for ZKVM environment
+        let pippenger_msm = |bases: &[G::Affine], scalars: &[G::ScalarField]| -> G {
+            use ark_ff::BigInteger;
+
+            if bases.is_empty() || scalars.is_empty() {
+                return G::zero();
+            }
+
+            let n = bases.len().min(scalars.len());
+
+            // For small MSMs, use naive method
+            if n < 32 {
+                let mut result = G::zero();
+                for i in 0..n {
+                    result += G::from(bases[i]) * scalars[i];
+                }
+                return result;
+            }
+
+            // Window size calculation (optimal for given input size)
+            let window_size = if n < 32 {
+                3
+            } else if n < 64 {
+                4
+            } else if n < 128 {
+                5
+            } else if n < 512 {
+                6
+            } else if n < 1024 {
+                7
+            } else if n < 4096 {
+                8
+            } else if n < 16384 {
+                9
+            } else {
+                10
+            };
+
+            let num_buckets = 1 << window_size;
+            // Determine scalar field bit size based on the actual field type
+            let scalar_bits = {
+                let scalar_ref: &dyn core::any::Any = &scalars[0];
+                if scalar_ref.is::<ark_grumpkin::Fr>() {
+                    255 // Grumpkin scalar field
+                } else if scalar_ref.is::<ark_bn254::Fr>() {
+                    254 // BN254 scalar field
+                } else {
+                    256 // Default fallback
+                }
+            };
+            let num_windows = (scalar_bits + window_size - 1) / window_size;
+
+            let mut result = G::zero();
+
+            // Process each window
+            for window in 0..num_windows {
+                // Initialize buckets
+                let mut buckets = vec![G::zero(); num_buckets];
+
+                // Add points to buckets based on their scalar bits in this window
+                for i in 0..n {
+                    // Transmute to access PrimeField methods
+                    let scalar_bigint = unsafe {
+                        use ark_ff::PrimeField;
+                        let scalar_ptr = &scalars[i] as *const G::ScalarField;
+                        // Cast through raw pointer to preserve the actual type
+                        let scalar_ref = &*(scalar_ptr as *const dyn core::any::Any);
+
+                        // Try Grumpkin first, then BN254
+                        if let Some(grumpkin_scalar) = scalar_ref.downcast_ref::<ark_grumpkin::Fr>() {
+                            grumpkin_scalar.into_bigint()
+                        } else if let Some(bn254_scalar) = scalar_ref.downcast_ref::<ark_bn254::Fr>() {
+                            bn254_scalar.into_bigint()
+                        } else {
+                            // Fallback: assume it implements PrimeField
+                            core::mem::transmute_copy::<G::ScalarField, ark_grumpkin::Fr>(&scalars[i]).into_bigint()
+                        }
+                    };
+
+                    // Extract the window_size bits for this window
+                    let window_start = window * window_size;
+                    let mut bucket_index = 0usize;
+
+                    for j in 0..window_size {
+                        let bit_index = window_start + j;
+                        if bit_index < scalar_bits {
+                            if scalar_bigint.get_bit(bit_index) {
+                                bucket_index |= 1 << j;
+                            }
+                        }
+                    }
+
+                    if bucket_index > 0 {
+                        buckets[bucket_index] += G::from(bases[i]);
+                    }
+                }
+
+                // Sum up the buckets using the Pippenger bucket method
+                let mut window_result = G::zero();
+                let mut running_sum = G::zero();
+
+                for i in (1..num_buckets).rev() {
+                    running_sum += buckets[i];
+                    window_result += running_sum;
+                }
+
+                // Shift result by window_size bits and add
+                for _ in 0..(window * window_size) {
+                    result.double_in_place();
+                }
+                result += window_result;
+            }
+
+            result
+        };
+
+        // In ZKVM guest environment, use serial Pippenger MSM to avoid rayon issues
+        let row_commitments = if cfg!(target_arch = "riscv64") || cfg!(target_arch = "riscv32") {
+            poly.Z
+                .chunks(R_size)
+                .map(|row| pippenger_msm(gens, row))
+                .collect()
+        } else {
+            poly.Z
+                .chunks(R_size)
+                .map(|row| G::msm_unchecked(gens, row))
+                .collect()
+        };
 
         Self { row_commitments }
     }
@@ -139,51 +265,166 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
             "Hyrax verify matrix dimensions"
         );
 
-        let eq_start = std::time::Instant::now();
         let L: Vec<G::ScalarField> = EqPolynomial::evals(&opening_point[..L_size.log_2()]);
         let R: Vec<G::ScalarField> = EqPolynomial::evals(&opening_point[L_size.log_2()..]);
-        tracing::debug!(
-            duration_us = eq_start.elapsed().as_micros(),
-            "Computed EqPolynomial evals for L and R"
-        );
+        tracing::debug!("Computed EqPolynomial evals for L and R");
 
         // Verifier-derived commitment to u * a = \prod Com(u_j)^{a_j}
-        let msm1_start = std::time::Instant::now();
         let normalized_commitments = G::normalize_batch(&commitment.row_commitments);
         tracing::debug!(
             num_bases = normalized_commitments.len(),
-            duration_us = msm1_start.elapsed().as_micros(),
             "Normalized row commitments"
         );
 
-        let msm1_compute_start = std::time::Instant::now();
-        let homomorphically_derived_commitment: G =
-            VariableBaseMSM::msm(&normalized_commitments, &MultilinearPolynomial::from(L)).unwrap();
+        // Single-threaded Pippenger MSM closure for ZKVM environment
+        let pippenger_msm = |bases: &[G::Affine], scalars: &[G::ScalarField]| -> G {
+            use ark_ff::BigInteger;
+
+            if bases.is_empty() || scalars.is_empty() {
+                return G::zero();
+            }
+
+            let n = bases.len().min(scalars.len());
+
+            // For small MSMs, use naive method
+            if n < 32 {
+                let mut result = G::zero();
+                for i in 0..n {
+                    result += G::from(bases[i]) * scalars[i];
+                }
+                return result;
+            }
+
+            // Window size calculation (optimal for given input size)
+            let window_size = if n < 32 {
+                3
+            } else if n < 64 {
+                4
+            } else if n < 128 {
+                5
+            } else if n < 512 {
+                6
+            } else if n < 1024 {
+                7
+            } else if n < 4096 {
+                8
+            } else if n < 16384 {
+                9
+            } else {
+                10
+            };
+
+            let num_buckets = 1 << window_size;
+            // Determine scalar field bit size based on the actual field type
+            let scalar_bits = {
+                let scalar_ref: &dyn core::any::Any = &scalars[0];
+                if scalar_ref.is::<ark_grumpkin::Fr>() {
+                    254 // Grumpkin scalar field
+                } else if scalar_ref.is::<ark_bn254::Fr>() {
+                    254 // BN254 scalar field
+                } else {
+                    254// Default fallback
+                }
+            };
+            let num_windows = (scalar_bits + window_size - 1) / window_size;
+
+            let mut result = G::zero();
+
+            // Process each window
+            for window in 0..num_windows {
+                // Initialize buckets
+                let mut buckets = vec![G::zero(); num_buckets];
+
+                // Add points to buckets based on their scalar bits in this window
+                for i in 0..n {
+                    // Transmute to access PrimeField methods
+                    let scalar_bigint = unsafe {
+                        use ark_ff::PrimeField;
+                        let scalar_ptr = &scalars[i] as *const G::ScalarField;
+                        // Cast through raw pointer to preserve the actual type
+                        let scalar_ref = &*(scalar_ptr as *const dyn core::any::Any);
+
+                        // Try Grumpkin first, then BN254
+                        if let Some(grumpkin_scalar) = scalar_ref.downcast_ref::<ark_grumpkin::Fr>() {
+                            grumpkin_scalar.into_bigint()
+                        } else if let Some(bn254_scalar) = scalar_ref.downcast_ref::<ark_bn254::Fr>() {
+                            bn254_scalar.into_bigint()
+                        } else {
+                            // Fallback: assume it implements PrimeField
+                            core::mem::transmute_copy::<G::ScalarField, ark_grumpkin::Fr>(&scalars[i]).into_bigint()
+                        }
+                    };
+
+                    // Extract the window_size bits for this window
+                    let window_start = window * window_size;
+                    let mut bucket_index = 0usize;
+
+                    for j in 0..window_size {
+                        let bit_index = window_start + j;
+                        if bit_index < scalar_bits {
+                            if scalar_bigint.get_bit(bit_index) {
+                                bucket_index |= 1 << j;
+                            }
+                        }
+                    }
+
+                    if bucket_index > 0 {
+                        buckets[bucket_index] += G::from(bases[i]);
+                    }
+                }
+
+                // Sum up the buckets using the Pippenger bucket method
+                let mut window_result = G::zero();
+                let mut running_sum = G::zero();
+
+                for i in (1..num_buckets).rev() {
+                    running_sum += buckets[i];
+                    window_result += running_sum;
+                }
+
+                // Shift result by window_size bits and add
+                for _ in 0..(window * window_size) {
+                    result.double_in_place();
+                }
+                result += window_result;
+            }
+
+            result
+        };
+
+        // In ZKVM guest environment, use serial Pippenger MSM to avoid rayon issues
+        let homomorphically_derived_commitment: G = if cfg!(target_arch = "riscv64") || cfg!(target_arch = "riscv32") {
+            let poly = MultilinearPolynomial::from(L);
+            let scalars = match &poly {
+                MultilinearPolynomial::LargeScalars(p) => p.evals_ref(),
+                _ => unreachable!("L should be LargeScalars"),
+            };
+            pippenger_msm(&normalized_commitments, scalars)
+        } else {
+            VariableBaseMSM::msm(&normalized_commitments, &MultilinearPolynomial::from(L)).unwrap()
+        };
         tracing::debug!(
             num_bases = normalized_commitments.len(),
-            duration_ms = msm1_compute_start.elapsed().as_millis(),
             "MSM #1: homomorphically derived commitment"
         );
 
-        let msm2_start = std::time::Instant::now();
-        let product_commitment = VariableBaseMSM::msm_field_elements(
-            &pedersen_generators.generators[..R_size],
-            &self.vector_matrix_product,
-        )
-        .unwrap();
+        let product_commitment = if cfg!(target_arch = "riscv64") || cfg!(target_arch = "riscv32") {
+            pippenger_msm(&pedersen_generators.generators[..R_size], &self.vector_matrix_product)
+        } else {
+            VariableBaseMSM::msm_field_elements(
+                &pedersen_generators.generators[..R_size],
+                &self.vector_matrix_product,
+            )
+            .unwrap()
+        };
         tracing::debug!(
             num_bases = R_size,
             vector_matrix_product_len = self.vector_matrix_product.len(),
-            duration_ms = msm2_start.elapsed().as_millis(),
             "MSM #2: product commitment"
         );
 
-        let dot_start = std::time::Instant::now();
         let dot_product = compute_dotproduct(&self.vector_matrix_product, &R);
-        tracing::debug!(
-            duration_us = dot_start.elapsed().as_micros(),
-            "Computed dot product"
-        );
+        tracing::debug!("Computed dot product");
 
         if (homomorphically_derived_commitment == product_commitment) && (dot_product == *opening) {
             Ok(())
@@ -235,7 +476,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
         openings: &[G::ScalarField],
         transcript: &mut ProofTranscript,
     ) -> Self {
-        let start = std::time::Instant::now();
         tracing::info!(
             num_polynomials = polynomials.len(),
             poly_size = polynomials[0].len(),
@@ -246,7 +486,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
 
         let rlc_coefficients: Vec<_> = transcript.challenge_vector(polynomials.len());
 
-        let rlc_start = std::time::Instant::now();
         let _span = trace_span!("Compute RLC of polynomials");
         let _enter = _span.enter();
 
@@ -292,24 +531,12 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
         drop(_enter);
         drop(_span);
 
-        tracing::debug!(
-            duration_ms = rlc_start.elapsed().as_millis(),
-            "RLC computation complete"
-        );
+        tracing::debug!("RLC computation complete");
 
-        let prove_start = std::time::Instant::now();
         let joint_proof =
             HyraxOpeningProof::prove(&DensePolynomial::new(rlc_poly), opening_point, RATIO);
 
-        tracing::debug!(
-            duration_ms = prove_start.elapsed().as_millis(),
-            "Joint proof generation complete"
-        );
-
-        tracing::info!(
-            total_duration_ms = start.elapsed().as_millis(),
-            "Batched Hyrax opening proof complete"
-        );
+        tracing::debug!("Joint proof generation complete");
 
         Self { joint_proof }
     }
