@@ -91,18 +91,6 @@ impl StageConfig {
     }
 }
 
-/// Jolt's 6 sumcheck stages configuration
-pub fn jolt_stage_configs(num_rounds_per_stage: usize) -> [StageConfig; 6] {
-    [
-        StageConfig::new(num_rounds_per_stage, 3), // Stage 1: Spartan Outer
-        StageConfig::new(num_rounds_per_stage, 3), // Stage 2: Product Virtualization
-        StageConfig::new(num_rounds_per_stage, 3), // Stage 3: Instruction Constraints
-        StageConfig::new(num_rounds_per_stage, 3), // Stage 4: Register + RAM
-        StageConfig::new(num_rounds_per_stage, 3), // Stage 5: Value + Lookup
-        StageConfig::new(num_rounds_per_stage, 3), // Stage 6: One-Hot + Hamming
-    ]
-}
-
 /// Variable index in the witness vector Z
 ///
 /// For relaxed R1CS, Z is laid out as: [u, public_inputs..., witness...]
