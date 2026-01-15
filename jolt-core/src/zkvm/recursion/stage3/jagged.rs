@@ -405,13 +405,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
         self.sparse_claim_value
     }
 
+    #[tracing::instrument(skip_all, name = "JaggedSumcheckVerifier::expected_output_claim")]
     fn expected_output_claim(
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         _sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let _span = tracing::info_span!("jagged_expected_output_claim").entered();
-
         // Get the dense polynomial opening claim from the accumulator
         let (_, dense_claim) = accumulator
             .get_committed_polynomial_opening(self.params.polynomial, self.params.sumcheck_id);
@@ -420,14 +419,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
         // This is just evaluating the MLE of claimed_evaluations at sparse_opening_point_s
         // Note: EqPolynomial::evals uses big-endian bit ordering, but index_to_binary_vec
         // uses little-endian, so we reverse the point to match.
-        let r_s_reversed: Vec<F> = self.sparse_opening_point_s.iter().rev().cloned().collect();
-        let eq_evals = EqPolynomial::<F>::evals(&r_s_reversed);
+        let eq_evals = {
+            let _span = tracing::info_span!("jagged_eq_evals", num_vars = self.sparse_opening_point_s.len()).entered();
+            let r_s_reversed: Vec<F> = self.sparse_opening_point_s.iter().rev().cloned().collect();
+            EqPolynomial::<F>::evals(&r_s_reversed)
+        };
 
-        let f_jagged_at_r_dense: F = eq_evals
-            .iter()
-            .zip(self.claimed_evaluations.iter())
-            .map(|(eq, v)| *eq * *v)
-            .sum();
+        let f_jagged_at_r_dense: F = {
+            let _span = tracing::info_span!("jagged_inner_product", k = self.claimed_evaluations.len()).entered();
+            eq_evals
+                .iter()
+                .zip(self.claimed_evaluations.iter())
+                .map(|(eq, v)| *eq * *v)
+                .sum()
+        };
 
         dense_claim * f_jagged_at_r_dense
     }

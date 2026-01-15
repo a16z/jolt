@@ -38,6 +38,27 @@ use super::branching_program::{
 };
 use crate::zkvm::recursion::bijection::VarCountJaggedBijection;
 
+/// Compute eq(r, index) directly in O(m) time.
+///
+/// This evaluates the equality polynomial at a boolean point specified by the binary
+/// representation of `index`. Uses little-endian bit ordering: bit 0 (LSB) of `index`
+/// corresponds to r[0].
+///
+/// eq(r, index) = Π_{i=0}^{m-1} (bit_i ? r_i : (1 - r_i))
+#[inline]
+fn eq_at_index<F: JoltField>(r: &[F], index: usize) -> F {
+    r.iter()
+        .enumerate()
+        .map(|(i, r_i)| {
+            if (index >> i) & 1 == 1 {
+                *r_i
+            } else {
+                F::one() - *r_i
+            }
+        })
+        .product()
+}
+
 /// Proof for the Jagged Assist batch MLE verification
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JaggedAssistProof<F: JoltField, T: Transcript> {
@@ -584,13 +605,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedAssis
             rho_d.push(rho[base + 3]);
         }
 
-        // ONE branching program evaluation
-        let g_at_rho = branching_program.eval_multilinear(
-            &Point::from(rho_a.clone()),
-            &Point::from(rho_b.clone()),
-            &Point::from(rho_c.clone()),
-            &Point::from(rho_d.clone()),
-        );
+        // ONE branching program evaluation - O(m)
+        let g_at_rho = {
+            let _span = tracing::info_span!("jagged_assist_bp_eval", num_bits).entered();
+            branching_program.eval_multilinear(
+                &Point::from(rho_a.clone()),
+                &Point::from(rho_b.clone()),
+                &Point::from(rho_c.clone()),
+                &Point::from(rho_d.clone()),
+            )
+        };
 
         // Compute eq_sum = Σ_k r^k · eq(ρ, x_k) efficiently
         // Key insight: r_x and r_dense are the SAME for all K polynomials
@@ -608,28 +632,29 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedAssis
         let mut r_dense_padded = r_dense.clone();
         r_dense_padded.resize(num_bits, F::zero());
 
-        // Compute eq_ab = eq(ρ_a, r_x) · eq(ρ_b, r_dense) - O(num_bits)
-        let eq_a = EqPolynomial::mle(&rho_a, &r_x_padded);
-        let eq_b = EqPolynomial::mle(&rho_b, &r_dense_padded);
-        let eq_ab = eq_a * eq_b;
+        // Compute eq_ab = eq(ρ_a, r_x) · eq(ρ_b, r_dense) - O(m)
+        let eq_ab = {
+            let _span = tracing::info_span!("jagged_assist_eq_ab", num_bits).entered();
+            let eq_a = EqPolynomial::mle(&rho_a, &r_x_padded);
+            let eq_b = EqPolynomial::mle(&rho_b, &r_dense_padded);
+            eq_a * eq_b
+        };
 
-        // Precompute eq_c and eq_d tables - O(2^num_bits)
-        // Note: EqPolynomial::evals uses big-endian, but t values use LSB-first,
-        // so we reverse rho_c and rho_d to match index ordering
-        let rho_c_rev: Vec<F> = rho_c.iter().rev().cloned().collect();
-        let rho_d_rev: Vec<F> = rho_d.iter().rev().cloned().collect();
-        let eq_c_evals = EqPolynomial::<F>::evals(&rho_c_rev);
-        let eq_d_evals = EqPolynomial::<F>::evals(&rho_d_rev);
-
-        // Compute Σ_k r^k · eq_c[t_{k-1}] · eq_d[t_k] - O(K)
-        let eq_cd_sum: F = self
-            .r_powers
-            .iter()
-            .zip(&self.params.evaluation_points)
-            .map(|(r_k, eval_point)| {
-                *r_k * eq_c_evals[eval_point.t_prev] * eq_d_evals[eval_point.t_curr]
-            })
-            .sum();
+        // Compute Σ_k r^k · eq(ρ_c, t_{k-1}) · eq(ρ_d, t_k) directly - O(m · K)
+        // This matches the paper's Theorem 1.5 cost: O(m · K) field operations
+        // instead of O(2^m) table precomputation + O(K) lookups.
+        let eq_cd_sum: F = {
+            let _span = tracing::info_span!("jagged_assist_eq_cd_sum", k = self.params.num_polynomials, num_bits).entered();
+            self.r_powers
+                .iter()
+                .zip(&self.params.evaluation_points)
+                .map(|(r_k, eval_point)| {
+                    let eq_c = eq_at_index(&rho_c, eval_point.t_prev);
+                    let eq_d = eq_at_index(&rho_d, eval_point.t_curr);
+                    *r_k * eq_c * eq_d
+                })
+                .sum()
+        };
 
         g_at_rho * eq_ab * eq_cd_sum
     }
