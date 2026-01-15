@@ -6,10 +6,7 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 use crate::{
-    poly::{
-        commitment::dory::DoryGlobals,
-        rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
-    },
+    poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
     zkvm::{claim_reductions::AdviceKind, config::OneHotParams},
 };
 use allocative::Allocative;
@@ -20,8 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::{
-    commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
-    multilinear_polynomial::MultilinearPolynomial,
+    commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::MultilinearPolynomial,
 };
 use crate::{
     field::JoltField,
@@ -644,38 +640,33 @@ where
 /// selector that is 1 on that block and 0 elsewhere:
 ///
 /// ```text
-/// Lagrange factor = ∏_{i=nu_a..nu_main} (1 - r_rows[i]) × ∏_{i=sigma_a..sigma_main} (1 - r_cols[i])
+/// Lagrange factor = ∏_{r ∈ opening_point, r ∉ advice_opening_point} (1 - r)
 /// ```
 ///
 /// # Arguments
-/// - `opening_point_be`: The unified opening point in big-endian order
-/// - `advice_vars`: Number of variables in the advice polynomial
+/// - `opening_point`: The unified opening point for the Dory opening proof
+/// - `advice_opening_point`: The opening point for the advice polynomial
 ///
 /// # Returns
 /// The Lagrange factor as a field element
 pub fn compute_advice_lagrange_factor<F: JoltField>(
-    opening_point_be: &[F::Challenge],
-    advice_vars: usize,
+    opening_point: &[F::Challenge],
+    advice_opening_point: &[F::Challenge],
 ) -> F {
-    // Convert to little-endian (Dory order)
-    let mut r_le: Vec<F::Challenge> = opening_point_be.to_vec();
-    r_le.reverse();
-
-    // Derive main matrix dimensions from the unified point length
-    let total_vars = r_le.len();
-    let (sigma_main, _nu_main) = DoryGlobals::balanced_sigma_nu(total_vars);
-    let (r_cols, r_rows) = r_le.split_at(sigma_main);
-
-    // Advice dimensions (balanced policy)
-    let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
-
-    // Row factor: eq(r_rows[nu_a..], [0, 0, ...]) = ∏(1 - r_rows[i]) for i >= nu_a
-    // This selects the "zero" vertex in the row dimension beyond the advice region
-    let row_factor = EqPolynomial::<F>::zero_selector(&r_rows[nu_a..]);
-
-    // Column factor: eq(r_cols[sigma_a..], [0, 0, ...]) = ∏(1 - r_cols[i]) for i >= sigma_a
-    // This selects the "zero" vertex in the column dimension beyond the advice region
-    let col_factor = EqPolynomial::<F>::zero_selector(&r_cols[sigma_a..]);
-
-    row_factor * col_factor
+    #[cfg(test)]
+    {
+        for r in advice_opening_point.iter() {
+            assert!(opening_point.contains(r));
+        }
+    }
+    opening_point
+        .iter()
+        .map(|r| {
+            if advice_opening_point.contains(r) {
+                F::one()
+            } else {
+                F::one() - r
+            }
+        })
+        .product()
 }

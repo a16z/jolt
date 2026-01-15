@@ -630,7 +630,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
         {
             let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
@@ -642,7 +642,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             SumcheckId::AdviceClaimReductionPhase2,
         ) {
             let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,

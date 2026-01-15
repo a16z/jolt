@@ -154,9 +154,6 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             advice_row_vars,
             advice_col_vars,
         );
-        println!("row-binding rounds: {row_binding_rounds:?}");
-        println!("col-binding rounds: {col_binding_rounds:?}");
-        println!("padding rounds: {padding_rounds:?}");
 
         Some(Self {
             kind,
@@ -274,29 +271,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
             }
         };
 
-        let advice_rows = 1 << params.advice_row_vars;
         let advice_cols = 1 << params.advice_col_vars;
-        println!("Advice matrix: {} x {}", advice_rows, advice_cols);
-
-        // let r_val_eval: OpeningPoint<LITTLE_ENDIAN, F> = params.r_val_eval.match_endianness();
-        // let r_val_eval = r_val_eval.r;
-        // let r_cols = &r_val_eval[..params.advice_col_vars];
-        // let r_rows = &r_val_eval[params.advice_col_vars..];
-        // // Little-endian cycles -> addresses
-        // let mut r_permuted = [
-        //     r_rows,
-        //     // r_cols,
-        //     // &r_cols[params.col_binding_rounds.len()..],
-        //     // &r_cols[..params.col_binding_rounds.len()],
-        //     &r_cols[params.log_k_chunk..],
-        //     &r_cols[..params.log_k_chunk],
-        // ]
-        // .concat();
-        // // println!("r_permuted: {r_permuted:?}");
-        // r_permuted.reverse();
-        // let eq_r_permuted = EqPolynomial::evals(&r_permuted);
-        // // println!("eq_evals: {eq_evals:?}");
-        // println!("eq_r_permuted: {eq_r_permuted:?}");
 
         let advice_index_to_address_cycle = |index: usize| -> (usize, usize) {
             let row = index / advice_cols;
@@ -398,14 +373,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        // if self.params.col_binding_rounds.contains(&round) {
-        //     println!("column variable");
-        //     println!("  {r_j}");
-        // }
-        // if self.params.row_binding_rounds.contains(&round) {
-        //     println!("row variable");
-        //     println!("  {r_j}");
-        // }
         if self.params.padding_rounds.contains(&round) {
             // Each dummy internal round halves the running claim; equivalently, we multiply the
             // scaling factor by 1/2.
@@ -454,9 +421,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         // If there is no Phase 2 (all advice row bits come from cycle), cache the final advice opening
         // directly here under `SumcheckId::AdviceClaimReduction` so Stage 7 can scale/embed it.
         if self.advice_poly.len() == 1 {
-            todo!("Broken for address-major");
             let advice_claim = self.advice_poly.final_sumcheck_claim();
-
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
@@ -572,7 +537,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         if self.params.row_binding_rounds.len() + self.params.col_binding_rounds.len()
             == self.params.advice_row_vars + self.params.advice_col_vars
         {
-            todo!("broken for address-major");
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
@@ -719,10 +683,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase2Param
         &self,
         address_challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        println!(
-            "sumcheck challenges: {:?}",
-            [self.cycle_challenges.as_slice(), address_challenges].concat()
-        );
         match DoryGlobals::get_layout() {
             DoryLayout::CycleMajor => OpeningPoint::<LITTLE_ENDIAN, F>::new(
                 [self.cycle_challenges.as_slice(), address_challenges].concat(),
@@ -921,17 +881,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        // println!("column variable (cont.)");
-        // println!("  {r_j}");
         self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        if self.advice_poly.len() == 1 {
-            println!(
-                "P Advice claim: {}",
-                self.advice_poly.final_sumcheck_claim()
-            );
-            println!("P EQ claim: {}", self.eq_poly.final_sumcheck_claim());
-        }
     }
 
     fn cache_openings(
@@ -942,7 +893,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     ) {
         // Build full advice opening point (little-endian Dory order):
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
-        // println!("{opening_point:?}");
         let claim = self.advice_poly.final_sumcheck_claim();
 
         match self.params.kind {
@@ -1017,10 +967,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             .1;
 
         let eq_eval = EqPolynomial::mle(&opening_point.r, &self.params.r_val_eval.r);
-        println!(
-            "mle({:?}, {:?})",
-            &opening_point.r, &self.params.r_val_eval.r
-        );
         let eq_combined = if self.params.single_opening {
             eq_eval
         } else {
@@ -1032,9 +978,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             let eq_final = EqPolynomial::mle(&opening_point.r, &r_final.r);
             eq_eval + self.params.gamma * eq_final
         };
-
-        println!("V Advice claim: {advice_claim}");
-        println!("V EQ claim: {eq_combined}");
 
         // Account for Phase 1's internal dummy-gap traversal via constant scaling.
         advice_claim * eq_combined * self.params.scale

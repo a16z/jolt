@@ -1408,11 +1408,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
         {
-            let advice_poly = self.advice.trusted_advice_polynomial.as_ref().unwrap();
-            let expected_eval = advice_poly.evaluate(&advice_point.r);
-            debug_assert_eq!(expected_eval, advice_claim);
+            println!("advice_point: {advice_point:?}");
+            println!("opening_point: {opening_point:?}");
+            #[cfg(test)]
+            {
+                let advice_poly = self.advice.trusted_advice_polynomial.as_ref().unwrap();
+                let expected_eval = advice_poly.evaluate(&advice_point.r);
+                assert_eq!(expected_eval, advice_claim);
+            }
             let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
@@ -1423,11 +1428,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             AdviceKind::Untrusted,
             SumcheckId::AdviceClaimReductionPhase2,
         ) {
-            let advice_poly = self.advice.untrusted_advice_polynomial.as_ref().unwrap();
-            let expected_eval = advice_poly.evaluate(&advice_point.r);
-            debug_assert_eq!(expected_eval, advice_claim);
+            println!("advice_point: {advice_point:?}");
+            println!("opening_point: {opening_point:?}");
+            #[cfg(test)]
+            {
+                let advice_poly = self.advice.untrusted_advice_polynomial.as_ref().unwrap();
+                let expected_eval = advice_poly.evaluate(&advice_point.r);
+                assert_eq!(expected_eval, advice_claim);
+            }
             let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,
