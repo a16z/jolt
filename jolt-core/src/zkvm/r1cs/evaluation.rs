@@ -289,8 +289,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         }
     }
 
-    // ---------- First group ----------
-
     #[inline]
     pub fn eval_az_first_group(&self) -> AzFirstGroup {
         let flags = &self.row.flags;
@@ -540,7 +538,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             !bz.one_minus_do_not_update_unexpanded_pc,
         );
     }
-    // ---------- Second group ----------
 
     #[inline]
     pub fn eval_az_second_group(&self) -> AzSecondGroup {

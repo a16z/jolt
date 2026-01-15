@@ -180,8 +180,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
     }
 }
 
-/// Sumcheck prover for [`InstructionReadRafSumcheckVerifier`].
-///
 /// Binds address variables first using prefix/suffix decomposition to aggregate, per cycle j,
 ///   Σ_k ra(k, j)·Val_j(k) and Σ_k ra(k, j)·RafVal_j(k),
 #[derive(Allocative)]

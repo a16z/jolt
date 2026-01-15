@@ -14,6 +14,53 @@ extern crate alloc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+/// Returns `true` iff `x >= p` (Fq modulus), i.e., `x` is non-canonical.
+/// Specialized: since p's upper 3 limbs are all u64::MAX, x >= p iff
+/// all upper 3 limbs are MAX and limb[0] >= Fq::MODULUS.0[0].
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+#[inline(always)]
+fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
+    x[3] == u64::MAX && x[2] == u64::MAX && x[1] == u64::MAX && x[0] >= Fq::MODULUS.0[0]
+}
+
+/// Returns `true` iff `x >= n` (Fr modulus), i.e., `x` is non-canonical.
+/// Specialized: since n's limb[3] is u64::MAX, we short-circuit if x[3] < MAX.
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+#[inline(always)]
+fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
+    if x[3] != u64::MAX {
+        return false;
+    }
+    if x[2] > Fr::MODULUS.0[2] {
+        return true;
+    }
+    if x[2] < Fr::MODULUS.0[2] {
+        return false;
+    }
+    if x[1] > Fr::MODULUS.0[1] {
+        return true;
+    }
+    if x[1] < Fr::MODULUS.0[1] {
+        return false;
+    }
+    x[0] >= Fr::MODULUS.0[0]
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+#[inline(always)]
+fn is_not_equal(x: &[u64; 4], y: &[u64; 4]) -> bool {
+    x[0] != y[0] || x[1] != y[1] || x[2] != y[2] || x[3] != y[3]
+}
+
 /// panic instruction
 /// spoils the proof
 /// used for inline checks
@@ -229,7 +276,7 @@ impl Secp256k1Fq {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div(&self, other: &Secp256k1Fq) -> Self {
+    fn div_impl(&self, other: &Secp256k1Fq) -> Self {
         // get inverse as pure advice
         let mut c = Secp256k1Fq::zero();
         unsafe {
@@ -247,22 +294,43 @@ impl Secp256k1Fq {
         }
         // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if greater than or equal to p, or other * c is not equal to self, panic
-        if (c.e.0 .0[3] == 0xFFFFFFFFFFFFFFFF
-            && c.e.0 .0[2] == 0xFFFFFFFFFFFFFFFF
-            && c.e.0 .0[1] == 0xFFFFFFFFFFFFFFFF
-            && c.e.0 .0[0] >= 0xFFFFFFFFFFFFFC2F)
-            || (tmp.e.0 .0[0] != self.e.0 .0[0]
-                || tmp.e.0 .0[1] != self.e.0 .0[1]
-                || tmp.e.0 .0[2] != self.e.0 .0[2]
-                || tmp.e.0 .0[3] != self.e.0 .0[3])
-        {
+        // if not canonical (>= p), or other * c is not equal to self, panic
+        if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
             hcf();
         }
         c
+    }
+    /// returns self / other
+    /// uses custom inline for performance
+    /// costs nearly the same as multiplication
+    ///
+    /// # Proof soundness
+    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
+    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
+    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div(&self, other: &Secp256k1Fq) -> Self {
+        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        if other.is_zero() {
+            hcf();
+        }
+        self.div_impl(other)
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fq) -> Self {
+        self.div_impl(other)
     }
     #[cfg(all(
         not(feature = "host"),
@@ -271,12 +339,25 @@ impl Secp256k1Fq {
     pub fn div(&self, _other: &Secp256k1Fq) -> Self {
         panic!("Secp256k1Fq::div called on non-RISC-V target without host feature");
     }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn div_unchecked(&self, _other: &Secp256k1Fq) -> Self {
+        panic!("Secp256k1Fq::div_unchecked called on non-RISC-V target without host feature");
+    }
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
             e: self.e / other.e,
         }
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fq) -> Self {
+        self.div(other)
     }
 }
 
@@ -370,7 +451,7 @@ impl Secp256k1Fr {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div(&self, other: &Secp256k1Fr) -> Self {
+    fn div_impl(&self, other: &Secp256k1Fr) -> Self {
         // get inverse as pure advice
         let mut c = Secp256k1Fr::zero();
         unsafe {
@@ -388,35 +469,43 @@ impl Secp256k1Fr {
         }
         // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if greater than or equal to p, or other * c is not equal to self, panic
-        if tmp.e.0 .0[0] != self.e.0 .0[0]
-            || tmp.e.0 .0[1] != self.e.0 .0[1]
-            || tmp.e.0 .0[2] != self.e.0 .0[2]
-            || tmp.e.0 .0[3] != self.e.0 .0[3]
-        {
+        // if not canonical (>= n), or other * c is not equal to self, panic
+        if is_fr_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
             // spoil the proof
             hcf();
         }
-        let mut greater = false;
-        if c.e.0 .0[3] == 0xffffffffffffffff {
-            if c.e.0 .0[2] > Fr::MODULUS.0[2] {
-                greater = true;
-            } else if c.e.0 .0[2] == Fr::MODULUS.0[2] {
-                if c.e.0 .0[1] > Fr::MODULUS.0[1] {
-                    greater = true;
-                } else if c.e.0 .0[1] == Fr::MODULUS.0[1] {
-                    if c.e.0 .0[0] >= Fr::MODULUS.0[0] {
-                        greater = true;
-                    }
-                }
-            }
-        }
-        if greater {
+        c
+    }
+    /// returns self / other
+    /// uses custom inline for performance
+    /// costs nearly the same as multiplication
+    ///
+    /// # Proof soundness
+    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
+    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
+    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div(&self, other: &Secp256k1Fr) -> Self {
+        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        if other.is_zero() {
             hcf();
         }
-        c
+        self.div_impl(other)
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fr) -> Self {
+        self.div_impl(other)
     }
     #[cfg(all(
         not(feature = "host"),
@@ -425,12 +514,25 @@ impl Secp256k1Fr {
     pub fn div(&self, _other: &Secp256k1Fr) -> Self {
         panic!("Secp256k1Fr::div called on non-RISC-V target without host feature");
     }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn div_unchecked(&self, _other: &Secp256k1Fr) -> Self {
+        panic!("Secp256k1Fr::div_unchecked called on non-RISC-V target without host feature");
+    }
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
         Secp256k1Fr {
             e: self.e / other.e,
         }
+    }
+    /// Same as [`Self::div`], but assumes `other != 0`.
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn div_unchecked(&self, other: &Secp256k1Fr) -> Self {
+        self.div(other)
     }
 }
 
@@ -558,7 +660,7 @@ impl Secp256k1Point {
         if self.y.is_zero() {
             Secp256k1Point::infinity()
         } else {
-            let s = self.x.square().tpl().div(&self.y.dbl());
+            let s = self.x.square().tpl().div_unchecked(&self.y.dbl());
             let x2 = s.square().sub(&self.x.dbl());
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             Secp256k1Point { x: x2, y: y2 }
@@ -580,7 +682,7 @@ impl Secp256k1Point {
             Secp256k1Point::infinity()
         // if the x coordinates are not equal and not infinity, perform standard point addition
         } else {
-            let s = (self.y.sub(&other.y)).div(&self.x.sub(&other.x));
+            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x).sub(&other.x);
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             Secp256k1Point { x: x2, y: y2 }
@@ -608,7 +710,7 @@ impl Secp256k1Point {
         // note that (self + other) cannot equal infinity or self here
         // so no special cases needed
         } else {
-            let s = (self.y.sub(&other.y)).div(&self.x.sub(&other.x));
+            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x).sub(&other.x);
             let t = self.y.dbl().div(&self.x.sub(&x2)).sub(&s);
             let x3 = t.square().sub(&self.x).sub(&x2);
@@ -828,8 +930,8 @@ pub fn ecdsa_verify(
         return Result::Err(Secp256k1Error::ROrSZero);
     }
     // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
-    let u1 = z.div(&s);
-    let u2 = r.div(&s);
+    let u1 = z.div_unchecked(&s);
+    let u2 = r.div_unchecked(&s);
     // step 3: compute R = u1 * G + u2 * q
     // 3.1: perform the glv scalar decomposition
     let decomp_u = Secp256k1Point::decompose_scalar(&u1);
@@ -845,10 +947,27 @@ pub fn ecdsa_verify(
     ];
     // 3.4: perform the 4x128-bit scalar multiplication
     let r_claim = secp256k1_4x128_scalar_mul(scalars, points);
-    // step 4: check that R.x == r (by converting to bigints and comparing)
-    let r_claim_x_bigint = r_claim.x.e.into_bigint();
+    // step 4: check that r == R.x mod n.
+    //
+    // We implement the `mod n` as a single conditional subtraction on the bigint:
+    // for secp256k1, `0 <= x_R < p` and `p < 2n`, so `x_R mod n` is either `x_R` or `x_R - n`.
+    let mut r1_mod_n = r_claim.x.e.into_bigint();
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    if is_fr_non_canonical(&r1_mod_n.0) {
+        r1_mod_n -= Fr::MODULUS;
+    }
+    #[cfg(any(
+        feature = "host",
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    if r1_mod_n >= Fr::MODULUS {
+        r1_mod_n -= Fr::MODULUS;
+    }
     let r_bigint = r.e.into_bigint();
-    if r_claim_x_bigint != r_bigint {
+    if r1_mod_n != r_bigint {
         return Result::Err(Secp256k1Error::RxMismatch);
     }
     // if all checks passed, return Ok(())

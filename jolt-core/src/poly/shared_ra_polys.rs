@@ -18,8 +18,8 @@
 //!
 //! Instead of storing N separate `RaPolynomial` each with their own eq table copy,
 //! `SharedRaPolynomials` stores:
-//! - ONE shared eq table (size K)
-//! - `Vec<RaIndices>` (size T, non-transposed)
+//! - One (small) eq table per polynomial (size K each; K is 16 or 256 in practice)
+//! - A single `Vec<RaIndices>` (size T, non-transposed) shared by all polynomials
 //!
 //! This saves memory and improves cache locality when iterating through cycles.
 
@@ -444,15 +444,11 @@ fn compute_all_G_impl<F: JoltField>(
         )
 }
 
-// ============================================================================
-// SharedRaPolynomials - Shared eq table for all RA polynomials
-// ============================================================================
-
 /// Shared RA polynomials that use a single eq table for all polynomials.
 ///
 /// Instead of N separate `RaPolynomial` each with their own eq table copy,
 /// this stores:
-/// - ONE shared eq table (or split tables for later rounds)
+/// - ONE (small) eq table per polynomial (or split tables for later rounds)
 /// - `Vec<RaIndices>` (size T, non-transposed)
 ///
 /// This saves memory and improves cache locality.
@@ -471,8 +467,11 @@ pub enum SharedRaPolynomials<F: JoltField> {
 /// Round 1 state: single shared eq table
 #[derive(Allocative, Default)]
 pub struct SharedRaRound1<F: JoltField> {
-    /// Shared eq table: F[k] = eq(r_address, k) for k in 0..K
-    F: Vec<F>,
+    /// Per-polynomial eq tables: tables[poly_idx][k] for k in 0..K
+    ///
+    /// In the booleanity sumcheck, these tables may already be pre-scaled by a per-polynomial
+    /// constant (e.g. a batching coefficient).
+    tables: Vec<Vec<F>>,
     /// RA indices for all cycles (non-transposed)
     indices: Vec<RaIndices>,
     /// Number of polynomials
@@ -485,10 +484,10 @@ pub struct SharedRaRound1<F: JoltField> {
 /// Round 2 state: split eq tables
 #[derive(Allocative, Default)]
 pub struct SharedRaRound2<F: JoltField> {
-    /// F_0[k] = eq(r_address, k) * eq(0, r0)
-    F_0: Vec<F>,
-    /// F_1[k] = eq(r_address, k) * eq(1, r0)
-    F_1: Vec<F>,
+    /// Per-polynomial tables for the 0-branch: tables_0[poly_idx][k]
+    tables_0: Vec<Vec<F>>,
+    /// Per-polynomial tables for the 1-branch: tables_1[poly_idx][k]
+    tables_1: Vec<Vec<F>>,
     /// RA indices for all cycles
     indices: Vec<RaIndices>,
     num_polys: usize,
@@ -500,10 +499,10 @@ pub struct SharedRaRound2<F: JoltField> {
 /// Round 3 state: further split eq tables
 #[derive(Allocative, Default)]
 pub struct SharedRaRound3<F: JoltField> {
-    F_00: Vec<F>,
-    F_01: Vec<F>,
-    F_10: Vec<F>,
-    F_11: Vec<F>,
+    tables_00: Vec<Vec<F>>,
+    tables_01: Vec<Vec<F>>,
+    tables_10: Vec<Vec<F>>,
+    tables_11: Vec<Vec<F>>,
     indices: Vec<RaIndices>,
     num_polys: usize,
     #[allocative(skip)]
@@ -513,11 +512,17 @@ pub struct SharedRaRound3<F: JoltField> {
 
 impl<F: JoltField> SharedRaPolynomials<F> {
     /// Create new SharedRaPolynomials from eq table and indices.
-    pub fn new(eq_table: Vec<F>, indices: Vec<RaIndices>, one_hot_params: OneHotParams) -> Self {
+    pub fn new(tables: Vec<Vec<F>>, indices: Vec<RaIndices>, one_hot_params: OneHotParams) -> Self {
         let num_polys =
             one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
+        debug_assert!(
+            tables.len() == num_polys,
+            "SharedRaPolynomials::new: tables.len() = {}, expected num_polys = {}",
+            tables.len(),
+            num_polys
+        );
         Self::Round1(SharedRaRound1 {
-            F: eq_table,
+            tables,
             indices,
             num_polys,
             one_hot_params,
@@ -596,19 +601,31 @@ impl<F: JoltField> SharedRaRound1<F> {
     fn get_bound_coeff(&self, poly_idx: usize, j: usize) -> F {
         self.indices[j]
             .get_index(poly_idx, &self.one_hot_params)
-            .map_or(F::zero(), |k| self.F[k as usize])
+            .map_or(F::zero(), |k| self.tables[poly_idx][k as usize])
     }
 
     fn bind(self, r0: F::Challenge, order: BindingOrder) -> SharedRaRound2<F> {
         let eq_0_r0 = EqPolynomial::mle(&[F::zero()], &[r0]);
         let eq_1_r0 = EqPolynomial::mle(&[F::one()], &[r0]);
-        let F_0: Vec<F> = self.F.iter().map(|v| eq_0_r0 * v).collect();
-        let F_1: Vec<F> = self.F.iter().map(|v| eq_1_r0 * v).collect();
-        drop_in_background_thread(self.F);
+        let (tables_0, tables_1) = rayon::join(
+            || {
+                self.tables
+                    .par_iter()
+                    .map(|t| t.iter().map(|v| eq_0_r0 * v).collect::<Vec<F>>())
+                    .collect::<Vec<Vec<F>>>()
+            },
+            || {
+                self.tables
+                    .par_iter()
+                    .map(|t| t.iter().map(|v| eq_1_r0 * v).collect::<Vec<F>>())
+                    .collect::<Vec<Vec<F>>>()
+            },
+        );
+        drop_in_background_thread(self.tables);
 
         SharedRaRound2 {
-            F_0,
-            F_1,
+            tables_0,
+            tables_1,
             indices: self.indices,
             num_polys: self.num_polys,
             one_hot_params: self.one_hot_params,
@@ -625,19 +642,19 @@ impl<F: JoltField> SharedRaRound2<F> {
                 let mid = self.indices.len() / 2;
                 let h_0 = self.indices[j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_0[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_0[poly_idx][k as usize]);
                 let h_1 = self.indices[mid + j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_1[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_1[poly_idx][k as usize]);
                 h_0 + h_1
             }
             BindingOrder::LowToHigh => {
                 let h_0 = self.indices[2 * j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_0[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_0[poly_idx][k as usize]);
                 let h_1 = self.indices[2 * j + 1]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_1[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_1[poly_idx][k as usize]);
                 h_0 + h_1
             }
         }
@@ -648,32 +665,48 @@ impl<F: JoltField> SharedRaRound2<F> {
         let eq_0_r1 = EqPolynomial::mle(&[F::zero()], &[r1]);
         let eq_1_r1 = EqPolynomial::mle(&[F::one()], &[r1]);
 
-        let mut F_00 = self.F_0.clone();
-        let mut F_01 = self.F_0;
-        let mut F_10 = self.F_1.clone();
-        let mut F_11 = self.F_1;
+        let mut tables_00 = self.tables_0.clone();
+        let mut tables_01 = self.tables_0;
+        let mut tables_10 = self.tables_1.clone();
+        let mut tables_11 = self.tables_1;
 
-        // Scale all four tables in parallel using nested joins
+        // Scale all four groups in parallel.
         rayon::join(
             || {
                 rayon::join(
-                    || F_00.par_iter_mut().for_each(|f| *f *= eq_0_r1),
-                    || F_01.par_iter_mut().for_each(|f| *f *= eq_1_r1),
+                    || {
+                        tables_00
+                            .par_iter_mut()
+                            .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r1))
+                    },
+                    || {
+                        tables_01
+                            .par_iter_mut()
+                            .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r1))
+                    },
                 )
             },
             || {
                 rayon::join(
-                    || F_10.par_iter_mut().for_each(|f| *f *= eq_0_r1),
-                    || F_11.par_iter_mut().for_each(|f| *f *= eq_1_r1),
+                    || {
+                        tables_10
+                            .par_iter_mut()
+                            .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r1))
+                    },
+                    || {
+                        tables_11
+                            .par_iter_mut()
+                            .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r1))
+                    },
                 )
             },
         );
 
         SharedRaRound3 {
-            F_00,
-            F_01,
-            F_10,
-            F_11,
+            tables_00,
+            tables_01,
+            tables_10,
+            tables_11,
             indices: self.indices,
             num_polys: self.num_polys,
             one_hot_params: self.one_hot_params,
@@ -690,32 +723,32 @@ impl<F: JoltField> SharedRaRound3<F> {
                 let quarter = self.indices.len() / 4;
                 let h_00 = self.indices[j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_00[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_00[poly_idx][k as usize]);
                 let h_01 = self.indices[quarter + j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_01[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_01[poly_idx][k as usize]);
                 let h_10 = self.indices[2 * quarter + j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_10[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_10[poly_idx][k as usize]);
                 let h_11 = self.indices[3 * quarter + j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_11[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_11[poly_idx][k as usize]);
                 h_00 + h_01 + h_10 + h_11
             }
             BindingOrder::LowToHigh => {
                 // Bit pattern for offset: (r1, r0), so offset 1 = r0=1,r1=0 → F_10
                 let h_00 = self.indices[4 * j]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_00[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_00[poly_idx][k as usize]);
                 let h_10 = self.indices[4 * j + 1]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_10[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_10[poly_idx][k as usize]);
                 let h_01 = self.indices[4 * j + 2]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_01[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_01[poly_idx][k as usize]);
                 let h_11 = self.indices[4 * j + 3]
                     .get_index(poly_idx, &self.one_hot_params)
-                    .map_or(F::zero(), |k| self.F_11[k as usize]);
+                    .map_or(F::zero(), |k| self.tables_11[poly_idx][k as usize]);
                 h_00 + h_10 + h_01 + h_11
             }
         }
@@ -729,14 +762,14 @@ impl<F: JoltField> SharedRaRound3<F> {
         let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
         let eq_1_r2 = EqPolynomial::mle(&[F::one()], &[r2]);
 
-        let mut F_000 = self.F_00.clone();
-        let mut F_001 = self.F_00;
-        let mut F_010 = self.F_01.clone();
-        let mut F_011 = self.F_01;
-        let mut F_100 = self.F_10.clone();
-        let mut F_101 = self.F_10;
-        let mut F_110 = self.F_11.clone();
-        let mut F_111 = self.F_11;
+        let mut tables_000 = self.tables_00.clone();
+        let mut tables_001 = self.tables_00;
+        let mut tables_010 = self.tables_01.clone();
+        let mut tables_011 = self.tables_01;
+        let mut tables_100 = self.tables_10.clone();
+        let mut tables_101 = self.tables_10;
+        let mut tables_110 = self.tables_11.clone();
+        let mut tables_111 = self.tables_11;
 
         // Scale by eq(r2, bit)
         rayon::join(
@@ -744,14 +777,30 @@ impl<F: JoltField> SharedRaRound3<F> {
                 rayon::join(
                     || {
                         rayon::join(
-                            || F_000.par_iter_mut().for_each(|f| *f *= eq_0_r2),
-                            || F_001.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                            || {
+                                tables_000
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
+                            },
+                            || {
+                                tables_001
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
+                            },
                         )
                     },
                     || {
                         rayon::join(
-                            || F_010.par_iter_mut().for_each(|f| *f *= eq_0_r2),
-                            || F_011.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                            || {
+                                tables_010
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
+                            },
+                            || {
+                                tables_011
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
+                            },
                         )
                     },
                 )
@@ -760,23 +809,46 @@ impl<F: JoltField> SharedRaRound3<F> {
                 rayon::join(
                     || {
                         rayon::join(
-                            || F_100.par_iter_mut().for_each(|f| *f *= eq_0_r2),
-                            || F_101.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                            || {
+                                tables_100
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
+                            },
+                            || {
+                                tables_101
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
+                            },
                         )
                     },
                     || {
                         rayon::join(
-                            || F_110.par_iter_mut().for_each(|f| *f *= eq_0_r2),
-                            || F_111.par_iter_mut().for_each(|f| *f *= eq_1_r2),
+                            || {
+                                tables_110
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
+                            },
+                            || {
+                                tables_111
+                                    .par_iter_mut()
+                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
+                            },
                         )
                     },
                 )
             },
         );
 
-        // Collect all 8 tables for indexed access
-        let F_tables = [
-            &F_000, &F_100, &F_010, &F_110, &F_001, &F_101, &F_011, &F_111,
+        // Collect all 8 table groups for indexed access: group[offset][poly_idx][k]
+        let table_groups = [
+            &tables_000,
+            &tables_100,
+            &tables_010,
+            &tables_110,
+            &tables_001,
+            &tables_101,
+            &tables_011,
+            &tables_111,
         ];
 
         // Materialize all polynomials in parallel
@@ -797,7 +869,9 @@ impl<F: JoltField> SharedRaRound3<F> {
                                     .map(|offset| {
                                         indices[8 * j + offset]
                                             .get_index(poly_idx, one_hot_params)
-                                            .map_or(F::zero(), |k| F_tables[offset][k as usize])
+                                            .map_or(F::zero(), |k| {
+                                                table_groups[offset][poly_idx][k as usize]
+                                            })
                                     })
                                     .sum()
                             })
@@ -811,7 +885,9 @@ impl<F: JoltField> SharedRaRound3<F> {
                                     .map(|seg| {
                                         indices[seg * eighth + j]
                                             .get_index(poly_idx, one_hot_params)
-                                            .map_or(F::zero(), |k| F_tables[seg][k as usize])
+                                            .map_or(F::zero(), |k| {
+                                                table_groups[seg][poly_idx][k as usize]
+                                            })
                                     })
                                     .sum()
                             })

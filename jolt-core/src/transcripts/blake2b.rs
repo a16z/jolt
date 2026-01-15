@@ -308,7 +308,6 @@ mod tests {
         let field_elem = Fr::rand(&mut rng);
         #[allow(clippy::op_ref)]
         let result_ref = field_elem * &challenge;
-        //let result_regular = field_elem * challenge.value();
         let result_regular = field_elem * challenge;
         assert_eq!(
             result_ref, result_regular,

@@ -281,10 +281,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
     }
 }
 
-// ============================================================================
-// PROVER
-// ============================================================================
-
 /// Prover for the fused HammingWeight + Address Reduction sumcheck.
 ///
 /// This sumcheck combines all three ra_i claim types (HammingWeight, Booleanity,
@@ -452,10 +448,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         flamegraph.visit_root(self);
     }
 }
-
-// ============================================================================
-// VERIFIER
-// ============================================================================
 
 pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
     params: HammingWeightClaimReductionParams<F>,

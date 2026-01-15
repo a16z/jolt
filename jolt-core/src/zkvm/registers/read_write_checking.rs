@@ -169,7 +169,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
     }
 }
 
-/// Sumcheck prover for [`RegistersReadWriteCheckingVerifier`].
 #[derive(Allocative)]
 pub struct RegistersReadWriteCheckingProver<F: JoltField> {
     sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>>,

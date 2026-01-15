@@ -96,7 +96,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
     }
 }
 
-/// Sumcheck prover for [`RafEvaluationSumcheckVerifier`].
 #[derive(Allocative)]
 pub struct RafEvaluationSumcheckProver<F: JoltField> {
     /// The ra polynomial

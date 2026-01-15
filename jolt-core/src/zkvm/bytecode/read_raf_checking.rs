@@ -884,7 +884,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                 let circuit_flags = instruction.circuit_flags();
                 let instr_flags = instruction.instruction_flags();
 
-                // ===== Stage 1 (Spartan outer sumcheck) =====
+                // Stage 1 (Spartan outer sumcheck)
                 // Val(k) = unexpanded_pc(k) + γ·imm(k)
                 //          + γ²·circuit_flags[0](k) + γ³·circuit_flags[1](k) + ...
                 // This virtualizes claims output by Spartan's "outer" sumcheck.
@@ -904,7 +904,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     *o0 = lc;
                 }
 
-                // ===== Stage 2 (product virtualization, de-duplicated factors) =====
+                // Stage 2 (product virtualization, de-duplicated factors)
                 // Val(k) = jump_flag(k) + γ·branch_flag(k)
                 //          + γ²·is_rd_not_zero_flag(k) + γ³·write_lookup_output_to_rd_flag(k)
                 // where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise;
@@ -929,7 +929,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     *o1 = lc;
                 }
 
-                // ===== Stage 3 (Shift sumcheck) =====
+                // Stage 3 (Shift sumcheck)
                 // Val(k) = imm(k) + γ·unexpanded_pc(k)
                 //          + γ²·left_operand_is_rs1_value(k) + γ³·left_operand_is_pc(k)
                 //          + γ⁴·right_operand_is_rs2_value(k) + γ⁵·right_operand_is_imm(k)
@@ -962,7 +962,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     *o2 = lc;
                 }
 
-                // ===== Stage 4 (registers read/write checking sumcheck) =====
+                // Stage 4 (registers read/write checking sumcheck)
                 // Val(k) = eq(rd(k), r_register) + γ·eq(rs1(k), r_register) + γ²·eq(rs2(k), r_register)
                 // where rd(k, r) = 1 if the k'th instruction in the bytecode has rd = r,
                 // and analogously for rs1(k, r) and rs2(k, r).
@@ -985,7 +985,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                         + rs2_eq * stage4_gammas[2];
                 }
 
-                // ===== Stage 5 (registers val-evaluation + instruction lookups sumcheck) =====
+                // Stage 5 (registers val-evaluation + instruction lookups sumcheck)
                 // Val(k) = eq(rd(k), r_register) + γ·raf_flag(k)
                 //          + γ²·lookup_table_flag[0](k) + γ³·lookup_table_flag[1](k) + ...
                 // where rd(k, r) = 1 if the k'th instruction in the bytecode has rd = r,

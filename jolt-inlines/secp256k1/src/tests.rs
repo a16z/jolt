@@ -198,4 +198,43 @@ mod sequence_tests {
         .unwrap();
         assert!(crate::sdk::ecdsa_verify(z, r, s, q).is_ok());
     }
+
+    /// Verify assumptions about Fq and Fr modulus limb structure used in
+    /// `is_fq_non_canonical` and `is_fr_non_canonical`.
+    #[test]
+    fn test_modulus_limb_assumptions() {
+        use ark_secp256k1::Fr;
+
+        // Fq modulus p = 2^256 - 2^32 - 977
+        // Expected: limbs[1], limbs[2], limbs[3] are all u64::MAX
+        assert_eq!(
+            Fq::MODULUS.0[3],
+            u64::MAX,
+            "Fq::MODULUS.0[3] should be u64::MAX"
+        );
+        assert_eq!(
+            Fq::MODULUS.0[2],
+            u64::MAX,
+            "Fq::MODULUS.0[2] should be u64::MAX"
+        );
+        assert_eq!(
+            Fq::MODULUS.0[1],
+            u64::MAX,
+            "Fq::MODULUS.0[1] should be u64::MAX"
+        );
+
+        // Fr modulus n (scalar field order)
+        // Expected: only limbs[3] is u64::MAX
+        assert_eq!(
+            Fr::MODULUS.0[3],
+            u64::MAX,
+            "Fr::MODULUS.0[3] should be u64::MAX"
+        );
+        // limbs[2] should NOT be u64::MAX (it's 0xFFFFFFFFFFFFFFFE)
+        assert_ne!(
+            Fr::MODULUS.0[2],
+            u64::MAX,
+            "Fr::MODULUS.0[2] should NOT be u64::MAX"
+        );
+    }
 }
