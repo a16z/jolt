@@ -9,14 +9,17 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
-use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
+use crate::curve::JoltCurve;
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+    subprotocols::{
+        blindfold::BlindFoldProof, sumcheck::SumcheckInstanceProof,
+        univariate_skip::UniSkipFirstRoundProofVariant,
+    },
     transcripts::Transcript,
     zkvm::{
         config::{OneHotConfig, ReadWriteConfig},
@@ -26,18 +29,21 @@ use crate::{
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
-    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
-    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
-    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub blindfold_proof: BlindFoldProof<F, C>,
+    /// Initial claims for each of the 7 sumcheck stages (needed for BlindFold verification)
+    pub blindfold_initial_claims: [F; 7],
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,

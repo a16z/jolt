@@ -1473,7 +1473,7 @@ mod tests {
         let mut prover_sumcheck =
             InstructionReadRafSumcheckProver::initialize(params, Arc::clone(&trace));
 
-        let (proof, r_sumcheck) = BatchedSumcheck::prove(
+        let (proof, r_sumcheck, _initial_claim) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],
             &mut prover_opening_accumulator,
             prover_transcript,
@@ -1512,16 +1512,16 @@ mod tests {
             OpeningPoint::new(r_cycle.clone()),
         );
 
-        let mut verifier_sumcheck = InstructionReadRafSumcheckVerifier::new(
+        let verifier_sumcheck = InstructionReadRafSumcheckVerifier::new(
             trace.len().log_2(),
             &one_hot_params,
             &verifier_opening_accumulator,
             verifier_transcript,
         );
 
-        let r_sumcheck_verif = BatchedSumcheck::verify(
+        let r_sumcheck_verif = BatchedSumcheck::verify_standard(
             &proof,
-            vec![&mut verifier_sumcheck],
+            vec![&verifier_sumcheck],
             &mut verifier_opening_accumulator,
             verifier_transcript,
         )

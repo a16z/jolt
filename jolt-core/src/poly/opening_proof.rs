@@ -179,6 +179,44 @@ pub enum OpeningId {
 pub type Opening<F> = (OpeningPoint<BIG_ENDIAN, F>, F);
 pub type Openings<F> = BTreeMap<OpeningId, Opening<F>>;
 
+/// ZK data collected during prove_zk for later use by BlindFold.
+///
+/// When ZK sumcheck is used, this stores the polynomial coefficients and
+/// blinding factors that are needed to construct the BlindFold witness.
+/// The commitments are stored as serialized bytes to keep the accumulator
+/// curve-agnostic.
+#[derive(Clone, Debug)]
+pub struct ZkStageData<F: JoltField> {
+    /// Initial batched claim for this sumcheck stage
+    pub initial_claim: F,
+    /// Pedersen commitments to round polynomials (serialized G1 points)
+    pub round_commitments: Vec<Vec<u8>>,
+    /// Compressed polynomial coefficients (coeffs_except_linear_term for each round)
+    pub compressed_poly_coeffs: Vec<Vec<F>>,
+    /// Blinding factors used for Pedersen commitments (one per round)
+    pub blinding_factors: Vec<F>,
+    /// Challenges derived during this sumcheck
+    pub challenges: Vec<F::Challenge>,
+}
+
+/// ZK data for uni-skip first round (Stages 1-2).
+/// Unlike regular sumcheck, uni-skip uses full polynomial (not compressed).
+#[derive(Clone, Debug)]
+pub struct UniSkipStageData<F: JoltField> {
+    /// Initial claim for this uni-skip round
+    pub input_claim: F,
+    /// Full polynomial coefficients (not compressed)
+    pub poly_coeffs: Vec<F>,
+    /// Blinding factor for Pedersen commitment
+    pub blinding_factor: F,
+    /// Challenge derived after committing
+    pub challenge: F::Challenge,
+    /// Polynomial degree
+    pub poly_degree: usize,
+    /// Serialized commitment bytes
+    pub commitment_bytes: Vec<u8>,
+}
+
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
 #[derive(Clone, Allocative)]
@@ -189,7 +227,14 @@ where
     pub openings: Openings<F>,
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
-    pub log_T: usize,
+    log_T: usize,
+    /// ZK auxiliary data for BlindFold, populated by BatchedSumcheck::prove_zk.
+    /// Each entry corresponds to one sumcheck stage.
+    #[allocative(skip)]
+    zk_stage_data: Vec<ZkStageData<F>>,
+    /// ZK uni-skip data for BlindFold (Stages 1-2 first rounds).
+    #[allocative(skip)]
+    uniskip_stage_data: Vec<UniSkipStageData<F>>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -349,6 +394,8 @@ where
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
+            zk_stage_data: Vec::new(),
+            uniskip_stage_data: Vec::new(),
         }
     }
 
@@ -473,6 +520,26 @@ where
             OpeningId::TrustedAdvice(sumcheck_id),
             (opening_point, claim),
         );
+    }
+
+    /// Store ZK stage data from a prove_zk call for later use by BlindFold.
+    pub fn push_zk_stage_data(&mut self, data: ZkStageData<F>) {
+        self.zk_stage_data.push(data);
+    }
+
+    /// Take all accumulated ZK stage data (used by prove_blindfold).
+    pub fn take_zk_stage_data(&mut self) -> Vec<ZkStageData<F>> {
+        std::mem::take(&mut self.zk_stage_data)
+    }
+
+    /// Store uni-skip stage data from prove_uniskip_round_zk for BlindFold.
+    pub fn push_uniskip_stage_data(&mut self, data: UniSkipStageData<F>) {
+        self.uniskip_stage_data.push(data);
+    }
+
+    /// Take all accumulated uni-skip stage data (used by prove_blindfold).
+    pub fn take_uniskip_stage_data(&mut self) -> Vec<UniSkipStageData<F>> {
+        std::mem::take(&mut self.uniskip_stage_data)
     }
 }
 

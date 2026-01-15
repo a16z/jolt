@@ -4,7 +4,11 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::pedersen::PedersenGenerators;
+use crate::poly::lagrange_poly::LagrangeHelper;
+use crate::subprotocols::blindfold::{BlindFoldVerifier, StageConfig, VerifierR1CSBuilder};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -28,7 +32,14 @@ use crate::zkvm::{
         read_raf_checking::InstructionReadRafSumcheckVerifier,
     },
     proof_serialization::JoltProof,
-    r1cs::key::UniformSpartanKey,
+    r1cs::{
+        constraints::{
+            OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        },
+        key::UniformSpartanKey,
+    },
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
@@ -73,12 +84,13 @@ use tracer::JoltDevice;
 pub struct JoltVerifier<
     'a,
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
-    pub proof: JoltProof<F, PCS, ProofTranscript>,
+    pub proof: JoltProof<F, C, PCS, ProofTranscript>,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
@@ -87,14 +99,20 @@ pub struct JoltVerifier<
     advice_reduction_gamma_untrusted: Option<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
+    pub pedersen_generators: PedersenGenerators<C>,
 }
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
-    JoltVerifier<'a, F, PCS, ProofTranscript>
+impl<
+        'a,
+        F: JoltField,
+        C: JoltCurve,
+        PCS: CommitmentScheme<Field = F>,
+        ProofTranscript: Transcript,
+    > JoltVerifier<'a, F, C, PCS, ProofTranscript>
 {
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
-        proof: JoltProof<F, PCS, ProofTranscript>,
+        proof: JoltProof<F, C, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
@@ -157,6 +175,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let one_hot_params =
             OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
 
+        // Use deterministic Pedersen generators for BlindFold verification
+        // This ensures prover and verifier use the same generators
+        let pedersen_generators = PedersenGenerators::<C>::deterministic(4096);
+
         Ok(Self {
             trusted_advice_commitment,
             program_io,
@@ -168,6 +190,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             advice_reduction_gamma_untrusted: None,
             spartan_key,
             one_hot_params,
+            pedersen_generators,
         })
     }
 
@@ -198,20 +221,26 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .append_serializable(trusted_advice_commitment);
         }
 
-        self.verify_stage1()?;
-        self.verify_stage2()?;
-        self.verify_stage3()?;
-        self.verify_stage4()?;
-        self.verify_stage5()?;
-        self.verify_stage6()?;
-        self.verify_stage7()?;
+        let (r_stage1, uniskip_challenge1) = self.verify_stage1()?;
+        let (r_stage2, uniskip_challenge2) = self.verify_stage2()?;
+        let r_stage3 = self.verify_stage3()?;
+        let r_stage4 = self.verify_stage4()?;
+        let r_stage5 = self.verify_stage5()?;
+        let r_stage6 = self.verify_stage6()?;
+        let r_stage7 = self.verify_stage7()?;
+        let sumcheck_challenges = [
+            r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
+        ];
+        let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
+        self.verify_blindfold(&sumcheck_challenges, uniskip_challenges)?;
         self.verify_stage8()?;
 
         Ok(())
     }
 
-    fn verify_stage1(&mut self) -> Result<(), anyhow::Error> {
-        let uni_skip_params = verify_stage1_uni_skip(
+    /// Returns (sumcheck_challenges, uni_skip_challenge)
+    fn verify_stage1(&mut self) -> Result<(Vec<F::Challenge>, F::Challenge), anyhow::Error> {
+        let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
             &mut self.opening_accumulator,
@@ -226,7 +255,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
         );
 
-        let _r_stage1 = BatchedSumcheck::verify(
+        let r_stage1 = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
             vec![&spartan_outer_remaining],
             &mut self.opening_accumulator,
@@ -234,11 +263,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 1")?;
 
-        Ok(())
+        Ok((r_stage1, uni_skip_challenge))
     }
 
-    fn verify_stage2(&mut self) -> Result<(), anyhow::Error> {
-        let uni_skip_params = verify_stage2_uni_skip(
+    /// Returns (sumcheck_challenges, uni_skip_challenge)
+    fn verify_stage2(&mut self) -> Result<(Vec<F::Challenge>, F::Challenge), anyhow::Error> {
+        let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -270,7 +300,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        let _r_stage2 = BatchedSumcheck::verify(
+        let r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             vec![
                 &spartan_product_virtual_remainder,
@@ -284,10 +314,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 2")?;
 
-        Ok(())
+        Ok((r_stage2, uni_skip_challenge))
     }
 
-    fn verify_stage3(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage3(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
@@ -301,7 +331,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        let _r_stage3 = BatchedSumcheck::verify(
+        let r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
                 &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
@@ -313,10 +343,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 3")?;
 
-        Ok(())
+        Ok(r_stage3)
     }
 
-    fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage4(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
@@ -354,7 +384,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
         );
 
-        let _r_stage4 = BatchedSumcheck::verify(
+        let r_stage4 = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             vec![
                 &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
@@ -366,10 +396,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 4")?;
 
-        Ok(())
+        Ok(r_stage4)
     }
 
-    fn verify_stage5(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage5(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
@@ -386,7 +416,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         );
 
-        let _r_stage5 = BatchedSumcheck::verify(
+        let r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             vec![
                 &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
@@ -398,10 +428,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 5")?;
 
-        Ok(())
+        Ok(r_stage5)
     }
 
-    fn verify_stage6(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage6(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
             &self.preprocessing.shared.bytecode,
@@ -481,7 +511,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             instances.push(advice);
         }
 
-        let _r_stage6 = BatchedSumcheck::verify(
+        let r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
             instances,
             &mut self.opening_accumulator,
@@ -489,11 +519,170 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 6")?;
 
+        Ok(r_stage6)
+    }
+
+    /// Verify BlindFold proof binding to sumcheck challenges.
+    ///
+    /// Stages 1-2 uni-skip first rounds use Pedersen commitments (ZkUniSkipFirstRoundProof).
+    /// The polynomial coefficients are hidden in the transcript - verifier only sees commitments.
+    /// BlindFold verifies the uni-skip polynomial constraints (sum check + evaluation) using
+    /// power sums for the symmetric domain.
+    fn verify_blindfold(
+        &mut self,
+        sumcheck_challenges: &[Vec<F::Challenge>; 7],
+        uniskip_challenges: [F::Challenge; 2],
+    ) -> Result<(), anyhow::Error> {
+        // Build stage configurations including uni-skip rounds.
+        // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
+        let stage_proofs = [
+            &self.proof.stage1_sumcheck_proof,
+            &self.proof.stage2_sumcheck_proof,
+            &self.proof.stage3_sumcheck_proof,
+            &self.proof.stage4_sumcheck_proof,
+            &self.proof.stage5_sumcheck_proof,
+            &self.proof.stage6_sumcheck_proof,
+            &self.proof.stage7_sumcheck_proof,
+        ];
+
+        // Precompute power sums for uni-skip domains
+        let outer_power_sums = LagrangeHelper::power_sums::<
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
+        >();
+        let product_power_sums = LagrangeHelper::power_sums::<
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+        >();
+
+        let mut stage_configs = Vec::new();
+        let mut total_rounds = 0usize;
+
+        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+            // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip config first
+            if stage_idx < 2 {
+                let uniskip_proof = if stage_idx == 0 {
+                    &self.proof.stage1_uni_skip_first_round_proof
+                } else {
+                    &self.proof.stage2_uni_skip_first_round_proof
+                };
+                let poly_degree = uniskip_proof.poly_degree();
+
+                let power_sums: Vec<i128> = if stage_idx == 0 {
+                    outer_power_sums.to_vec()
+                } else {
+                    product_power_sums.to_vec()
+                };
+
+                let config = if stage_idx == 0 {
+                    StageConfig::new_uniskip(poly_degree, power_sums)
+                } else {
+                    StageConfig::new_uniskip_chain(poly_degree, power_sums)
+                };
+                stage_configs.push(config);
+                total_rounds += 1;
+            }
+
+            // Add regular sumcheck rounds
+            let num_rounds = proof.num_rounds();
+            for round_idx in 0..num_rounds {
+                let poly_degree = match proof {
+                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Standard(std_proof) => {
+                        std_proof.compressed_polys[round_idx]
+                            .coeffs_except_linear_term
+                            .len()
+                    }
+                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) => {
+                        zk_proof.poly_degrees[round_idx]
+                    }
+                };
+                // For stages 0-1: first regular round follows uni-skip (no new chain)
+                // For stages 2-6: first regular round starts a new chain
+                let starts_new_chain = round_idx == 0 && stage_idx >= 2;
+                let config = if starts_new_chain {
+                    StageConfig::new_chain(1, poly_degree)
+                } else {
+                    StageConfig::new(1, poly_degree)
+                };
+                stage_configs.push(config);
+                total_rounds += 1;
+            }
+        }
+
+        // Build the verifier R1CS with the same structure as the prover
+        let builder = VerifierR1CSBuilder::new(&stage_configs);
+        let r1cs = builder.build();
+
+        // SECURITY: Verify that challenges in BlindFold proof match those derived from main transcript.
+        // Public inputs in real_instance.x are laid out as: [challenges..., initial_claims...]
+        // Challenges include uni-skip challenges for stages 0-1, then regular sumcheck challenges.
+        let mut challenge_idx = 0;
+        for (stage_idx, stage_challenges) in sumcheck_challenges.iter().enumerate() {
+            // For stages 0 and 1, verify uni-skip challenge first
+            if stage_idx < 2 {
+                let expected_field: F = uniskip_challenges[stage_idx].into();
+                let actual_field = self.proof.blindfold_proof.real_instance.x[challenge_idx];
+                if expected_field != actual_field {
+                    return Err(anyhow::anyhow!(
+                        "BlindFold uni-skip challenge mismatch at stage {stage_idx}: \
+                         expected {expected_field:?}, got {actual_field:?}"
+                    ));
+                }
+                challenge_idx += 1;
+            }
+
+            // Verify regular sumcheck challenges
+            for (round_idx, expected_challenge) in stage_challenges.iter().enumerate() {
+                let expected_field: F = (*expected_challenge).into();
+                let actual_field = self.proof.blindfold_proof.real_instance.x[challenge_idx];
+                if expected_field != actual_field {
+                    return Err(anyhow::anyhow!(
+                        "BlindFold challenge mismatch at stage {stage_idx} round {round_idx}: \
+                         expected {expected_field:?}, got {actual_field:?}"
+                    ));
+                }
+                challenge_idx += 1;
+            }
+        }
+
+        // Verify that the initial claims in the BlindFold proof match those in the Jolt proof.
+        // Initial claims start at index total_rounds (after all challenges).
+        let num_chains = 7; // Jolt has 7 independent sumcheck stages
+        let initial_claims_in_blindfold =
+            &self.proof.blindfold_proof.real_instance.x[total_rounds..total_rounds + num_chains];
+
+        for (i, (expected, actual)) in self
+            .proof
+            .blindfold_initial_claims
+            .iter()
+            .zip(initial_claims_in_blindfold.iter())
+            .enumerate()
+        {
+            if expected != actual {
+                return Err(anyhow::anyhow!(
+                    "BlindFold initial claim mismatch at stage {i}: expected {expected:?}, got {actual:?}"
+                ));
+            }
+        }
+
+        // Create BlindFold verifier and verify the proof
+        let verifier = BlindFoldVerifier::new(&self.pedersen_generators, &r1cs);
+        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+
+        verifier
+            .verify(&self.proof.blindfold_proof, &mut blindfold_transcript)
+            .map_err(|e| anyhow::anyhow!("BlindFold verification failed: {e:?}"))?;
+
+        tracing::debug!(
+            "BlindFold verification passed: {} R1CS constraints",
+            r1cs.num_constraints
+        );
+
         Ok(())
     }
 
     /// Stage 7: HammingWeight claim reduction verification.
-    fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage7(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
@@ -537,7 +726,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         if let Some(ref v) = untrusted_advice_phase2 {
             instances.push(v);
         }
-        let _r_address_stage7 = BatchedSumcheck::verify(
+        let r_address_stage7 = BatchedSumcheck::verify(
             &self.proof.stage7_sumcheck_proof,
             instances,
             &mut self.opening_accumulator,
@@ -545,7 +734,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 7")?;
 
-        Ok(())
+        Ok(r_address_stage7)
     }
 
     /// Stage 8: Dory batch opening verification.
