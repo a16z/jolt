@@ -199,6 +199,24 @@ pub struct ZkStageData<F: JoltField> {
     pub challenges: Vec<F::Challenge>,
 }
 
+/// ZK data for uni-skip first round (Stages 1-2).
+/// Unlike regular sumcheck, uni-skip uses full polynomial (not compressed).
+#[derive(Clone, Debug)]
+pub struct UniSkipStageData<F: JoltField> {
+    /// Initial claim for this uni-skip round
+    pub input_claim: F,
+    /// Full polynomial coefficients (not compressed)
+    pub poly_coeffs: Vec<F>,
+    /// Blinding factor for Pedersen commitment
+    pub blinding_factor: F,
+    /// Challenge derived after committing
+    pub challenge: F::Challenge,
+    /// Polynomial degree
+    pub poly_degree: usize,
+    /// Serialized commitment bytes
+    pub commitment_bytes: Vec<u8>,
+}
+
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
 #[derive(Clone, Allocative)]
@@ -214,6 +232,9 @@ where
     /// Each entry corresponds to one sumcheck stage.
     #[allocative(skip)]
     zk_stage_data: Vec<ZkStageData<F>>,
+    /// ZK uni-skip data for BlindFold (Stages 1-2 first rounds).
+    #[allocative(skip)]
+    uniskip_stage_data: Vec<UniSkipStageData<F>>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -374,6 +395,7 @@ where
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
             zk_stage_data: Vec::new(),
+            uniskip_stage_data: Vec::new(),
         }
     }
 
@@ -508,6 +530,16 @@ where
     /// Take all accumulated ZK stage data (used by prove_blindfold).
     pub fn take_zk_stage_data(&mut self) -> Vec<ZkStageData<F>> {
         std::mem::take(&mut self.zk_stage_data)
+    }
+
+    /// Store uni-skip stage data from prove_uniskip_round_zk for BlindFold.
+    pub fn push_uniskip_stage_data(&mut self, data: UniSkipStageData<F>) {
+        self.uniskip_stage_data.push(data);
+    }
+
+    /// Take all accumulated uni-skip stage data (used by prove_blindfold).
+    pub fn take_uniskip_stage_data(&mut self) -> Vec<UniSkipStageData<F>> {
+        std::mem::take(&mut self.uniskip_stage_data)
     }
 }
 

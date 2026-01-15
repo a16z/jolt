@@ -22,6 +22,7 @@ use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_
 use crate::{
     field::JoltField,
     guest,
+    poly::lagrange_poly::LagrangeHelper,
     poly::{
         commitment::{commitment_scheme::StreamingCommitmentScheme, dory::DoryGlobals},
         multilinear_polynomial::MultilinearPolynomial,
@@ -38,9 +39,9 @@ use crate::{
             StageConfig, StageWitness, VerifierR1CSBuilder,
         },
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
-        sumcheck::{BatchedSumcheck, SumcheckInstanceProof, UniSkipFirstRoundProof},
+        sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
-        univariate_skip::prove_uniskip_round,
+        univariate_skip::{prove_uniskip_round_zk, UniSkipFirstRoundProofVariant},
     },
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
@@ -100,7 +101,14 @@ use crate::{
             read_raf_checking::InstructionReadRafSumcheckProver,
         },
         proof_serialization::{Claims, JoltProof},
-        r1cs::key::UniformSpartanKey,
+        r1cs::{
+            constraints::{
+                OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+                PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+                PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            },
+            key::UniformSpartanKey,
+        },
         ram::{
             gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
             output_check::OutputSumcheckProver, prover_accumulate_advice,
@@ -465,39 +473,21 @@ impl<
             opening_proof_hints.insert(CommittedPolynomial::UntrustedAdvice, hint);
         }
 
-        let (
-            stage1_uni_skip_first_round_proof,
-            stage1_sumcheck_proof,
-            r_stage1,
-            stage1_initial_claim,
-        ) = self.prove_stage1();
-        let (
-            stage2_uni_skip_first_round_proof,
-            stage2_sumcheck_proof,
-            r_stage2,
-            stage2_initial_claim,
-        ) = self.prove_stage2();
-        let (stage3_sumcheck_proof, r_stage3, stage3_initial_claim) = self.prove_stage3();
-        let (stage4_sumcheck_proof, r_stage4, stage4_initial_claim) = self.prove_stage4();
-        let (stage5_sumcheck_proof, r_stage5, stage5_initial_claim) = self.prove_stage5();
-        let (stage6_sumcheck_proof, r_stage6, stage6_initial_claim) = self.prove_stage6();
-        let (stage7_sumcheck_proof, r_stage7, stage7_initial_claim) = self.prove_stage7();
+        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, r_stage1) =
+            self.prove_stage1();
+        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof, r_stage2) =
+            self.prove_stage2();
+        let (stage3_sumcheck_proof, r_stage3) = self.prove_stage3();
+        let (stage4_sumcheck_proof, r_stage4) = self.prove_stage4();
+        let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5();
+        let (stage6_sumcheck_proof, r_stage6) = self.prove_stage6();
+        let (stage7_sumcheck_proof, r_stage7) = self.prove_stage7();
 
         let _sumcheck_challenges = [
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
-        let initial_claims = [
-            stage1_initial_claim,
-            stage2_initial_claim,
-            stage3_initial_claim,
-            stage4_initial_claim,
-            stage5_initial_claim,
-            stage6_initial_claim,
-            stage7_initial_claim,
-        ];
-
-        let blindfold_proof = self.prove_blindfold();
+        let (blindfold_proof, blindfold_initial_claims) = self.prove_blindfold();
 
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
@@ -534,7 +524,7 @@ impl<
             stage6_sumcheck_proof,
             stage7_sumcheck_proof,
             blindfold_proof,
-            blindfold_initial_claims: initial_claims,
+            blindfold_initial_claims,
             joint_opening_proof,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
@@ -695,10 +685,9 @@ impl<
     fn prove_stage1(
         &mut self,
     ) -> (
-        UniSkipFirstRoundProof<F, ProofTranscript>,
+        UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
-        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 1 baseline");
@@ -710,11 +699,15 @@ impl<
             &self.trace,
             &self.preprocessing.shared.bytecode,
         );
-        let first_round_proof = prove_uniskip_round(
+        let mut rng = rand::thread_rng();
+        let zk_proof = prove_uniskip_round_zk::<F, C, _, _, _>(
             &mut uni_skip,
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &self.pedersen_generators,
+            &mut rng,
         );
+        let first_round_proof = UniSkipFirstRoundProofVariant::Zk(zk_proof);
 
         // Every sum-check with num_rounds > 1 requires a schedule
         // which dictates the compute_message and bind methods.
@@ -732,7 +725,7 @@ impl<
             OuterRemainingStreamingSumcheck::new(shared, schedule);
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, r_stage1, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage1, _initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             vec![&mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -740,19 +733,18 @@ impl<
             &mut rng,
         );
 
-        (first_round_proof, sumcheck_proof, r_stage1, initial_claim)
+        (first_round_proof, sumcheck_proof, r_stage1)
     }
 
-    /// Returns (uni_skip_proof, sumcheck_proof, challenges, initial_claim)
+    /// Returns (uni_skip_proof, sumcheck_proof, challenges)
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all)]
     fn prove_stage2(
         &mut self,
     ) -> (
-        UniSkipFirstRoundProof<F, ProofTranscript>,
+        UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
-        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 2 baseline");
@@ -762,11 +754,15 @@ impl<
             ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript);
         let mut uni_skip =
             ProductVirtualUniSkipProver::initialize(uni_skip_params.clone(), &self.trace);
-        let first_round_proof = prove_uniskip_round(
+        let mut rng = rand::thread_rng();
+        let zk_proof = prove_uniskip_round_zk::<F, C, _, _, _>(
             &mut uni_skip,
             &mut self.opening_accumulator,
             &mut self.transcript,
+            &self.pedersen_generators,
+            &mut rng,
         );
+        let first_round_proof = UniSkipFirstRoundProofVariant::Zk(zk_proof);
 
         // Initialization params
         let spartan_product_virtual_remainder_params = ProductVirtualRemainderParams::new(
@@ -855,7 +851,7 @@ impl<
         tracing::info!("Stage 2 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, r_stage2, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage2, _initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -867,17 +863,16 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (first_round_proof, sumcheck_proof, r_stage2, initial_claim)
+        (first_round_proof, sumcheck_proof, r_stage2)
     }
 
-    /// Returns (sumcheck_proof, challenges, initial_claim)
+    /// Returns (sumcheck_proof, challenges)
     #[tracing::instrument(skip_all)]
     fn prove_stage3(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
-        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
@@ -936,7 +931,7 @@ impl<
         tracing::info!("Stage 3 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, r_stage3, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage3, _initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -947,17 +942,16 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, r_stage3, initial_claim)
+        (sumcheck_proof, r_stage3)
     }
 
-    /// Returns (sumcheck_proof, challenges, initial_claim)
+    /// Returns (sumcheck_proof, challenges)
     #[tracing::instrument(skip_all)]
     fn prove_stage4(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
-        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
@@ -1027,7 +1021,7 @@ impl<
         tracing::info!("Stage 4 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, r_stage4, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage4, _initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -1038,17 +1032,16 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, r_stage4, initial_claim)
+        (sumcheck_proof, r_stage4)
     }
 
-    /// Returns (sumcheck_proof, challenges, initial_claim)
+    /// Returns (sumcheck_proof, challenges)
     #[tracing::instrument(skip_all)]
     fn prove_stage5(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
-        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
@@ -1105,7 +1098,7 @@ impl<
         tracing::info!("Stage 5 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, r_stage5, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage5, _initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -1116,17 +1109,16 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, r_stage5, initial_claim)
+        (sumcheck_proof, r_stage5)
     }
 
-    /// Returns (sumcheck_proof, challenges, initial_claim)
+    /// Returns (sumcheck_proof, challenges)
     #[tracing::instrument(skip_all)]
     fn prove_stage6(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
-        F,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6 baseline");
@@ -1281,7 +1273,7 @@ impl<
         tracing::info!("Stage 6 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, r_stage6, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage6, _initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -1292,7 +1284,7 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, r_stage6, initial_claim)
+        (sumcheck_proof, r_stage6)
     }
 
     /// Prove BlindFold protocol to make sumcheck proofs zero-knowledge.
@@ -1301,14 +1293,25 @@ impl<
     /// from the opening accumulator where it was stored during prove_zk calls.
     /// The coefficients and blinding factors are hidden from the verifier (who only
     /// sees commitments), while BlindFold proves the R1CS constraints are satisfied.
+    /// Returns (blindfold_proof, initial_claims).
+    /// The initial_claims are for the 7 logical Jolt stages, where stages 1-2 use
+    /// uni-skip initial claims and stages 3-7 use regular sumcheck initial claims.
     #[tracing::instrument(skip_all)]
-    fn prove_blindfold(&mut self) -> BlindFoldProof<F, C> {
+    fn prove_blindfold(&mut self) -> (BlindFoldProof<F, C>, [F; 7]) {
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
 
+        // Retrieve uni-skip stage data (stages 1-2 first rounds)
+        let uniskip_stages = self.opening_accumulator.take_uniskip_stage_data();
+        assert_eq!(
+            uniskip_stages.len(),
+            2,
+            "Expected 2 uni-skip stages, got {}",
+            uniskip_stages.len()
+        );
+
         // Retrieve ZK stage data from the accumulator
-        // This contains coefficients, challenges, and initial claims from all prove_zk calls
         let zk_stages = self.opening_accumulator.take_zk_stage_data();
         assert_eq!(
             zk_stages.len(),
@@ -1317,53 +1320,92 @@ impl<
             zk_stages.len()
         );
 
-        // Build stage configurations with per-round degree support
-        // Each compressed polynomial may have a different degree, so we create
-        // one "stage" per round to allow variable degrees.
-        // The first round of each logical Jolt stage (stage_idx > 0) starts a new chain
-        // with its own initial claim.
+        // Precompute power sums for uni-skip domains
+        let outer_power_sums = LagrangeHelper::power_sums::<
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
+        >();
+        let product_power_sums = LagrangeHelper::power_sums::<
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+        >();
+
         let mut stage_configs = Vec::new();
         let mut stage_witnesses = Vec::new();
         let mut initial_claims = Vec::new();
 
         for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
-            // Start with the stage's initial claim
             let mut current_claim = zk_data.initial_claim;
-            initial_claims.push(zk_data.initial_claim);
 
-            // Use actual challenges from the ZK stage data
-            let stage_challenges = &zk_data.challenges;
+            // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip round first
+            if stage_idx < 2 {
+                let uniskip = &uniskip_stages[stage_idx];
+                let coeffs = &uniskip.poly_coeffs;
+                let challenge: F = uniskip.challenge.into();
 
-            for (round_idx, compressed) in zk_data.compressed_poly_coeffs.iter().enumerate() {
-                // Use the actual challenge from the transcript
-                let challenge: F = stage_challenges[round_idx].into();
+                // Uni-skip uses full polynomial coefficients (not compressed)
+                let poly_degree = coeffs.len() - 1;
 
-                // Extract compressed coefficients [c0, c2, c3, ...]
-                // The length gives us the polynomial degree
-                let poly_degree = compressed.len();
-                let c0 = compressed[0];
-                let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
+                // The initial claim for uni-skip is stored in uniskip_data
+                let claimed_sum = uniskip.input_claim;
+                initial_claims.push(claimed_sum);
 
-                // Compute c1 from sumcheck relation: claimed_sum = 2*c0 + c1 + c2 + c3 + ...
-                // Use the actual current_claim (which chains from the stage's initial claim)
-                let claimed_sum = current_claim;
-                let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
-
-                // Build full coefficients [c0, c1, c2, c3, ...]
-                let mut coeffs = vec![c0, c1];
-                coeffs.extend_from_slice(&compressed[1..]);
-
-                // Evaluate the polynomial at challenge to get next claim
-                // g(r) = c0 + c1*r + c2*r^2 + ... using Horner's method
+                // Evaluate polynomial at challenge to get next claim
                 let mut next_claim = coeffs[coeffs.len() - 1];
                 for i in (0..coeffs.len() - 1).rev() {
                     next_claim = coeffs[i] + challenge * next_claim;
                 }
 
-                // Create one "stage" with one round for this polynomial.
-                // Mark the first round of each logical Jolt stage (except stage 0)
-                // as starting a new chain with its own initial claim.
-                let starts_new_chain = round_idx == 0 && stage_idx > 0;
+                // Create uni-skip stage config with power sums
+                let power_sums: Vec<i128> = if stage_idx == 0 {
+                    outer_power_sums.to_vec()
+                } else {
+                    product_power_sums.to_vec()
+                };
+
+                let config = if stage_idx == 0 {
+                    StageConfig::new_uniskip(poly_degree, power_sums)
+                } else {
+                    StageConfig::new_uniskip_chain(poly_degree, power_sums)
+                };
+                stage_configs.push(config);
+                stage_witnesses.push(StageWitness::new(vec![RoundWitness::with_claimed_sum(
+                    coeffs.clone(),
+                    challenge,
+                    claimed_sum,
+                )]));
+
+                // Chain: uni-skip output becomes first regular round's input
+                current_claim = next_claim;
+            } else {
+                // Stages 3-7: no uni-skip, use ZK stage's initial claim
+                initial_claims.push(zk_data.initial_claim);
+            }
+
+            // Process regular sumcheck rounds
+            let stage_challenges = &zk_data.challenges;
+
+            for (round_idx, compressed) in zk_data.compressed_poly_coeffs.iter().enumerate() {
+                let challenge: F = stage_challenges[round_idx].into();
+
+                let poly_degree = compressed.len();
+                let c0 = compressed[0];
+                let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
+
+                let claimed_sum = current_claim;
+                let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
+
+                let mut coeffs = vec![c0, c1];
+                coeffs.extend_from_slice(&compressed[1..]);
+
+                let mut next_claim = coeffs[coeffs.len() - 1];
+                for i in (0..coeffs.len() - 1).rev() {
+                    next_claim = coeffs[i] + challenge * next_claim;
+                }
+
+                // For stages 0-1: first regular round follows uni-skip (no new chain)
+                // For stages 2-6: first regular round starts a new chain
+                let starts_new_chain = round_idx == 0 && stage_idx >= 2;
                 let config = if starts_new_chain {
                     StageConfig::new_chain(1, poly_degree)
                 } else {
@@ -1376,7 +1418,6 @@ impl<
                     claimed_sum,
                 )]));
 
-                // Chain: this round's evaluation becomes next round's claimed_sum
                 current_claim = next_claim;
             }
         }
@@ -1385,9 +1426,14 @@ impl<
         let builder = VerifierR1CSBuilder::<F>::new(&stage_configs);
         let r1cs = builder.build();
 
+        // Convert initial claims to array
+        let initial_claims_array: [F; 7] = initial_claims
+            .try_into()
+            .expect("Expected exactly 7 initial claims");
+
         // Use all 7 initial claims for the BlindFoldWitness
         let blindfold_witness =
-            BlindFoldWitness::with_multiple_claims(initial_claims, stage_witnesses);
+            BlindFoldWitness::with_multiple_claims(initial_claims_array.to_vec(), stage_witnesses);
 
         // Assign witness to get Z vector
         let z = blindfold_witness.assign(&r1cs);
@@ -1410,13 +1456,15 @@ impl<
         let prover = BlindFoldProver::new(&self.pedersen_generators, &r1cs);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
-        prover.prove(
+        let proof = prover.prove(
             &real_instance,
             &real_witness,
             &z,
             &mut blindfold_transcript,
             &mut rng,
-        )
+        );
+
+        (proof, initial_claims_array)
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
@@ -1426,7 +1474,6 @@ impl<
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
-        F,
     ) {
         // Create params and prover for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
@@ -1496,7 +1543,7 @@ impl<
         tracing::info!("Stage 7 proving");
 
         let mut rng = rand::thread_rng();
-        let (sumcheck_proof, r_stage7, initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
+        let (sumcheck_proof, r_stage7, _initial_claim) = BatchedSumcheck::prove_zk::<F, C, _, _>(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -1507,7 +1554,7 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
         drop_in_background_thread(instances);
 
-        (sumcheck_proof, r_stage7, initial_claim)
+        (sumcheck_proof, r_stage7)
     }
 
     /// Stage 8: Dory batch opening proof.

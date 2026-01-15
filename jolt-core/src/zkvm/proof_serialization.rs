@@ -17,8 +17,8 @@ use crate::{
         opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
     },
     subprotocols::{
-        blindfold::BlindFoldProof,
-        sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
+        blindfold::BlindFoldProof, sumcheck::SumcheckInstanceProof,
+        univariate_skip::UniSkipFirstRoundProofVariant,
     },
     transcripts::Transcript,
     zkvm::{
@@ -32,9 +32,9 @@ use crate::{
 pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
-    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
+    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
     pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
+    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
     pub stage2_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,

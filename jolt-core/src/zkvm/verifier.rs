@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::pedersen::PedersenGenerators;
+use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{BlindFoldVerifier, StageConfig, VerifierR1CSBuilder};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -31,7 +32,14 @@ use crate::zkvm::{
         read_raf_checking::InstructionReadRafSumcheckVerifier,
     },
     proof_serialization::JoltProof,
-    r1cs::key::UniformSpartanKey,
+    r1cs::{
+        constraints::{
+            OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        },
+        key::UniformSpartanKey,
+    },
     ram::{
         self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
@@ -213,8 +221,8 @@ impl<
                 .append_serializable(trusted_advice_commitment);
         }
 
-        let r_stage1 = self.verify_stage1()?;
-        let r_stage2 = self.verify_stage2()?;
+        let (r_stage1, uniskip_challenge1) = self.verify_stage1()?;
+        let (r_stage2, uniskip_challenge2) = self.verify_stage2()?;
         let r_stage3 = self.verify_stage3()?;
         let r_stage4 = self.verify_stage4()?;
         let r_stage5 = self.verify_stage5()?;
@@ -223,14 +231,16 @@ impl<
         let sumcheck_challenges = [
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
-        self.verify_blindfold(&sumcheck_challenges)?;
+        let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
+        self.verify_blindfold(&sumcheck_challenges, uniskip_challenges)?;
         self.verify_stage8()?;
 
         Ok(())
     }
 
-    fn verify_stage1(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
-        let uni_skip_params = verify_stage1_uni_skip(
+    /// Returns (sumcheck_challenges, uni_skip_challenge)
+    fn verify_stage1(&mut self) -> Result<(Vec<F::Challenge>, F::Challenge), anyhow::Error> {
+        let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
             &mut self.opening_accumulator,
@@ -253,11 +263,12 @@ impl<
         )
         .context("Stage 1")?;
 
-        Ok(r_stage1)
+        Ok((r_stage1, uni_skip_challenge))
     }
 
-    fn verify_stage2(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
-        let uni_skip_params = verify_stage2_uni_skip(
+    /// Returns (sumcheck_challenges, uni_skip_challenge)
+    fn verify_stage2(&mut self) -> Result<(Vec<F::Challenge>, F::Challenge), anyhow::Error> {
+        let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -303,7 +314,7 @@ impl<
         )
         .context("Stage 2")?;
 
-        Ok(r_stage2)
+        Ok((r_stage2, uni_skip_challenge))
     }
 
     fn verify_stage3(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
@@ -513,19 +524,17 @@ impl<
 
     /// Verify BlindFold proof binding to sumcheck challenges.
     ///
-    /// # Security Note
-    /// TODO(#UNI-SKIP): Stages 1-2 use uni_skip_first_round which reveals full univariate
-    /// polynomials without commitments. These rounds are NOT included in BlindFold R1CS
-    /// constraints, meaning they leak prover information. To achieve full ZK, either:
-    /// 1. Commit to uni-skip polynomials and include them in BlindFold, or
-    /// 2. Document as acceptable partial hiding for the use case
+    /// Stages 1-2 uni-skip first rounds use Pedersen commitments (ZkUniSkipFirstRoundProof).
+    /// The polynomial coefficients are hidden in the transcript - verifier only sees commitments.
+    /// BlindFold verifies the uni-skip polynomial constraints (sum check + evaluation) using
+    /// power sums for the symmetric domain.
     fn verify_blindfold(
         &mut self,
         sumcheck_challenges: &[Vec<F::Challenge>; 7],
+        uniskip_challenges: [F::Challenge; 2],
     ) -> Result<(), anyhow::Error> {
-        // Build stage configurations by examining the proof's sumcheck rounds
-        // Each round becomes its own "stage" to support variable polynomial degrees.
-        // The first round of each logical Jolt stage (except stage 0) starts a new chain.
+        // Build stage configurations including uni-skip rounds.
+        // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
         let stage_proofs = [
             &self.proof.stage1_sumcheck_proof,
             &self.proof.stage2_sumcheck_proof,
@@ -536,12 +545,47 @@ impl<
             &self.proof.stage7_sumcheck_proof,
         ];
 
+        // Precompute power sums for uni-skip domains
+        let outer_power_sums = LagrangeHelper::power_sums::<
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
+        >();
+        let product_power_sums = LagrangeHelper::power_sums::<
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+        >();
+
         let mut stage_configs = Vec::new();
         let mut total_rounds = 0usize;
+
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+            // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip config first
+            if stage_idx < 2 {
+                let uniskip_proof = if stage_idx == 0 {
+                    &self.proof.stage1_uni_skip_first_round_proof
+                } else {
+                    &self.proof.stage2_uni_skip_first_round_proof
+                };
+                let poly_degree = uniskip_proof.poly_degree();
+
+                let power_sums: Vec<i128> = if stage_idx == 0 {
+                    outer_power_sums.to_vec()
+                } else {
+                    product_power_sums.to_vec()
+                };
+
+                let config = if stage_idx == 0 {
+                    StageConfig::new_uniskip(poly_degree, power_sums)
+                } else {
+                    StageConfig::new_uniskip_chain(poly_degree, power_sums)
+                };
+                stage_configs.push(config);
+                total_rounds += 1;
+            }
+
+            // Add regular sumcheck rounds
             let num_rounds = proof.num_rounds();
             for round_idx in 0..num_rounds {
-                // Extract polynomial degree from the proof variant
                 let poly_degree = match proof {
                     crate::subprotocols::sumcheck::SumcheckInstanceProof::Standard(std_proof) => {
                         std_proof.compressed_polys[round_idx]
@@ -552,8 +596,9 @@ impl<
                         zk_proof.poly_degrees[round_idx]
                     }
                 };
-                // Mark first round of each logical Jolt stage (except stage 0) as starting a new chain
-                let starts_new_chain = round_idx == 0 && stage_idx > 0;
+                // For stages 0-1: first regular round follows uni-skip (no new chain)
+                // For stages 2-6: first regular round starts a new chain
+                let starts_new_chain = round_idx == 0 && stage_idx >= 2;
                 let config = if starts_new_chain {
                     StageConfig::new_chain(1, poly_degree)
                 } else {
@@ -570,9 +615,23 @@ impl<
 
         // SECURITY: Verify that challenges in BlindFold proof match those derived from main transcript.
         // Public inputs in real_instance.x are laid out as: [challenges..., initial_claims...]
-        // This binding ensures BlindFold proves the correct sumcheck relation, not an unrelated one.
+        // Challenges include uni-skip challenges for stages 0-1, then regular sumcheck challenges.
         let mut challenge_idx = 0;
         for (stage_idx, stage_challenges) in sumcheck_challenges.iter().enumerate() {
+            // For stages 0 and 1, verify uni-skip challenge first
+            if stage_idx < 2 {
+                let expected_field: F = uniskip_challenges[stage_idx].into();
+                let actual_field = self.proof.blindfold_proof.real_instance.x[challenge_idx];
+                if expected_field != actual_field {
+                    return Err(anyhow::anyhow!(
+                        "BlindFold uni-skip challenge mismatch at stage {stage_idx}: \
+                         expected {expected_field:?}, got {actual_field:?}"
+                    ));
+                }
+                challenge_idx += 1;
+            }
+
+            // Verify regular sumcheck challenges
             for (round_idx, expected_challenge) in stage_challenges.iter().enumerate() {
                 let expected_field: F = (*expected_challenge).into();
                 let actual_field = self.proof.blindfold_proof.real_instance.x[challenge_idx];

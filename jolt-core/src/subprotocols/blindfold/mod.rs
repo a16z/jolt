@@ -37,6 +37,11 @@ pub struct StageConfig {
     /// When true, the first round of this stage uses a separate initial_claim
     /// rather than chaining from the previous stage's last round.
     pub starts_new_chain: bool,
+    /// Power sums for uni-skip sum constraint (if this is a uni-skip round).
+    /// For standard sumcheck, this is None and uses `2*c0 + c1 + c2 + ... = claimed_sum`.
+    /// For uni-skip, contains `[PowerSum[0], PowerSum[1], ...]` where
+    /// `PowerSum[k] = Σ_{t in symmetric domain} t^k`.
+    pub uniskip_power_sums: Option<Vec<i128>>,
 }
 
 impl StageConfig {
@@ -45,6 +50,7 @@ impl StageConfig {
             num_rounds,
             poly_degree,
             starts_new_chain: false,
+            uniskip_power_sums: None,
         }
     }
 
@@ -54,7 +60,34 @@ impl StageConfig {
             num_rounds,
             poly_degree,
             starts_new_chain: true,
+            uniskip_power_sums: None,
         }
+    }
+
+    /// Create a uni-skip stage config.
+    /// `power_sums` are precomputed: `PowerSum[k] = Σ_{t in symmetric domain} t^k`
+    pub fn new_uniskip(poly_degree: usize, power_sums: Vec<i128>) -> Self {
+        Self {
+            num_rounds: 1,
+            poly_degree,
+            starts_new_chain: false,
+            uniskip_power_sums: Some(power_sums),
+        }
+    }
+
+    /// Create a uni-skip stage config that starts a new chain.
+    pub fn new_uniskip_chain(poly_degree: usize, power_sums: Vec<i128>) -> Self {
+        Self {
+            num_rounds: 1,
+            poly_degree,
+            starts_new_chain: true,
+            uniskip_power_sums: Some(power_sums),
+        }
+    }
+
+    /// Returns true if this is a uni-skip round.
+    pub fn is_uniskip(&self) -> bool {
+        self.uniskip_power_sums.is_some()
     }
 }
 

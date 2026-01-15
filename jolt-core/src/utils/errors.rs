@@ -34,4 +34,6 @@ pub enum ProofVerifyError {
     SumcheckVerificationError,
     #[error("Univariate-skip round verification failed")]
     UniSkipVerificationError,
+    #[error("Serialization failed")]
+    SerializationError,
 }

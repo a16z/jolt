@@ -215,7 +215,11 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
     ///
     ///    For degree 1 (linear), no intermediates needed:
     ///    - c1 * r = next_claim - c0
-    fn add_round_constraints(&mut self, vars: &RoundVariables) {
+    fn add_round_constraints(
+        &mut self,
+        vars: &RoundVariables,
+        uniskip_power_sums: Option<&[i128]>,
+    ) {
         let RoundVariables {
             coeffs,
             intermediates,
@@ -226,11 +230,24 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
 
         let degree = coeffs.len() - 1; // d coefficients means degree d-1
 
-        // Constraint 1: Sum check (2*c0 + c1 + c2 + ... + cd) * 1 = claimed_sum
-        let mut a = LinearCombination::new().add_term(coeffs[0], F::from_u64(2));
-        for i in 1..coeffs.len() {
-            a = a.add_var(coeffs[i]);
-        }
+        // Constraint 1: Sum check
+        let a = if let Some(power_sums) = uniskip_power_sums {
+            // Uni-skip: Σ_j coeff[j] * PowerSum[j] = claimed_sum
+            let mut lc = LinearCombination::new();
+            for (j, &coeff_var) in coeffs.iter().enumerate() {
+                if power_sums[j] != 0 {
+                    lc = lc.add_term(coeff_var, F::from_i128(power_sums[j]));
+                }
+            }
+            lc
+        } else {
+            // Standard sumcheck: 2*c0 + c1 + c2 + ... + cd = claimed_sum
+            let mut lc = LinearCombination::new().add_term(coeffs[0], F::from_u64(2));
+            for i in 1..coeffs.len() {
+                lc = lc.add_var(coeffs[i]);
+            }
+            lc
+        };
         let b = LinearCombination::constant(F::one());
         let c_lc = LinearCombination::variable(*claimed_sum);
         self.add_constraint(a, b, c_lc);
@@ -347,7 +364,8 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                 };
 
                 // Add constraints for this round
-                self.add_round_constraints(&vars);
+                let power_sums = config.uniskip_power_sums.as_deref();
+                self.add_round_constraints(&vars, power_sums);
 
                 // Chain: this round's output becomes next round's input
                 current_claim = next_claim;
@@ -538,6 +556,66 @@ mod tests {
         assert!(
             r1cs.check_satisfaction(&z).is_err(),
             "R1CS should NOT be satisfied with invalid witness"
+        );
+    }
+
+    #[test]
+    fn test_uniskip_constraint_satisfaction() {
+        type F = Fr;
+
+        // Symmetric domain {-2, -1, 1, 2} has power sums:
+        // PowerSum[0] = 4, PowerSum[1] = 0, PowerSum[2] = 10, PowerSum[3] = 0
+        let power_sums = vec![4, 0, 10, 0];
+
+        let configs = [super::super::StageConfig::new_uniskip(3, power_sums)];
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
+
+        // Uni-skip sum constraint: c0*4 + c1*0 + c2*10 + c3*0 = claimed_sum
+        // => 4*c0 + 10*c2 = claimed_sum
+        // With c0=5, c2=3: 4*5 + 10*3 = 20 + 30 = 50
+        let c0 = F::from_u64(5);
+        let c1 = F::from_u64(7); // ignored in sum
+        let c2 = F::from_u64(3);
+        let c3 = F::from_u64(9); // ignored in sum
+        let initial_claim = F::from_u64(50);
+        let r = F::from_u64(2);
+
+        let round = RoundWitness::new(vec![c0, c1, c2, c3], r);
+        let witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
+
+        let z = witness.assign(&r1cs);
+        match r1cs.check_satisfaction(&z) {
+            Ok(()) => {}
+            Err(row) => panic!("Constraint {row} failed"),
+        }
+    }
+
+    #[test]
+    fn test_uniskip_invalid_witness_fails() {
+        type F = Fr;
+
+        // Same power sums as above
+        let power_sums = vec![4, 0, 10, 0];
+
+        let configs = [super::super::StageConfig::new_uniskip(3, power_sums)];
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
+
+        // Correct sum would be 4*5 + 10*3 = 50, but we use initial_claim = 100
+        let c0 = F::from_u64(5);
+        let c1 = F::from_u64(7);
+        let c2 = F::from_u64(3);
+        let c3 = F::from_u64(9);
+        let r = F::from_u64(2);
+
+        let round = RoundWitness::with_claimed_sum(vec![c0, c1, c2, c3], r, F::from_u64(100));
+        let witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+
+        let z = witness.assign(&r1cs);
+        assert!(
+            r1cs.check_satisfaction(&z).is_err(),
+            "R1CS should NOT be satisfied with invalid uni-skip witness"
         );
     }
 }
