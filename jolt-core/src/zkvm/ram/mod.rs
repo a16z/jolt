@@ -198,8 +198,8 @@ pub fn prover_accumulate_advice<F: JoltField>(
                                   max_advice_size: usize| {
         let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
         let eval = advice_poly.evaluate(&r_address.r[total_variables - advice_variables..]);
-        let mut advice_point = r_address.clone();
-        advice_point.r = r_address.r[total_variables - advice_variables..].to_vec();
+        let advice_point =
+            OpeningPoint::new(r_address.r[total_variables - advice_variables..].to_vec());
         (advice_point, eval)
     };
 

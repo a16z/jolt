@@ -1,4 +1,7 @@
-use crate::{subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::config::OneHotConfig};
+use crate::{
+    poly::multilinear_polynomial::PolynomialEvaluation,
+    subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::config::OneHotConfig,
+};
 use std::{
     collections::HashMap,
     fs::File,
@@ -1405,6 +1408,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
         {
+            let advice_poly = self.advice.trusted_advice_polynomial.as_ref().unwrap();
+            let expected_eval = advice_poly.evaluate(&advice_point.r);
+            debug_assert_eq!(expected_eval, advice_claim);
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((
@@ -1417,6 +1423,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             AdviceKind::Untrusted,
             SumcheckId::AdviceClaimReductionPhase2,
         ) {
+            let advice_poly = self.advice.untrusted_advice_polynomial.as_ref().unwrap();
+            let expected_eval = advice_poly.evaluate(&advice_point.r);
+            debug_assert_eq!(expected_eval, advice_claim);
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
             polynomial_claims.push((

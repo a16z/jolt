@@ -231,8 +231,23 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase1Param
         &self,
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        // Instance-local rounds are interpreted as little-endian in time order.
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+        let advice_vars = self.advice_col_vars + self.advice_row_vars;
+        let mut advice_var_challenges: Vec<F::Challenge> = Vec::with_capacity(advice_vars);
+        match DoryGlobals::get_layout() {
+            DoryLayout::CycleMajor => {
+                advice_var_challenges
+                    .extend_from_slice(&challenges[self.col_binding_rounds.clone()]);
+                advice_var_challenges
+                    .extend_from_slice(&challenges[self.row_binding_rounds.clone()]);
+            }
+            DoryLayout::AddressMajor => {
+                advice_var_challenges
+                    .extend_from_slice(&challenges[self.row_binding_rounds.clone()]);
+                advice_var_challenges
+                    .extend_from_slice(&challenges[self.col_binding_rounds.clone()])
+            }
+        }
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_var_challenges).match_endianness()
     }
 }
 
@@ -300,15 +315,6 @@ impl<F: JoltField> AdviceClaimReductionPhase1Prover<F> {
             let col = index % advice_cols;
             row_col_to_address_cycle(row, col)
         };
-
-        // for index in 0..advice_poly.len() {
-        //     let row = index / advice_cols;
-        //     let col = index % advice_cols;
-        //     println!(
-        //         "{index} -> ({row}, {col}) -> {:?}",
-        //         row_col_to_address_cycle(row, col)
-        //     );
-        // }
 
         let mut permuted_coeffs: Vec<(usize, (u64, F))> = match advice_poly {
             MultilinearPolynomial::U64Scalars(poly) => poly
@@ -432,27 +438,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         }
         let c_mid = sum * self.scale;
 
-        let advice_vars = self.params.advice_col_vars + self.params.advice_row_vars;
-        let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(advice_vars);
-        match DoryGlobals::get_layout() {
-            DoryLayout::CycleMajor => {
-                advice_le.extend_from_slice(
-                    &sumcheck_challenges[self.params.col_binding_rounds.clone()],
-                );
-                advice_le.extend_from_slice(
-                    &sumcheck_challenges[self.params.row_binding_rounds.clone()],
-                );
-            }
-            DoryLayout::AddressMajor => {
-                advice_le.extend_from_slice(
-                    &sumcheck_challenges[self.params.row_binding_rounds.clone()],
-                );
-                advice_le
-                    .extend_from_slice(&sumcheck_challenges[self.params.col_binding_rounds.clone()])
-            }
-        }
-        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
-            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
 
         match self.params.kind {
             AdviceKind::Trusted => accumulator.append_trusted_advice(
@@ -472,6 +458,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         // If there is no Phase 2 (all advice row bits come from cycle), cache the final advice opening
         // directly here under `SumcheckId::AdviceClaimReduction` so Stage 7 can scale/embed it.
         if self.advice_poly.len() == 1 {
+            todo!("Broken for address-major");
             let advice_claim = self.advice_poly.final_sumcheck_claim();
 
             match self.params.kind {
@@ -569,27 +556,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let advice_vars = self.params.advice_col_vars + self.params.advice_row_vars;
-        let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(advice_vars);
-        match DoryGlobals::get_layout() {
-            DoryLayout::CycleMajor => {
-                advice_le.extend_from_slice(
-                    &sumcheck_challenges[self.params.col_binding_rounds.clone()],
-                );
-                advice_le.extend_from_slice(
-                    &sumcheck_challenges[self.params.row_binding_rounds.clone()],
-                );
-            }
-            DoryLayout::AddressMajor => {
-                advice_le.extend_from_slice(
-                    &sumcheck_challenges[self.params.row_binding_rounds.clone()],
-                );
-                advice_le
-                    .extend_from_slice(&sumcheck_challenges[self.params.col_binding_rounds.clone()])
-            }
-        }
-        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
-            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
 
         match self.params.kind {
             AdviceKind::Trusted => accumulator.append_trusted_advice(
@@ -607,8 +574,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // If Phase 2 is absent (nu_a_addr == 0), Phase 1 cached the final advice opening in Stage 6.
         // Populate its opening point now so downstream stages can extract it.
         if self.params.row_binding_rounds.len() + self.params.col_binding_rounds.len()
-            == advice_vars
+            == self.params.advice_row_vars + self.params.advice_col_vars
         {
+            todo!("broken for address-major");
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
@@ -713,6 +681,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
             .unwrap()
             .0
             .match_endianness();
+        let cycle_challenges = r_cycle_le.r;
 
         Some(Self {
             kind,
@@ -727,7 +696,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
             main_row_vars,
             scale,
             inv_scale,
-            cycle_challenges: r_cycle_le.r,
+            cycle_challenges,
             r_val_eval,
             r_val_final,
         })
@@ -753,9 +722,33 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase2Param
 
     fn normalize_opening_point(
         &self,
-        challenges: &[<F as JoltField>::Challenge],
+        address_challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+        match DoryGlobals::get_layout() {
+            DoryLayout::CycleMajor => OpeningPoint::<LITTLE_ENDIAN, F>::new(
+                [self.cycle_challenges.as_slice(), address_challenges].concat(),
+            )
+            .match_endianness(),
+            DoryLayout::AddressMajor => {
+                let (row_binding_rounds, _, _) = phase1_round_schedule(
+                    self.log_t,
+                    self.log_k_chunk,
+                    self.main_row_vars,
+                    self.main_col_vars,
+                    self.advice_row_vars,
+                    self.advice_col_vars,
+                );
+                OpeningPoint::<LITTLE_ENDIAN, F>::new(
+                    [
+                        address_challenges,
+                        &self.cycle_challenges[row_binding_rounds.end..],
+                        &self.cycle_challenges[row_binding_rounds],
+                    ]
+                    .concat(),
+                )
+                .match_endianness()
+            }
+        }
     }
 }
 
@@ -793,25 +786,28 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
                 .collect()
         };
 
+        let main_rows = 1 << params.main_row_vars;
+        let main_cols = 1 << params.main_col_vars;
         let row_col_to_address_cycle = |row: usize, col: usize| -> (usize, usize) {
             match DoryGlobals::get_layout() {
                 DoryLayout::CycleMajor => {
-                    let global_index = row as u128 * params.main_col_vars as u128 + col as u128;
+                    let global_index = row as u128 * main_cols + col as u128;
                     let address = global_index / (1 << params.log_t);
                     let cycle = global_index % (1 << params.log_t);
                     (address as usize, cycle as usize)
                 }
                 DoryLayout::AddressMajor => {
                     let address = col % params.log_k_chunk;
-                    let cycle = (col / params.log_k_chunk) * params.main_row_vars + row;
+                    let cycle = (col / params.log_k_chunk) * main_rows + row;
                     (address as usize, cycle as usize)
                 }
             }
         };
 
+        let advice_cols = 1 << params.advice_col_vars;
         let advice_index_to_address_cycle = |index: usize| -> (usize, usize) {
-            let row = index / params.advice_col_vars;
-            let col = index % params.advice_col_vars;
+            let row = index / advice_cols;
+            let col = index % advice_cols;
             row_col_to_address_cycle(row, col)
         };
 
@@ -841,11 +837,9 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
         let mut advice_poly: MultilinearPolynomial<F> = advice_coeffs.into();
         let mut eq_poly: MultilinearPolynomial<F> = eq_coeffs.into();
 
-        // Pre-bind cycle-derived advice variables in Dory order:
-        // [col_bits || row_cycle_bits].
+        // Pre-bind cycle-derived advice variables in Dory order
         for &r in params.cycle_challenges.iter() {
             advice_poly.bind_parallel(r, BindingOrder::LowToHigh);
-            println!("advice_poly.len() = {}", advice_poly.len());
             eq_poly.bind_parallel(r, BindingOrder::LowToHigh);
         }
 
@@ -914,6 +908,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        if self.advice_poly.len() == 1 {
+            println!(
+                "P Advice claim: {}",
+                self.advice_poly.final_sumcheck_claim()
+            );
+            println!("P EQ claim: {}", self.eq_poly.final_sumcheck_claim());
+        }
     }
 
     fn cache_openings(
@@ -923,13 +924,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) {
         // Build full advice opening point (little-endian Dory order):
-        let mut advice_le: Vec<F::Challenge> = vec![];
-        advice_le.extend_from_slice(&self.params.cycle_challenges);
-        advice_le.extend_from_slice(sumcheck_challenges);
-
-        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
-            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
-
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let claim = self.advice_poly.final_sumcheck_claim();
 
         match self.params.kind {
@@ -997,13 +992,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        // Build the full advice opening point in BIG_ENDIAN for eq computations.
-        let mut advice_le: Vec<F::Challenge> = vec![];
-        advice_le.extend_from_slice(&self.params.cycle_challenges);
-        advice_le.extend_from_slice(sumcheck_challenges);
-        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
-            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
-
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let advice_claim = accumulator
             .get_advice_opening(self.params.kind, SumcheckId::AdviceClaimReductionPhase2)
             .expect("Final advice claim not found")
@@ -1022,6 +1011,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             eq_eval + self.params.gamma * eq_final
         };
 
+        println!("V Advice claim: {advice_claim}");
+        println!("V EQ claim: {eq_combined}");
+
         // Account for Phase 1's internal dummy-gap traversal via constant scaling.
         advice_claim * eq_combined * self.params.scale
     }
@@ -1032,11 +1024,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let mut advice_le: Vec<F::Challenge> = vec![];
-        advice_le.extend_from_slice(&self.params.cycle_challenges);
-        advice_le.extend_from_slice(sumcheck_challenges);
-        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
-            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
 
         match self.params.kind {
             AdviceKind::Trusted => accumulator.append_trusted_advice(
