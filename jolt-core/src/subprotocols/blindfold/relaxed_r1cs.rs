@@ -33,6 +33,8 @@ pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve> {
     pub W_bar: C::G1,
     /// Public inputs (challenges, initial claim, etc.)
     pub x: Vec<F>,
+    /// Per-round commitments from ZK sumcheck
+    pub round_commitments: Vec<C::G1>,
 }
 
 /// Relaxed R1CS Witness (private data)
@@ -48,17 +50,25 @@ pub struct RelaxedR1CSWitness<F: JoltField> {
     pub W: Vec<F>,
     /// Blinding factor for W commitment
     pub r_W: F,
+    /// Per-round polynomial coefficients (openings for round_commitments)
+    pub round_coefficients: Vec<Vec<F>>,
+    /// Per-round blinding factors
+    pub round_blindings: Vec<F>,
 }
 
 impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     /// Create a non-relaxed instance (u=1, E=0) from standard R1CS witness.
     ///
     /// This is the starting point before any folding.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_non_relaxed<R: CryptoRngCore>(
         gens: &PedersenGenerators<C>,
         witness: &[F],
         public_inputs: Vec<F>,
         num_constraints: usize,
+        round_commitments: Vec<C::G1>,
+        round_coefficients: Vec<Vec<F>>,
+        round_blindings: Vec<F>,
         rng: &mut R,
     ) -> (Self, RelaxedR1CSWitness<F>) {
         // For non-relaxed: E = 0, u = 1
@@ -77,6 +87,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             u: F::one(),
             W_bar,
             x: public_inputs,
+            round_commitments,
         };
 
         let witness_struct = RelaxedR1CSWitness {
@@ -84,6 +95,8 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             r_E,
             W: witness.to_vec(),
             r_W,
+            round_coefficients,
+            round_blindings,
         };
 
         (instance, witness_struct)
@@ -96,6 +109,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     /// - u' = u₁ + r·u₂
     /// - W̄' = W̄₁ + r·W̄₂
     /// - x' = x₁ + r·x₂
+    /// - round_commitments' = round_commitments₁ + r·round_commitments₂
     pub fn fold(&self, other: &Self, T_bar: &C::G1, r: F) -> Self {
         let r_squared = r * r;
 
@@ -116,7 +130,21 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .map(|(a, b)| *a + r * *b)
             .collect();
 
-        Self { E_bar, u, W_bar, x }
+        // round_commitments' = round_commitments₁ + r·round_commitments₂
+        let round_commitments: Vec<C::G1> = self
+            .round_commitments
+            .iter()
+            .zip(&other.round_commitments)
+            .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
+            .collect();
+
+        Self {
+            E_bar,
+            u,
+            W_bar,
+            x,
+            round_commitments,
+        }
     }
 }
 
@@ -125,6 +153,8 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
     pub fn new_non_relaxed<R: CryptoRngCore>(
         witness: Vec<F>,
         num_constraints: usize,
+        round_coefficients: Vec<Vec<F>>,
+        round_blindings: Vec<F>,
         rng: &mut R,
     ) -> Self {
         Self {
@@ -132,6 +162,8 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
             r_E: F::zero(),
             W: witness,
             r_W: F::random(rng),
+            round_coefficients,
+            round_blindings,
         }
     }
 
@@ -142,6 +174,8 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
     /// - r_E' = r_E₁ + r·r_T + r²·r_E₂
     /// - W' = W₁ + r·W₂
     /// - r_W' = r_W₁ + r·r_W₂
+    /// - round_coefficients' = round_coefficients₁ + r·round_coefficients₂
+    /// - round_blindings' = round_blindings₁ + r·round_blindings₂
     pub fn fold(&self, other: &Self, T: &[F], r_T: F, r: F) -> Self {
         let r_squared = r * r;
 
@@ -168,7 +202,30 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
         // r_W' = r_W₁ + r·r_W₂
         let r_W = self.r_W + r * other.r_W;
 
-        Self { E, r_E, W, r_W }
+        // round_coefficients' = round_coefficients₁ + r·round_coefficients₂
+        let round_coefficients: Vec<Vec<F>> = self
+            .round_coefficients
+            .iter()
+            .zip(&other.round_coefficients)
+            .map(|(c1, c2)| c1.iter().zip(c2).map(|(a, b)| *a + r * *b).collect())
+            .collect();
+
+        // round_blindings' = round_blindings₁ + r·round_blindings₂
+        let round_blindings: Vec<F> = self
+            .round_blindings
+            .iter()
+            .zip(&other.round_blindings)
+            .map(|(r1, r2)| *r1 + r * *r2)
+            .collect();
+
+        Self {
+            E,
+            r_E,
+            W,
+            r_W,
+            round_coefficients,
+            round_blindings,
+        }
     }
 
     /// Check if the witness satisfies the relaxed R1CS.
@@ -267,12 +324,15 @@ mod tests {
         // Create generators (need enough for the witness size)
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(witness.len() + 10);
 
-        // Create non-relaxed instance
+        // Create non-relaxed instance (with empty round commitment data for unit test)
         let (instance, relaxed_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
             public_inputs.clone(),
             r1cs.num_constraints,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
@@ -322,8 +382,13 @@ mod tests {
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
         // Create relaxed witness
-        let relaxed_witness =
-            RelaxedR1CSWitness::new_non_relaxed(witness, r1cs.num_constraints, &mut rng);
+        let relaxed_witness = RelaxedR1CSWitness::new_non_relaxed(
+            witness,
+            r1cs.num_constraints,
+            Vec::new(),
+            Vec::new(),
+            &mut rng,
+        );
 
         // Check relaxed satisfaction (should pass since u=1, E=0)
         let result = relaxed_witness.check_satisfaction(&r1cs, F::one(), &public_inputs);
@@ -357,6 +422,8 @@ mod tests {
             r_E: r_e1,
             W: w1.clone(),
             r_W: r_w1,
+            round_coefficients: Vec::new(),
+            round_blindings: Vec::new(),
         };
 
         let wit2 = RelaxedR1CSWitness {
@@ -364,6 +431,8 @@ mod tests {
             r_E: r_e2,
             W: w2.clone(),
             r_W: r_w2,
+            round_coefficients: Vec::new(),
+            round_blindings: Vec::new(),
         };
 
         let r = F::rand(&mut rng);
@@ -415,6 +484,7 @@ mod tests {
             u: u1,
             W_bar: W_bar1,
             x: x1.clone(),
+            round_commitments: Vec::new(),
         };
 
         let inst2 = RelaxedR1CSInstance::<F, Bn254Curve> {
@@ -422,6 +492,7 @@ mod tests {
             u: u2,
             W_bar: W_bar2,
             x: x2.clone(),
+            round_commitments: Vec::new(),
         };
 
         let r = F::rand(&mut rng);

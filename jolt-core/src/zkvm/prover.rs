@@ -1297,7 +1297,7 @@ impl<
     /// The initial_claims are for the 7 logical Jolt stages, where stages 1-2 use
     /// uni-skip initial claims and stages 3-7 use regular sumcheck initial claims.
     #[tracing::instrument(skip_all)]
-    fn prove_blindfold(&mut self) -> (BlindFoldProof<F, C>, [F; 7]) {
+    fn prove_blindfold(&mut self) -> (BlindFoldProof<F, C>, [F; 9]) {
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
@@ -1335,8 +1335,6 @@ impl<
         let mut initial_claims = Vec::new();
 
         for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
-            let mut current_claim = zk_data.initial_claim;
-
             // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip round first
             if stage_idx < 2 {
                 let uniskip = &uniskip_stages[stage_idx];
@@ -1349,12 +1347,6 @@ impl<
                 // The initial claim for uni-skip is stored in uniskip_data
                 let claimed_sum = uniskip.input_claim;
                 initial_claims.push(claimed_sum);
-
-                // Evaluate polynomial at challenge to get next claim
-                let mut next_claim = coeffs[coeffs.len() - 1];
-                for i in (0..coeffs.len() - 1).rev() {
-                    next_claim = coeffs[i] + challenge * next_claim;
-                }
 
                 // Create uni-skip stage config with power sums
                 let power_sums: Vec<i128> = if stage_idx == 0 {
@@ -1375,37 +1367,34 @@ impl<
                     claimed_sum,
                 )]));
 
-                // Chain: uni-skip output becomes first regular round's input
-                current_claim = next_claim;
+                // For stages 0-1: push regular rounds initial claim (separate chain from uni-skip)
+                initial_claims.push(zk_data.initial_claim);
             } else {
-                // Stages 3-7: no uni-skip, use ZK stage's initial claim
+                // Stages 2-6: no uni-skip, use ZK stage's initial claim
                 initial_claims.push(zk_data.initial_claim);
             }
 
             // Process regular sumcheck rounds
+            // Regular rounds start their own chain with zk_data.initial_claim
+            let mut current_claim = zk_data.initial_claim;
             let stage_challenges = &zk_data.challenges;
 
-            for (round_idx, compressed) in zk_data.compressed_poly_coeffs.iter().enumerate() {
+            for (round_idx, coeffs) in zk_data.poly_coeffs.iter().enumerate() {
                 let challenge: F = stage_challenges[round_idx].into();
-
-                let poly_degree = compressed.len();
-                let c0 = compressed[0];
-                let sum_higher_coeffs: F = compressed[1..].iter().copied().sum();
-
+                // Degree = coefficient_count - 1
+                let poly_degree = coeffs.len() - 1;
                 let claimed_sum = current_claim;
-                let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
 
-                let mut coeffs = vec![c0, c1];
-                coeffs.extend_from_slice(&compressed[1..]);
-
+                // Compute next_claim via Horner evaluation
                 let mut next_claim = coeffs[coeffs.len() - 1];
                 for i in (0..coeffs.len() - 1).rev() {
                     next_claim = coeffs[i] + challenge * next_claim;
                 }
 
-                // For stages 0-1: first regular round follows uni-skip (no new chain)
-                // For stages 2-6: first regular round starts a new chain
-                let starts_new_chain = round_idx == 0 && stage_idx >= 2;
+                // First regular round starts a new chain
+                // For stages 0-1, this separates regular rounds from uni-skip
+                // For stages 2-6, this starts their independent chain
+                let starts_new_chain = round_idx == 0;
                 let config = if starts_new_chain {
                     StageConfig::new_chain(1, poly_degree)
                 } else {
@@ -1413,7 +1402,7 @@ impl<
                 };
                 stage_configs.push(config);
                 stage_witnesses.push(StageWitness::new(vec![RoundWitness::with_claimed_sum(
-                    coeffs,
+                    coeffs.clone(),
                     challenge,
                     claimed_sum,
                 )]));
@@ -1427,11 +1416,12 @@ impl<
         let r1cs = builder.build();
 
         // Convert initial claims to array
-        let initial_claims_array: [F; 7] = initial_claims
+        // 9 chains: 2 for stage 0 (uni-skip + regular), 2 for stage 1, 5 for stages 2-6
+        let initial_claims_array: [F; 9] = initial_claims
             .try_into()
-            .expect("Expected exactly 7 initial claims");
+            .expect("Expected exactly 9 initial claims");
 
-        // Use all 7 initial claims for the BlindFoldWitness
+        // Use all 9 initial claims for the BlindFoldWitness
         let blindfold_witness =
             BlindFoldWitness::with_multiple_claims(initial_claims_array.to_vec(), stage_witnesses);
 
@@ -1443,12 +1433,46 @@ impl<
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
-        // Create non-relaxed instance and witness
+        // Collect round commitments, coefficients, and blindings from all stages
+        let mut round_commitments: Vec<C::G1> = Vec::new();
+        let mut round_coefficients: Vec<Vec<F>> = Vec::new();
+        let mut round_blindings: Vec<F> = Vec::new();
+
+        for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
+            // For stages 0-1, include uni-skip round first
+            if stage_idx < 2 {
+                let uniskip = &uniskip_stages[stage_idx];
+                let commitment =
+                    C::G1::deserialize_compressed(&uniskip.commitment_bytes[..]).unwrap();
+                round_commitments.push(commitment);
+                round_coefficients.push(uniskip.poly_coeffs.clone());
+                round_blindings.push(uniskip.blinding_factor);
+            }
+
+            // Add regular sumcheck rounds
+            for (commitment_bytes, coeffs, blinding) in zk_data
+                .round_commitments
+                .iter()
+                .zip(&zk_data.poly_coeffs)
+                .zip(&zk_data.blinding_factors)
+                .map(|((c, p), b)| (c, p, b))
+            {
+                let commitment = C::G1::deserialize_compressed(&commitment_bytes[..]).unwrap();
+                round_commitments.push(commitment);
+                round_coefficients.push(coeffs.clone());
+                round_blindings.push(*blinding);
+            }
+        }
+
+        // Create non-relaxed instance and witness with round commitment data
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, C>::new_non_relaxed(
             &self.pedersen_generators,
             &witness,
             public_inputs,
             r1cs.num_constraints,
+            round_commitments,
+            round_coefficients,
+            round_blindings,
             &mut rng,
         );
 
@@ -2563,7 +2587,7 @@ mod tests {
                         let degree = zk_proof.poly_degrees[round_idx];
 
                         // Create synthetic coefficients that satisfy sumcheck relation
-                        // g(x) = c0 + c1*x + c2*x^2 + ... has degree coefficients
+                        // g(x) = c0 + c1*x + c2*x^2 + ... has degree+1 coefficients
                         // claimed_sum = 2*c0 + c1 + c2 + ...
                         let claimed_sum = Fr::from(12345u64);
 
@@ -2834,12 +2858,15 @@ mod tests {
         let witness: Vec<Fr> = z[witness_start..].to_vec();
         let public_inputs: Vec<Fr> = z[1..witness_start].to_vec();
 
-        // Create non-relaxed instance and witness
+        // Create non-relaxed instance and witness (with empty round commitment data for unit test)
         let (real_instance, real_witness) = RelaxedR1CSInstance::<Fr, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
             public_inputs,
             r1cs.num_constraints,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 

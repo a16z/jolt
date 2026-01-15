@@ -243,7 +243,7 @@ impl BatchedSumcheck {
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut round_commitments_g1: Vec<C::G1> = Vec::with_capacity(max_num_rounds);
         let mut round_commitments_bytes: Vec<Vec<u8>> = Vec::with_capacity(max_num_rounds);
-        let mut compressed_poly_coeffs: Vec<Vec<F>> = Vec::with_capacity(max_num_rounds);
+        let mut poly_coeffs: Vec<Vec<F>> = Vec::with_capacity(max_num_rounds);
         let mut blinding_factors: Vec<F> = Vec::with_capacity(max_num_rounds);
         let mut poly_degrees: Vec<usize> = Vec::with_capacity(max_num_rounds);
 
@@ -282,12 +282,9 @@ impl BatchedSumcheck {
                     },
                 );
 
-            let compressed_poly = batched_univariate_poly.compress();
-
-            // Generate blinding and compute Pedersen commitment
+            // Generate blinding and compute Pedersen commitment to full coefficients
             let blinding = F::random(rng);
-            let commitment =
-                pedersen_gens.commit(&compressed_poly.coeffs_except_linear_term, &blinding);
+            let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
             // Serialize commitment for transcript
             let mut commitment_bytes = Vec::new();
@@ -318,9 +315,9 @@ impl BatchedSumcheck {
             // Store data for BlindFold
             round_commitments_g1.push(commitment);
             round_commitments_bytes.push(commitment_bytes);
-            // Polynomial degree is the length of compressed coefficients (excludes c1)
-            poly_degrees.push(compressed_poly.coeffs_except_linear_term.len());
-            compressed_poly_coeffs.push(compressed_poly.coeffs_except_linear_term.clone());
+            // Polynomial degree = number of coefficients - 1
+            poly_degrees.push(batched_univariate_poly.coeffs.len() - 1);
+            poly_coeffs.push(batched_univariate_poly.coeffs.clone());
             blinding_factors.push(blinding);
         }
 
@@ -346,7 +343,7 @@ impl BatchedSumcheck {
         opening_accumulator.push_zk_stage_data(ZkStageData {
             initial_claim: initial_batched_claim,
             round_commitments: round_commitments_bytes,
-            compressed_poly_coeffs,
+            poly_coeffs,
             blinding_factors,
             challenges: r_sumcheck.clone(),
         });

@@ -153,6 +153,8 @@ pub enum BlindFoldVerifyError {
     ECommitmentMismatch,
     /// W commitment opening failed
     WCommitmentMismatch,
+    /// Round commitment opening failed at specified index
+    RoundCommitmentMismatch(usize),
     /// R1CS constraint not satisfied
     R1CSConstraintFailed(usize),
 }
@@ -214,6 +216,19 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
             return Err(BlindFoldVerifyError::ECommitmentMismatch);
         }
 
+        // Check each round commitment opens correctly
+        for (i, ((commitment, coeffs), blinding)) in folded_instance
+            .round_commitments
+            .iter()
+            .zip(&proof.folded_witness.round_coefficients)
+            .zip(&proof.folded_witness.round_blindings)
+            .enumerate()
+        {
+            if !self.gens.verify(commitment, coeffs, blinding) {
+                return Err(BlindFoldVerifyError::RoundCommitmentMismatch(i));
+            }
+        }
+
         // Step 4: Verify R1CS satisfaction
         // Check: (A·Z') ∘ (B·Z') = u_folded*(C·Z') + E_folded
         let result = proof.folded_witness.check_satisfaction(
@@ -254,6 +269,11 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
         x_i.serialize_compressed(&mut x_bytes)
             .expect("Serialization should not fail");
         transcript.append_bytes(&x_bytes);
+    }
+
+    // Include round commitments in Fiat-Shamir
+    for commitment in &instance.round_commitments {
+        append_g1_to_transcript::<C>(commitment, transcript);
     }
 }
 
@@ -303,12 +323,15 @@ mod tests {
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
-        // Create non-relaxed instance and witness
+        // Create non-relaxed instance and witness (with empty round commitment data for unit test)
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
             public_inputs,
             r1cs.num_constraints,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
@@ -367,6 +390,9 @@ mod tests {
             &witness,
             public_inputs,
             r1cs.num_constraints,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
@@ -457,6 +483,9 @@ mod tests {
             &witness,
             public_inputs,
             r1cs.num_constraints,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 

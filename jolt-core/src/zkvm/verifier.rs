@@ -9,7 +9,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{BlindFoldVerifier, StageConfig, VerifierR1CSBuilder};
-use crate::subprotocols::sumcheck::BatchedSumcheck;
+use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
+use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
@@ -596,9 +597,10 @@ impl<
                         zk_proof.poly_degrees[round_idx]
                     }
                 };
-                // For stages 0-1: first regular round follows uni-skip (no new chain)
-                // For stages 2-6: first regular round starts a new chain
-                let starts_new_chain = round_idx == 0 && stage_idx >= 2;
+                // First regular round always starts a new chain
+                // For stages 0-1: separates regular rounds from uni-skip
+                // For stages 2-6: starts their independent chain
+                let starts_new_chain = round_idx == 0;
                 let config = if starts_new_chain {
                     StageConfig::new_chain(1, poly_degree)
                 } else {
@@ -647,7 +649,8 @@ impl<
 
         // Verify that the initial claims in the BlindFold proof match those in the Jolt proof.
         // Initial claims start at index total_rounds (after all challenges).
-        let num_chains = 7; // Jolt has 7 independent sumcheck stages
+        // 9 chains: 2 for stage 0 (uni-skip + regular), 2 for stage 1, 5 for stages 2-6
+        let num_chains = 9;
         let initial_claims_in_blindfold =
             &self.proof.blindfold_proof.real_instance.x[total_rounds..total_rounds + num_chains];
 
@@ -663,6 +666,36 @@ impl<
                     "BlindFold initial claim mismatch at stage {i}: expected {expected:?}, got {actual:?}"
                 ));
             }
+        }
+
+        // SECURITY: Verify round commitments in BlindFold match those in sumcheck proofs.
+        // This prevents prover from using different polynomials in BlindFold vs sumcheck.
+        let mut expected_round_commitments: Vec<C::G1> = Vec::new();
+
+        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+            // For stages 0-1, include uni-skip commitment first
+            if stage_idx < 2 {
+                let uniskip_proof = if stage_idx == 0 {
+                    &self.proof.stage1_uni_skip_first_round_proof
+                } else {
+                    &self.proof.stage2_uni_skip_first_round_proof
+                };
+                if let UniSkipFirstRoundProofVariant::Zk(zk_uniskip) = uniskip_proof {
+                    expected_round_commitments.push(zk_uniskip.commitment);
+                }
+            }
+
+            // Add regular sumcheck round commitments
+            if let SumcheckInstanceProof::Zk(zk_proof) = proof {
+                expected_round_commitments.extend(zk_proof.round_commitments.iter().cloned());
+            }
+        }
+
+        if expected_round_commitments != self.proof.blindfold_proof.real_instance.round_commitments
+        {
+            return Err(anyhow::anyhow!(
+                "BlindFold round commitments do not match sumcheck proof commitments"
+            ));
         }
 
         // Create BlindFold verifier and verify the proof

@@ -191,8 +191,8 @@ pub struct ZkStageData<F: JoltField> {
     pub initial_claim: F,
     /// Pedersen commitments to round polynomials (serialized G1 points)
     pub round_commitments: Vec<Vec<u8>>,
-    /// Compressed polynomial coefficients (coeffs_except_linear_term for each round)
-    pub compressed_poly_coeffs: Vec<Vec<F>>,
+    /// Full polynomial coefficients for each round
+    pub poly_coeffs: Vec<Vec<F>>,
     /// Blinding factors used for Pedersen commitments (one per round)
     pub blinding_factors: Vec<F>,
     /// Challenges derived during this sumcheck

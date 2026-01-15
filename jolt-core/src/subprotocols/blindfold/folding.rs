@@ -54,6 +54,7 @@ pub fn compute_cross_term<F: JoltField>(
 /// 2. Sample random scalar u
 /// 3. Sample random public inputs x
 /// 4. Compute E to make it satisfy: E = (AZ) ∘ (BZ) - u*(CZ)
+/// 5. Sample random per-round coefficients and commit to them
 ///
 /// The resulting (instance, witness) pair is uniformly random but satisfying.
 pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCore>(
@@ -94,7 +95,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         .map(|i| az[i] * bz[i] - u * cz[i])
         .collect();
 
-    // Sample blinding factors
+    // Sample blinding factors for E and W
     let r_E = F::random(rng);
     let r_W = F::random(rng);
 
@@ -102,14 +103,41 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let E_bar = gens.commit(&E, &r_E);
     let W_bar = gens.commit(&W, &r_W);
 
+    // Generate random per-round commitments and openings
+    let mut round_coefficients = Vec::new();
+    let mut round_blindings = Vec::new();
+    let mut round_commitments = Vec::new();
+
+    for config in &r1cs.stage_configs {
+        for _ in 0..config.num_rounds {
+            // Coefficient count = degree + 1
+            let num_coeffs = config.poly_degree + 1;
+            let coeffs: Vec<F> = (0..num_coeffs).map(|_| F::random(rng)).collect();
+            let blinding = F::random(rng);
+            let commitment = gens.commit(&coeffs, &blinding);
+
+            round_coefficients.push(coeffs);
+            round_blindings.push(blinding);
+            round_commitments.push(commitment);
+        }
+    }
+
     let instance = RelaxedR1CSInstance {
         E_bar,
         u,
         W_bar,
         x: x.clone(),
+        round_commitments,
     };
 
-    let witness = RelaxedR1CSWitness { E, r_E, W, r_W };
+    let witness = RelaxedR1CSWitness {
+        E,
+        r_E,
+        W,
+        r_W,
+        round_coefficients,
+        round_blindings,
+    };
 
     (instance, witness, z)
 }
@@ -258,6 +286,8 @@ mod tests {
             r_E: F::zero(),
             W: w1_vec,
             r_W: F::random(&mut rng),
+            round_coefficients: Vec::new(),
+            round_blindings: Vec::new(),
         };
         let u1 = F::one();
 
