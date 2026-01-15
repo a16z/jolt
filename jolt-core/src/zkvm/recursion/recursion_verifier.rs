@@ -123,30 +123,30 @@ impl<F: JoltField> RecursionVerifier<F> {
             )
         })?;
 
-        // // ============ STAGE 3: Verify Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
-        // let _r_stage3 = tracing::info_span!("verify_recursion_stage3").in_scope(|| {
-        //     tracing::info!("Verifying Stage 3: Jagged transform sumcheck + Jagged Assist");
-        //     self.verify_stage3(
-        //         &proof.stage3_proof,
-        //         &proof.stage3b_proof,
-        //         transcript,
-        //         &mut accumulator,
-        //         &r_stage1,
-        //         &r_stage2,
-        //     )
-        // })?;
+        // ============ STAGE 3: Verify Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
+        let _r_stage3 = tracing::info_span!("verify_recursion_stage3").in_scope(|| {
+            tracing::info!("Verifying Stage 3: Jagged transform sumcheck + Jagged Assist");
+            self.verify_stage3(
+                &proof.stage3_proof,
+                &proof.stage3b_proof,
+                transcript,
+                &mut accumulator,
+                &r_stage1,
+                &r_stage2,
+            )
+        })?;
 
-        // ============ PCS OPENING VERIFICATION ============
-        // tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
-        //     tracing::info!("Verifying PCS opening proof");
-        //     // Verify opening proof using PCS
-        //     accumulator.verify_single::<T, PCS>(
-        //         &proof.opening_proof,
-        //         matrix_commitment.clone(),
-        //         verifier_setup,
-        //         transcript,
-        //     )
-        // })?;
+        ============ PCS OPENING VERIFICATION ============
+        tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
+            tracing::info!("Verifying PCS opening proof");
+            // Verify opening proof using PCS
+            accumulator.verify_single::<T, PCS>(
+                &proof.opening_proof,
+                matrix_commitment.clone(),
+                verifier_setup,
+                transcript,
+            )
+        })?;
 
         Ok(true)
     }
