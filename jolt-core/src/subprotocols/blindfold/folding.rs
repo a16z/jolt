@@ -117,7 +117,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::Bn254Curve;
+    use crate::curve::{Bn254Curve, JoltGroupElement};
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::StageConfig;

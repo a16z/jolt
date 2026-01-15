@@ -452,6 +452,13 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // Append input claims to transcript BEFORE deriving batching coefficients
+        // (must match ordering in BatchedSumcheck::prove)
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(&input_claim);
+        });
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         let claim: F = sumcheck_instances
@@ -460,7 +467,6 @@ impl BatchedSumcheck {
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
