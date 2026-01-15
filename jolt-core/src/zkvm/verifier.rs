@@ -9,7 +9,7 @@ use ark_grumpkin::Projective as GrumpkinProjective;
 
 use crate::poly::commitment::{
     commitment_scheme::{CommitmentScheme, RecursionExt},
-    hyrax::Hyrax,
+    hyrax::{Hyrax, PedersenGenerators},
 };
 use crate::poly::opening_proof::OpeningId;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -76,12 +76,7 @@ use itertools::Itertools;
 use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
-pub struct JoltVerifier<
-    'a,
-    F: JoltField,
-    PCS: RecursionExt<F>,
-    ProofTranscript: Transcript,
-> {
+pub struct JoltVerifier<'a, F: JoltField, PCS: RecursionExt<F>, ProofTranscript: Transcript> {
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
     pub proof: JoltProof<F, PCS, ProofTranscript>,
@@ -587,6 +582,7 @@ where
     }
 
     /// Stage 8: PCS batch opening verification using a recursion hint (when supported by the PCS).
+    #[tracing::instrument(skip_all, name = "verify_stage8_with_pcs_hint")]
     fn verify_stage8_with_pcs_hint(
         &mut self,
         stage8_hint: &<PCS as RecursionExt<F>>::Hint,
@@ -596,60 +592,69 @@ where
     {
         // Get the unified opening point from HammingWeightClaimReduction
         // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
-        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::HammingWeightClaimReduction,
-        );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+        let (opening_point, polynomial_claims, claims) = {
+            let _span = tracing::info_span!("stage8_collect_claims").entered();
 
-        // 1. Collect all (polynomial, claim) pairs
-        let mut polynomial_claims = Vec::new();
-
-        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
-        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::IncClaimReduction,
-        );
-        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncClaimReduction,
-        );
-
-        // Apply Lagrange factor for dense polys
-        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
-        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-
-        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
-        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
-
-        // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
-        for i in 0..self.one_hot_params.instruction_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::InstructionRa(i),
+            let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(0),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
-        }
-        for i in 0..self.one_hot_params.bytecode_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::BytecodeRa(i),
-                SumcheckId::HammingWeightClaimReduction,
+            let log_k_chunk = self.one_hot_params.log_k_chunk;
+            let r_address_stage7 = &opening_point.r[..log_k_chunk];
+
+            // 1. Collect all (polynomial, claim) pairs
+            let mut polynomial_claims = Vec::new();
+
+            // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
+            let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
-        }
-        for i in 0..self.one_hot_params.ram_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamRa(i),
-                SumcheckId::HammingWeightClaimReduction,
+            let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
-        }
+
+            // Apply Lagrange factor for dense polys
+            // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
+            let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+
+            polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
+            polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+
+            // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
+            for i in 0..self.one_hot_params.instruction_d {
+                let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::InstructionRa(i),
+                    SumcheckId::HammingWeightClaimReduction,
+                );
+                polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
+            }
+            for i in 0..self.one_hot_params.bytecode_d {
+                let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::BytecodeRa(i),
+                    SumcheckId::HammingWeightClaimReduction,
+                );
+                polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
+            }
+            for i in 0..self.one_hot_params.ram_d {
+                let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::RamRa(i),
+                    SumcheckId::HammingWeightClaimReduction,
+                );
+                polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
+            }
+
+            let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
+            (opening_point, polynomial_claims, claims)
+        };
 
         // 2. Sample gamma and compute powers for RLC
-        let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
-        self.transcript.append_scalars(&claims);
-        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        let gamma_powers: Vec<F> = {
+            let _span = tracing::info_span!("stage8_gamma_powers", num_claims = claims.len()).entered();
+            self.transcript.append_scalars(&claims);
+            self.transcript.challenge_scalar_powers(claims.len())
+        };
 
         // Build state for computing joint commitment/claim
         let state = DoryOpeningState {
@@ -660,40 +665,48 @@ where
 
         // Compute joint commitment: Σ γ_i · C_i
         // Use precomputed hint if available, otherwise compute directly
-        let joint_commitment = if let Some(combine_hint) = &self.proof.stage8_combine_hint {
-            // Use the precomputed hint (recursion-offloaded path)
-            tracing::info!("[Homomorphic Combine] Verifier using precomputed combine_hint");
-            PCS::combine_with_hint_fq12(combine_hint)
-        } else {
-            // Build commitments map and compute directly
-            let mut commitments_map = HashMap::new();
-            for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
-                .into_iter()
-                .zip_eq(&self.proof.commitments)
-            {
-                commitments_map.insert(polynomial, commitment.clone());
+        let joint_commitment = {
+            let _span = tracing::info_span!("stage8_joint_commitment").entered();
+            if let Some(combine_hint) = &self.proof.stage8_combine_hint {
+                // Use the precomputed hint (recursion-offloaded path)
+                PCS::combine_with_hint_fq12(combine_hint)
+            } else {
+                // Build commitments map and compute directly
+                let mut commitments_map = HashMap::new();
+                for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
+                    .into_iter()
+                    .zip_eq(&self.proof.commitments)
+                {
+                    commitments_map.insert(polynomial, commitment.clone());
+                }
+                self.compute_joint_commitment(&mut commitments_map, &state)
             }
-            self.compute_joint_commitment(&mut commitments_map, &state)
         };
 
         // Compute joint claim: Σ γ_i · claim_i
-        let joint_claim: F = gamma_powers
-            .iter()
-            .zip(claims.iter())
-            .map(|(gamma, claim)| *gamma * claim)
-            .sum();
+        let joint_claim: F = {
+            let _span = tracing::info_span!("stage8_joint_claim").entered();
+            gamma_powers
+                .iter()
+                .zip(claims.iter())
+                .map(|(gamma, claim)| *gamma * claim)
+                .sum()
+        };
 
         // Verify opening using the hint-based PCS verifier
-        PCS::verify_with_hint(
-            &self.proof.stage8_opening_proof,
-            &self.preprocessing.generators,
-            &mut self.transcript,
-            &opening_point.r,
-            &joint_claim,
-            &joint_commitment,
-            stage8_hint,
-        )
-        .context("Stage 8 (hint)")
+        {
+            let _span = tracing::info_span!("stage8_pcs_verify_with_hint").entered();
+            PCS::verify_with_hint(
+                &self.proof.stage8_opening_proof,
+                &self.preprocessing.generators,
+                &mut self.transcript,
+                &opening_point.r,
+                &joint_claim,
+                &joint_commitment,
+                stage8_hint,
+            )
+            .context("Stage 8 (hint)")
+        }
     }
 
     /// Compute joint commitment for the batch opening.
@@ -721,19 +734,24 @@ where
     }
 
     /// Verify Stage 8 with recursion proof
+    #[tracing::instrument(skip_all, name = "verify_stage8_with_recursion")]
     fn verify_stage8_with_recursion(&mut self) -> Result<(), anyhow::Error>
     where
         PCS: RecursionExt<F>,
         <PCS as RecursionExt<F>>::Hint: Clone,
     {
         // 1. Verify Dory proof with hints
-        let hint = self
-            .proof
-            .stage9_pcs_hint
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("stage9_pcs_hint is required for recursion verification"))?;
+        let hint = {
+            let _span = tracing::info_span!("stage8_clone_hint").entered();
+            self.proof.stage9_pcs_hint.clone().ok_or_else(|| {
+                anyhow::anyhow!("stage9_pcs_hint is required for recursion verification")
+            })?
+        };
 
-        self.verify_stage8_with_pcs_hint(&hint)?;
+        {
+            let _span = tracing::info_span!("stage8_verify_dory_with_hint").entered();
+            self.verify_stage8_with_pcs_hint(&hint)?;
+        }
 
         // 2. Extract data for RecursionVerifier
         let recursion_proof = &self.proof.recursion_proof;
@@ -744,9 +762,11 @@ where
 
         // Extract constraint counts from the opening claims in recursion_proof
         // We can infer the structure from the types of virtual polynomials
-        let mut num_gt_exp = 0;
-        let mut num_gt_mul = 0;
-        let mut num_g1_scalar_mul = 0;
+        let (_num_gt_exp, _num_gt_mul, _num_g1_scalar_mul) = {
+            let _span = tracing::info_span!("stage8_count_constraint_types", num_claims = recursion_proof.opening_claims.len()).entered();
+            let mut num_gt_exp = 0;
+            let mut num_gt_mul = 0;
+            let mut num_g1_scalar_mul = 0;
 
         // Count constraint types based on the virtual polynomial types in opening claims
         for (key, _) in &recursion_proof.opening_claims {
@@ -810,44 +830,52 @@ where
                 _ => {} // Ignore non-virtual openings
             }
         }
+            (num_gt_exp, num_gt_mul, num_g1_scalar_mul)
+        };
 
         // Use metadata from proof instead of placeholders
         let metadata = &self.proof.stage10_recursion_metadata;
 
-        let constraint_types = metadata.constraint_types.clone();
-        let num_constraints = constraint_types.len();
-        let num_constraints_padded = num_constraints.next_power_of_two();
+        let verifier_input = {
+            let _span = tracing::info_span!("stage8_build_verifier_input").entered();
+            let constraint_types = metadata.constraint_types.clone();
+            let num_constraints = constraint_types.len();
+            let num_constraints_padded = num_constraints.next_power_of_two();
 
-        // The dense polynomial is created by the jagged bijection which compresses
-        // the sparse matrix by removing redundant evaluations. We should use the
-        // actual dense_num_vars from the metadata rather than trying to recalculate it.
+            // The dense polynomial is created by the jagged bijection which compresses
+            // the sparse matrix by removing redundant evaluations. We should use the
+            // actual dense_num_vars from the metadata rather than trying to recalculate it.
 
-        // Calculate the constraint system parameters for the verifier input
-        // These are based on the original constraint matrix structure
-        const NUM_POLY_TYPES: usize = 15; // PolyType::NUM_TYPES
-        let num_rows_unpadded = NUM_POLY_TYPES * num_constraints_padded;
-        let num_s_vars = (num_rows_unpadded as f64).log2().ceil() as usize;
-        let num_constraint_vars = 8; // All constraints padded to 8 variables
-        let num_vars = num_s_vars + num_constraint_vars;
+            // Calculate the constraint system parameters for the verifier input
+            // These are based on the original constraint matrix structure
+            const NUM_POLY_TYPES: usize = 15; // PolyType::NUM_TYPES
+            let num_rows_unpadded = NUM_POLY_TYPES * num_constraints_padded;
+            let num_s_vars = (num_rows_unpadded as f64).log2().ceil() as usize;
+            let num_constraint_vars = 8; // All constraints padded to 8 variables
+            let num_vars = num_s_vars + num_constraint_vars;
 
-        let jagged_bijection = metadata.jagged_bijection.clone();
-        let jagged_mapping = metadata.jagged_mapping.clone();
-        let matrix_rows = metadata.matrix_rows.clone();
+            let jagged_bijection = metadata.jagged_bijection.clone();
+            let jagged_mapping = metadata.jagged_mapping.clone();
+            let matrix_rows = metadata.matrix_rows.clone();
 
-        let verifier_input = RecursionVerifierInput {
-            constraint_types,
-            num_vars,
-            num_constraint_vars,
-            num_s_vars,
-            num_constraints,
-            num_constraints_padded,
-            jagged_bijection,
-            jagged_mapping,
-            matrix_rows,
+            RecursionVerifierInput {
+                constraint_types,
+                num_vars,
+                num_constraint_vars,
+                num_s_vars,
+                num_constraints,
+                num_constraints_padded,
+                jagged_bijection,
+                jagged_mapping,
+                matrix_rows,
+            }
         };
 
         // 3. Verify recursion proof
-        let recursion_verifier = RecursionVerifier::<Fq>::new(verifier_input);
+        let recursion_verifier = {
+            let _span = tracing::info_span!("stage8_create_recursion_verifier").entered();
+            RecursionVerifier::<Fq>::new(verifier_input)
+        };
 
         // Sample the same challenges from the main transcript that the prover did
         let _gamma: Fq = self.transcript.challenge_scalar();
@@ -855,23 +883,30 @@ where
 
         type HyraxPCS = Hyrax<1, GrumpkinProjective>;
 
-        // Setup Hyrax from proof metadata
-        let dense_num_vars = metadata.dense_num_vars;
-        let hyrax_prover_setup = <HyraxPCS as CommitmentScheme>::setup_prover(dense_num_vars);
-        let hyrax_verifier_setup =
-            <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
+        // Use cached Hyrax setup from preprocessing (avoids 40ms regeneration)
+        let hyrax_verifier_setup = &self.preprocessing.hyrax_recursion_setup;
+        assert!(
+            metadata.dense_num_vars <= MAX_RECURSION_DENSE_NUM_VARS,
+            "dense_num_vars {} exceeds max {}",
+            metadata.dense_num_vars,
+            MAX_RECURSION_DENSE_NUM_VARS
+        );
 
         // Add dense commitment to transcript (must match prover's order)
-        self.transcript.append_serializable(&recursion_proof.dense_commitment);
+        self.transcript
+            .append_serializable(&recursion_proof.dense_commitment);
 
-        let verification_result = recursion_verifier
-            .verify::<ProofTranscript, HyraxPCS>(
-                recursion_proof,
-                &mut self.transcript,
-                &recursion_proof.dense_commitment,
-                &hyrax_verifier_setup,
-            )
-            .map_err(|e| anyhow::anyhow!("Recursion verification failed: {:?}", e))?;
+        let verification_result = {
+            let _span = tracing::info_span!("stage8_recursion_verifier_verify").entered();
+            recursion_verifier
+                .verify::<ProofTranscript, HyraxPCS>(
+                    recursion_proof,
+                    &mut self.transcript,
+                    &recursion_proof.dense_commitment,
+                    &hyrax_verifier_setup,
+                )
+                .map_err(|e| anyhow::anyhow!("Recursion verification failed: {:?}", e))?
+        };
 
         if !verification_result {
             return Err(anyhow::anyhow!("Recursion proof verification failed"));
@@ -1081,6 +1116,9 @@ impl JoltSharedPreprocessing {
     }
 }
 
+/// Max dense_num_vars for recursion Hyrax setup. Supports up to 2^22 constraints.
+pub const MAX_RECURSION_DENSE_NUM_VARS: usize = 22;
+
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltVerifierPreprocessing<F, PCS>
 where
@@ -1089,6 +1127,8 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
+    /// Cached Hyrax setup for recursion verification (avoids 40ms regeneration per verify)
+    pub hyrax_recursion_setup: PedersenGenerators<GrumpkinProjective>,
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -1127,9 +1167,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
     ) -> JoltVerifierPreprocessing<F, PCS> {
+        // Precompute Hyrax generators for recursion verification
+        type HyraxPCS = Hyrax<1, GrumpkinProjective>;
+        let hyrax_prover_setup =
+            <HyraxPCS as CommitmentScheme>::setup_prover(MAX_RECURSION_DENSE_NUM_VARS);
+        let hyrax_recursion_setup = <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
+
         Self {
             generators,
             shared: shared.clone(),
+            hyrax_recursion_setup,
         }
     }
 }
@@ -1140,9 +1187,18 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
 {
     fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
+
+        // Precompute Hyrax generators for recursion verification
+        type HyraxPCS = Hyrax<1, GrumpkinProjective>;
+        let hyrax_prover_setup =
+            <HyraxPCS as CommitmentScheme>::setup_prover(MAX_RECURSION_DENSE_NUM_VARS);
+        let hyrax_recursion_setup =
+            <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
+
         Self {
             generators,
             shared: prover_preprocessing.shared.clone(),
+            hyrax_recursion_setup,
         }
     }
 }

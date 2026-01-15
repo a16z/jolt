@@ -27,8 +27,7 @@ use super::{
         packed_gt_exp::{PackedGtExpParams, PackedGtExpVerifier},
     },
     stage2::virtualization::{
-        DirectEvaluationParams, DirectEvaluationVerifier,
-        extract_virtual_claims_from_accumulator,
+        extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationVerifier,
     },
     stage3::{
         jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
@@ -115,15 +114,10 @@ impl<F: JoltField> RecursionVerifier<F> {
         // ============ STAGE 2: Verify Virtualization Sumcheck ============
         let r_stage2 = tracing::info_span!("verify_recursion_stage2").in_scope(|| {
             tracing::info!("Verifying Stage 2: Direct evaluation");
-            self.verify_stage2(
-                transcript,
-                &mut accumulator,
-                &r_stage1,
-                proof.stage2_m_eval,
-            )
+            self.verify_stage2(transcript, &mut accumulator, &r_stage1, proof.stage2_m_eval)
         })?;
 
-        // ============ STAGE 3: Verify Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
+        // // ============ STAGE 3: Verify Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
         let _r_stage3 = tracing::info_span!("verify_recursion_stage3").in_scope(|| {
             tracing::info!("Verifying Stage 3: Jagged transform sumcheck + Jagged Assist");
             self.verify_stage3(
@@ -136,7 +130,7 @@ impl<F: JoltField> RecursionVerifier<F> {
             )
         })?;
 
-        ============ PCS OPENING VERIFICATION ============
+        // ============ PCS OPENING VERIFICATION ============
         tracing::info_span!("verify_recursion_pcs_opening").in_scope(|| {
             tracing::info!("Verifying PCS opening proof");
             // Verify opening proof using PCS
@@ -255,7 +249,8 @@ impl<F: JoltField> RecursionVerifier<F> {
         }
 
         // Since we know F = Fq, we can work directly with Fq types
-        let accumulator_fq: &mut VerifierOpeningAccumulator<Fq> = unsafe { std::mem::transmute(accumulator) };
+        let accumulator_fq: &mut VerifierOpeningAccumulator<Fq> =
+            unsafe { std::mem::transmute(accumulator) };
 
         // Convert r_stage1 challenges to Fq field elements
         // SAFETY: We verified F = Fq above, so F::Challenge = Fq::Challenge
@@ -265,10 +260,8 @@ impl<F: JoltField> RecursionVerifier<F> {
         };
 
         // Extract virtual claims from Stage 1
-        let virtual_claims = extract_virtual_claims_from_accumulator(
-            accumulator_fq,
-            &self.input.constraint_types,
-        );
+        let virtual_claims =
+            extract_virtual_claims_from_accumulator(accumulator_fq, &self.input.constraint_types);
 
         // Create parameters
         let params = DirectEvaluationParams::new(
@@ -279,28 +272,22 @@ impl<F: JoltField> RecursionVerifier<F> {
         );
 
         // Create and run verifier
-        let verifier = DirectEvaluationVerifier::new(
-            params,
-            virtual_claims,
-            r_x,
-        );
+        let verifier = DirectEvaluationVerifier::new(params, virtual_claims, r_x);
 
         // Convert stage2_m_eval from F to Fq
         // SAFETY: We verified F = Fq above
         let m_eval_fq: Fq = unsafe { std::mem::transmute_copy(&stage2_m_eval) };
 
-        let r_s = verifier.verify(transcript, accumulator_fq, m_eval_fq)
+        let r_s = verifier
+            .verify(transcript, accumulator_fq, m_eval_fq)
             .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
 
         // Convert r_s to challenges for Stage 3 compatibility
         // Stage 3 expects them in reverse order
         // SAFETY: We verified F = Fq above
         let r_stage2: Vec<<F as JoltField>::Challenge> = unsafe {
-            let r_s_challenges: Vec<<Fq as JoltField>::Challenge> = r_s
-                .into_iter()
-                .rev()
-                .map(|f| f.into())
-                .collect();
+            let r_s_challenges: Vec<<Fq as JoltField>::Challenge> =
+                r_s.into_iter().rev().map(|f| f.into()).collect();
             std::mem::transmute(r_s_challenges)
         };
 
