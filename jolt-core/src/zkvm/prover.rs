@@ -1408,8 +1408,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
         {
-            println!("advice_point: {advice_point:?}");
-            println!("opening_point: {opening_point:?}");
             #[cfg(test)]
             {
                 let advice_poly = self.advice.trusted_advice_polynomial.as_ref().unwrap();
@@ -1428,8 +1426,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             AdviceKind::Untrusted,
             SumcheckId::AdviceClaimReductionPhase2,
         ) {
-            println!("advice_point: {advice_point:?}");
-            println!("opening_point: {opening_point:?}");
             #[cfg(test)]
             {
                 let advice_poly = self.advice.untrusted_advice_polynomial.as_ref().unwrap();

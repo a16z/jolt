@@ -246,14 +246,6 @@ impl DoryGlobals {
     /// Get the current Dory matrix layout
     pub fn get_layout() -> DoryLayout {
         CURRENT_LAYOUT.load(Ordering::SeqCst).into()
-        // if Self::current_context() == DoryContext::Main {
-        //     CURRENT_LAYOUT.load(Ordering::SeqCst).into()
-        // } else {
-        //     // Advice polynomials are always committed as dense matrices
-        //     // and are implicitly embedded in the top-left corner of the
-        //     // main Dory matrix.
-        //     DoryLayout::CycleMajor
-        // }
     }
 
     /// Set the Dory matrix layout directly (test-only).

@@ -83,8 +83,6 @@ pub struct AdviceClaimReductionPhase1Params<F: JoltField> {
     pub row_binding_rounds: Range<usize>,
     #[allocative(skip)]
     pub col_binding_rounds: Range<usize>,
-    #[allocative(skip)]
-    pub padding_rounds: Range<usize>,
     pub r_val_eval: OpeningPoint<BIG_ENDIAN, F>,
     pub r_val_final: Option<OpeningPoint<BIG_ENDIAN, F>>,
 }
@@ -95,21 +93,19 @@ fn phase1_round_schedule(
     main_col_vars: usize,
     advice_row_vars: usize,
     advice_col_vars: usize,
-) -> (Range<usize>, Range<usize>, Range<usize>) {
+) -> (Range<usize>, Range<usize>) {
     match DoryGlobals::get_layout() {
         DoryLayout::CycleMajor => {
             let col_binding_rounds = 0..min(log_T, advice_col_vars);
             let row_binding_rounds =
                 min(log_T, main_col_vars)..min(log_T, main_col_vars + advice_row_vars);
-            let padding_rounds = col_binding_rounds.end..row_binding_rounds.start;
-            (row_binding_rounds, col_binding_rounds, padding_rounds)
+            (col_binding_rounds, row_binding_rounds)
         }
         DoryLayout::AddressMajor => {
             let col_binding_rounds = 0..advice_col_vars.saturating_sub(log_k_chunk);
             let row_binding_rounds =
                 col_binding_rounds.end..min(log_T, col_binding_rounds.end + advice_row_vars);
-            let padding_rounds = 0..0;
-            (row_binding_rounds, col_binding_rounds, padding_rounds)
+            (col_binding_rounds, row_binding_rounds)
         }
     }
 }
@@ -147,7 +143,7 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
 
         let (advice_col_vars, advice_row_vars) =
             DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
-        let (row_binding_rounds, col_binding_rounds, padding_rounds) = phase1_round_schedule(
+        let (col_binding_rounds, row_binding_rounds) = phase1_round_schedule(
             log_t,
             log_k_chunk,
             main_col_vars,
@@ -167,7 +163,6 @@ impl<F: JoltField> AdviceClaimReductionPhase1Params<F> {
             main_row_vars,
             row_binding_rounds,
             col_binding_rounds,
-            padding_rounds,
             r_val_eval,
             r_val_final,
         })
@@ -197,12 +192,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase1Param
     }
 
     fn num_rounds(&self) -> usize {
-        let mut num_rounds = self.col_binding_rounds.len();
         if !self.row_binding_rounds.is_empty() {
-            num_rounds += self.padding_rounds.len();
-            num_rounds += self.row_binding_rounds.len();
+            self.row_binding_rounds.end - self.col_binding_rounds.start
+        } else {
+            self.col_binding_rounds.len()
         }
-        num_rounds
     }
 
     fn normalize_opening_point(
@@ -360,7 +354,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        if self.params.padding_rounds.contains(&round) {
+        if !self.params.col_binding_rounds.contains(&round)
+            && !self.params.row_binding_rounds.contains(&round)
+        {
             // Dummy internal variable: constant univariate with H(0)=H(1)=previous_claim/2.
             UniPoly::from_coeff(vec![previous_claim * self.two_inv])
         } else {
@@ -373,7 +369,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        if self.params.padding_rounds.contains(&round) {
+        if !self.params.col_binding_rounds.contains(&round)
+            && !self.params.row_binding_rounds.contains(&round)
+        {
             // Each dummy internal round halves the running claim; equivalently, we multiply the
             // scaling factor by 1/2.
             self.scale *= self.two_inv;
@@ -611,7 +609,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         let (advice_col_vars, advice_row_vars) =
             DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
 
-        let (row_binding_rounds, col_binding_rounds, padding_rounds) = phase1_round_schedule(
+        let (col_binding_rounds, row_binding_rounds) = phase1_round_schedule(
             log_t,
             log_k_chunk,
             main_col_vars,
@@ -628,7 +626,7 @@ impl<F: JoltField> AdviceClaimReductionPhase2Params<F> {
         let gap_len = if row_binding_rounds.is_empty() || col_binding_rounds.is_empty() {
             0
         } else {
-            padding_rounds.len()
+            row_binding_rounds.start - col_binding_rounds.end
         };
 
         let two_inv = F::from_u64(2).inverse().unwrap();
@@ -689,7 +687,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase2Param
             )
             .match_endianness(),
             DoryLayout::AddressMajor => {
-                let (row_binding_rounds, col_binding_rounds, _) = phase1_round_schedule(
+                let (col_binding_rounds, row_binding_rounds) = phase1_round_schedule(
                     self.log_t,
                     self.log_k_chunk,
                     self.main_col_vars,
@@ -768,23 +766,6 @@ impl<F: JoltField> AdviceClaimReductionPhase2Prover<F> {
             let col = index % advice_cols;
             row_col_to_address_cycle(row, col)
         };
-
-        // let r_val_eval: OpeningPoint<LITTLE_ENDIAN, F> = params.r_val_eval.match_endianness();
-        // let r_val_eval = r_val_eval.r;
-        // let r_cols = &r_val_eval[..params.advice_col_vars];
-        // let r_rows = &r_val_eval[params.advice_col_vars..];
-        // // Little-endian cycles -> addresses
-        // let mut r_permuted = [
-        //     r_rows,
-        //     // r_cols,
-        //     // &r_cols[params.col_binding_rounds.len()..],
-        //     // &r_cols[..params.col_binding_rounds.len()],
-        //     &r_cols[params.log_k_chunk..],
-        //     &r_cols[..params.log_k_chunk],
-        // ]
-        // .concat();
-        // r_permuted.reverse();
-        // let eq_r_permuted = EqPolynomial::evals(&r_permuted);
 
         let mut permuted_coeffs: Vec<(usize, (u64, F))> = match advice_poly {
             MultilinearPolynomial::U64Scalars(poly) => poly
