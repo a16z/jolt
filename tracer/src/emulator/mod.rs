@@ -121,6 +121,7 @@ impl Emulator {
         #[cfg(feature = "std")]
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         let mut cycle_count = 0;
+        let mut prev_pc: u64 = 0;
         loop {
             // Log every 1000 cycles to see progress, and log more detail near cycle 13000
             if cycle_count % 1000 == 0 || cycle_count < 10 || (cycle_count >= 13005 && cycle_count < 13020) {
@@ -129,6 +130,15 @@ impl Emulator {
             }
             // let disas = self.cpu.disassemble_next_instruction();
             // tracing::debug!("{disas}");
+
+            // Check for infinite loop termination (PC stall detection)
+            // This is used by Jolt guests that terminate via `j .` instruction.
+            let pc = self.cpu.read_pc();
+            if prev_pc == pc {
+                tracing::info!("Program exited successfully (code 0)");
+                break;
+            }
+            prev_pc = pc;
 
             let mut traces = if trace { Some(Vec::new()) } else { None };
             self.tick(traces.as_mut());

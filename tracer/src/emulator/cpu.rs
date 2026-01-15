@@ -568,23 +568,16 @@ impl Cpu {
 
                 return false;
             } else if call_id == JOLT_CSR_ECALL_NUM {
-                // CSR operations via ECALL - only mtvec write is supported
-                // Other CSR operations are ignored for soundness (CSR state is not proven)
-                const CSR_OP_WRITE: u32 = 2;
+                // CSR ECALL for setting trap handler address.
+                // We write to mtvec CSR for emulation purposes (so handle_trap knows where to jump).
+                // We also set a flag so the ECALL inline sequence stores the address (from a3)
+                // into the trap handler virtual register (register 33) for proof verification.
+                // The proof verifies against virtual register 33, not the CSR value.
+                let trap_handler_addr = self.x[13] as u64; // a3 contains the trap handler address
+                self.write_csr_raw(CSR_MTVEC_ADDRESS, trap_handler_addr);
 
-                let op = self.x[11] as u32;      // a1: operation type
-                let csr_addr = self.x[12] as u16; // a2: CSR address
-                let value = self.x[13] as u64;    // a3: value (for write ops)
-
-                // Only allow mtvec write - other CSRs are not proven and would be unsound
-                if op == CSR_OP_WRITE && csr_addr == CSR_MTVEC_ADDRESS {
-                    self.write_csr_raw(csr_addr, value);
-                }
-                // All other CSR operations are silently ignored
-                // (mcause reads, mepc ops, etc. are no longer needed)
+                self.vr_allocator.set_is_csr_ecall(true);
                 self.pending_csr_result = Some(0);
-
-                // PC is already advanced by tick_operate after fetch, so we don't need to advance it again
 
                 return false; // we don't take the trap
             }
