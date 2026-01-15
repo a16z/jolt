@@ -50,21 +50,55 @@ pub fn compute_cross_term<F: JoltField>(
 ///
 /// This is used in the BlindFold protocol to generate a random mask.
 /// The key observation is that for relaxed R1CS, we can:
-/// 1. Sample random witness W
+/// 1. Sample random witness W with proper structure (coefficients, intermediates, next_claims)
 /// 2. Sample random scalar u
 /// 3. Sample random public inputs x
 /// 4. Compute E to make it satisfy: E = (AZ) ∘ (BZ) - u*(CZ)
-/// 5. Sample random per-round coefficients and commit to them
+/// 5. Extract round coefficients from W and commit to them
 ///
 /// The resulting (instance, witness) pair is uniformly random but satisfying.
+/// Critically, round_coefficients are extracted from W (not generated separately)
+/// to ensure consistency after folding.
 pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCore>(
     gens: &PedersenGenerators<C>,
     r1cs: &VerifierR1CS<F>,
     rng: &mut R,
 ) -> (RelaxedR1CSInstance<F, C>, RelaxedR1CSWitness<F>, Vec<F>) {
-    // Sample random witness (private portion)
-    let witness_size = r1cs.num_vars - 1 - r1cs.num_public_inputs;
-    let W: Vec<F> = (0..witness_size).map(|_| F::random(rng)).collect();
+    // Build W with proper structure: [coefficients, intermediates, next_claim] per round
+    // This ensures round_coefficients extracted from W match the actual coefficients
+    let mut W: Vec<F> = Vec::new();
+    let mut round_coefficients: Vec<Vec<F>> = Vec::new();
+    let mut round_blindings: Vec<F> = Vec::new();
+    let mut round_commitments: Vec<C::G1> = Vec::new();
+
+    for config in &r1cs.stage_configs {
+        for _ in 0..config.num_rounds {
+            let num_coeffs = config.poly_degree + 1;
+            let num_intermediates = config.poly_degree.saturating_sub(1);
+
+            // Generate random coefficients
+            let coeffs: Vec<F> = (0..num_coeffs).map(|_| F::random(rng)).collect();
+
+            // Generate random intermediates
+            let intermediates: Vec<F> = (0..num_intermediates).map(|_| F::random(rng)).collect();
+
+            // Generate random next_claim
+            let next_claim = F::random(rng);
+
+            // Append to W in order: coefficients, intermediates, next_claim
+            W.extend_from_slice(&coeffs);
+            W.extend_from_slice(&intermediates);
+            W.push(next_claim);
+
+            // Commit to coefficients
+            let blinding = F::random(rng);
+            let commitment = gens.commit(&coeffs, &blinding);
+
+            round_coefficients.push(coeffs);
+            round_blindings.push(blinding);
+            round_commitments.push(commitment);
+        }
+    }
 
     // Sample random public inputs
     let x: Vec<F> = (0..r1cs.num_public_inputs)
@@ -80,9 +114,8 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     };
 
     // Build Z vector: [u, public_inputs..., witness...]
-    // Using u at Z[0] allows proper folding since Z' = Z1 + r*Z2 gives Z'[0] = u1 + r*u2 = u'
     let mut z = Vec::with_capacity(r1cs.num_vars);
-    z.push(u); // u scalar at index 0
+    z.push(u);
     z.extend_from_slice(&x);
     z.extend_from_slice(&W);
 
@@ -102,25 +135,6 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     // Commit to E and W
     let E_bar = gens.commit(&E, &r_E);
     let W_bar = gens.commit(&W, &r_W);
-
-    // Generate random per-round commitments and openings
-    let mut round_coefficients = Vec::new();
-    let mut round_blindings = Vec::new();
-    let mut round_commitments = Vec::new();
-
-    for config in &r1cs.stage_configs {
-        for _ in 0..config.num_rounds {
-            // Coefficient count = degree + 1
-            let num_coeffs = config.poly_degree + 1;
-            let coeffs: Vec<F> = (0..num_coeffs).map(|_| F::random(rng)).collect();
-            let blinding = F::random(rng);
-            let commitment = gens.commit(&coeffs, &blinding);
-
-            round_coefficients.push(coeffs);
-            round_blindings.push(blinding);
-            round_commitments.push(commitment);
-        }
-    }
 
     let instance = RelaxedR1CSInstance {
         E_bar,

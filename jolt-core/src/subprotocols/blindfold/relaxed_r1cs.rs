@@ -267,6 +267,59 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
 
         Ok(())
     }
+
+    /// Verify that round_coefficients match the coefficients embedded in W.
+    ///
+    /// This is critical for soundness: ensures the coefficients used in R1CS
+    /// constraints are the same as those verified via commitment opening.
+    ///
+    /// If round_coefficients is empty (unit tests without round commitment data),
+    /// this check is skipped.
+    pub fn verify_round_coefficients_consistency(
+        &self,
+        r1cs: &VerifierR1CS<F>,
+    ) -> Result<(), usize> {
+        // Skip check if no round coefficients (unit tests without round commitment data)
+        if self.round_coefficients.is_empty() {
+            return Ok(());
+        }
+
+        let mut w_idx = 0;
+        let mut round_idx = 0;
+
+        for config in &r1cs.stage_configs {
+            for _ in 0..config.num_rounds {
+                let num_coeffs = config.poly_degree + 1;
+                let num_intermediates = config.poly_degree.saturating_sub(1);
+
+                // Extract coefficients from W at current position
+                let coeffs_in_w = &self.W[w_idx..w_idx + num_coeffs];
+
+                // Compare with round_coefficients
+                if round_idx >= self.round_coefficients.len() {
+                    return Err(round_idx);
+                }
+                let expected_coeffs = &self.round_coefficients[round_idx];
+
+                if coeffs_in_w.len() != expected_coeffs.len() {
+                    return Err(round_idx);
+                }
+
+                for (w_coeff, expected) in coeffs_in_w.iter().zip(expected_coeffs.iter()) {
+                    if w_coeff != expected {
+                        return Err(round_idx);
+                    }
+                }
+
+                // Move to next round's position in W
+                // Layout: coefficients + intermediates + next_claim
+                w_idx += num_coeffs + num_intermediates + 1;
+                round_idx += 1;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

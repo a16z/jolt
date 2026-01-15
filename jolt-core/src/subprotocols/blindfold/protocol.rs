@@ -155,6 +155,8 @@ pub enum BlindFoldVerifyError {
     WCommitmentMismatch,
     /// Round commitment opening failed at specified index
     RoundCommitmentMismatch(usize),
+    /// Round coefficients in W don't match round_coefficients at specified round
+    RoundCoefficientsMismatch(usize),
     /// R1CS constraint not satisfied
     R1CSConstraintFailed(usize),
 }
@@ -228,6 +230,13 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
                 return Err(BlindFoldVerifyError::RoundCommitmentMismatch(i));
             }
         }
+
+        // SECURITY: Verify that the coefficients in W match round_coefficients.
+        // This binds the coefficients used in R1CS to those verified via commitment opening.
+        proof
+            .folded_witness
+            .verify_round_coefficients_consistency(self.r1cs)
+            .map_err(BlindFoldVerifyError::RoundCoefficientsMismatch)?;
 
         // Step 4: Verify R1CS satisfaction
         // Check: (A·Z') ∘ (B·Z') = u_folded*(C·Z') + E_folded
