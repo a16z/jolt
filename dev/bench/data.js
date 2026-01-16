@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1768526395324,
+  "lastUpdate": 1768584578135,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -46510,6 +46510,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 372112,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mchl.zhu.96@gmail.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4accd1dbabf948df02d19f6bcf93b5f820012402",
+          "message": "Dory: add layout enum + AddressMajor support (#1206)\n\n* feat: Add Dory matrix layout support\n\nIntroduces DoryLayout enum for row-major and column-major coefficient mapping.\nIncludes global state management and updated commitment logic.\n\nCo-authored-by: quang.dao <quang.dao@layerzerolabs.org>\n\n* Refactor Dory layout to support AddressMajor for OneHot polynomials\n\nCo-authored-by: quang.dao <quang.dao@layerzerolabs.org>\n\n* feat: Add Dory layout tests and update parameters\n\nUpdate test parameters to match and add E2E tests for Dory layouts.\n\nCo-authored-by: quang.dao <quang.dao@layerzerolabs.org>\n\n* feat: Add AddressMajor Dory layout support\n\nThis commit introduces the AddressMajor layout for Dory, enabling more efficient polynomial commitments. It includes updates to OneHotPolynomial, RLCPolynomial, and DoryGlobals to handle the new layout. The verifier is also updated to initialize DoryGlobals with the new layout.\n\nCo-authored-by: quang.dao <quang.dao@layerzerolabs.org>\n\n* feat: Implement full AddressMajor layout support for Dory\n\nThis commit completes the AddressMajor layout implementation by updating\nthe core algorithms in OneHotPolynomial and RLCPolynomial:\n\n- Updated OneHotPolynomial::num_rows() to be layout-aware\n- Implemented commit_rows_address_major() with cycle-based row indexing\n- Implemented vector_matrix_product_address_major() for correct VMV\n- Updated RLCPolynomial to handle AddressMajor for dense polynomials\n- Added get_dimension() and get_cycles_per_row() helper methods\n- Fixed test num_vars consistency to avoid generator cache conflicts\n\nThe two layouts differ in how coefficients are organized:\n- CycleMajor: index = address * T + cycle (groups by address)\n- AddressMajor: index = cycle * K + address (groups by cycle)\n\n* Fix build after merging main (DoryGlobals init + preprocessing API)\n\n* Refactor Dory layout plumbing; fix AddressMajor dense + streaming VMV\n\n* fmt\n\n* markos' patch\n\n* fix(sdk): add missing 4th arg to initialize_context in provable macro\n\n* refactor: code quality improvements for DoryLayout PR\n\n- Extract duplicated reordering logic to helper function\n- Fix typo in DoryLayout documentation\n- Make verifier read dory_layout from proof\n- Improve panic message in address_major_vector_matrix_product\n- Add comments explaining test parameter choices\n- Co-locate From<DoryLayout> impl with From<u8>\n- Revert noisy formatting changes in wrappers.rs\n\n* remove wrong reason for choosing layout in docstring\n\n* Fix bugs\n\n* fix vmv address major test\n\n* fix(dory): slice MSM bases and reset advice globals\n\n* fix(dory): support all multilinear variants and stabilize tests\n\n* fmt\n\n* advice_e2e_dory_address_major failing\n\n* Always use CycleMajor for advice commitments\n\n* cosmetic\n\n* temp\n\n* temp2\n\n* Sort advice by implicit address, cycle\n\n* Permute EQ poly coeffs too\n\n* progress\n\n* progress2\n\n* more progress\n\n* Fix permutation order\n\n* Finally working\n\n* clean up\n\n* refactor\n\n* clippy + fmt\n\n* clippy\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: quang.dao <quang.dao@layerzerolabs.org>",
+          "timestamp": "2026-01-16T11:42:55-05:00",
+          "tree_id": "500d1bc78638087e16e44a1e35560e689ad8ea86",
+          "url": "https://github.com/a16z/jolt/commit/4accd1dbabf948df02d19f6bcf93b5f820012402"
+        },
+        "date": 1768584576408,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0931,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 383544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 404428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.635,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 383736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5954,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 385916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.8742,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 385680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5192,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 385812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3671,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 385684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5064,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 385800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 385916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.1021,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 616212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 96.2641,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2707788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5372,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 383980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6135,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 383916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 377708,
             "unit": "KB",
             "extra": ""
           }
