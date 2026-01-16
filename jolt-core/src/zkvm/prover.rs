@@ -838,7 +838,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage2_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage2_start_flamechart.svg");
         tracing::info!("Stage 2 proving");
         let (sumcheck_proof, _r_stage2) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
@@ -846,7 +846,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         (first_round_proof, sumcheck_proof)
@@ -907,7 +907,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
         tracing::info!("Stage 3 proving");
         let (sumcheck_proof, _r_stage3) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
@@ -915,7 +915,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         sumcheck_proof
@@ -987,7 +987,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage4_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage4_start_flamechart.svg");
         tracing::info!("Stage 4 proving");
         let (sumcheck_proof, _r_stage4) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
@@ -995,7 +995,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         sumcheck_proof
@@ -1054,7 +1054,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage5_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage5_start_flamechart.svg");
         tracing::info!("Stage 5 proving");
         let (sumcheck_proof, _r_stage5) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
@@ -1062,7 +1062,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         sumcheck_proof
@@ -1291,7 +1291,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         }
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
         tracing::info!("Stage 7 proving");
         let (sumcheck_proof, _) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
@@ -1299,7 +1299,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         sumcheck_proof
@@ -1491,8 +1491,20 @@ pub struct JoltAdvice<F: JoltField, PCS: CommitmentScheme<Field = F>> {
 }
 
 #[cfg(feature = "allocative")]
-fn write_instance_flamegraph_svg(
+fn write_boxed_instance_flamegraph_svg(
     instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
+    path: impl AsRef<Path>,
+) {
+    let mut flamegraph = FlameGraphBuilder::default();
+    for instance in instances {
+        instance.update_flamegraph(&mut flamegraph)
+    }
+    write_flamegraph_svg(flamegraph, path);
+}
+
+#[cfg(feature = "allocative")]
+fn write_instance_flamegraph_svg(
+    instances: &[&mut dyn SumcheckInstanceProver<impl JoltField, impl Transcript>],
     path: impl AsRef<Path>,
 ) {
     let mut flamegraph = FlameGraphBuilder::default();
