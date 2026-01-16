@@ -317,12 +317,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
-        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
-            self.proof.trace_length,
-            &self.opening_accumulator,
-            &mut self.transcript,
-            &self.proof.rw_config,
-        );
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,
             &self.program_io,
@@ -333,6 +327,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof
                 .rw_config
                 .needs_single_advice_opening(self.proof.trace_length.log_2()),
+        );
+        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
+            self.proof.trace_length,
+            &self.opening_accumulator,
+            &mut self.transcript,
+            &self.proof.rw_config,
         );
         let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
@@ -352,6 +352,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             self.proof.ram_K,
             &self.opening_accumulator,
+            &self.proof.rw_config,
         );
 
         let _r_stage4 = BatchedSumcheck::verify(
