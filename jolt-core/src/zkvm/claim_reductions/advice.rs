@@ -415,7 +415,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        let message = if self.params.phase == ReductionPhase::CycleVariables
+        if self.params.phase == ReductionPhase::CycleVariables
             && !self.params.cycle_phase_col_rounds.contains(&round)
             && !self.params.cycle_phase_row_rounds.contains(&round)
         {
@@ -438,8 +438,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
             let prev_unscaled = previous_claim * scaling_factor.inverse().unwrap();
             let poly_unscaled = self.compute_message_unscaled(prev_unscaled);
             poly_unscaled * scaling_factor
-        };
-        message
+        }
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
@@ -629,7 +628,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) {
         let mut params = self.params.borrow_mut();
         if params.phase == ReductionPhase::CycleVariables {
-            let opening_point = params.normalize_opening_point(&sumcheck_challenges);
+            let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
@@ -649,7 +648,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         if params.num_address_phase_rounds() == 0
             || params.phase == ReductionPhase::AddressVariables
         {
-            let opening_point = params.normalize_opening_point(&sumcheck_challenges);
+            let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,

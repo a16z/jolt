@@ -6,7 +6,7 @@ pub mod ram_ra;
 pub mod registers;
 
 pub use advice::{
-    AdviceClaimReductionParams,  AdviceClaimReductionProver, AdviceClaimReductionVerifier,
+    AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceClaimReductionVerifier,
     AdviceKind,
 };
 pub use hamming_weight::{
