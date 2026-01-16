@@ -13,7 +13,7 @@ use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
+        commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
         opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -45,6 +45,41 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
+    pub dory_layout: DoryLayout,
+}
+
+impl CanonicalSerialize for DoryLayout {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        u8::from(*self).serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        u8::from(*self).serialized_size(compress)
+    }
+}
+
+impl Valid for DoryLayout {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for DoryLayout {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u8::deserialize_with_mode(reader, compress, validate)?;
+        if value > 1 {
+            return Err(SerializationError::InvalidData);
+        }
+        Ok(DoryLayout::from(value))
+    }
 }
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
