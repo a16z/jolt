@@ -154,8 +154,8 @@ pub enum SumcheckId {
     RegistersValEvaluation,
     BytecodeReadRaf,
     Booleanity,
-    AdviceClaimReductionPhase1,
-    AdviceClaimReductionPhase2,
+    AdviceClaimReductionCyclePhase,
+    AdviceClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }

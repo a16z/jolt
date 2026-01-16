@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::{
-    poly::multilinear_polynomial::PolynomialEvaluation,
-    subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::config::OneHotConfig,
+    subprotocols::streaming_schedule::LinearOnlySchedule,
+    zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig},
 };
 use std::{
     collections::HashMap,
@@ -49,8 +51,7 @@ use crate::{
     zkvm::{
         bytecode::read_raf_checking::BytecodeReadRafSumcheckParams,
         claim_reductions::{
-            AdviceClaimReductionPhase1Params, AdviceClaimReductionPhase1Prover,
-            AdviceClaimReductionPhase2Params, AdviceClaimReductionPhase2Prover, AdviceKind,
+            AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
             IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
@@ -146,10 +147,12 @@ pub struct JoltCpuProver<
     pub lazy_trace: LazyTraceIterator,
     pub trace: Arc<Vec<Cycle>>,
     pub advice: JoltAdvice<F, PCS>,
-    /// Phase-bridge randomness for two-phase advice claim reduction.
-    /// Stored after Stage 6 initialization and reused in Stage 7.
-    advice_reduction_gamma_trusted: Option<F>,
-    advice_reduction_gamma_untrusted: Option<F>,
+    /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
+    /// Cache the prover state here between stages.
+    advice_reduction_prover_trusted: Option<AdviceClaimReductionProver<F>>,
+    /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
+    /// Cache the prover state here between stages.
+    advice_reduction_prover_untrusted: Option<AdviceClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -397,8 +400,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 untrusted_advice_hint: None,
                 trusted_advice_hint,
             },
-            advice_reduction_gamma_trusted: None,
-            advice_reduction_gamma_untrusted: None,
+            advice_reduction_prover_trusted: None,
+            advice_reduction_prover_untrusted: None,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -1105,75 +1108,81 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
 
         // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
-        let trusted_advice_phase1_params = AdviceClaimReductionPhase1Params::new(
-            AdviceKind::Trusted,
-            &self.program_io.memory_layout,
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-            self.rw_config
-                .needs_single_advice_opening(self.trace.len().log_2()),
-        );
-        let untrusted_advice_phase1_params = AdviceClaimReductionPhase1Params::new(
-            AdviceKind::Untrusted,
-            &self.program_io.memory_layout,
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-            self.rw_config
-                .needs_single_advice_opening(self.trace.len().log_2()),
-        );
+        if self.advice.trusted_advice_polynomial.is_some() {
+            let trusted_advice_params = AdviceClaimReductionParams::new(
+                AdviceKind::Trusted,
+                &self.program_io.memory_layout,
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+                self.rw_config
+                    .needs_single_advice_opening(self.trace.len().log_2()),
+            );
+            // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
+            // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
+            self.advice_reduction_prover_trusted = {
+                let poly = self
+                    .advice
+                    .trusted_advice_polynomial
+                    .clone()
+                    .expect("trusted advice params exist but polynomial is missing");
+                Some(AdviceClaimReductionProver::initialize(
+                    trusted_advice_params,
+                    poly,
+                ))
+            };
+        }
 
-        let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
+        if self.advice.untrusted_advice_polynomial.is_some() {
+            let untrusted_advice_params = AdviceClaimReductionParams::new(
+                AdviceKind::Untrusted,
+                &self.program_io.memory_layout,
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+                self.rw_config
+                    .needs_single_advice_opening(self.trace.len().log_2()),
+            );
+            // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
+            // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
+            self.advice_reduction_prover_untrusted = {
+                let poly = self
+                    .advice
+                    .untrusted_advice_polynomial
+                    .clone()
+                    .expect("untrusted advice params exist but polynomial is missing");
+                Some(AdviceClaimReductionProver::initialize(
+                    untrusted_advice_params,
+                    poly,
+                ))
+            };
+        }
+
+        let mut bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
             Arc::clone(&self.preprocessing.shared.bytecode),
         );
-        let ram_hamming_booleanity =
+        let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
-        let booleanity = BooleanitySumcheckProver::initialize(
+        let mut booleanity = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
         );
 
-        let ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
+        let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
             &self.trace,
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
-        let lookups_ra_virtual =
+        let mut lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
-        let inc_reduction =
+        let mut inc_reduction =
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
-
-        // Initialize Phase 1 provers (Stage 6) if advice is present.
-        // Note: We clone the advice polynomial here because:
-        // 1. Phase1 (Stage 6) destructively binds cycle variables
-        // 2. Phase2 (Stage 7) needs a fresh copy to bind address variables
-        // 3. Stage 8 RLC needs the original polynomial
-        // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
-        let trusted_advice_phase1 = trusted_advice_phase1_params.map(|params| {
-            self.advice_reduction_gamma_trusted = Some(params.gamma);
-            let poly = self
-                .advice
-                .trusted_advice_polynomial
-                .clone()
-                .expect("trusted advice params exist but polynomial is missing");
-            AdviceClaimReductionPhase1Prover::initialize(params, poly)
-        });
-        let untrusted_advice_phase1 = untrusted_advice_phase1_params.map(|params| {
-            self.advice_reduction_gamma_untrusted = Some(params.gamma);
-            let poly = self
-                .advice
-                .untrusted_advice_polynomial
-                .clone()
-                .expect("untrusted advice params exist but polynomial is missing");
-            AdviceClaimReductionPhase1Prover::initialize(params, poly)
-        });
 
         #[cfg(feature = "allocative")]
         {
@@ -1186,33 +1195,27 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncClaimReductionSumcheckProver", &inc_reduction);
-            if let Some(ref advice) = trusted_advice_phase1 {
-                print_data_structure_heap_usage(
-                    "AdviceClaimReductionPhase1Prover(trusted)",
-                    advice,
-                );
+            if let Some(ref advice) = self.advice_reduction_prover_trusted {
+                print_data_structure_heap_usage("AdviceClaimReductionProver(trusted)", advice);
             }
-            if let Some(ref advice) = untrusted_advice_phase1 {
-                print_data_structure_heap_usage(
-                    "AdviceClaimReductionPhase1Prover(untrusted)",
-                    advice,
-                );
+            if let Some(ref advice) = self.advice_reduction_prover_untrusted {
+                print_data_structure_heap_usage("AdviceClaimReductionProver(untrusted)", advice);
             }
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
-            Box::new(bytecode_read_raf),
-            Box::new(ram_hamming_booleanity),
-            Box::new(booleanity),
-            Box::new(ram_ra_virtual),
-            Box::new(lookups_ra_virtual),
-            Box::new(inc_reduction),
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> = vec![
+            &mut bytecode_read_raf,
+            &mut ram_hamming_booleanity,
+            &mut booleanity,
+            &mut ram_ra_virtual,
+            &mut lookups_ra_virtual,
+            &mut inc_reduction,
         ];
-        if let Some(advice) = trusted_advice_phase1 {
-            instances.push(Box::new(advice));
+        if let Some(advice) = self.advice_reduction_prover_trusted.as_mut() {
+            instances.push(advice);
         }
-        if let Some(advice) = untrusted_advice_phase1 {
-            instances.push(Box::new(advice));
+        if let Some(advice) = self.advice_reduction_prover_untrusted.as_mut() {
+            instances.push(advice);
         }
 
         #[cfg(feature = "allocative")]
@@ -1225,7 +1228,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         );
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
-        drop_in_background_thread(instances);
+        drop_in_background_thread(bytecode_read_raf);
+        drop_in_background_thread(ram_hamming_booleanity);
+        drop_in_background_thread(booleanity);
+        drop_in_background_thread(ram_ra_virtual);
+        drop_in_background_thread(lookups_ra_virtual);
+        drop_in_background_thread(inc_reduction);
 
         sumcheck_proof
     }
@@ -1250,49 +1258,35 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
 
-        // 3. Run Stage 7 batched sumcheck (address rounds only).
-        // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
+        // Run Stage 7 batched sumcheck (address rounds only).
+        // Includes HammingWeightClaimReduction plus address phase of advice reduction instances (if needed).
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
             vec![Box::new(hw_prover)];
 
-        if let Some(gamma) = self.advice_reduction_gamma_trusted {
-            if let Some(params) = AdviceClaimReductionPhase2Params::new(
-                AdviceKind::Trusted,
-                &self.program_io.memory_layout,
-                self.trace.len(),
-                gamma,
-                &self.opening_accumulator,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
-            ) {
-                let poly = self
-                    .advice
-                    .trusted_advice_polynomial
-                    .clone()
-                    .expect("trusted advice phase2 params exist but polynomial is missing");
-                instances.push(Box::new(AdviceClaimReductionPhase2Prover::initialize(
-                    params, poly,
-                )));
+        if let Some(mut advice_reduction_prover_trusted) =
+            self.advice_reduction_prover_trusted.take()
+        {
+            if advice_reduction_prover_trusted
+                .params
+                .num_address_phase_rounds()
+                > 0
+            {
+                // Transition phase
+                advice_reduction_prover_trusted.params.phase = ReductionPhase::AddressVariables;
+                instances.push(Box::new(advice_reduction_prover_trusted));
             }
         }
-        if let Some(gamma) = self.advice_reduction_gamma_untrusted {
-            if let Some(params) = AdviceClaimReductionPhase2Params::new(
-                AdviceKind::Untrusted,
-                &self.program_io.memory_layout,
-                self.trace.len(),
-                gamma,
-                &self.opening_accumulator,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
-            ) {
-                let poly = self
-                    .advice
-                    .untrusted_advice_polynomial
-                    .clone()
-                    .expect("untrusted advice phase2 params exist but polynomial is missing");
-                instances.push(Box::new(AdviceClaimReductionPhase2Prover::initialize(
-                    params, poly,
-                )));
+        if let Some(mut advice_reduction_prover_untrusted) =
+            self.advice_reduction_prover_untrusted.take()
+        {
+            if advice_reduction_prover_untrusted
+                .params
+                .num_address_phase_rounds()
+                > 0
+            {
+                // Transition phase
+                advice_reduction_prover_untrusted.params.phase = ReductionPhase::AddressVariables;
+                instances.push(Box::new(advice_reduction_prover_untrusted));
             }
         }
 
@@ -1406,7 +1400,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // them in the top-left block of the main Dory matrix.
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
-            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
         {
             #[cfg(test)]
             {
@@ -1422,10 +1416,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             ));
         }
 
-        if let Some((advice_point, advice_claim)) = self.opening_accumulator.get_advice_opening(
-            AdviceKind::Untrusted,
-            SumcheckId::AdviceClaimReductionPhase2,
-        ) {
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
+        {
             #[cfg(test)]
             {
                 let advice_poly = self.advice.untrusted_advice_polynomial.as_ref().unwrap();
@@ -2093,7 +2087,7 @@ mod tests {
         ] {
             let get_fn = debug_info
                 .opening_accumulator
-                .get_advice_opening(kind, SumcheckId::AdviceClaimReductionPhase2);
+                .get_advice_opening(kind, SumcheckId::AdviceClaimReduction);
             assert!(
                 get_fn.is_some(),
                 "{name} advice opening missing for AdviceClaimReductionPhase2"
