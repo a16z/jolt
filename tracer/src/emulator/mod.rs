@@ -133,6 +133,8 @@ impl Emulator {
 
             // Check for infinite loop termination (PC stall detection)
             // This is used by Jolt guests that terminate via `j .` instruction.
+            // The trap handler (in guest_std_boot.rs or guest_no_std_boot.rs) calls
+            // jolt_exit() which enters an infinite loop for clean termination.
             let pc = self.cpu.read_pc();
             if prev_pc == pc {
                 tracing::info!("Program exited successfully (code 0)");
@@ -143,15 +145,6 @@ impl Emulator {
             let mut traces = if trace { Some(Vec::new()) } else { None };
             self.tick(traces.as_mut());
             cycle_count += 1;
-
-            // Check if EXIT ECALL was called
-            if let Some(exit_code) = self.cpu.exit_code {
-                match exit_code {
-                    0 => tracing::info!("Program exited successfully (code {})", exit_code),
-                    _ => tracing::error!("Program exited with error code {}", exit_code),
-                };
-                break;
-            }
 
             // Check if tohost has been written to
             let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);

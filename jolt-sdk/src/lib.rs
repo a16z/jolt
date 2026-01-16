@@ -2,10 +2,10 @@
 
 extern crate jolt_sdk_macros;
 
-// Link ZeroOS jolt-platform for guest-std builds on RISC-V.
-// This provides __platform_bootstrap and jolt_syscall that guest_std_boot.rs
-// calls via extern "C". The `extern crate` ensures the linker includes it.
-#[cfg(all(feature = "guest-std", target_arch = "riscv64"))]
+// Link ZeroOS jolt-platform for guest builds on RISC-V.
+// This provides __platform_bootstrap and (for guest-std) jolt_syscall.
+// The `extern crate` ensures the linker includes it.
+#[cfg(all(not(feature = "host"), target_arch = "riscv64"))]
 extern crate zeroos_jolt_platform;
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
@@ -17,6 +17,11 @@ pub use host_utils::*;
 // Only compile this for the RISC-V target (not for host builds)
 #[cfg(all(feature = "guest-std", target_arch = "riscv64"))]
 mod guest_std_boot;
+
+// Guest no-std boot code - provides _start, boot_main for no-std guests
+// This initializes ZeroOS heap and provides clean exit via infinite loop
+#[cfg(all(not(feature = "guest-std"), not(feature = "host"), target_arch = "riscv64"))]
+mod guest_no_std_boot;
 
 pub use jolt_platform::*;
 pub use jolt_sdk_macros::provable;

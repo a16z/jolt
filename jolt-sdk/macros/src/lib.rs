@@ -776,29 +776,11 @@ impl MacroBuilder {
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
-        // Only provide custom _start in no_std mode
-        // In std mode, rely on bolt's boot code (_start -> kernel_main -> __libc_start_main -> main)
-        let custom_start = if !self.std {
-            quote! {
-                #[cfg(feature = "guest")]
-                use core::arch::global_asm;
-
-                #[cfg(feature = "guest")]
-                global_asm!("\
-                    .global _start\n\
-                    .extern _STACK_PTR\n\
-                    .section .text.boot\n\
-                    _start:	la sp, _STACK_PTR\n\
-                        call main\n\
-                        j .\n\
-                ");
-            }
-        } else {
-            // In std mode, boot code (_start, kernel_main, etc.) is provided by jolt-sdk's guest_std_boot module
-            // No additional setup needed here - the boot symbols are automatically included when
-            // jolt-sdk is compiled with the guest-std feature for the riscv64 target
-            quote! {}
-        };
+        // Boot code (_start) is provided by jolt-sdk's boot modules:
+        // - std mode: guest_std_boot.rs (_start -> kernel_main -> __libc_start_main -> main)
+        // - no-std mode: guest_no_std_boot.rs (_start -> boot_main -> __platform_bootstrap -> main)
+        // Both use ZeroOS jolt-platform for heap initialization.
+        let custom_start = quote! {};
 
         quote! {
             #custom_start
@@ -829,6 +811,7 @@ impl MacroBuilder {
 
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         if self.std {
+            // In std mode, provide jolt_panic() which the runtime calls on panic.
             quote! {
                 #[cfg(feature = "guest")]
                 #[no_mangle]
@@ -841,33 +824,25 @@ impl MacroBuilder {
                 }
             }
         } else {
+            // In no-std mode, ZeroOS jolt-platform provides the #[panic_handler].
+            // We still set the panic bit for jolt to detect panics.
             quote! {
                 #[cfg(feature = "guest")]
-                use core::panic::PanicInfo;
-
-                #[cfg(feature = "guest")]
-                #[panic_handler]
-                fn panic(_info: &PanicInfo) -> ! {
+                #[no_mangle]
+                pub extern "C" fn jolt_panic() {
                     unsafe {
                         core::ptr::write_volatile(#panic_address as *mut u8, 1);
                     }
-
-                    loop {}
                 }
             }
         }
     }
 
     fn make_allocator(&self) -> TokenStream2 {
-        if self.std {
-            quote! {}
-        } else {
-            quote! {
-                #[cfg(feature = "guest")]
-                #[global_allocator]
-                static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator;
-            }
-        }
+        // The allocator is provided by jolt-sdk's boot modules:
+        // - std mode: guest_std_boot.rs uses linked_list_allocator
+        // - no-std mode: ZeroOS jolt-platform provides the global allocator
+        quote! {}
     }
 
     fn make_imports(&self) -> TokenStream2 {

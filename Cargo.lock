@@ -5094,11 +5094,20 @@ dependencies = [
 name = "zeroos"
 version = "0.1.0"
 dependencies = [
+ "zeroos-allocator-linked-list",
  "zeroos-debug",
  "zeroos-foundation",
  "zeroos-macros",
  "zeroos-os-linux",
  "zeroos-runtime-nostd",
+]
+
+[[package]]
+name = "zeroos-allocator-linked-list"
+version = "0.1.0"
+dependencies = [
+ "linked_list_allocator",
+ "zeroos-foundation",
 ]
 
 [[package]]
