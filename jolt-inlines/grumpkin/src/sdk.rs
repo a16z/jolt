@@ -1,7 +1,16 @@
 //! grumpkin operations optimized for Jolt zkVM.
 
+#[cfg(feature = "host")]
+use ark_ff::BigInteger;
 use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
 use ark_grumpkin::{Fq, Fr};
+
+#[cfg(feature = "host")]
+use num_bigint::BigInt as NBigInt;
+#[cfg(feature = "host")]
+use num_bigint::Sign;
+#[cfg(feature = "host")]
+use num_integer::Integer;
 
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +162,28 @@ pub enum GrumpkinError {
     InvalidFrElement, // input array does not correspond to a valid Fr element
     NotOnCurve,       // point is not on the grumpkin curve
 }
+
+// Grumpkin GLV endomorphism constants (Montgomery form).
+// The endomorphism is (x, y) -> (beta * x, y), where beta^3 = 1.
+const GRUMPKIN_ENDO_BETA_LIMBS: [u64; 4] = [
+    244305545194690131,
+    8351807910065594880,
+    14266533074055306532,
+    404339206190769364,
+];
+const GRUMPKIN_ENDO_G_Y_LIMBS: [u64; 4] = [
+    1275327871829426648,
+    2581482255512206787,
+    12284567389086920635,
+    1491620523682192744,
+];
+#[allow(dead_code)]
+const GRUMPKIN_GLV_LAMBDA_LIMBS: [u64; 4] = [
+    3697675806616062876,
+    9065277094688085689,
+    6918009208039626314,
+    2775033306905974752,
+];
 
 /// grumpkin base field element
 /// in montgomery form
@@ -606,16 +637,133 @@ impl GrumpkinPoint {
     /// generator with endomorphism applied
     #[inline(always)]
     pub fn generator_w_endomorphism() -> Self {
-        GrumpkinPoint::from_u64_arr_unchecked(&[
-            16173582788404280516,
-            5747022314874861025,
-            3849308819804808767,
-            12496950317914431610,
-            12780836216951778274,
-            10231155108014310989,
-            8121878653926228278,
-            14933801261141951190,
-        ])
+        let mut arr = [0u64; 8];
+        arr[0..4].copy_from_slice(&GRUMPKIN_ENDO_BETA_LIMBS);
+        arr[4..8].copy_from_slice(&GRUMPKIN_ENDO_G_Y_LIMBS);
+        GrumpkinPoint::from_u64_arr_unchecked(&arr)
+    }
+    /// returns beta * self where beta is the GLV endomorphism coefficient
+    #[inline(always)]
+    pub fn endomorphism(&self) -> Self {
+        if self.is_infinity() {
+            GrumpkinPoint::infinity()
+        } else {
+            let beta = GrumpkinFq::from_u64_arr_unchecked(&GRUMPKIN_ENDO_BETA_LIMBS);
+            GrumpkinPoint {
+                x: self.x.mul(&beta),
+                y: self.y.clone(),
+            }
+        }
+    }
+    /// given k, return k1 and k2 such that
+    /// k = k1 + k2 * lambda
+    /// and |k1|, |k2| < 2^128
+    /// based on the implementation found in ec/src/scalar_mul/glv.rs in arkworks
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn decompose_scalar(k: &GrumpkinFr) -> [(bool, u128); 2] {
+        // get non-deterministic decomposition
+        let mut out = [0u64; 6];
+        unsafe {
+            use crate::{GRUMPKIN_FUNCT7, GRUMPKIN_GLVR_ADV_FUNCT3, INLINE_OPCODE};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
+                opcode = const INLINE_OPCODE,
+                funct3 = const GRUMPKIN_GLVR_ADV_FUNCT3,
+                funct7 = const GRUMPKIN_FUNCT7,
+                rd = in(reg) out.as_mut_ptr(),
+                rs1 = in(reg) k.e.0.0.as_ptr(),
+                options(nostack)
+            );
+        }
+        // check that decomposition is correct
+        // this is check that k1 + k2 * lambda == k (mod r)
+        let lambda = Fr::new_unchecked(BigInt {
+            0: GRUMPKIN_GLV_LAMBDA_LIMBS,
+        });
+        let mut k1 = Fr::from_bigint(BigInt {
+            0: [out[1], out[2], 0u64, 0u64],
+        })
+        .unwrap();
+        if out[0] == 1u64 {
+            k1 = -k1;
+        }
+        let mut k2 = Fr::from_bigint(BigInt {
+            0: [out[4], out[5], 0u64, 0u64],
+        })
+        .unwrap();
+        if out[3] == 1u64 {
+            k2 = -k2;
+        }
+        let recomposed_k = k1 + k2 * lambda;
+        if recomposed_k != k.e {
+            hcf(); // panic and spoil proof if decomposition is incorrect
+        }
+        // return as (sign, abs_value) pairs
+        [
+            (out[0] == 1u64, (out[1] as u128) | ((out[2] as u128) << 64)),
+            (out[3] == 1u64, (out[4] as u128) | ((out[5] as u128) << 64)),
+        ]
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn decompose_scalar(_k: &GrumpkinFr) -> [(bool, u128); 2] {
+        panic!("GrumpkinPoint::decompose_scalar called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn decompose_scalar(k: &GrumpkinFr) -> [(bool, u128); 2] {
+        let k: NBigInt = k.e.into_bigint().into();
+        let r = NBigInt::from_bytes_le(Sign::Plus, &Fr::MODULUS.to_bytes_le());
+        let n11 = NBigInt::from(147946756881789319000765030803803410729i128);
+        let n12 = NBigInt::from(-9931322734385697762i128);
+        let n21 = NBigInt::from(9931322734385697762i128);
+        let n22 = NBigInt::from(147946756881789319010696353538189108491i128);
+        let beta_1 = {
+            let (mut div, rem) = (&k * &n22).div_rem(&r);
+            if (&rem + &rem) > r {
+                div += NBigInt::from(1u8);
+            }
+            div
+        };
+        let beta_2 = {
+            let n12_neg = -n12.clone();
+            let (mut div, rem) = (&k * &n12_neg).div_rem(&r);
+            if (&rem + &rem) > r {
+                div += NBigInt::from(1u8);
+            }
+            div
+        };
+        let k1 = &k - &beta_1 * &n11 - &beta_2 * &n21;
+        let k2 = -(&beta_1 * &n12 + &beta_2 * &n22);
+        // convert k1, k2 to absolute values and signs
+        let serialize_k = |k: NBigInt| -> (u64, [u64; 2]) {
+            let sign = if k.sign() == Sign::Minus { 1u64 } else { 0u64 };
+            let abs_k = if sign == 1 { -k } else { k };
+            let bytes = abs_k.to_bytes_le().1;
+            let mut arr = [0u64; 2];
+            for i in 0..bytes.len() {
+                arr[i / 8] |= (bytes[i] as u64) << ((i % 8) * 8);
+            }
+            (sign, arr)
+        };
+        let (s1, k1_arr) = serialize_k(k1);
+        let (s2, k2_arr) = serialize_k(k2);
+        [
+            (
+                s1 == 1u64,
+                (k1_arr[0] as u128) | ((k1_arr[1] as u128) << 64),
+            ),
+            (
+                s2 == 1u64,
+                (k2_arr[0] as u128) | ((k2_arr[1] as u128) << 64),
+            ),
+        ]
     }
     /// returns the point at infinity (0, 0)
     #[inline(always)]

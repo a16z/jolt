@@ -1401,6 +1401,7 @@ dependencies = [
 name = "grumpkin-msm-bench-guest"
 version = "0.1.0"
 dependencies = [
+ "ark-grumpkin",
  "jolt-inlines-grumpkin",
  "jolt-sdk",
 ]

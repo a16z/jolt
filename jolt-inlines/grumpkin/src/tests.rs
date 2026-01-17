@@ -1,9 +1,9 @@
 mod sequence_tests {
-    use crate::sdk::GrumpkinPoint;
+    use crate::sdk::{GrumpkinFr, GrumpkinPoint};
     use crate::{GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
     use ark_ec::AffineRepr;
     use ark_ff::{BigInt, Field};
-    use ark_grumpkin::Fq;
+    use ark_grumpkin::{Fq, Fr};
     use std::ops::Mul;
     use tracer::emulator::cpu::Xlen;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
@@ -100,6 +100,49 @@ mod sequence_tests {
         ];
         for &scalar in scalars.iter() {
             scalar_mul_consistency_helper(scalar);
+        }
+    }
+
+    #[test]
+    fn test_grumpkin_endomorphism_generator() {
+        let endo_g = GrumpkinPoint::generator().endomorphism();
+        let expected = GrumpkinPoint::generator_w_endomorphism();
+        assert_eq!(endo_g.to_u64_arr(), expected.to_u64_arr());
+    }
+
+    #[test]
+    fn test_grumpkin_glv_decomposition_recompose() {
+        let lambda = Fr::new_unchecked(BigInt {
+            0: [
+                3697675806616062876,
+                9065277094688085689,
+                6918009208039626314,
+                2775033306905974752,
+            ],
+        });
+        let scalars = [
+            0u64,
+            1u64,
+            2u64,
+            3u64,
+            5u64,
+            7u64,
+            0x123456789ABCDEF0,
+            0x0FEDCBA987654321,
+        ];
+        for scalar in scalars.iter() {
+            let k = GrumpkinFr::new(Fr::from(*scalar));
+            let decomp = GrumpkinPoint::decompose_scalar(&k);
+            let mut k1 = Fr::from(decomp[0].1);
+            if decomp[0].0 {
+                k1 = -k1;
+            }
+            let mut k2 = Fr::from(decomp[1].1);
+            if decomp[1].0 {
+                k2 = -k2;
+            }
+            let recomposed = k1 + k2 * lambda;
+            assert_eq!(recomposed, k.fr());
         }
     }
 }

@@ -9,3 +9,4 @@ guest = []
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
 jolt-inlines-grumpkin.workspace = true
+ark-grumpkin.workspace = true
