@@ -65,85 +65,58 @@ impl CSRRS {
 
 impl RISCVTrace for CSRRS {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // CSRRS (including csrr pseudo) causes Sumcheck verification failure
-        // when used after csrrw. See context.md for details.
-        // For now, panic to prevent silent failures.
-        panic!(
-            "CSRRS: Not supported (causes Sumcheck failure). \
-             CSR reads are not yet working correctly in Jolt."
-        );
+        // Only support csrr pseudo-instruction (rs1=0)
+        if self.operands.rs1 != 0 {
+            panic!(
+                "CSRRS: rs1 != 0 not supported (only csrr pseudo-instruction is used). \
+                 Use csrr rd, csr instead of csrrs rd, csr, rs1."
+            );
+        }
 
-        #[allow(unreachable_code)]
-        {
-            let csr_addr = self.csr_address();
-            let virtual_reg = match csr_addr {
-                CSR_MSTATUS => cpu.vr_allocator.mstatus_register(),
-                CSR_MTVEC => cpu.vr_allocator.trap_handler_register(),
-                CSR_MSCRATCH => cpu.vr_allocator.mscratch_register(),
-                CSR_MEPC => cpu.vr_allocator.mepc_register(),
-                CSR_MCAUSE => cpu.vr_allocator.mcause_register(),
-                CSR_MTVAL => cpu.vr_allocator.mtval_register(),
-                _ => panic!("CSRRS: Unsupported CSR 0x{:03x}", csr_addr),
-            };
+        let csr_addr = self.csr_address();
 
-            // Get values BEFORE execute (in case rd overlaps virtual_reg)
-            let old_vr_val = cpu.x[virtual_reg as usize] as u64;
-            let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
+        // Get the CSR value from the CPU's emulation state (not the virtual register)
+        // This is the source of truth for the CSR value.
+        let csr_val = cpu.read_csr_raw(csr_addr);
 
-            // Execute the CSR operation (updates emulation state)
-            let mut ram_access = ();
-            self.execute(cpu, &mut ram_access);
+        // Execute the CSR operation (updates emulation state)
+        let mut ram_access = ();
+        self.execute(cpu, &mut ram_access);
 
-            // Determine the value to write back:
-            // - For rs1=0 (csrr): same value (no change)
-            // - For rs1!=0 (csrrs): old | rs1
-            let write_val = if self.operands.rs1 != 0 {
-                old_vr_val | rs1_val
-            } else {
-                old_vr_val
-            };
+        // Generate inline sequence and fill in advice
+        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-            // Generate inline sequence and fill in advice
-            let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        // VirtualAdvice at index 0 provides the CSR value
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+            instr.advice = csr_val;
+        } else {
+            panic!(
+                "CSRRS: Expected VirtualAdvice at index 0, got {:?}",
+                inline_sequence[0]
+            );
+        }
 
-            // VirtualAdvice is always at index 0 now (write-then-read pattern)
-            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-                instr.advice = write_val;
-            } else {
-                panic!(
-                    "CSRRS: Expected VirtualAdvice at index 0, got {:?}",
-                    inline_sequence[0]
-                );
-            }
-
-            // Execute inline sequence to record in trace
-            let mut trace = trace;
-            for instr in inline_sequence {
-                instr.trace(cpu, trace.as_deref_mut());
-            }
+        // Execute inline sequence to record in trace
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    /// Generate inline sequence for CSRRS.
+    /// Generate inline sequence for CSRRS (csrr pseudo-instruction only).
     ///
     /// IMPORTANT: We use write-then-read pattern to match ECALL's approach.
     /// Virtual registers must be "initialized" within the inline sequence before
     /// being read, otherwise R1CS constraints fail.
     ///
     /// For rs1 = 0 (csrr, read only) with rd != 0:
-    ///   0: VirtualAdvice(temp)       - Get advice (current vr value)
+    ///   0: VirtualAdvice(temp)       - Get advice (CSR value from emulation state)
     ///   1: ADDI(vr, temp, 0)         - Write advice to vr (makes it "defined")
     ///   2: ADDI(rd, vr, 0)           - Read vr to rd
     ///
-    /// For rs1 = 0 (csrr, read only) with rd == 0 (no-op, just preserve vr):
-    ///   0: VirtualAdvice(temp)       - Get advice (current vr value)
+    /// For rs1 = 0, rd == 0: No-op, just refresh vr:
+    ///   0: VirtualAdvice(temp)       - Get advice (CSR value)
     ///   1: ADDI(vr, temp, 0)         - Write advice back to vr
-    ///
-    /// For rs1 != 0 (csrrs, read and set bits):
-    ///   0: VirtualAdvice(temp)       - Get advice (new value = old | rs1)
-    ///   1: ADDI(vr, temp, 0)         - Write new value to vr
-    ///   2: ADDI(rd, vr, 0)           - Read vr to rd (gets old value via separate advice)
-    ///   Note: For rs1!=0, we need a different approach since rd should get OLD value
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -168,27 +141,15 @@ impl RISCVTrace for CSRRS {
         let value_reg = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        if self.operands.rs1 == 0 && self.operands.rd != 0 {
-            // csrr with rd != 0: Write-then-read pattern (matches ECALL)
-            // Index 0: VirtualAdvice provides the current vr value
-            asm.emit_j::<VirtualAdvice>(*value_reg, 0);
+        // Index 0: VirtualAdvice provides the CSR value
+        asm.emit_j::<VirtualAdvice>(*value_reg, 0);
 
-            // Index 1: Write advice to vr (makes it "defined" in this sequence)
-            asm.emit_i::<ADDI>(virtual_reg, *value_reg, 0);
+        // Index 1: Write advice to vr (makes it "defined" in this sequence)
+        asm.emit_i::<ADDI>(virtual_reg, *value_reg, 0);
 
-            // Index 2: Read vr to rd
+        // Index 2: Read vr to rd (if rd != 0)
+        if self.operands.rd != 0 {
             asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
-        } else if self.operands.rs1 != 0 {
-            // csrrs with rs1 != 0: Need both old value (for rd) and new value (for vr)
-            // This case is complex - for now panic as we don't use csrrs with rs1!=0
-            panic!("CSRRS: rs1 != 0 not yet supported (only csrr pseudo-instruction is used)");
-        } else {
-            // rd == 0 and rs1 == 0: No-op, just preserve vr
-            // Index 0: VirtualAdvice provides current vr value
-            asm.emit_j::<VirtualAdvice>(*value_reg, 0);
-
-            // Index 1: Write advice back to vr
-            asm.emit_i::<ADDI>(virtual_reg, *value_reg, 0);
         }
 
         asm.finalize()

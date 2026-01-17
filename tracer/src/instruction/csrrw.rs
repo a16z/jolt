@@ -2,10 +2,17 @@
 //!
 //! Encoding: csr[31:20] | rs1[19:15] | funct3=001[14:12] | rd[11:7] | opcode=1110011[6:0]
 //!
-//! For ZeroOS: Single-core, no-interrupts, M-mode-only. Only mtvec (0x305) is supported
-//! initially, mapped to virtual register 33 for proof verification.
+//! For ZeroOS: Single-core, no-interrupts, M-mode-only. Supports the following CSRs
+//! mapped to virtual registers for proof verification:
+//!   - mtvec (0x305) → vr33
+//!   - mscratch (0x340) → vr34
+//!   - mepc (0x341) → vr35
+//!   - mcause (0x342) → vr36
+//!   - mtval (0x343) → vr37
+//!   - mstatus (0x300) → vr38
 //!
 //! The `csrw csr, rs` pseudo-instruction is `csrrw x0, csr, rs` (rd=0, discard old value).
+//! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +27,7 @@ use super::{
     addi::ADDI,
     format::format_i::FormatI,
     virtual_advice::VirtualAdvice,
+    virtual_assert_eq::VirtualAssertEQ,
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
@@ -64,15 +72,12 @@ impl CSRRW {
 
 impl RISCVTrace for CSRRW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Only rd=0 (csrw pseudo-instruction) is supported
-        // rd!=0 causes Sumcheck verification failure - see context.md
-        if self.operands.rd != 0 {
-            panic!(
-                "CSRRW: rd!=0 not supported (causes Sumcheck failure). Use csrw instead of csrrw."
-            );
-        }
+        let csr_addr = self.csr_address();
 
-        // Get the value being written
+        // Get the OLD CSR value before executing (for rd when rd != 0)
+        let old_csr_val = cpu.read_csr_raw(csr_addr);
+
+        // Get the value being written (from rs1)
         let write_val = cpu.x[self.operands.rs1 as usize] as u64;
 
         // Execute the CSR operation (updates emulation state)
@@ -82,11 +87,28 @@ impl RISCVTrace for CSRRW {
         // Generate inline sequence for proof verification
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // Fill in the advice value
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = write_val;
+        if self.operands.rd == 0 {
+            // csrw pseudo-instruction: just one advice (new CSR value)
+            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+                instr.advice = write_val;
+            } else {
+                panic!("Expected VirtualAdvice at index 0, got {:?}", inline_sequence[0]);
+            }
         } else {
-            panic!("Expected VirtualAdvice at index 0, got {:?}", inline_sequence[0]);
+            // Full csrrw: need two advice values
+            // Index 0: old CSR value (for rd)
+            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+                instr.advice = old_csr_val;
+            } else {
+                panic!("Expected VirtualAdvice at index 0, got {:?}", inline_sequence[0]);
+            }
+
+            // Index 2: new CSR value (from rs1)
+            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[2] {
+                instr.advice = write_val;
+            } else {
+                panic!("Expected VirtualAdvice at index 2, got {:?}", inline_sequence[2]);
+            }
         }
 
         // Execute inline sequence to record in trace
@@ -98,9 +120,16 @@ impl RISCVTrace for CSRRW {
 
     /// Generate inline sequence for CSRRW.
     ///
-    /// Only rd = 0 (csrw pseudo-instruction) is supported:
-    ///   0: VirtualAdvice(temp, 0)     - Get write value as advice
-    ///   1: ADDI(vr, temp, 0)          - Write to virtual register
+    /// For rd = 0 (csrw pseudo-instruction):
+    ///   0: VirtualAdvice(temp)     - Get write value as advice
+    ///   1: ADDI(vr, temp, 0)       - Write to virtual register
+    ///
+    /// For rd != 0 (full csrrw, atomic swap):
+    ///   0: VirtualAdvice(temp_old) - Get OLD CSR value as advice
+    ///   1: ADDI(rd, temp_old, 0)   - Write old value to rd
+    ///   2: VirtualAdvice(temp_new) - Get NEW value (from rs1) as advice
+    ///   3: ADDI(vr, temp_new, 0)   - Write new value to virtual register
+    ///   4: VirtualAssertEQ(temp_new, rs1) - Assert advice matches rs1
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -122,15 +151,38 @@ impl RISCVTrace for CSRRW {
             ),
         };
 
-        let value_reg = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // csrw pseudo-instruction: just write new value
-        // Index 0: Get write value as advice
-        asm.emit_j::<VirtualAdvice>(*value_reg, 0);
+        if self.operands.rd == 0 {
+            // csrw pseudo-instruction: just write new value
+            let value_reg = allocator.allocate();
 
-        // Index 1: Write value to virtual register
-        asm.emit_i::<ADDI>(virtual_reg, *value_reg, 0);
+            // Index 0: Get write value as advice
+            asm.emit_j::<VirtualAdvice>(*value_reg, 0);
+
+            // Index 1: Write value to virtual register
+            asm.emit_i::<ADDI>(virtual_reg, *value_reg, 0);
+        } else {
+            // Full csrrw: rd ← old_CSR, CSR ← rs1
+            let temp_old = allocator.allocate();
+            let temp_new = allocator.allocate();
+
+            // Index 0: Get old CSR value as advice
+            asm.emit_j::<VirtualAdvice>(*temp_old, 0);
+
+            // Index 1: Write old value to rd
+            asm.emit_i::<ADDI>(self.operands.rd, *temp_old, 0);
+
+            // Index 2: Get new value (rs1) as advice
+            asm.emit_j::<VirtualAdvice>(*temp_new, 0);
+
+            // Index 3: Write new value to virtual register
+            asm.emit_i::<ADDI>(virtual_reg, *temp_new, 0);
+
+            // Index 4: Assert that advice equals rs1 (verifies prover honesty)
+            // This prevents the prover from lying about what value is being written.
+            asm.emit_b::<VirtualAssertEQ>(*temp_new, self.operands.rs1, 0);
+        }
 
         asm.finalize()
     }

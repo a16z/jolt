@@ -56,6 +56,7 @@ use lrw::LRW;
 use lui::LUI;
 use lw::LW;
 use lwu::LWU;
+use mret::MRET;
 use mul::MUL;
 use mulh::MULH;
 use mulhsu::MULHSU;
@@ -195,6 +196,7 @@ pub mod lrw;
 pub mod lui;
 pub mod lw;
 pub mod lwu;
+pub mod mret;
 pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
@@ -593,7 +595,7 @@ macro_rules! define_rv32im_enums {
 define_rv32im_enums! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, CSRRS, CSRRW, DIV, DIVU,
-        EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
+        EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MRET, MUL, MULH, MULHSU,
         MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
         SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
         // RV64I
@@ -889,15 +891,17 @@ impl Instruction {
                 }
             }
             0b1110011 => {
-                // SYSTEM opcode: ECALL, EBREAK, CSR instructions
+                // SYSTEM opcode: ECALL, EBREAK, MRET, CSR instructions
                 let funct3 = (instr >> 12) & 0x7;
                 match funct3 {
                     0b000 => {
-                        // ECALL/EBREAK based on instruction encoding
+                        // ECALL/EBREAK/MRET based on instruction encoding
                         if instr == ECALL::MATCH {
                             Ok(ECALL::new(instr, address, true, compressed).into())
                         } else if instr == EBREAK::MATCH {
                             Ok(EBREAK::new(instr, address, true, compressed).into())
+                        } else if instr == MRET::MATCH {
+                            Ok(MRET::new(instr, address, true, compressed).into())
                         } else {
                             Err("Unsupported SYSTEM instruction (funct3=0)")
                         }
