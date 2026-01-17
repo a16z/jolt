@@ -854,7 +854,7 @@ impl Cpu {
     }
 
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
-    fn read_csr_raw(&self, address: u16) -> u64 {
+    pub fn read_csr_raw(&self, address: u16) -> u64 {
         match address {
             // @TODO: Mask should consider of 32-bit mode
             CSR_FFLAGS_ADDRESS => self.csr[CSR_FCSR_ADDRESS as usize] & 0x1f,
@@ -867,7 +867,7 @@ impl Cpu {
         }
     }
 
-    fn write_csr_raw(&mut self, address: u16, value: u64) {
+    pub fn write_csr_raw(&mut self, address: u16, value: u64) {
         match address {
             CSR_FFLAGS_ADDRESS => {
                 self.csr[CSR_FCSR_ADDRESS as usize] &= !0x1f;

@@ -63,8 +63,8 @@ rand = { workspace = true, optional = true }
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 # ZeroOS jolt-platform: provides __platform_bootstrap, syscall routing, VFS, etc.
 # Features are controlled by jolt-sdk features (guest-std enables os-linux, default enables memory)
-zeroos-jolt-platform = { package = "jolt-platform", path = "/Users/sdhawan/Work/ZeroOS/platforms/jolt-platform", default-features = false, features = ["memory"] }
-zeroos-runtime-musl = { path = "/Users/sdhawan/Work/ZeroOS/crates/zeroos-runtime-musl", optional = true }
+zeroos-jolt-platform = { package = "jolt-platform", path = "../../ZeroOS/platforms/jolt-platform", default-features = false, features = ["memory"] }
+zeroos-runtime-musl = { path = "../../ZeroOS/crates/zeroos-runtime-musl", optional = true }
 linked_list_allocator = { version = "0.10", default-features = false, features = ["use_spin_nightly"], optional = true }
 
 [dev-dependencies]

@@ -4,12 +4,12 @@
 //! This module is conditionally compiled when the `guest-std` feature is enabled.
 //!
 //! The boot sequence:
-//! 1. _start: Initialize global pointer, stack pointer, and trap handler via ECALL
+//! 1. _start: Initialize global pointer, stack pointer, and trap handler via `csrw mtvec`
 //! 2. kernel_main: Initialize heap, build musl-compatible stack, call __libc_start_main
 //! 3. _main_c: Wrapper that calls the user's main() function
 //!
-//! This uses the Jolt-specific approach with ECALL for setting mtvec (not direct csrw),
-//! which is required for Jolt's execution environment.
+//! The trap handler address is set using the proper RISC-V `csrw mtvec` instruction,
+//! which Jolt's tracer decodes and maps to virtual register 33 for proof verification.
 
 use core::arch::naked_asm;
 use linked_list_allocator::LockedHeap;
@@ -173,10 +173,9 @@ pub unsafe extern "C" fn _trap_handler() {
     )
 }
 
-/// Jolt-specific _start that uses ECALL for setting mtvec
+/// Entry point for Jolt guest programs with std support.
 ///
-/// This is the entry point for Jolt guest programs with std support.
-/// It initializes the global pointer, stack pointer, and trap handler,
+/// Initializes the global pointer, stack pointer, and trap handler,
 /// then jumps to kernel_main for musl initialization.
 #[unsafe(naked)]
 #[no_mangle]
@@ -197,16 +196,12 @@ pub unsafe extern "C" fn _start() -> ! {
         "   lla     sp, __stack_top",
         "   andi    sp, sp, -16",
 
-        // Set up trap handler using CSR ECALL instead of csrw
+        // Set up trap handler using csrw
         "   la      t0, {_trap_handler}",
+        "   csrw    mtvec, t0",
 
-        // Call CSR ECALL to set mtvec (Jolt-specific mechanism)
-        "   lui      a0, 0x435",
-        "   addi     a0, a0, 0x352",     // a0 = 0x435352 (CSR_ECALL_NUM)
-        "   addi     a1, zero, 2",       // a1 = 2 (CSR_OP_WRITE)
-        "   addi     a2, zero, 0x305",   // a2 = 0x305 (CSR_MTVEC)
-        "   addi     a3, t0, 0",         // a3 = trap handler address
-        "   ecall",
+        // Initialize mscratch
+        "   csrw    mscratch, x0",
 
         "   tail    {kmain}",
 

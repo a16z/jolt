@@ -11,9 +11,9 @@ const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 
 /// Layout of virtual registers:
 /// - Register 32: Reservation address for LR/SC (persistent, not allocated)
-/// - Register 33: Trap handler address (persistent, not allocated)
-/// - Registers 34-40: Temporary registers for inline sequences (allocate())
-/// - Registers 41+: Registers for larger inlines (allocate_for_inline())
+/// - Register 33-38: CSR registers (mtvec, mscratch, mepc, mcause, mtval, mstatus)
+/// - Registers 39-45: Temporary registers for inline sequences (allocate())
+/// - Registers 46+: Registers for larger inlines (allocate_for_inline())
 ///
 /// The reserved registers (32, 33) are at the front but skipped by allocate()
 /// to ensure they persist across instructions.
@@ -21,13 +21,25 @@ const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 /// Register 32 is used for LR/SC reservation address.
 const RESERVATION_REGISTER: u8 = RISCV_REGISTER_BASE; // register 32
 
-/// Register 33 stores the trap handler address.
-/// Set at boot via CSR ECALL, used by trap-taking ECALLs to verify target.
-const TRAP_HANDLER_REGISTER: u8 = RISCV_REGISTER_BASE + 1; // register 33
+/// CSR Virtual Register Mapping (persistent, not allocated):
+/// - Register 33: mtvec (trap handler address)
+/// - Register 34: mscratch (trap scratch register)
+/// - Register 35: mepc (exception PC)
+/// - Register 36: mcause (trap cause)
+/// - Register 37: mtval (trap value)
+/// - Register 38: mstatus (machine status)
+const TRAP_HANDLER_REGISTER: u8 = RISCV_REGISTER_BASE + 1; // register 33 (mtvec)
+const MSCRATCH_REGISTER: u8 = RISCV_REGISTER_BASE + 2;     // register 34
+const MEPC_REGISTER: u8 = RISCV_REGISTER_BASE + 3;         // register 35
+const MCAUSE_REGISTER: u8 = RISCV_REGISTER_BASE + 4;       // register 36
+const MTVAL_REGISTER: u8 = RISCV_REGISTER_BASE + 5;        // register 37
+const MSTATUS_REGISTER: u8 = RISCV_REGISTER_BASE + 6;      // register 38
 
-/// Number of reserved virtual registers that are NOT allocated (reservation + trap handler).
-/// allocate() skips these and starts from register 34.
-const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 2;
+/// Number of reserved virtual registers that are NOT allocated.
+/// Includes: reservation (32), mtvec (33), mscratch (34), mepc (35),
+///           mcause (36), mtval (37), mstatus (38)
+/// allocate() skips these and starts from register 39.
+const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 7;
 
 #[derive(Debug, Clone)]
 pub struct VirtualRegisterAllocator {
@@ -78,10 +90,35 @@ impl VirtualRegisterAllocator {
         RESERVATION_REGISTER
     }
 
-    /// Get the trap handler register (register 33) used for storing trap handler address.
+    /// Get the trap handler register (register 33) - mtvec CSR.
     /// Set at boot via CSR ECALL, used by trap-taking ECALLs to verify target.
     pub fn trap_handler_register(&self) -> u8 {
         TRAP_HANDLER_REGISTER
+    }
+
+    /// Get the mscratch register (register 34) - scratch register for trap handler.
+    pub fn mscratch_register(&self) -> u8 {
+        MSCRATCH_REGISTER
+    }
+
+    /// Get the mepc register (register 35) - exception program counter.
+    pub fn mepc_register(&self) -> u8 {
+        MEPC_REGISTER
+    }
+
+    /// Get the mcause register (register 36) - trap cause.
+    pub fn mcause_register(&self) -> u8 {
+        MCAUSE_REGISTER
+    }
+
+    /// Get the mtval register (register 37) - trap value.
+    pub fn mtval_register(&self) -> u8 {
+        MTVAL_REGISTER
+    }
+
+    /// Get the mstatus register (register 38) - machine status.
+    pub fn mstatus_register(&self) -> u8 {
+        MSTATUS_REGISTER
     }
 
     /// Set whether the current ECALL is a CSR ECALL (for trap handler setup).

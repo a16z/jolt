@@ -252,7 +252,7 @@ macro_rules! define_rv32im_trait_impls {
 define_rv32im_trait_impls! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
-        ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
+        EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
         // Note: LRW, LRD, SCW, SCD use inline_sequence expansion in tracer
         // They don't need to be in this macro - the expanded instructions are already here
@@ -281,6 +281,7 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
+pub mod ebreak;
 pub mod ecall;
 pub mod fence;
 pub mod jal;

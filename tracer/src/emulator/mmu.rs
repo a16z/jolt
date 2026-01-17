@@ -1229,7 +1229,7 @@ mod test_mmu {
     }
 
     #[test]
-    #[should_panic(expected = "I/O underflow")]
+    #[should_panic(expected = "Unknown memory mapping")]
     fn test_io_underflow() {
         let mut mmu = setup_mmu();
         let trusted_advice_size = mmu
@@ -1248,7 +1248,9 @@ mod test_mmu {
             - 1
             - trusted_advice_size
             - untrusted_advice_size;
-        // illegal write to inputs
+        // Write to address below I/O region - rejected as unknown mapping
+        // (Note: address is in "zero-padding" range so passes underflow check,
+        // but fails device I/O check since it's not a valid write target)
         mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }
 

@@ -39,6 +39,9 @@ use div::DIV;
 use divu::DIVU;
 use divuw::DIVUW;
 use divw::DIVW;
+use csrrs::CSRRS;
+use csrrw::CSRRW;
+use ebreak::EBREAK;
 use ecall::ECALL;
 use fence::FENCE;
 use jal::JAL;
@@ -174,6 +177,9 @@ pub mod div;
 pub mod divu;
 pub mod divuw;
 pub mod divw;
+pub mod csrrs;
+pub mod csrrw;
+pub mod ebreak;
 pub mod ecall;
 pub mod fence;
 pub mod inline;
@@ -586,8 +592,8 @@ macro_rules! define_rv32im_enums {
 
 define_rv32im_enums! {
     instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
-        ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, CSRRS, CSRRW, DIV, DIVU,
+        EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
         MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
         SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
         // RV64I
@@ -883,11 +889,22 @@ impl Instruction {
                 }
             }
             0b1110011 => {
-                // For now this only (potentially) maps to ECALL.
-                if instr == ECALL::MATCH {
-                    Ok(ECALL::new(instr, address, true, compressed).into())
-                } else {
-                    Err("Unsupported SYSTEM instruction")
+                // SYSTEM opcode: ECALL, EBREAK, CSR instructions
+                let funct3 = (instr >> 12) & 0x7;
+                match funct3 {
+                    0b000 => {
+                        // ECALL/EBREAK based on instruction encoding
+                        if instr == ECALL::MATCH {
+                            Ok(ECALL::new(instr, address, true, compressed).into())
+                        } else if instr == EBREAK::MATCH {
+                            Ok(EBREAK::new(instr, address, true, compressed).into())
+                        } else {
+                            Err("Unsupported SYSTEM instruction (funct3=0)")
+                        }
+                    }
+                    0b001 => Ok(CSRRW::new(instr, address, true, compressed).into()),
+                    0b010 => Ok(CSRRS::new(instr, address, true, compressed).into()),
+                    _ => Err("Unsupported CSR instruction"),
                 }
             }
             // 0x0B is reserved for inlines supported by Jolt in jolt-inlines crate.
