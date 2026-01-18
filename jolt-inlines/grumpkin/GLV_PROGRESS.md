@@ -44,11 +44,16 @@ reduce doublings and improve overall MSM performance.
 
 | GLV_WINDOW | RV64IMAC | Virtual | Total |
 |------------|----------|---------|-------|
-| 12 | 105,865,712 | 155,068,028 | **260,933,740** |
-| 10 | 57,290,195 | 73,217,503 | **130,507,698** |
+| 7 | 51,167,509 | 56,501,923 | 107,669,432 |
+| **8** | **49,167,132** | **55,906,558** | **105,073,690** |
+| 9 | 50,293,472 | 60,566,281 | 110,859,753 |
+| 10 | 57,290,195 | 73,217,503 | 130,507,698 |
+| 11 | 73,673,369 | 101,369,899 | 175,043,268 |
+| 12 | 105,865,712 | 155,068,028 | 260,933,740 |
 
-**Finding:** GLV_WINDOW=10 is ~2x faster than GLV_WINDOW=12 for MSM_SIZE=1024.
-Smaller window reduces bucket accumulation cost (2^w additions per window).
+**Finding:** GLV_WINDOW=8 is optimal for MSM_SIZE=1024.
+- 2.5x faster than GLV_WINDOW=12 (105M vs 261M total cycles)
+- Sweet spot balances: fewer buckets (2^8=256) vs more windows (128/8=16)
 
 ### References
 - Grumpkin inline constants: `jolt-inlines/grumpkin/src/lib.rs`

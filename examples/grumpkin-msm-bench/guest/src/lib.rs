@@ -21,7 +21,7 @@ const BASELINE_WINDOWS: usize = SCALAR_BITS.div_ceil(BASELINE_WINDOW);
 
 // Pippenger parameters for GLV (128-bit scalars).
 const GLV_SCALAR_BITS: usize = 128;
-const GLV_WINDOW: usize = 11;
+const GLV_WINDOW: usize = 8;
 const GLV_BUCKETS: usize = 1 << GLV_WINDOW;
 const GLV_WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(GLV_WINDOW);
 
