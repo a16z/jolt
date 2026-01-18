@@ -69,18 +69,48 @@ reduce doublings and improve overall MSM performance.
 - Larger MSM amortizes bucket cost → optimal window shifts up
 - 1.7x faster than GLV_WINDOW=12 at MSM_SIZE=2048 (188M vs 321M)
 
-### Fixed-base (generator) precompute (FIXED_BASE_WINDOW = 8)
+### Fixed-Base Precompute
 
-Fixed-base window tables let us compute scalar * G with **no doublings** (only lookups + additions).
+**Idea:** For a fixed generator G, precompute `Table[w][d] = d * (2^(w*window)) * G` for all windows w and digits d.
+Then scalar multiplication becomes pure **lookups + additions** — no doublings needed.
 
-Using `examples/grumpkin-msm-bench` with `MSM_SIZE=1024`, `GLV_WINDOW=8`, `FIXED_BASE_WINDOW=8`:
-- fixed_base_precompute_g_w8: 10,573,780 RV64IMAC cycles (11,105,622 virtual)
-- scalar_mul_fixed_base_table_256_w8: 38,343 RV64IMAC cycles (40,935 virtual)
-  - vs scalar_mul_256bit: 394,014 RV64IMAC cycles (406,967 virtual) → ~10.1x faster (total cycles)
-  - vs scalar_mul_glv_2x128: 225,133 RV64IMAC cycles (236,321 virtual) → ~5.8x faster (total cycles)
-- msm_setup: 9,782,897 RV64IMAC cycles (11,117,945 virtual)
-  - note: `msm_setup` now uses the fixed-base table to generate points (previously it did 1024x double-and-add scalar mul).
-- msm_fixed_base_table_256_w8 (RUN_FIXED_BASE_ONLY): 40,043,310 RV64IMAC cycles (42,730,875 virtual)
+#### Precompute Table Sizes
+
+| w | windows | entries/window | total entries | memory |
+|---|---------|----------------|---------------|--------|
+| 8 | 32 | 256 | 8,192 | 0.5 MiB |
+| 10 | 26 | 1,024 | 26,624 | 1.6 MiB |
+| 11 | 24 | 2,048 | 49,152 | 3.0 MiB |
+| 12 | 22 | 4,096 | 90,112 | 5.5 MiB |
+| 13 | 20 | 8,192 | 163,840 | 10.0 MiB |
+| 14 | 19 | 16,384 | 311,296 | 19.0 MiB |
+
+*(Each affine point = 64 bytes: two 256-bit field elements)*
+
+#### Fixed-Base Window Sweep (MSM_SIZE=1024, msm_fixed_base_table)
+
+| w | RV64IMAC | Virtual | **Total** | vs GLV+Pippenger |
+|---|----------|---------|-----------|------------------|
+| 8 | 40,208,584 | 42,896,149 | 83,104,733 | 1.26x |
+| 9 | 36,403,488 | 38,911,414 | 75,314,902 | 1.40x |
+| 10 | 33,061,817 | 35,421,326 | 68,483,143 | 1.53x |
+| 11 | 29,854,092 | 32,072,225 | 61,926,317 | 1.70x |
+| 12 | 27,726,692 | 29,848,563 | 57,575,255 | 1.82x |
+| 13 | 25,693,311 | 27,726,498 | 53,419,809 | 1.97x |
+| **14** | **23,980,749** | **25,937,710** | **49,918,459** | **2.10x** |
+
+**Finding:** FIXED_BASE_WINDOW=14 is optimal for MSM_SIZE=1024, giving **49.9M** total cycles.
+- **2.1x faster** than GLV+Pippenger (50M vs 105M)
+- Trade-off: 19 MiB precompute table (heap-allocated via `Box`)
+
+#### MSM Comparison Summary (MSM_SIZE=1024)
+
+| Method | Total Cycles | vs GLV+Pippenger |
+|--------|--------------|------------------|
+| Pippenger (256-bit, no GLV) | 453M | 0.23x |
+| **GLV + Pippenger (w=8)** | **105M** | **1.0x (baseline)** |
+| Fixed-base table (w=8) | 83M | 1.26x |
+| Fixed-base table (w=14) | 50M | 2.10x |
 
 ### References
 - Grumpkin inline constants: `jolt-inlines/grumpkin/src/lib.rs`

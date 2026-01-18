@@ -4,6 +4,8 @@
 //! This benchmarks multi-scalar multiplication (MSM) on the Grumpkin curve
 //! using the inline-accelerated field operations.
 
+extern crate alloc;
+use alloc::boxed::Box;
 use core::hint::black_box;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 use jolt_inlines_grumpkin::{GrumpkinFr, GrumpkinPoint, UnwrapOrSpoilProof};
@@ -28,7 +30,7 @@ const GLV_WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(GLV_WINDOW);
 // Fixed-base (generator) windowed multiplication parameters (256-bit scalars).
 // This is a classic fixed-window method: precompute [j * 2^(w*i) * G] for each window i.
 // Online cost: ~SCALAR_BITS/FIXED_BASE_WINDOW additions, with *no doublings*.
-const FIXED_BASE_WINDOW: usize = 8;
+const FIXED_BASE_WINDOW: usize = 14;
 const FIXED_BASE_BUCKETS: usize = 1 << FIXED_BASE_WINDOW;
 const FIXED_BASE_WINDOWS: usize = SCALAR_BITS.div_ceil(FIXED_BASE_WINDOW);
 
@@ -37,8 +39,8 @@ const RUN_GLV: bool = false;
 const RUN_PIPPENGER: bool = false;
 const RUN_GLV_PIPPENGER: bool = false;
 const RUN_PIPPENGER_ONLY: bool = false;
-const RUN_GLV_PIPPENGER_ONLY: bool = true;
-const RUN_FIXED_BASE_ONLY: bool = false;
+const RUN_GLV_PIPPENGER_ONLY: bool = false;
+const RUN_FIXED_BASE_ONLY: bool = true;
 
 const FR_MODULUS_LIMBS: [u64; 4] = [
     4332616871279656263,
@@ -137,15 +139,18 @@ fn fixed_base_window_value_256(scalar: &[u64; 4], window: usize) -> u16 {
     (val & mask) as u16
 }
 
+/// Fixed-base table type alias for heap allocation.
+type FixedBaseTable = [[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS];
+
 /// Fixed-base precomputation table for a single base point `P`.
 ///
 /// `table[window][digit] = digit * (2^(window*FIXED_BASE_WINDOW)) * P`.
+/// Returns a Box to avoid stack overflow for large tables.
 #[inline(never)]
-fn precompute_fixed_base_table(
-    base: &GrumpkinPoint,
-) -> [[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS] {
-    let mut table: [[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS] =
-        core::array::from_fn(|_| core::array::from_fn(|_| GrumpkinPoint::infinity()));
+fn precompute_fixed_base_table(base: &GrumpkinPoint) -> Box<FixedBaseTable> {
+    let mut table: Box<FixedBaseTable> = Box::new(core::array::from_fn(|_| {
+        core::array::from_fn(|_| GrumpkinPoint::infinity())
+    }));
 
     let mut window_base = base.clone();
     for window_table in table.iter_mut() {
@@ -166,10 +171,7 @@ fn precompute_fixed_base_table(
 
 /// Fixed-base (table) scalar multiplication for 256-bit scalars.
 #[inline(never)]
-fn scalar_mul_fixed_base_table_256(
-    scalar: &[u64; 4],
-    table: &[[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS],
-) -> GrumpkinPoint {
+fn scalar_mul_fixed_base_table_256(scalar: &[u64; 4], table: &FixedBaseTable) -> GrumpkinPoint {
     let mut res = GrumpkinPoint::infinity();
     for (window, window_table) in table.iter().enumerate() {
         let digit = fixed_base_window_value_256(scalar, window) as usize;
@@ -397,10 +399,7 @@ fn msm_pippenger_glv(scalars: &[[u64; 4]], points: &[GrumpkinPoint]) -> Grumpkin
 
 /// Fixed-base MSM: sum_i (scalar_i * G) using a fixed-window precomputed table for `G`.
 #[inline(never)]
-fn msm_fixed_base_table_256(
-    scalars: &[[u64; 4]],
-    base_table: &[[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS],
-) -> GrumpkinPoint {
+fn msm_fixed_base_table_256(scalars: &[[u64; 4]], base_table: &FixedBaseTable) -> GrumpkinPoint {
     let mut result = GrumpkinPoint::infinity();
     for scalar in scalars.iter() {
         let term = scalar_mul_fixed_base_table_256(scalar, base_table);
@@ -429,7 +428,7 @@ fn generate_scalars(seed: u64, count: usize) -> [[u64; 4]; MSM_SIZE] {
 fn generate_points_fixed_base(
     seed: u64,
     count: usize,
-    table_g: &[[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS],
+    table_g: &FixedBaseTable,
 ) -> [GrumpkinPoint; MSM_SIZE] {
     // Initialize with infinity - we'll replace these
     let mut points: [GrumpkinPoint; MSM_SIZE] = core::array::from_fn(|_| GrumpkinPoint::infinity());
@@ -448,8 +447,8 @@ fn generate_points_fixed_base(
 
 #[jolt::provable(
     max_output_size = 1024,
-    memory_size = 67108864,    // 64 MB
-    stack_size = 16777216,     // 16 MB
+    memory_size = 134217728,   // 128 MB
+    stack_size = 67108864,     // 64 MB
     max_trace_length = 500000000
 )]
 fn grumpkin_msm_bench(seed: u64) -> [u64; 8] {
