@@ -169,6 +169,10 @@ impl GrumpkinGlvrAdv {
             let sign = if k.sign() == Sign::Minus { 1u64 } else { 0u64 };
             let abs_k = if sign == 1 { -k } else { k };
             let bytes = abs_k.to_bytes_le().1;
+            assert!(
+                bytes.len() <= 16,
+                "GLV decomposition produced out-of-range half-scalar"
+            );
             let mut arr = [0u64; 2];
             for i in 0..bytes.len() {
                 arr[i / 8] |= (bytes[i] as u64) << ((i % 8) * 8);
