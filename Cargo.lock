@@ -1386,27 +1386,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
-name = "grumpkin-msm-bench"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "grumpkin-msm-bench-guest",
- "jolt-inlines-grumpkin",
- "jolt-sdk",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "grumpkin-msm-bench-guest"
-version = "0.1.0"
-dependencies = [
- "ark-grumpkin",
- "jolt-inlines-grumpkin",
- "jolt-sdk",
-]
-
-[[package]]
 name = "h2"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
