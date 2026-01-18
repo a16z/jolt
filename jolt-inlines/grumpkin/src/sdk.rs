@@ -23,33 +23,55 @@ use serde::{Deserialize, Serialize};
 ))]
 #[inline(always)]
 fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
-    x[3] == u64::MAX && x[2] == u64::MAX && x[1] == u64::MAX && x[0] >= Fq::MODULUS.0[0]
+    let m = Fq::MODULUS.0;
+    if x[3] > m[3] {
+        return true;
+    }
+    if x[3] < m[3] {
+        return false;
+    }
+    if x[2] > m[2] {
+        return true;
+    }
+    if x[2] < m[2] {
+        return false;
+    }
+    if x[1] > m[1] {
+        return true;
+    }
+    if x[1] < m[1] {
+        return false;
+    }
+    x[0] >= m[0]
 }
 
 /// Returns `true` iff `x >= n` (Fr modulus), i.e., `x` is non-canonical.
-/// Specialized: since n's limb[3] is u64::MAX, we short-circuit if x[3] < MAX.
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 #[inline(always)]
 fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
-    if x[3] != u64::MAX {
-        return false;
-    }
-    if x[2] > Fr::MODULUS.0[2] {
+    let m = Fr::MODULUS.0;
+    if x[3] > m[3] {
         return true;
     }
-    if x[2] < Fr::MODULUS.0[2] {
+    if x[3] < m[3] {
         return false;
     }
-    if x[1] > Fr::MODULUS.0[1] {
+    if x[2] > m[2] {
         return true;
     }
-    if x[1] < Fr::MODULUS.0[1] {
+    if x[2] < m[2] {
         return false;
     }
-    x[0] >= Fr::MODULUS.0[0]
+    if x[1] > m[1] {
+        return true;
+    }
+    if x[1] < m[1] {
+        return false;
+    }
+    x[0] >= m[0]
 }
 
 #[cfg(all(
@@ -165,20 +187,15 @@ pub enum GrumpkinError {
 
 // Grumpkin GLV endomorphism constants (Montgomery form).
 // The endomorphism is (x, y) -> (beta * x, y), where beta^3 = 1.
-const GRUMPKIN_ENDO_BETA_LIMBS: [u64; 4] = [
+pub(crate) const GRUMPKIN_ENDO_BETA_LIMBS: [u64; 4] = [
     244305545194690131,
     8351807910065594880,
     14266533074055306532,
     404339206190769364,
 ];
-const GRUMPKIN_ENDO_G_Y_LIMBS: [u64; 4] = [
-    1275327871829426648,
-    2581482255512206787,
-    12284567389086920635,
-    1491620523682192744,
-];
+
 #[allow(dead_code)]
-const GRUMPKIN_GLV_LAMBDA_LIMBS: [u64; 4] = [
+pub(crate) const GRUMPKIN_GLV_LAMBDA_LIMBS: [u64; 4] = [
     3697675806616062876,
     9065277094688085689,
     6918009208039626314,
@@ -637,10 +654,7 @@ impl GrumpkinPoint {
     /// generator with endomorphism applied
     #[inline(always)]
     pub fn generator_w_endomorphism() -> Self {
-        let mut arr = [0u64; 8];
-        arr[0..4].copy_from_slice(&GRUMPKIN_ENDO_BETA_LIMBS);
-        arr[4..8].copy_from_slice(&GRUMPKIN_ENDO_G_Y_LIMBS);
-        GrumpkinPoint::from_u64_arr_unchecked(&arr)
+        Self::generator().endomorphism()
     }
     /// returns beta * self where beta is the GLV endomorphism coefficient
     #[inline(always)]
@@ -718,14 +732,15 @@ impl GrumpkinPoint {
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn decompose_scalar(k: &GrumpkinFr) -> [(bool, u128); 2] {
-        let k: NBigInt = k.e.into_bigint().into();
+        let k_fr = k.e;
+        let k_bigint: NBigInt = k_fr.into_bigint().into();
         let r = NBigInt::from_bytes_le(Sign::Plus, &Fr::MODULUS.to_bytes_le());
         let n11 = NBigInt::from(147946756881789319000765030803803410729i128);
         let n12 = NBigInt::from(-9931322734385697762i128);
         let n21 = NBigInt::from(9931322734385697762i128);
         let n22 = NBigInt::from(147946756881789319010696353538189108491i128);
         let beta_1 = {
-            let (mut div, rem) = (&k * &n22).div_rem(&r);
+            let (mut div, rem) = (&k_bigint * &n22).div_rem(&r);
             if (&rem + &rem) > r {
                 div += NBigInt::from(1u8);
             }
@@ -733,37 +748,51 @@ impl GrumpkinPoint {
         };
         let beta_2 = {
             let n12_neg = -n12.clone();
-            let (mut div, rem) = (&k * &n12_neg).div_rem(&r);
+            let (mut div, rem) = (&k_bigint * &n12_neg).div_rem(&r);
             if (&rem + &rem) > r {
                 div += NBigInt::from(1u8);
             }
             div
         };
-        let k1 = &k - &beta_1 * &n11 - &beta_2 * &n21;
+        let k1 = &k_bigint - &beta_1 * &n11 - &beta_2 * &n21;
         let k2 = -(&beta_1 * &n12 + &beta_2 * &n22);
         // convert k1, k2 to absolute values and signs
         let serialize_k = |k: NBigInt| -> (u64, [u64; 2]) {
             let sign = if k.sign() == Sign::Minus { 1u64 } else { 0u64 };
             let abs_k = if sign == 1 { -k } else { k };
             let bytes = abs_k.to_bytes_le().1;
+            assert!(
+                bytes.len() <= 16,
+                "GLV decomposition produced out-of-range half-scalar"
+            );
             let mut arr = [0u64; 2];
-            for i in 0..bytes.len() {
-                arr[i / 8] |= (bytes[i] as u64) << ((i % 8) * 8);
+            for (i, b) in bytes.iter().enumerate() {
+                arr[i / 8] |= (*b as u64) << ((i % 8) * 8);
             }
             (sign, arr)
         };
         let (s1, k1_arr) = serialize_k(k1);
         let (s2, k2_arr) = serialize_k(k2);
-        [
-            (
-                s1 == 1u64,
-                (k1_arr[0] as u128) | ((k1_arr[1] as u128) << 64),
-            ),
-            (
-                s2 == 1u64,
-                (k2_arr[0] as u128) | ((k2_arr[1] as u128) << 64),
-            ),
-        ]
+        let k1_u = (k1_arr[0] as u128) | ((k1_arr[1] as u128) << 64);
+        let k2_u = (k2_arr[0] as u128) | ((k2_arr[1] as u128) << 64);
+        let out = [(s1 == 1u64, k1_u), (s2 == 1u64, k2_u)];
+        debug_assert!(
+            {
+                let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+                let mut k1_fr_check = Fr::from(out[0].1);
+                if out[0].0 {
+                    k1_fr_check = -k1_fr_check;
+                }
+                let mut k2_fr_check = Fr::from(out[1].1);
+                if out[1].0 {
+                    k2_fr_check = -k2_fr_check;
+                }
+                let recomposed = k1_fr_check + k2_fr_check * lambda;
+                recomposed == k_fr
+            },
+            "GLV decomposition recomposition failed"
+        );
+        out
     }
     /// returns the point at infinity (0, 0)
     #[inline(always)]

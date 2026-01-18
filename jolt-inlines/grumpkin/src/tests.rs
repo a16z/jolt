@@ -1,8 +1,10 @@
 mod sequence_tests {
-    use crate::sdk::{GrumpkinFr, GrumpkinPoint};
+    use crate::sdk::{
+        GrumpkinFr, GrumpkinPoint, GRUMPKIN_ENDO_BETA_LIMBS, GRUMPKIN_GLV_LAMBDA_LIMBS,
+    };
     use crate::{GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
     use ark_ec::AffineRepr;
-    use ark_ff::{BigInt, Field};
+    use ark_ff::{BigInt, BigInteger, Field, One, PrimeField, Zero};
     use ark_grumpkin::{Fq, Fr};
     use std::ops::Mul;
     use tracer::emulator::cpu::Xlen;
@@ -111,15 +113,51 @@ mod sequence_tests {
     }
 
     #[test]
+    fn test_grumpkin_endo_beta_has_order_3_in_fq() {
+        let beta = Fq::new_unchecked(BigInt(GRUMPKIN_ENDO_BETA_LIMBS));
+        assert_ne!(beta, Fq::one(), "beta must not be 1");
+        assert_eq!(beta.square() * beta, Fq::one(), "beta^3 must equal 1");
+    }
+
+    #[test]
+    fn test_grumpkin_glv_lambda_satisfies_minpoly() {
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+        assert_ne!(lambda, Fr::one(), "lambda must not be 1");
+        let lhs = lambda.square() + lambda + Fr::one();
+        assert!(lhs.is_zero(), "lambda^2 + lambda + 1 must equal 0");
+    }
+
+    #[test]
+    fn test_grumpkin_endomorphism_order_3() {
+        let g = GrumpkinPoint::generator();
+        let g3 = g.endomorphism().endomorphism().endomorphism();
+        assert_eq!(
+            g3.to_u64_arr(),
+            g.to_u64_arr(),
+            "endomorphism should have order 3"
+        );
+    }
+
+    #[test]
+    fn test_grumpkin_endomorphism_matches_scalar_mul_lambda_on_generator_multiples() {
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+        let scalars = [1u64, 2u64, 3u64, 5u64, 7u64, 0x123456789ABCDEF0u64];
+        for &s in scalars.iter() {
+            let p = u64_point_mul(s, &GrumpkinPoint::generator());
+            let endo_p = p.endomorphism();
+
+            let expected_scalar = Fr::from(s) * lambda;
+            let ark_expected =
+                ark_grumpkin::Affine::from(ark_grumpkin::Affine::generator().mul(expected_scalar));
+
+            assert_eq!(endo_p.x().fq(), ark_expected.x);
+            assert_eq!(endo_p.y().fq(), ark_expected.y);
+        }
+    }
+
+    #[test]
     fn test_grumpkin_glv_decomposition_recompose() {
-        let lambda = Fr::new_unchecked(BigInt {
-            0: [
-                3697675806616062876,
-                9065277094688085689,
-                6918009208039626314,
-                2775033306905974752,
-            ],
-        });
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
         let scalars = [
             0u64,
             1u64,
@@ -144,5 +182,97 @@ mod sequence_tests {
             let recomposed = k1 + k2 * lambda;
             assert_eq!(recomposed, k.fr());
         }
+    }
+
+    #[test]
+    fn test_grumpkin_glv_decomposition_recompose_many() {
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+        let (a, c) = (6364136223846793005u64, 1442695040888963407u64);
+        let mut state = 0xA5A5_A5A5_5A5A_5A5Au64;
+
+        for _ in 0..256 {
+            // Deterministic 256-bit input -> reduce mod Fr.
+            let mut bytes = [0u8; 32];
+            for chunk in bytes.chunks_mut(8) {
+                state = state.wrapping_mul(a).wrapping_add(c);
+                chunk.copy_from_slice(&state.to_le_bytes());
+            }
+            let fr = Fr::from_le_bytes_mod_order(&bytes);
+            let k = GrumpkinFr::new(fr);
+
+            let decomp = GrumpkinPoint::decompose_scalar(&k);
+            let mut k1 = Fr::from(decomp[0].1);
+            if decomp[0].0 {
+                k1 = -k1;
+            }
+            let mut k2 = Fr::from(decomp[1].1);
+            if decomp[1].0 {
+                k2 = -k2;
+            }
+            let recomposed = k1 + k2 * lambda;
+            assert_eq!(recomposed, k.fr());
+        }
+    }
+
+    #[test]
+    fn test_grumpkin_glv_decomposition_edge_cases() {
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+
+        // Helper to verify decomposition
+        let verify_decomp = |k: GrumpkinFr, name: &str| {
+            let decomp = GrumpkinPoint::decompose_scalar(&k);
+            let mut k1 = Fr::from(decomp[0].1);
+            if decomp[0].0 {
+                k1 = -k1;
+            }
+            let mut k2 = Fr::from(decomp[1].1);
+            if decomp[1].0 {
+                k2 = -k2;
+            }
+            let recomposed = k1 + k2 * lambda;
+            assert_eq!(recomposed, k.fr(), "GLV decomposition failed for {}", name);
+        };
+
+        // k = 0
+        verify_decomp(GrumpkinFr::new(Fr::zero()), "k=0");
+
+        // k = 1
+        verify_decomp(GrumpkinFr::new(Fr::one()), "k=1");
+
+        // k = n - 1 (largest valid scalar, equivalent to -1)
+        verify_decomp(GrumpkinFr::new(-Fr::one()), "k=n-1");
+
+        // k = λ (should decompose to k1=0, k2=1 ideally, but any valid decomposition works)
+        verify_decomp(GrumpkinFr::new(lambda), "k=lambda");
+
+        // k = λ - 1
+        verify_decomp(GrumpkinFr::new(lambda - Fr::one()), "k=lambda-1");
+
+        // k = λ + 1
+        verify_decomp(GrumpkinFr::new(lambda + Fr::one()), "k=lambda+1");
+
+        // k = λ² (which equals -λ - 1 since λ² + λ + 1 = 0)
+        let lambda_sq = lambda.square();
+        verify_decomp(GrumpkinFr::new(lambda_sq), "k=lambda^2");
+    }
+
+    #[test]
+    fn test_grumpkin_glv_lattice_determinant() {
+        use num_bigint::BigInt as NBigInt;
+        use num_bigint::Sign;
+
+        // GLV basis vectors (same as in decompose_scalar)
+        let n11 = NBigInt::from(147946756881789319000765030803803410729i128);
+        let n12 = NBigInt::from(-9931322734385697762i128);
+        let n21 = NBigInt::from(9931322734385697762i128);
+        let n22 = NBigInt::from(147946756881789319010696353538189108491i128);
+
+        // Compute determinant: n11 * n22 - n12 * n21
+        let det = &n11 * &n22 - &n12 * &n21;
+
+        // The determinant should equal the curve order n
+        let n = NBigInt::from_bytes_le(Sign::Plus, &Fr::MODULUS.to_bytes_le());
+
+        assert_eq!(det, n, "GLV lattice determinant must equal curve order");
     }
 }

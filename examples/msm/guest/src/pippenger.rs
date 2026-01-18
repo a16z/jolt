@@ -13,6 +13,12 @@ fn double_n<G: MsmGroup>(mut acc: G, n: usize) -> G {
 }
 
 /// Pippenger MSM: Σ(scalar_i · point_i) with runtime window sizing.
+///
+/// # Timing
+/// This implementation is **variable-time** with respect to scalar values
+/// (bucket selection, leading-zero optimization). This is acceptable for zkVM
+/// proof generation where the prover already knows all secrets, but should not
+/// be used for operations where timing leaks are a concern.
 #[inline(always)]
 pub fn msm_pippenger<G, S>(scalars: &[S], points: &[G], window_bits: usize) -> G
 where
@@ -24,6 +30,7 @@ where
         return G::identity();
     }
     assert!(window_bits > 0, "window_bits must be positive");
+    assert!(window_bits <= 16, "window_bits must be <= 16");
 
     let scalar_bits = scalars[0].bit_len();
     let num_windows = scalar_bits.div_ceil(window_bits);
@@ -78,7 +85,10 @@ where
     G: MsmGroup,
     S: WindowedScalar,
 {
-    const { assert!(WINDOW_BITS > 0, "WINDOW_BITS must be positive") };
+    const {
+        assert!(WINDOW_BITS > 0, "WINDOW_BITS must be positive");
+        assert!(WINDOW_BITS <= 16, "WINDOW_BITS must be <= 16");
+    };
 
     assert_eq!(scalars.len(), points.len());
     if scalars.is_empty() {

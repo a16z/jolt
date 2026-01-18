@@ -21,6 +21,15 @@ impl<G: MsmGroup, const WINDOWS: usize, const BUCKETS: usize> FixedBaseTable<G, 
     /// Window size is derived from BUCKETS const generic.
     #[inline(always)]
     pub fn new(base: &G) -> Self {
+        const {
+            assert!(BUCKETS > 1, "BUCKETS must be > 1");
+            assert!(BUCKETS.is_power_of_two(), "BUCKETS must be a power of two");
+            assert!(
+                BUCKETS.trailing_zeros() as usize <= 16,
+                "BUCKETS (window size) must be <= 2^16"
+            );
+        }
+
         let mut table: Box<[[G; BUCKETS]; WINDOWS]> = Box::new(core::array::from_fn(|_| {
             core::array::from_fn(|_| G::identity())
         }));

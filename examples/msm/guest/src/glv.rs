@@ -32,6 +32,9 @@ fn expand_glv_into<G: GlvCapable>(
 }
 
 /// GLV-accelerated MSM: expands input via scalar decomposition, then runs Pippenger.
+///
+/// # Timing
+/// Inherits Pippenger's variable-time behavior. See [`msm_pippenger`] for details.
 #[inline(always)]
 pub fn msm_glv<G>(scalars: &[G::FullScalar], points: &[G], window_bits: usize) -> G
 where
