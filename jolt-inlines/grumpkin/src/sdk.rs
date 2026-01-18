@@ -606,7 +606,15 @@ impl GrumpkinPoint {
     pub fn new_unchecked(x: GrumpkinFq, y: GrumpkinFq) -> Self {
         GrumpkinPoint { x, y }
     }
-    /// converts the point to a [u64; 8] array
+    /// Converts the point to a `[u64; 8]` array **in Montgomery form**.
+    ///
+    /// This is the raw arkworks internal representation of `(x, y)` and is **not**
+    /// compatible with [`Self::from_u64_arr`], which expects canonical (non-Montgomery)
+    /// limbs.
+    ///
+    /// - For a canonical (non-Montgomery) encoding, use [`Self::to_u64_arr_canonical`].
+    /// - To parse this encoding, use [`Self::from_u64_arr_unchecked`] (caller must ensure
+    ///   limbs are canonical and the point is on-curve).
     #[inline(always)]
     pub fn to_u64_arr(&self) -> [u64; 8] {
         let mut arr = [0u64; 8];
@@ -614,9 +622,19 @@ impl GrumpkinPoint {
         arr[4..8].copy_from_slice(&self.y.e.0 .0);
         arr
     }
-    /// creates a GrumpkinPoint from a [u64; 8] array in normal form
-    /// performs checks to ensure that the point is on the curve
-    /// and that the coordinates are well formed
+
+    /// Converts the point to a `[u64; 8]` array in canonical (non-Montgomery) form.
+    #[inline(always)]
+    pub fn to_u64_arr_canonical(&self) -> [u64; 8] {
+        let mut arr = [0u64; 8];
+        arr[0..4].copy_from_slice(&self.x.e.into_bigint().0);
+        arr[4..8].copy_from_slice(&self.y.e.into_bigint().0);
+        arr
+    }
+
+    /// Creates a GrumpkinPoint from a `[u64; 8]` array in canonical (non-Montgomery) form.
+    /// Performs checks to ensure that the point is on the curve and that the coordinates
+    /// are well formed.
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 8]) -> Result<Self, GrumpkinError> {
         let x = GrumpkinFq::from_u64_arr(&[arr[0], arr[1], arr[2], arr[3]])?;
@@ -892,7 +910,17 @@ impl GrumpkinPoint {
         } else {
             let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x).sub(&other.x);
-            let t = self.y.dbl().div(&self.x.sub(&x2)).sub(&s);
+            // Edge case: if x2 == x1 then (x1 - x2) = 0 and the slope used for the
+            // second addition is undefined. This occurs for valid inputs such as
+            // `other = -2*self`, where the true result is infinity.
+            //
+            // Fall back to the generic path, which correctly handles these cases.
+            let denom = self.x.sub(&x2);
+            if denom.is_zero() {
+                return self.double().add(other);
+            }
+
+            let t = self.y.dbl().div(&denom).sub(&s);
             let x3 = t.square().sub(&self.x).sub(&x2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             GrumpkinPoint { x: x3, y: y3 }
