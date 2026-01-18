@@ -115,3 +115,25 @@ Then scalar multiplication becomes pure **lookups + additions** — no doublings
 ### References
 - Grumpkin inline constants: `jolt-inlines/grumpkin/src/lib.rs`
 - Grumpkin GLV constants and endomorphism: `jolt-inlines/grumpkin/src/sdk.rs`
+
+---
+
+### Generic MSM Crate (`examples/msm/`)
+
+A modular MSM implementation with trait-based abstractions was created in `examples/msm/`.
+The generic code is curve-agnostic; Grumpkin integration is in `curves/grumpkin.rs`.
+
+#### Benchmarks (MSM_SIZE=1024, GLV_WINDOW=8)
+
+| Method | Old (grumpkin-msm-bench) | New (examples/msm) | Diff |
+|--------|--------------------------|---------------------|------|
+| **GLV+Pippenger RV64IMAC** | 49,167,132 | 48,589,016 | **-1.2%** |
+| **GLV+Pippenger Virtual** | 55,906,558 | 55,252,641 | **-1.2%** |
+| **GLV+Pippenger Total** | 105,073,690 | 103,841,657 | **-1.2%** |
+| Fixed-base (w=14) RV64IMAC | 23,980,749 | 24,429,902 | +1.9% |
+| Fixed-base (w=14) Virtual | 25,937,710 | 26,547,453 | +2.4% |
+| Fixed-base (w=14) Total | 49,918,459 | 50,977,355 | +2.1% |
+
+**Finding:** The generic trait-based implementation has:
+- **No overhead for GLV+Pippenger** — actually ~1.2% faster due to cleaner code
+- **~2% overhead for fixed-base MSM** — acceptable for generic abstraction
