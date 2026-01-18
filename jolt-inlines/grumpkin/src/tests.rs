@@ -230,7 +230,7 @@ mod sequence_tests {
                 k2 = -k2;
             }
             let recomposed = k1 + k2 * lambda;
-            assert_eq!(recomposed, k.fr(), "GLV decomposition failed for {}", name);
+            assert_eq!(recomposed, k.fr(), "GLV decomposition failed for {name}");
         };
 
         // k = 0
