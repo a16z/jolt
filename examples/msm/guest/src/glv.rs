@@ -82,6 +82,14 @@ where
 {
     assert_eq!(scalars.len(), points.len());
     let n = scalars.len();
+    assert!(
+        expanded_scalars.len() >= 2 * n,
+        "expanded_scalars buffer too small"
+    );
+    assert!(
+        expanded_points.len() >= 2 * n,
+        "expanded_points buffer too small"
+    );
 
     expand_glv_into::<G>(scalars, points, expanded_scalars, expanded_points);
 
