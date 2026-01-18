@@ -816,24 +816,28 @@ impl GrumpkinPoint {
     /// adds two points on the grumpkin curve
     #[inline(always)]
     pub fn add(&self, other: &GrumpkinPoint) -> Self {
-        // if either point is at infinity, return the other point
+        // Fast path: handle infinity and x-equality with minimal redundant work.
         if self.is_infinity() {
-            other.clone()
-        } else if other.is_infinity() {
-            self.clone()
-        // if the points are equal, perform point doubling
-        } else if self.x == other.x && self.y == other.y {
-            self.double()
-        // if the x coordinates are equal but the y coordinates are not, return the point at infinity
-        } else if self.x == other.x && self.y != other.y {
-            GrumpkinPoint::infinity()
-        // if the x coordinates are not equal and not infinity, perform standard point addition
-        } else {
-            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x).sub(&other.x);
-            let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
-            GrumpkinPoint { x: x2, y: y2 }
+            return other.clone();
         }
+        if other.is_infinity() {
+            return self.clone();
+        }
+
+        // If x-coordinates match, either we're doubling (same point) or adding inverses (infinity).
+        if self.x == other.x {
+            if self.y == other.y {
+                return self.double();
+            }
+            return GrumpkinPoint::infinity();
+        }
+
+        let dy = self.y.sub(&other.y);
+        let dx = self.x.sub(&other.x);
+        let s = dy.div_unchecked(&dx);
+        let x2 = s.square().sub(&self.x).sub(&other.x);
+        let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
+        GrumpkinPoint { x: x2, y: y2 }
     }
     // specialty routine for computing res = 2*self + other
     // tries to avoid doubling as much as possible
