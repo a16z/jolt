@@ -25,12 +25,20 @@ const GLV_WINDOW: usize = 8;
 const GLV_BUCKETS: usize = 1 << GLV_WINDOW;
 const GLV_WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(GLV_WINDOW);
 
+// Fixed-base (generator) windowed multiplication parameters (256-bit scalars).
+// This is a classic fixed-window method: precompute [j * 2^(w*i) * G] for each window i.
+// Online cost: ~SCALAR_BITS/FIXED_BASE_WINDOW additions, with *no doublings*.
+const FIXED_BASE_WINDOW: usize = 8;
+const FIXED_BASE_BUCKETS: usize = 1 << FIXED_BASE_WINDOW;
+const FIXED_BASE_WINDOWS: usize = SCALAR_BITS.div_ceil(FIXED_BASE_WINDOW);
+
 const RUN_BASELINE: bool = false;
 const RUN_GLV: bool = false;
 const RUN_PIPPENGER: bool = false;
 const RUN_GLV_PIPPENGER: bool = false;
 const RUN_PIPPENGER_ONLY: bool = false;
 const RUN_GLV_PIPPENGER_ONLY: bool = true;
+const RUN_FIXED_BASE_ONLY: bool = false;
 
 const FR_MODULUS_LIMBS: [u64; 4] = [
     4332616871279656263,
@@ -111,6 +119,65 @@ fn pippenger_window_value_128(scalar: u128, window: usize) -> u16 {
     let val = scalar >> offset;
     let mask = (1u128 << GLV_WINDOW) - 1;
     (val & mask) as u16
+}
+
+#[inline(always)]
+fn fixed_base_window_value_256(scalar: &[u64; 4], window: usize) -> u16 {
+    let offset = window * FIXED_BASE_WINDOW;
+    let limb = offset / 64;
+    let bit = offset % 64;
+    if limb >= 4 {
+        return 0;
+    }
+    let mut val = scalar[limb] >> bit;
+    if bit + FIXED_BASE_WINDOW > 64 && limb + 1 < 4 {
+        val |= scalar[limb + 1] << (64 - bit);
+    }
+    let mask = (1u64 << FIXED_BASE_WINDOW) - 1;
+    (val & mask) as u16
+}
+
+/// Fixed-base precomputation table for a single base point `P`.
+///
+/// `table[window][digit] = digit * (2^(window*FIXED_BASE_WINDOW)) * P`.
+#[inline(never)]
+fn precompute_fixed_base_table(
+    base: &GrumpkinPoint,
+) -> [[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS] {
+    let mut table: [[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS] =
+        core::array::from_fn(|_| core::array::from_fn(|_| GrumpkinPoint::infinity()));
+
+    let mut window_base = base.clone();
+    for window_table in table.iter_mut() {
+        window_table[0] = GrumpkinPoint::infinity();
+        window_table[1] = window_base.clone();
+        for digit in 2..FIXED_BASE_BUCKETS {
+            window_table[digit] = window_table[digit - 1].add(&window_base);
+        }
+
+        // Shift base for next window: window_base *= 2^FIXED_BASE_WINDOW.
+        for _ in 0..FIXED_BASE_WINDOW {
+            window_base = window_base.double();
+        }
+    }
+
+    table
+}
+
+/// Fixed-base (table) scalar multiplication for 256-bit scalars.
+#[inline(never)]
+fn scalar_mul_fixed_base_table_256(
+    scalar: &[u64; 4],
+    table: &[[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS],
+) -> GrumpkinPoint {
+    let mut res = GrumpkinPoint::infinity();
+    for (window, window_table) in table.iter().enumerate() {
+        let digit = fixed_base_window_value_256(scalar, window) as usize;
+        if digit != 0 {
+            res = res.add(&window_table[digit]);
+        }
+    }
+    res
 }
 
 #[inline(always)]
@@ -328,6 +395,20 @@ fn msm_pippenger_glv(scalars: &[[u64; 4]], points: &[GrumpkinPoint]) -> Grumpkin
     result
 }
 
+/// Fixed-base MSM: sum_i (scalar_i * G) using a fixed-window precomputed table for `G`.
+#[inline(never)]
+fn msm_fixed_base_table_256(
+    scalars: &[[u64; 4]],
+    base_table: &[[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS],
+) -> GrumpkinPoint {
+    let mut result = GrumpkinPoint::infinity();
+    for scalar in scalars.iter() {
+        let term = scalar_mul_fixed_base_table_256(scalar, base_table);
+        result = result.add(&term);
+    }
+    result
+}
+
 /// Generate deterministic test scalars using a simple LCG.
 fn generate_scalars(seed: u64, count: usize) -> [[u64; 4]; MSM_SIZE] {
     let mut scalars = [[0u64; 4]; MSM_SIZE];
@@ -345,10 +426,13 @@ fn generate_scalars(seed: u64, count: usize) -> [[u64; 4]; MSM_SIZE] {
 }
 
 /// Generate deterministic test points by scalar multiplication of generator.
-fn generate_points(seed: u64, count: usize) -> [GrumpkinPoint; MSM_SIZE] {
+fn generate_points_fixed_base(
+    seed: u64,
+    count: usize,
+    table_g: &[[GrumpkinPoint; FIXED_BASE_BUCKETS]; FIXED_BASE_WINDOWS],
+) -> [GrumpkinPoint; MSM_SIZE] {
     // Initialize with infinity - we'll replace these
     let mut points: [GrumpkinPoint; MSM_SIZE] = core::array::from_fn(|_| GrumpkinPoint::infinity());
-    let generator = GrumpkinPoint::generator();
 
     let (a, c) = (6364136223846793005u64, 1442695040888963407u64);
     let mut state = seed;
@@ -357,7 +441,7 @@ fn generate_points(seed: u64, count: usize) -> [GrumpkinPoint; MSM_SIZE] {
         // Generate a small scalar for point generation (just use one limb)
         state = state.wrapping_mul(a).wrapping_add(c);
         let small_scalar = [state, 0, 0, 0];
-        *point = scalar_mul(&small_scalar, &generator);
+        *point = scalar_mul_fixed_base_table_256(&small_scalar, table_g);
     }
     points
 }
@@ -373,6 +457,11 @@ fn grumpkin_msm_bench(seed: u64) -> [u64; 8] {
 
     let g = GrumpkinPoint::generator();
     let g2 = g.double();
+
+    // Fixed-base (generator) precompute table.
+    start_cycle_tracking("fixed_base_precompute_g_w8");
+    let fixed_table_g = precompute_fixed_base_table(&g);
+    end_cycle_tracking("fixed_base_precompute_g_w8");
 
     // Benchmark: Point addition
     start_cycle_tracking("point_add");
@@ -424,13 +513,30 @@ fn grumpkin_msm_bench(seed: u64) -> [u64; 8] {
     let _r = black_box(scalar_mul_glv(black_box(&test_scalar), black_box(&g)));
     end_cycle_tracking("scalar_mul_glv_2x128");
 
+    start_cycle_tracking("scalar_mul_fixed_base_table_256_w8");
+    let _r = black_box(scalar_mul_fixed_base_table_256(
+        black_box(&test_scalar),
+        black_box(&fixed_table_g),
+    ));
+    end_cycle_tracking("scalar_mul_fixed_base_table_256_w8");
+
     // ========== MSM benchmark ==========
 
     // Generate test data
     start_cycle_tracking("msm_setup");
     let scalars = generate_scalars(seed, MSM_SIZE);
-    let points = generate_points(seed.wrapping_add(1), MSM_SIZE);
+    let points = generate_points_fixed_base(seed.wrapping_add(1), MSM_SIZE, &fixed_table_g);
     end_cycle_tracking("msm_setup");
+
+    if RUN_FIXED_BASE_ONLY {
+        start_cycle_tracking("msm_fixed_base_table_256_w8");
+        let result = black_box(msm_fixed_base_table_256(
+            black_box(&scalars),
+            black_box(&fixed_table_g),
+        ));
+        end_cycle_tracking("msm_fixed_base_table_256_w8");
+        return result.to_u64_arr();
+    }
 
     if RUN_PIPPENGER_ONLY {
         start_cycle_tracking("msm_pippenger");
