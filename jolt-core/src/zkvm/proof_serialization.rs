@@ -36,7 +36,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage6a_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
@@ -365,6 +366,15 @@ impl CanonicalSerialize for VirtualPolynomial {
                 40u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*flag).unwrap()).serialize_with_mode(&mut writer, compress)
             }
+            Self::BytecodeValStage(stage) => {
+                41u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*stage).unwrap()).serialize_with_mode(&mut writer, compress)
+            }
+            Self::BytecodeReadRafAddrClaim => 42u8.serialize_with_mode(&mut writer, compress),
+            Self::BooleanityAddrClaim => 43u8.serialize_with_mode(&mut writer, compress),
+            Self::BytecodeClaimReductionIntermediate => {
+                44u8.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -406,11 +416,15 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RamValInit
             | Self::RamValFinal
             | Self::RamHammingWeight
-            | Self::UnivariateSkip => 1,
+            | Self::UnivariateSkip
+            | Self::BytecodeReadRafAddrClaim
+            | Self::BooleanityAddrClaim
+            | Self::BytecodeClaimReductionIntermediate => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
-            | Self::LookupTableFlag(_) => 2,
+            | Self::LookupTableFlag(_)
+            | Self::BytecodeValStage(_) => 2,
         }
     }
 }
@@ -486,6 +500,13 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::LookupTableFlag(flag as usize)
                 }
+                41 => {
+                    let stage = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::BytecodeValStage(stage as usize)
+                }
+                42 => Self::BytecodeReadRafAddrClaim,
+                43 => Self::BooleanityAddrClaim,
+                44 => Self::BytecodeClaimReductionIntermediate,
                 _ => return Err(SerializationError::InvalidData),
             },
         )

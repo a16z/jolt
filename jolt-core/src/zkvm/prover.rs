@@ -41,7 +41,10 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
+        booleanity::{
+            BooleanityAddressSumcheckProver, BooleanityCycleSumcheckProver,
+            BooleanitySumcheckParams,
+        },
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProof},
@@ -96,7 +99,9 @@ use crate::{
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     zkvm::{
-        bytecode::read_raf_checking::BytecodeReadRafSumcheckProver,
+        bytecode::read_raf_checking::{
+            BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
+        },
         fiat_shamir_preamble,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
@@ -153,6 +158,10 @@ pub struct JoltCpuProver<
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the prover state here between stages.
     advice_reduction_prover_untrusted: Option<AdviceClaimReductionProver<F>>,
+    /// BytecodeReadRaf spans Stage 6a (address) and Stage 6b (cycle).
+    bytecode_read_raf_cycle_prover: Option<BytecodeReadRafCycleSumcheckProver<F>>,
+    /// Booleanity spans Stage 6a (address) and Stage 6b (cycle).
+    booleanity_cycle_prover: Option<BooleanityCycleSumcheckProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -402,6 +411,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             },
             advice_reduction_prover_trusted: None,
             advice_reduction_prover_untrusted: None,
+            bytecode_read_raf_cycle_prover: None,
+            booleanity_cycle_prover: None,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -454,7 +465,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage3_sumcheck_proof = self.prove_stage3();
         let stage4_sumcheck_proof = self.prove_stage4();
         let stage5_sumcheck_proof = self.prove_stage5();
-        let stage6_sumcheck_proof = self.prove_stage6();
+        let stage6a_sumcheck_proof = self.prove_stage6a();
+        let stage6b_sumcheck_proof = self.prove_stage6b();
         let stage7_sumcheck_proof = self.prove_stage7();
 
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
@@ -489,7 +501,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             stage3_sumcheck_proof,
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
-            stage6_sumcheck_proof,
+            stage6a_sumcheck_proof,
+            stage6b_sumcheck_proof,
             stage7_sumcheck_proof,
             joint_opening_proof,
             trace_length: self.trace.len(),
@@ -1070,9 +1083,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage6(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+    fn prove_stage6a(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
         #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 6 baseline");
+        print_current_memory_usage("Stage 6a baseline");
 
         let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
             &self.preprocessing.shared.bytecode,
@@ -1082,15 +1095,61 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        let ram_hamming_booleanity_params =
-            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
-
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+
+        let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
+            bytecode_read_raf_params,
+            Arc::clone(&self.trace),
+            Arc::clone(&self.preprocessing.shared.bytecode),
+        );
+        let mut booleanity = BooleanityAddressSumcheckProver::initialize(
+            booleanity_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
+        );
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage(
+                "BytecodeReadRafAddressSumcheckProver",
+                &bytecode_read_raf,
+            );
+            print_data_structure_heap_usage("BooleanityAddressSumcheckProver", &booleanity);
+        }
+
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> =
+            vec![&mut bytecode_read_raf, &mut booleanity];
+
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage6a_start_flamechart.svg");
+        tracing::info!("Stage 6a proving");
+        let (sumcheck_proof, _r_stage6a) = BatchedSumcheck::prove(
+            instances.iter_mut().map(|v| &mut **v as _).collect(),
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        );
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage6a_end_flamechart.svg");
+
+        self.bytecode_read_raf_cycle_prover = Some(bytecode_read_raf.into_cycle_prover());
+        self.booleanity_cycle_prover = Some(booleanity.into_cycle_prover());
+
+        sumcheck_proof
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prove_stage6b(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 6b baseline");
+
+        let ram_hamming_booleanity_params =
+            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
 
         let ram_ra_virtual_params = RamRaVirtualParams::new(
             self.trace.len(),
@@ -1108,7 +1167,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.advice.trusted_advice_polynomial.is_some() {
             let trusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Trusted,
@@ -1159,20 +1218,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             };
         }
 
-        let mut bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
-            bytecode_read_raf_params,
-            Arc::clone(&self.trace),
-            Arc::clone(&self.preprocessing.shared.bytecode),
-        );
+        let mut bytecode_read_raf = self
+            .bytecode_read_raf_cycle_prover
+            .take()
+            .expect("Stage 6b missing BytecodeReadRaf cycle prover");
+        let mut booleanity = self
+            .booleanity_cycle_prover
+            .take()
+            .expect("Stage 6b missing Booleanity cycle prover");
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
-
-        let mut booleanity = BooleanitySumcheckProver::initialize(
-            booleanity_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
-            &self.program_io.memory_layout,
-        );
 
         let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
@@ -1187,12 +1242,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         #[cfg(feature = "allocative")]
         {
-            print_data_structure_heap_usage("BytecodeReadRafSumcheckProver", &bytecode_read_raf);
+            print_data_structure_heap_usage(
+                "BytecodeReadRafCycleSumcheckProver",
+                &bytecode_read_raf,
+            );
             print_data_structure_heap_usage(
                 "ram HammingBooleanitySumcheckProver",
                 &ram_hamming_booleanity,
             );
-            print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
+            print_data_structure_heap_usage("BooleanityCycleSumcheckProver", &booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncClaimReductionSumcheckProver", &inc_reduction);
@@ -1220,15 +1278,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         }
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage6_start_flamechart.svg");
-        tracing::info!("Stage 6 proving");
-        let (sumcheck_proof, _r_stage6) = BatchedSumcheck::prove(
+        write_instance_flamegraph_svg(&instances, "stage6b_start_flamechart.svg");
+        tracing::info!("Stage 6b proving");
+        let (sumcheck_proof, _r_stage6b) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
+        write_instance_flamegraph_svg(&instances, "stage6b_end_flamechart.svg");
         drop_in_background_thread(bytecode_read_raf);
         drop_in_background_thread(ram_hamming_booleanity);
         drop_in_background_thread(booleanity);
