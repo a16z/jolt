@@ -600,24 +600,288 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 }
 
+/// Bytecode Read+RAF Address-Phase Sumcheck Prover.
+///
+/// This prover handles only the first `log_K` rounds (address variables).
+/// After completion, call `into_cycle_prover()` to get the cycle-phase prover.
 #[derive(Allocative)]
 pub struct BytecodeReadRafAddressSumcheckProver<F: JoltField> {
-    inner: BytecodeReadRafSumcheckProver<F>,
+    /// Per-stage address MLEs F_i(k) built from eq(r_cycle_stage_i, (chunk_index, j)).
+    F: [MultilinearPolynomial<F>; N_STAGES],
+    /// Binding challenges for the first log_K variables.
+    r_address_prime: Vec<F::Challenge>,
+    /// Previous-round claims s_i(0)+s_i(1) per stage.
+    prev_round_claims: [F; N_STAGES],
+    /// Round polynomials per stage for advancing to the next claim.
+    prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
+    /// Trace for computing RA polynomials during transition.
+    #[allocative(skip)]
+    trace: Arc<Vec<Cycle>>,
+    /// Bytecode preprocessing for computing PCs.
+    #[allocative(skip)]
+    bytecode_preprocessing: Arc<BytecodePreprocessing>,
+
+    // State transferred to cycle prover
+    /// Per-stage Gruen-split eq polynomials over cycle vars.
+    gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
+    /// Parameters (shared with cycle prover).
+    pub params: BytecodeReadRafSumcheckParams<F>,
 }
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
+    /// Initialize a BytecodeReadRafAddressSumcheckProver.
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafAddressSumcheckProver::initialize")]
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: Arc<BytecodePreprocessing>,
     ) -> Self {
+        let claim_per_stage = [
+            params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
+            params.rv_claims[1],
+            params.rv_claims[2] + params.gamma_powers[4] * params.raf_shift_claim,
+            params.rv_claims[3],
+            params.rv_claims[4],
+        ];
+
+        // Two-table split-eq optimization for computing F[stage][k] = Σ_{c: PC(c)=k} eq(r_cycle, c).
+        let T = trace.len();
+        let K = params.K;
+        let log_T = params.log_T;
+
+        let lo_bits = log_T / 2;
+        let hi_bits = log_T - lo_bits;
+        let in_len: usize = 1 << lo_bits;
+        let out_len: usize = 1 << hi_bits;
+
+        let (E_hi, E_lo): ([Vec<F>; N_STAGES], [Vec<F>; N_STAGES]) = rayon::join(
+            || {
+                params
+                    .r_cycles
+                    .each_ref()
+                    .map(|r_cycle| EqPolynomial::evals(&r_cycle[..hi_bits]))
+            },
+            || {
+                params
+                    .r_cycles
+                    .each_ref()
+                    .map(|r_cycle| EqPolynomial::evals(&r_cycle[hi_bits..]))
+            },
+        );
+
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = out_len.div_ceil(num_threads);
+
+        let F_polys: [Vec<F>; N_STAGES] = E_hi[0]
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                let mut partial: [Vec<F>; N_STAGES] =
+                    array::from_fn(|_| unsafe_allocate_zero_vec(K));
+                let mut inner: [Vec<F>; N_STAGES] = array::from_fn(|_| unsafe_allocate_zero_vec(K));
+                let mut touched = Vec::with_capacity(in_len);
+
+                let chunk_start = chunk_idx * chunk_size;
+                for (local_idx, _) in chunk.iter().enumerate() {
+                    let c_hi = chunk_start + local_idx;
+                    let c_hi_base = c_hi * in_len;
+
+                    for &k in &touched {
+                        for stage in 0..N_STAGES {
+                            inner[stage][k] = F::zero();
+                        }
+                    }
+                    touched.clear();
+
+                    for c_lo in 0..in_len {
+                        let c = c_hi_base + c_lo;
+                        if c >= T {
+                            break;
+                        }
+
+                        let pc = bytecode_preprocessing.get_pc(&trace[c]);
+                        if inner[0][pc].is_zero() {
+                            touched.push(pc);
+                        }
+                        for stage in 0..N_STAGES {
+                            inner[stage][pc] += E_lo[stage][c_lo];
+                        }
+                    }
+
+                    for &k in &touched {
+                        for stage in 0..N_STAGES {
+                            partial[stage][k] += E_hi[stage][c_hi] * inner[stage][k];
+                        }
+                    }
+                }
+                partial
+            })
+            .reduce(
+                || array::from_fn(|_| unsafe_allocate_zero_vec(K)),
+                |mut a, b| {
+                    for stage in 0..N_STAGES {
+                        a[stage]
+                            .par_iter_mut()
+                            .zip(b[stage].par_iter())
+                            .for_each(|(a, b)| *a += *b);
+                    }
+                    a
+                },
+            );
+
+        let F = F_polys.map(MultilinearPolynomial::from);
+        let gruen_eq_polys = params
+            .r_cycles
+            .each_ref()
+            .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
+
         Self {
-            inner: BytecodeReadRafSumcheckProver::initialize(params, trace, bytecode_preprocessing),
+            F,
+            r_address_prime: Vec::with_capacity(params.log_K),
+            prev_round_claims: claim_per_stage,
+            prev_round_polys: None,
+            trace,
+            bytecode_preprocessing,
+            gruen_eq_polys,
+            params,
         }
     }
 
-    pub fn into_cycle_prover(self) -> BytecodeReadRafCycleSumcheckProver<F> {
-        BytecodeReadRafCycleSumcheckProver { inner: self.inner }
+    /// Transform into the cycle-phase prover, computing RA polynomials and bound_val_evals.
+    pub fn into_cycle_prover(mut self) -> BytecodeReadRafCycleSumcheckProver<F> {
+        // Compute bound_val_evals from val_polys
+        let int_poly = self.params.int_poly.final_sumcheck_claim();
+        let bound_val_evals: [F; N_STAGES] = self
+            .params
+            .val_polys
+            .iter()
+            .zip([
+                int_poly * self.params.gamma_powers[5],
+                F::zero(),
+                int_poly * self.params.gamma_powers[4],
+                F::zero(),
+                F::zero(),
+            ])
+            .map(|(poly, int_term)| poly.final_sumcheck_claim() + int_term)
+            .collect::<Vec<F>>()
+            .try_into()
+            .unwrap();
+
+        // Reverse r_address_prime to get the correct order
+        let mut r_address = std::mem::take(&mut self.r_address_prime);
+        r_address.reverse();
+
+        let r_address_chunks = self
+            .params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(&r_address);
+
+        // Build RA polynomials
+        let ra: Vec<RaPolynomial<u8, F>> = r_address_chunks
+            .iter()
+            .enumerate()
+            .map(|(i, r_address_chunk)| {
+                let ra_i: Vec<Option<u8>> = self
+                    .trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let pc = self.bytecode_preprocessing.get_pc(cycle);
+                        Some(self.params.one_hot_params.bytecode_pc_chunk(pc, i))
+                    })
+                    .collect();
+                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_chunk))
+            })
+            .collect();
+
+        BytecodeReadRafCycleSumcheckProver {
+            ra,
+            gruen_eq_polys: self.gruen_eq_polys,
+            prev_round_claims: self.prev_round_claims,
+            prev_round_polys: None,
+            bound_val_evals,
+            params: self.params,
+        }
+    }
+
+    fn compute_message_impl(&mut self, _previous_claim: F) -> UniPoly<F> {
+        const DEGREE: usize = 2;
+
+        let eval_per_stage: [[F; DEGREE]; N_STAGES] = (0..self.params.val_polys[0].len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let ra_evals = self
+                    .F
+                    .each_ref()
+                    .map(|poly| poly.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh));
+
+                let int_evals =
+                    self.params
+                        .int_poly
+                        .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                let mut val_evals = self
+                    .params
+                    .val_polys
+                    .iter()
+                    .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh))
+                    .zip([Some(&int_evals), None, Some(&int_evals), None, None])
+                    .zip([
+                        Some(self.params.gamma_powers[5]),
+                        None,
+                        Some(self.params.gamma_powers[4]),
+                        None,
+                        None,
+                    ])
+                    .map(|((val_evals, int_evals), gamma)| {
+                        std::array::from_fn::<F, DEGREE, _>(|j| {
+                            val_evals[j]
+                                + int_evals
+                                    .map_or(F::zero(), |int_evals| int_evals[j] * gamma.unwrap())
+                        })
+                    });
+
+                array::from_fn(|stage| {
+                    let [ra_at_0, ra_at_2] = ra_evals[stage];
+                    let [val_at_0, val_at_2] = val_evals.next().unwrap();
+                    [ra_at_0 * val_at_0, ra_at_2 * val_at_2]
+                })
+            })
+            .reduce(
+                || [[F::zero(); DEGREE]; N_STAGES],
+                |a, b| array::from_fn(|i| array::from_fn(|j| a[i][j] + b[i][j])),
+            );
+
+        let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
+        let mut agg_round_poly = UniPoly::zero();
+
+        for (stage, evals) in eval_per_stage.into_iter().enumerate() {
+            let [eval_at_0, eval_at_2] = evals;
+            let eval_at_1 = self.prev_round_claims[stage] - eval_at_0;
+            let round_poly = UniPoly::from_evals(&[eval_at_0, eval_at_1, eval_at_2]);
+            agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
+            round_polys[stage] = round_poly;
+        }
+
+        self.prev_round_polys = Some(round_polys);
+        agg_round_poly
+    }
+
+    fn ingest_challenge_impl(&mut self, r_j: F::Challenge) {
+        if let Some(prev_round_polys) = self.prev_round_polys.take() {
+            self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
+        }
+
+        self.params
+            .val_polys
+            .iter_mut()
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+        self.params
+            .int_poly
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.F
+            .iter_mut()
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+        self.r_address_prime.push(r_j);
     }
 }
 
@@ -625,23 +889,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for BytecodeReadRafAddressSumcheckProver<F>
 {
     fn degree(&self) -> usize {
-        self.inner.params.degree()
+        self.params.degree()
     }
 
     fn num_rounds(&self) -> usize {
-        self.inner.params.log_K
+        self.params.log_K
     }
 
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.inner.params.input_claim(accumulator)
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim(_accumulator)
     }
 
-    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        self.inner.compute_message_internal(round, previous_claim)
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        self.compute_message_impl(previous_claim)
     }
 
-    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        self.inner.ingest_challenge_internal(r_j, round)
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        self.ingest_challenge_impl(r_j)
     }
 
     fn cache_openings(
@@ -654,10 +918,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         r_address.reverse();
         let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(r_address);
         let address_claim: F = self
-            .inner
             .prev_round_claims
             .iter()
-            .zip(self.inner.params.gamma_powers.iter())
+            .zip(self.params.gamma_powers.iter())
             .take(N_STAGES)
             .map(|(claim, gamma)| *claim * *gamma)
             .sum();
@@ -676,20 +939,118 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 }
 
+/// Bytecode Read+RAF Cycle-Phase Sumcheck Prover.
+///
+/// This prover handles the remaining `log_T` rounds (cycle variables).
+/// It is constructed from `BytecodeReadRafAddressSumcheckProver::into_cycle_prover()`.
 #[derive(Allocative)]
 pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
-    inner: BytecodeReadRafSumcheckProver<F>,
+    /// Chunked RA polynomials over address variables.
+    ra: Vec<RaPolynomial<u8, F>>,
+    /// Per-stage Gruen-split eq polynomials over cycle vars.
+    gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
+    /// Previous-round claims s_i(0)+s_i(1) per stage.
+    prev_round_claims: [F; N_STAGES],
+    /// Round polynomials per stage.
+    prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
+    /// Final sumcheck claims of stage Val polynomials (with RAF Int folded).
+    bound_val_evals: [F; N_STAGES],
+    /// Parameters.
+    pub params: BytecodeReadRafSumcheckParams<F>,
+}
+
+impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
+    fn compute_message_impl(&mut self, _previous_claim: F) -> UniPoly<F> {
+        let degree = self.params.degree();
+
+        let out_len = self.gruen_eq_polys[0].E_out_current().len();
+        let in_len = self.gruen_eq_polys[0].E_in_current().len();
+        let in_n_vars = in_len.log_2();
+
+        let mut evals_per_stage: [Vec<F>; N_STAGES] = (0..out_len)
+            .into_par_iter()
+            .map(|j_hi| {
+                let mut ra_eval_pairs = vec![(F::zero(), F::zero()); self.ra.len()];
+                let mut ra_prod_evals = vec![F::zero(); degree - 1];
+                let mut evals_per_stage: [_; N_STAGES] =
+                    array::from_fn(|_| vec![F::Unreduced::zero(); degree - 1]);
+
+                for j_lo in 0..in_len {
+                    let j = j_lo + (j_hi << in_n_vars);
+
+                    for (i, ra_i) in self.ra.iter().enumerate() {
+                        let ra_i_eval_at_j_0 = ra_i.get_bound_coeff(j * 2);
+                        let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
+                        ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
+                    }
+                    eval_linear_prod_assign(&ra_eval_pairs, &mut ra_prod_evals);
+
+                    for stage in 0..N_STAGES {
+                        let eq_in_eval = self.gruen_eq_polys[stage].E_in_current()[j_lo];
+                        for i in 0..degree - 1 {
+                            evals_per_stage[stage][i] +=
+                                eq_in_eval.mul_unreduced::<9>(ra_prod_evals[i]);
+                        }
+                    }
+                }
+
+                array::from_fn(|stage| {
+                    let eq_out_eval = self.gruen_eq_polys[stage].E_out_current()[j_hi];
+                    evals_per_stage[stage]
+                        .iter()
+                        .map(|v| eq_out_eval * F::from_montgomery_reduce(*v))
+                        .collect()
+                })
+            })
+            .reduce(
+                || array::from_fn(|_| vec![F::zero(); degree - 1]),
+                |a, b| array::from_fn(|i| zip_eq(&a[i], &b[i]).map(|(a, b)| *a + *b).collect()),
+            );
+
+        // Multiply by bound values
+        for (stage, evals) in evals_per_stage.iter_mut().enumerate() {
+            evals
+                .iter_mut()
+                .for_each(|v| *v *= self.bound_val_evals[stage]);
+        }
+
+        let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
+        let mut agg_round_poly = UniPoly::zero();
+
+        for (stage, evals) in evals_per_stage.iter().enumerate() {
+            let claim = self.prev_round_claims[stage];
+            let round_poly = self.gruen_eq_polys[stage].gruen_poly_from_evals(evals, claim);
+            agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
+            round_polys[stage] = round_poly;
+        }
+
+        self.prev_round_polys = Some(round_polys);
+        agg_round_poly
+    }
+
+    fn ingest_challenge_impl(&mut self, r_j: F::Challenge) {
+        if let Some(prev_round_polys) = self.prev_round_polys.take() {
+            self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
+        }
+
+        self.ra
+            .iter_mut()
+            .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
+        self.gruen_eq_polys
+            .iter_mut()
+            .for_each(|poly| poly.bind(r_j));
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for BytecodeReadRafCycleSumcheckProver<F>
 {
     fn degree(&self) -> usize {
-        self.inner.params.degree()
+        self.params.degree()
     }
 
     fn num_rounds(&self) -> usize {
-        self.inner.params.log_T
+        self.params.log_T
     }
 
     fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
@@ -701,14 +1062,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             .1
     }
 
-    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        self.inner
-            .compute_message_internal(round + self.inner.params.log_K, previous_claim)
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        self.compute_message_impl(previous_claim)
     }
 
-    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        self.inner
-            .ingest_challenge_internal(r_j, round + self.inner.params.log_K)
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        self.ingest_challenge_impl(r_j)
     }
 
     fn cache_openings(
@@ -725,8 +1084,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         r_address_le.reverse();
         let mut full_challenges = r_address_le;
         full_challenges.extend_from_slice(sumcheck_challenges);
-        let inner: &dyn SumcheckInstanceProver<F, T> = &self.inner;
-        inner.cache_openings(accumulator, transcript, &full_challenges);
+        let opening_point = self.params.normalize_opening_point(&full_challenges);
+        let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
+
+        let r_address_chunks = self
+            .params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(&r_address.r);
+
+        for i in 0..self.params.d {
+            accumulator.append_sparse(
+                transcript,
+                vec![CommittedPolynomial::BytecodeRa(i)],
+                SumcheckId::BytecodeReadRaf,
+                r_address_chunks[i].clone(),
+                r_cycle.clone().into(),
+                vec![self.ra[i].final_sumcheck_claim()],
+            );
+        }
     }
 
     #[cfg(feature = "allocative")]
