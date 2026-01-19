@@ -36,7 +36,10 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
-        shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
+        shared_ra_polys::{
+            compute_all_G, compute_all_G_and_ra_indices, compute_ra_indices, RaIndices,
+            SharedRaPolynomials,
+        },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -494,7 +497,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
 /// Booleanity Address-Phase Sumcheck Prover.
 ///
 /// This prover handles only the first `log_k_chunk` rounds (address variables).
-/// After completion, call `into_cycle_prover()` to get the cycle-phase prover.
+/// The cycle-phase prover is constructed separately from witness + accumulator (Option B).
 #[derive(Allocative)]
 pub struct BooleanityAddressSumcheckProver<F: JoltField> {
     /// B: split-eq over address-chunk variables (LowToHigh).
@@ -503,20 +506,10 @@ pub struct BooleanityAddressSumcheckProver<F: JoltField> {
     G: Vec<Vec<F>>,
     /// F: Expanding table for address phase
     F: ExpandingTable<F>,
-    /// Per-polynomial powers γ^i (in the base field).
-    gamma_powers: Vec<F>,
-    /// RA indices (non-transposed, one per cycle)
-    ra_indices: Vec<RaIndices>,
     /// Last round polynomial for claim computation
     last_round_poly: Option<UniPoly<F>>,
     /// Final claim after binding all address variables
     address_claim: Option<F>,
-
-    // State that will be transferred to cycle prover
-    /// D: split-eq over time/cycle variables (LowToHigh).
-    D: GruenSplitEqPolynomial<F>,
-    /// Per-polynomial inverse powers γ^{-i} (in the base field).
-    gamma_powers_inv: Vec<F>,
     /// Parameters (shared with cycle prover)
     pub params: BooleanitySumcheckParams<F>,
 }
@@ -532,8 +525,8 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
-        // Compute G and RA indices in a single pass over the trace
-        let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
+        // Compute G in a single pass over the trace (witness-dependent).
+        let G = compute_all_G::<F>(
             trace,
             bytecode,
             memory_layout,
@@ -541,75 +534,21 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
             &params.r_cycle,
         );
 
-        // Initialize split-eq polynomials for address and cycle variables
+        // Initialize split-eq polynomial for address variables
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
-        let D = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
 
         // Initialize expanding table for address phase
         let k_chunk = 1 << params.log_k_chunk;
         let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
         F_table.reset(F::one());
 
-        // Compute prover-only fields: gamma_powers (γ^i) and gamma_powers_inv (γ^{-i})
-        let num_polys = params.polynomial_types.len();
-        let gamma_f: F = params.gamma.into();
-        let mut gamma_powers = Vec::with_capacity(num_polys);
-        let mut gamma_powers_inv = Vec::with_capacity(num_polys);
-        let mut rho_i = F::one();
-        for _ in 0..num_polys {
-            gamma_powers.push(rho_i);
-            gamma_powers_inv.push(
-                rho_i
-                    .inverse()
-                    .expect("gamma_powers[i] is nonzero (gamma != 0)"),
-            );
-            rho_i *= gamma_f;
-        }
-
         Self {
             B,
             G,
             F: F_table,
-            gamma_powers,
-            ra_indices,
             last_round_poly: None,
             address_claim: None,
-            D,
-            gamma_powers_inv,
             params,
-        }
-    }
-
-    /// Transform into the cycle-phase prover, transferring necessary state.
-    pub fn into_cycle_prover(mut self) -> BooleanityCycleSumcheckProver<F> {
-        // Compute eq_r_r from B's final state
-        let eq_r_r = self.B.get_current_scalar();
-
-        // Initialize SharedRaPolynomials with per-poly pre-scaled eq tables (by rho_i)
-        let F_table = std::mem::take(&mut self.F);
-        let ra_indices = std::mem::take(&mut self.ra_indices);
-        let base_eq = F_table.clone_values();
-        let num_polys = self.params.polynomial_types.len();
-        let tables: Vec<Vec<F>> = (0..num_polys)
-            .into_par_iter()
-            .map(|i| {
-                let rho = self.gamma_powers[i];
-                base_eq.iter().map(|v| rho * *v).collect()
-            })
-            .collect();
-        let H = SharedRaPolynomials::new(tables, ra_indices, self.params.one_hot_params.clone());
-
-        // Drop G arrays in background
-        let g = std::mem::take(&mut self.G);
-        drop_in_background_thread(g);
-
-        BooleanityCycleSumcheckProver {
-            D: self.D,
-            H,
-            eq_r_r,
-            gamma_powers: self.gamma_powers,
-            gamma_powers_inv: self.gamma_powers_inv,
-            params: self.params,
         }
     }
 
@@ -738,7 +677,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 /// Booleanity Cycle-Phase Sumcheck Prover.
 ///
 /// This prover handles the remaining `log_t` rounds (cycle variables).
-/// It is constructed from `BooleanityAddressSumcheckProver::into_cycle_prover()`.
+/// It is constructed from scratch via [`BooleanityCycleSumcheckProver::initialize`].
 #[derive(Allocative)]
 pub struct BooleanityCycleSumcheckProver<F: JoltField> {
     /// D: split-eq over time/cycle variables (LowToHigh).
@@ -756,6 +695,88 @@ pub struct BooleanityCycleSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
+    /// Initialize the cycle-phase prover from scratch (Option B).
+    ///
+    /// Reconstructs all cycle-phase state from:
+    /// - `params` (sampled in Stage 6a, must match verifier)
+    /// - witness inputs (`trace`, `bytecode`, `memory_layout`)
+    /// - Stage 6a address challenges (read from `accumulator`)
+    #[tracing::instrument(skip_all, name = "BooleanityCycleSumcheckProver::initialize")]
+    pub fn initialize(
+        params: BooleanitySumcheckParams<F>,
+        trace: &[Cycle],
+        bytecode: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        accumulator: &ProverOpeningAccumulator<F>,
+    ) -> Self {
+        // Recover Stage 6a address challenges from the accumulator.
+        // These were stored as BIG_ENDIAN (MSB-first) by the address-phase cache_openings.
+        let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::BooleanityAddrClaim,
+            SumcheckId::BooleanityAddressPhase,
+        );
+        let mut r_address_low_to_high = r_address_point.r;
+        r_address_low_to_high.reverse();
+
+        // Recompute eq_r_r = eq(params.r_address, r_address_challenges) using the same binding
+        // progression as the address prover.
+        let mut B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
+        for r_j in r_address_low_to_high.iter().cloned() {
+            B.bind(r_j);
+        }
+        let eq_r_r = B.get_current_scalar();
+
+        // Recompute base eq table over k_chunk addresses from the address challenges.
+        let k_chunk = 1 << params.log_k_chunk;
+        let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
+        F_table.reset(F::one());
+        for r_j in r_address_low_to_high.iter().cloned() {
+            F_table.update(r_j);
+        }
+        let base_eq = F_table.clone_values();
+
+        // Compute RA indices from witness (unfused with G computation).
+        let ra_indices = compute_ra_indices(trace, bytecode, memory_layout, &params.one_hot_params);
+
+        // Compute prover-only batching coefficients rho_i = gamma^i and inverses.
+        let num_polys = params.polynomial_types.len();
+        let gamma_f: F = params.gamma.into();
+        let mut gamma_powers = Vec::with_capacity(num_polys);
+        let mut gamma_powers_inv = Vec::with_capacity(num_polys);
+        let mut rho_i = F::one();
+        for _ in 0..num_polys {
+            gamma_powers.push(rho_i);
+            gamma_powers_inv.push(
+                rho_i
+                    .inverse()
+                    .expect("gamma is nonzero, so rho_i is invertible"),
+            );
+            rho_i *= gamma_f;
+        }
+
+        // Initialize SharedRaPolynomials with per-poly pre-scaled eq tables (by rho_i).
+        let tables: Vec<Vec<F>> = (0..num_polys)
+            .into_par_iter()
+            .map(|i| {
+                let rho = gamma_powers[i];
+                base_eq.iter().map(|v| rho * *v).collect()
+            })
+            .collect();
+        let H = SharedRaPolynomials::new(tables, ra_indices, params.one_hot_params.clone());
+
+        // Cycle split-eq polynomial over r_cycle.
+        let D = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
+
+        Self {
+            D,
+            H,
+            eq_r_r,
+            gamma_powers,
+            gamma_powers_inv,
+            params,
+        }
+    }
+
     fn compute_message_impl(&self, previous_claim: F) -> UniPoly<F> {
         let D = &self.D;
         let H = &self.H;
@@ -932,6 +953,11 @@ impl<F: JoltField> BooleanityAddressSumcheckVerifier<F> {
         Self { params }
     }
 
+    /// Consume this verifier and return the underlying parameters (for Option B orchestration).
+    pub fn into_params(self) -> BooleanitySumcheckParams<F> {
+        self.params
+    }
+
     pub fn into_cycle_verifier(self) -> BooleanityCycleSumcheckVerifier<F> {
         BooleanityCycleSumcheckVerifier {
             params: self.params,
@@ -986,6 +1012,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
 pub struct BooleanityCycleSumcheckVerifier<F: JoltField> {
     params: BooleanitySumcheckParams<F>,
+}
+
+impl<F: JoltField> BooleanityCycleSumcheckVerifier<F> {
+    pub fn new(params: BooleanitySumcheckParams<F>) -> Self {
+        Self { params }
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>

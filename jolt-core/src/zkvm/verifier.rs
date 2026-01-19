@@ -20,6 +20,7 @@ use crate::zkvm::Serializable;
 use crate::zkvm::{
     bytecode::read_raf_checking::{
         BytecodeReadRafAddressSumcheckVerifier, BytecodeReadRafCycleSumcheckVerifier,
+        BytecodeReadRafSumcheckParams,
     },
     claim_reductions::{
         AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
@@ -95,10 +96,6 @@ pub struct JoltVerifier<
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the verifier state here between stages.
     advice_reduction_verifier_untrusted: Option<AdviceClaimReductionVerifier<F>>,
-    /// BytecodeReadRaf spans Stage 6a (address) and Stage 6b (cycle).
-    bytecode_read_raf_cycle_verifier: Option<BytecodeReadRafCycleSumcheckVerifier<F>>,
-    /// Booleanity spans Stage 6a (address) and Stage 6b (cycle).
-    booleanity_cycle_verifier: Option<BooleanityCycleSumcheckVerifier<F>>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
 }
@@ -180,8 +177,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             opening_accumulator,
             advice_reduction_verifier_trusted: None,
             advice_reduction_verifier_untrusted: None,
-            bytecode_read_raf_cycle_verifier: None,
-            booleanity_cycle_verifier: None,
             spartan_key,
             one_hot_params,
         })
@@ -218,8 +213,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.verify_stage3()?;
         self.verify_stage4()?;
         self.verify_stage5()?;
-        self.verify_stage6a()?;
-        self.verify_stage6b()?;
+        let (bytecode_read_raf_params, booleanity_params) = self.verify_stage6a()?;
+        self.verify_stage6b(bytecode_read_raf_params, booleanity_params)?;
         self.verify_stage7()?;
         self.verify_stage8()?;
 
@@ -418,7 +413,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         Ok(())
     }
 
-    fn verify_stage6a(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage6a(
+        &mut self,
+    ) -> Result<
+        (
+            BytecodeReadRafSumcheckParams<F>,
+            BooleanitySumcheckParams<F>,
+        ),
+        anyhow::Error,
+    > {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             &self.preprocessing.shared.bytecode,
@@ -445,22 +448,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
         )
         .context("Stage 6a")?;
-
-        self.bytecode_read_raf_cycle_verifier = Some(bytecode_read_raf.into_cycle_verifier());
-        self.booleanity_cycle_verifier = Some(booleanity.into_cycle_verifier());
-
-        Ok(())
+        Ok((bytecode_read_raf.into_params(), booleanity.into_params()))
     }
 
-    fn verify_stage6b(&mut self) -> Result<(), anyhow::Error> {
-        let bytecode_read_raf = self
-            .bytecode_read_raf_cycle_verifier
-            .take()
-            .expect("Stage 6b missing BytecodeReadRaf cycle verifier");
-        let booleanity = self
-            .booleanity_cycle_verifier
-            .take()
-            .expect("Stage 6b missing Booleanity cycle verifier");
+    fn verify_stage6b(
+        &mut self,
+        bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
+        booleanity_params: BooleanitySumcheckParams<F>,
+    ) -> Result<(), anyhow::Error> {
+        // Initialize Stage 6b cycle verifiers from scratch (Option B).
+        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(bytecode_read_raf_params);
+        let booleanity = BooleanityCycleSumcheckVerifier::new(booleanity_params);
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(

@@ -603,7 +603,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 /// Bytecode Read+RAF Address-Phase Sumcheck Prover.
 ///
 /// This prover handles only the first `log_K` rounds (address variables).
-/// After completion, call `into_cycle_prover()` to get the cycle-phase prover.
+/// The cycle-phase prover is constructed separately from witness + accumulator (Option B).
 #[derive(Allocative)]
 pub struct BytecodeReadRafAddressSumcheckProver<F: JoltField> {
     /// Per-stage address MLEs F_i(k) built from eq(r_cycle_stage_i, (chunk_index, j)).
@@ -614,16 +614,6 @@ pub struct BytecodeReadRafAddressSumcheckProver<F: JoltField> {
     prev_round_claims: [F; N_STAGES],
     /// Round polynomials per stage for advancing to the next claim.
     prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
-    /// Trace for computing RA polynomials during transition.
-    #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
-    /// Bytecode preprocessing for computing PCs.
-    #[allocative(skip)]
-    bytecode_preprocessing: Arc<BytecodePreprocessing>,
-
-    // State transferred to cycle prover
-    /// Per-stage Gruen-split eq polynomials over cycle vars.
-    gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
     /// Parameters (shared with cycle prover).
     pub params: BytecodeReadRafSumcheckParams<F>,
 }
@@ -730,76 +720,13 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
             );
 
         let F = F_polys.map(MultilinearPolynomial::from);
-        let gruen_eq_polys = params
-            .r_cycles
-            .each_ref()
-            .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
 
         Self {
             F,
             r_address_prime: Vec::with_capacity(params.log_K),
             prev_round_claims: claim_per_stage,
             prev_round_polys: None,
-            trace,
-            bytecode_preprocessing,
-            gruen_eq_polys,
             params,
-        }
-    }
-
-    /// Transform into the cycle-phase prover, computing RA polynomials and bound_val_evals.
-    pub fn into_cycle_prover(mut self) -> BytecodeReadRafCycleSumcheckProver<F> {
-        // Compute bound_val_evals from val_polys
-        let int_poly = self.params.int_poly.final_sumcheck_claim();
-        let bound_val_evals: [F; N_STAGES] = self
-            .params
-            .val_polys
-            .iter()
-            .zip([
-                int_poly * self.params.gamma_powers[5],
-                F::zero(),
-                int_poly * self.params.gamma_powers[4],
-                F::zero(),
-                F::zero(),
-            ])
-            .map(|(poly, int_term)| poly.final_sumcheck_claim() + int_term)
-            .collect::<Vec<F>>()
-            .try_into()
-            .unwrap();
-
-        // Reverse r_address_prime to get the correct order
-        let mut r_address = std::mem::take(&mut self.r_address_prime);
-        r_address.reverse();
-
-        let r_address_chunks = self
-            .params
-            .one_hot_params
-            .compute_r_address_chunks::<F>(&r_address);
-
-        // Build RA polynomials
-        let ra: Vec<RaPolynomial<u8, F>> = r_address_chunks
-            .iter()
-            .enumerate()
-            .map(|(i, r_address_chunk)| {
-                let ra_i: Vec<Option<u8>> = self
-                    .trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let pc = self.bytecode_preprocessing.get_pc(cycle);
-                        Some(self.params.one_hot_params.bytecode_pc_chunk(pc, i))
-                    })
-                    .collect();
-                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_chunk))
-            })
-            .collect();
-
-        BytecodeReadRafCycleSumcheckProver {
-            ra,
-            gruen_eq_polys: self.gruen_eq_polys,
-            prev_round_claims: self.prev_round_claims,
-            prev_round_polys: None,
-            bound_val_evals,
-            params: self.params,
         }
     }
 
@@ -942,7 +869,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 /// Bytecode Read+RAF Cycle-Phase Sumcheck Prover.
 ///
 /// This prover handles the remaining `log_T` rounds (cycle variables).
-/// It is constructed from `BytecodeReadRafAddressSumcheckProver::into_cycle_prover()`.
+/// It is constructed from scratch via [`BytecodeReadRafCycleSumcheckProver::initialize`].
 #[derive(Allocative)]
 pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
     /// Chunked RA polynomials over address variables.
@@ -960,6 +887,96 @@ pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
+    /// Initialize the cycle-phase prover from scratch (Option B).
+    ///
+    /// This recomputes the address-phase internal state (per-stage claims and bound value
+    /// evaluations) by replaying the address binding using the Stage 6a challenges from the
+    /// accumulator. This avoids passing prover state across stages at the cost of extra work.
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafCycleSumcheckProver::initialize")]
+    pub fn initialize(
+        params: BytecodeReadRafSumcheckParams<F>,
+        trace: Arc<Vec<Cycle>>,
+        bytecode_preprocessing: Arc<BytecodePreprocessing>,
+        accumulator: &ProverOpeningAccumulator<F>,
+    ) -> Self {
+        // Recover Stage 6a address challenges from the accumulator.
+        // Address-phase cache_openings stored them as BIG_ENDIAN (MSB-first).
+        let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::BytecodeReadRafAddrClaim,
+            SumcheckId::BytecodeReadRafAddressPhase,
+        );
+
+        // Sumcheck challenges were generated LowToHigh; recover that order for replay.
+        let mut r_address_low_to_high = r_address_point.r.clone();
+        r_address_low_to_high.reverse();
+
+        // Re-run the address prover deterministically (no transcript) to recover:
+        // - per-stage claims after binding all address variables
+        // - bound value evaluations (Val + RAF Int folds) as scalars
+        let mut addr = BytecodeReadRafAddressSumcheckProver::initialize(
+            params.clone(),
+            Arc::clone(&trace),
+            Arc::clone(&bytecode_preprocessing),
+        );
+        for (round, r_j) in r_address_low_to_high.iter().cloned().enumerate() {
+            let _ = round; // replay is round-agnostic for this instance
+                           // previous_claim is ignored by this instance (it uses internal per-stage state).
+            let _ = addr.compute_message_impl(F::zero());
+            addr.ingest_challenge_impl(r_j);
+        }
+
+        // Compute bound_val_evals from the now-fully-bound val_polys and int_poly.
+        let int_poly = addr.params.int_poly.final_sumcheck_claim();
+        let bound_val_evals: [F; N_STAGES] = addr
+            .params
+            .val_polys
+            .iter()
+            .zip([
+                int_poly * addr.params.gamma_powers[5],
+                F::zero(),
+                int_poly * addr.params.gamma_powers[4],
+                F::zero(),
+                F::zero(),
+            ])
+            .map(|(poly, int_term)| poly.final_sumcheck_claim() + int_term)
+            .collect::<Vec<F>>()
+            .try_into()
+            .unwrap();
+
+        // Build RA polynomials from witness using MSB-first address challenges.
+        let r_address_chunks = params
+            .one_hot_params
+            .compute_r_address_chunks::<F>(&r_address_point.r);
+        let ra: Vec<RaPolynomial<u8, F>> = r_address_chunks
+            .iter()
+            .enumerate()
+            .map(|(i, r_address_chunk)| {
+                let ra_i: Vec<Option<u8>> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let pc = bytecode_preprocessing.get_pc(cycle);
+                        Some(params.one_hot_params.bytecode_pc_chunk(pc, i))
+                    })
+                    .collect();
+                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_chunk))
+            })
+            .collect();
+
+        let gruen_eq_polys = params
+            .r_cycles
+            .each_ref()
+            .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
+
+        Self {
+            ra,
+            gruen_eq_polys,
+            prev_round_claims: addr.prev_round_claims,
+            prev_round_polys: None,
+            bound_val_evals,
+            params,
+        }
+    }
+
     fn compute_message_impl(&mut self, _previous_claim: F) -> UniPoly<F> {
         let degree = self.params.degree();
 
@@ -1244,6 +1261,11 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         }
     }
 
+    /// Consume this verifier and return the underlying parameters (for Option B orchestration).
+    pub fn into_params(self) -> BytecodeReadRafSumcheckParams<F> {
+        self.params
+    }
+
     pub fn into_cycle_verifier(self) -> BytecodeReadRafCycleSumcheckVerifier<F> {
         BytecodeReadRafCycleSumcheckVerifier {
             params: self.params,
@@ -1298,6 +1320,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
 pub struct BytecodeReadRafCycleSumcheckVerifier<F: JoltField> {
     params: BytecodeReadRafSumcheckParams<F>,
+}
+
+impl<F: JoltField> BytecodeReadRafCycleSumcheckVerifier<F> {
+    pub fn new(params: BytecodeReadRafSumcheckParams<F>) -> Self {
+        Self { params }
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
