@@ -69,34 +69,35 @@ fn test_bijection_with_constraint_system() {
     let builder = ConstraintSystemJaggedBuilder::from_constraints(&cs.constraints);
     let (bijection, mapping) = builder.build();
 
-    // PackedGtExp has 5 poly types (Base, RhoPrev, RhoCurr, Quotient, Bit): 3 × 5 = 15
+    // PackedGtExp has 3 poly types (RhoPrev, RhoCurr, Quotient) - Base/Bit are public inputs: 3 × 3 = 9
     // GtMul has 4 poly types: 2 × 4 = 8
     // G1ScalarMul has 7 poly types: 1 × 7 = 7
-    // Total: 30 polynomials
-    assert_eq!(bijection.num_polynomials(), 30);
-    assert_eq!(mapping.num_polynomials(), 30);
+    // Total: 24 polynomials
+    assert_eq!(bijection.num_polynomials(), 24);
+    assert_eq!(mapping.num_polynomials(), 24);
 
     // Dense sizes:
-    // - PackedGtExp polynomials are 12-var (4096 each): 15 × 4096 = 61440
+    // - PackedGtExp polynomials are 12-var (4096 each): 9 × 4096 = 36864
     // - GtMul polynomials are 4-var (16 each): 8 × 16 = 128
     // - G1ScalarMul polynomials are 8-var (256 each): 7 × 256 = 1792
-    // Total: 63360
+    // Total: 38784
     assert_eq!(
         <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection),
-        15 * 4096 + 8 * 16 + 7 * 256
+        9 * 4096 + 8 * 16 + 7 * 256
     );
 
     let (c_idx, p_type) = mapping.decode(0);
     assert_eq!(c_idx, 0);
-    assert_eq!(p_type as usize, PolyType::Base as usize);
+    // First poly type is now RhoPrev (Base was removed - it's a public input)
+    assert_eq!(p_type as usize, PolyType::RhoPrev as usize);
 
-    // With 15 PackedGtExp polys (indices 0-14), index 15 is the first GtMul poly
-    let (c_idx, p_type) = mapping.decode(15);
+    // With 9 PackedGtExp polys (indices 0-8), index 9 is the first GtMul poly
+    let (c_idx, p_type) = mapping.decode(9);
     assert_eq!(c_idx, 3);
     assert_eq!(p_type as usize, PolyType::MulLhs as usize);
 
-    // Index 23 (15 GT exp + 8 GT mul = 23) is the first G1ScalarMul poly
-    let (c_idx, p_type) = mapping.decode(23);
+    // Index 17 (9 GT exp + 8 GT mul = 17) is the first G1ScalarMul poly
+    let (c_idx, p_type) = mapping.decode(17);
     assert_eq!(c_idx, 5);
     assert_eq!(p_type as usize, PolyType::G1ScalarMulXA as usize);
 }
@@ -273,14 +274,11 @@ fn test_constraint_mapping_consistency() {
         let constraint = &cs.constraints[constraint_idx];
         match constraint.constraint_type {
             ConstraintType::PackedGtExp => {
+                // Base and Bit are public inputs, not committed polynomials
                 assert!(
                     matches!(
                         poly_type,
-                        PolyType::Base
-                            | PolyType::RhoPrev
-                            | PolyType::RhoCurr
-                            | PolyType::Quotient
-                            | PolyType::Bit
+                        PolyType::RhoPrev | PolyType::RhoCurr | PolyType::Quotient
                     ),
                     "Invalid poly type {:?} for GT exp constraint",
                     poly_type
@@ -728,12 +726,11 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
         let constraint_type = &constraint_system.constraints[constraint_idx].constraint_type;
 
         let poly_types = match constraint_type {
+            // Base and Bit are public inputs, not committed polynomials
             ConstraintType::PackedGtExp => vec![
-                PolyType::Base,
                 PolyType::RhoPrev,
                 PolyType::RhoCurr,
                 PolyType::Quotient,
-                PolyType::Bit,
             ],
             ConstraintType::GtMul => vec![
                 PolyType::MulLhs,

@@ -24,7 +24,7 @@ use super::{
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier},
         gt_mul::{GtMulParams, GtMulVerifier},
-        packed_gt_exp::{PackedGtExpParams, PackedGtExpVerifier},
+        packed_gt_exp::{PackedGtExpParams, PackedGtExpPublicInputs, PackedGtExpVerifier},
     },
     stage2::virtualization::{
         extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationVerifier,
@@ -57,6 +57,8 @@ pub struct RecursionVerifierInput {
     pub jagged_mapping: ConstraintMapping,
     /// Precomputed matrix row indices for each polynomial index
     pub matrix_rows: Vec<usize>,
+    /// Public inputs for packed GT exp (base Fq12 and scalar bits)
+    pub packed_gt_exp_public_inputs: Vec<PackedGtExpPublicInputs>,
 }
 
 /// Unified verifier for the recursion SNARK
@@ -196,7 +198,11 @@ impl<F: JoltField> RecursionVerifier<F> {
         // Each PackedGtExp constraint = 1 witness (covers all 254 steps)
         if num_gt_exp > 0 {
             let params = PackedGtExpParams::new();
-            let verifier = PackedGtExpVerifier::new(params, num_gt_exp, transcript);
+            let verifier = PackedGtExpVerifier::new(
+                params,
+                self.input.packed_gt_exp_public_inputs.clone(),
+                transcript,
+            );
             verifiers.push(Box::new(verifier));
         }
 
@@ -260,8 +266,11 @@ impl<F: JoltField> RecursionVerifier<F> {
         };
 
         // Extract virtual claims from Stage 1
-        let virtual_claims =
-            extract_virtual_claims_from_accumulator(accumulator_fq, &self.input.constraint_types);
+        let virtual_claims = extract_virtual_claims_from_accumulator(
+            accumulator_fq,
+            &self.input.constraint_types,
+            &self.input.packed_gt_exp_public_inputs,
+        );
 
         // Create parameters
         let params = DirectEvaluationParams::new(

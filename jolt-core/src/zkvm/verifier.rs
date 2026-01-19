@@ -868,6 +868,7 @@ where
                 jagged_bijection,
                 jagged_mapping,
                 matrix_rows,
+                packed_gt_exp_public_inputs: metadata.packed_gt_exp_public_inputs.clone(),
             }
         };
 

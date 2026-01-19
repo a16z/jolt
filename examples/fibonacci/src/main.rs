@@ -48,20 +48,4 @@ pub fn main() {
         serialize_and_print_size("io_device", "/tmp/fib_io_device.bin", &io_device)
             .expect("Could not serialize io_device.");
     }
-
-    // Test serialization/deserialization of the proof
-    info!("Testing proof serialization/deserialization...");
-    let mut proof_bytes = Vec::new();
-    use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
-    proof.serialize_compressed(&mut proof_bytes).expect("Failed to serialize proof");
-    info!("Serialized proof to {} bytes", proof_bytes.len());
-
-    let deserialized_proof = type_of_proof::deserialize_compressed(&proof_bytes[..])
-        .expect("Failed to deserialize proof");
-    info!("Successfully deserialized proof");
-
-    // Verify with deserialized proof
-    let is_valid = verify_fib(50, output, io_device.panic, deserialized_proof);
-    info!("output: {output}");
-    info!("valid: {is_valid}");
 }

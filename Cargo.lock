@@ -3212,8 +3212,6 @@ dependencies = [
 name = "recursion-guest"
 version = "0.1.0"
 dependencies = [
- "ark-ec",
- "ark-ff",
  "ark-serialize",
  "jolt-sdk",
  "postcard",

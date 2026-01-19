@@ -58,7 +58,10 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        recursion::constraints_sys::ConstraintType,
+        recursion::{
+            constraints_sys::ConstraintType,
+            stage1::packed_gt_exp::PackedGtExpPublicInputs,
+        },
         witness::VirtualPolynomial,
     },
 };
@@ -67,13 +70,15 @@ use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 /// Number of polynomial types in the constraint system
-const NUM_POLY_TYPES: usize = 16;
+/// Note: This was reduced from 16 to 14 after removing Base and Bit polynomials
+/// (they are now computed from public inputs, not stored in the matrix)
+const NUM_POLY_TYPES: usize = 14;
 
 /// Helper function to compute the index in the virtual claims array
 ///
 /// Virtual claims are laid out as:
-/// [constraint_0_poly_0, constraint_0_poly_1, ..., constraint_0_poly_15,
-///  constraint_1_poly_0, constraint_1_poly_1, ..., constraint_1_poly_15, ...]
+/// [constraint_0_poly_0, constraint_0_poly_1, ..., constraint_0_poly_13,
+///  constraint_1_poly_0, constraint_1_poly_1, ..., constraint_1_poly_13, ...]
 ///
 /// So for constraint i and polynomial type j, the index is: i * NUM_POLY_TYPES + j
 #[inline]
@@ -315,15 +320,24 @@ impl DirectEvaluationVerifier {
 /// [constraint_0_poly_0, constraint_0_poly_1, ..., constraint_0_poly_14,
 ///  constraint_1_poly_0, constraint_1_poly_1, ..., constraint_1_poly_14, ...]
 ///
+/// For PackedGtExp constraints, base and bit evaluations are computed directly from
+/// public inputs rather than being extracted from the accumulator.
+///
 /// # Type Parameters
 /// - `F`: The field type
 /// - `A`: The accumulator type (ProverOpeningAccumulator or VerifierOpeningAccumulator)
+///
+/// # Arguments
+/// - `accumulator`: The Stage 1 opening accumulator
+/// - `constraint_types`: The types of constraints in order
+/// - `packed_gt_exp_public_inputs`: Public inputs for each packed GT exp (base, scalar_bits)
 ///
 /// # Returns
 /// A vector of virtual claims organized by constraint then polynomial type
 pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulator<F>>(
     accumulator: &A,
     constraint_types: &[ConstraintType],
+    _packed_gt_exp_public_inputs: &[PackedGtExpPublicInputs],
 ) -> Vec<F> {
     let mut claims = Vec::new();
 
@@ -334,19 +348,20 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
 
     // Process each constraint
     for (idx, constraint_type) in constraint_types.iter().enumerate() {
-        // For each constraint, we need to extract claims for all 16 polynomial types
-        // in the correct order matching the PolyType enum (0-15)
+        // For each constraint, we need to extract claims for all 14 polynomial types
+        // in the correct order matching the PolyType enum (0-13)
+        // Note: Base and Bit are NOT in this array - they're computed from public inputs
+        // and are not stored in the matrix
 
         let mut constraint_claims = vec![F::zero(); NUM_POLY_TYPES];
 
         match constraint_type {
             ConstraintType::PackedGtExp => {
-                // Packed GT Exp uses polynomials 0-4 (Base, RhoPrev, RhoCurr, Quotient, Bit)
-                tracing::debug!("[extract_constraint_claims] Getting PackedGtExpBase({}) opening for constraint {}", packed_gt_exp_idx, idx);
-                let (_, base) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::PackedGtExpBase(packed_gt_exp_idx),
-                    SumcheckId::PackedGtExp,
-                );
+                // Packed GT Exp uses polynomials 0-2 (RhoPrev, RhoCurr, Quotient)
+                // Base and bit are public inputs, not in the matrix
+                tracing::debug!("[extract_constraint_claims] Getting PackedGtExp({}) openings for constraint {}", packed_gt_exp_idx, idx);
+
+                // Get committed polynomial claims
                 let (_, rho_prev) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::PackedGtExpRho(packed_gt_exp_idx),
                     SumcheckId::PackedGtExp,
@@ -359,21 +374,16 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
                     VirtualPolynomial::PackedGtExpQuotient(packed_gt_exp_idx),
                     SumcheckId::PackedGtExp,
                 );
-                let (_, bit) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::PackedGtExpBit(packed_gt_exp_idx),
-                    SumcheckId::PackedGtExp,
-                );
 
-                constraint_claims[0] = base;
-                constraint_claims[1] = rho_prev;
-                constraint_claims[2] = rho_curr;
-                constraint_claims[3] = quotient;
-                constraint_claims[4] = bit;
+                // New PolyType values: RhoPrev=0, RhoCurr=1, Quotient=2
+                constraint_claims[0] = rho_prev;
+                constraint_claims[1] = rho_curr;
+                constraint_claims[2] = quotient;
 
                 packed_gt_exp_idx += 1;
             }
             ConstraintType::GtMul { .. } => {
-                // GT Mul uses polynomials 5-8 (MulLhs, MulRhs, MulResult, MulQuotient)
+                // GT Mul uses polynomials 3-6 (MulLhs, MulRhs, MulResult, MulQuotient)
                 let (_, lhs) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::RecursionMulLhs(gt_mul_idx),
                     SumcheckId::GtMul,
@@ -391,15 +401,16 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
                     SumcheckId::GtMul,
                 );
 
-                constraint_claims[5] = lhs;
-                constraint_claims[6] = rhs;
-                constraint_claims[7] = result;
-                constraint_claims[8] = quotient;
+                // New PolyType values: MulLhs=3, MulRhs=4, MulResult=5, MulQuotient=6
+                constraint_claims[3] = lhs;
+                constraint_claims[4] = rhs;
+                constraint_claims[5] = result;
+                constraint_claims[6] = quotient;
 
                 gt_mul_idx += 1;
             }
             ConstraintType::G1ScalarMul { .. } => {
-                // G1 Scalar Mul uses polynomials 9-15
+                // G1 Scalar Mul uses polynomials 7-13
                 let (_, x_a) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::RecursionG1ScalarMulXA(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
@@ -429,13 +440,14 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
                     SumcheckId::G1ScalarMul,
                 );
 
-                constraint_claims[9] = x_a;
-                constraint_claims[10] = y_a;
-                constraint_claims[11] = x_t;
-                constraint_claims[12] = y_t;
-                constraint_claims[13] = x_a_next;
-                constraint_claims[14] = y_a_next;
-                constraint_claims[15] = indicator;
+                // New PolyType values: G1ScalarMulXA=7, YA=8, XT=9, YT=10, XANext=11, YANext=12, Indicator=13
+                constraint_claims[7] = x_a;
+                constraint_claims[8] = y_a;
+                constraint_claims[9] = x_t;
+                constraint_claims[10] = y_t;
+                constraint_claims[11] = x_a_next;
+                constraint_claims[12] = y_a_next;
+                constraint_claims[13] = indicator;
 
                 g1_scalar_mul_idx += 1;
             }

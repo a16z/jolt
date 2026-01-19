@@ -36,7 +36,7 @@ use super::{
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
         gt_mul::{GtMulParams, GtMulProver},
-        packed_gt_exp::{PackedGtExpParams, PackedGtExpProver},
+        packed_gt_exp::{PackedGtExpParams, PackedGtExpProver, PackedGtExpPublicInputs},
     },
     stage2::virtualization::{
         DirectEvaluationParams, DirectEvaluationProver,
@@ -362,6 +362,7 @@ impl RecursionProver<Fq> {
         )
         .entered();
         let mut packed_gt_exp_witnesses = Vec::with_capacity(witness_collection.gt_exp.len());
+        let mut packed_gt_exp_public_inputs = Vec::with_capacity(witness_collection.gt_exp.len());
         for (_op_id, witness) in witness_collection.gt_exp.iter() {
             // Convert base ArkGT to 4-var MLE
             let base_mle = fq12_to_multilinear_evals(&witness.base);
@@ -379,6 +380,12 @@ impl RecursionProver<Fq> {
 
             // Keep for Stage 1 prover
             packed_gt_exp_witnesses.push(packed);
+
+            // Store public inputs for verifier
+            packed_gt_exp_public_inputs.push(PackedGtExpPublicInputs::new(
+                witness.base,
+                witness.bits.clone(),
+            ));
         }
         drop(packed_gt_exp_span);
 
@@ -413,6 +420,15 @@ impl RecursionProver<Fq> {
                 cw.mul_witnesses.len(),
                 pre_count
             );
+
+            // Also collect public inputs for the combine witnesses
+            for exp_wit in &cw.exp_witnesses {
+                packed_gt_exp_public_inputs.push(PackedGtExpPublicInputs::new(
+                    exp_wit.base,
+                    exp_wit.bits.clone(),
+                ));
+            }
+
             let combined_packed_witnesses = builder.add_combine_witness(cw);
             tracing::info!(
                 "[Homomorphic Combine] Post-add constraint count: {}, packed witnesses: {}",
@@ -437,6 +453,7 @@ impl RecursionProver<Fq> {
             matrix,
             g_poly,
             packed_gt_exp_witnesses,
+            packed_gt_exp_public_inputs,
         })
     }
 }
@@ -715,6 +732,7 @@ impl<F: JoltField> RecursionProver<F> {
         let virtual_claims = extract_virtual_claims_from_accumulator(
             accumulator_fq,
             &constraint_types,
+            &self.constraint_system.packed_gt_exp_public_inputs,
         );
 
         // Create parameters

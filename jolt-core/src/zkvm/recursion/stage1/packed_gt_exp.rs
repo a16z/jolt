@@ -1,14 +1,16 @@
 //! Packed GT exponentiation sumcheck with 2-phase protocol
 //!
 //! This implements the optimized GT exponentiation verification that packs all 254 steps
-//! into larger MLEs, reducing claims from ~1,016 to 5 per GT exp.
+//! into larger MLEs, reducing claims from ~1,016 to 3 per GT exp.
 //!
-//! Polynomial structure:
+//! Polynomial structure (committed by prover):
 //! - rho(s, x): 12-var (8 step + 4 element) - intermediate results
 //! - rho_next(s, x): 12-var - shifted: rho_next(i, x) = rho(i+1, x)
 //! - quotient(s, x): 12-var - quotient polynomials
-//! - bit(s): 8-var padded to 12-var - scalar bits
-//! - base(x): 4-var padded to 12-var - base element
+//!
+//! Public inputs (verifier computes directly, not committed):
+//! - bit(s): 8-var - scalar bits (derived from public scalar exponent)
+//! - base(x): 4-var - base element (derived from public Fq12 base)
 //!
 //! Constraint: C(s, x) = rho_next(s, x) - rho(s, x)² × base(x)^{bit(s)} - quotient(s, x) × g(x)
 //!
@@ -35,8 +37,10 @@ use crate::{
     zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
     virtual_claims,
 };
-use ark_bn254::Fq;
+use ark_bn254::{Fq, Fq12};
 use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_optimizations::fq12_to_multilinear_evals;
 use rayon::prelude::*;
 
 /// Number of step variables (8 for 256 steps, sufficient for 254 scalar bits)
@@ -47,6 +51,64 @@ pub const NUM_ELEMENT_VARS: usize = 4;
 
 /// Total variables = step + element
 pub const NUM_TOTAL_VARS: usize = NUM_STEP_VARS + NUM_ELEMENT_VARS;
+
+/// Public inputs for a single packed GT exponentiation.
+///
+/// These are known to both prover and verifier, so the verifier can compute
+/// the bit and base polynomial evaluations directly without receiving claims.
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct PackedGtExpPublicInputs {
+    /// Base GT element (Fq12) for this exponentiation
+    pub base: Fq12,
+    /// Scalar bits (binary representation of the exponent)
+    pub scalar_bits: Vec<bool>,
+}
+
+impl PackedGtExpPublicInputs {
+    /// Create new public inputs for a GT exponentiation
+    pub fn new(base: Fq12, scalar_bits: Vec<bool>) -> Self {
+        Self { base, scalar_bits }
+    }
+
+    /// Evaluate the bit MLE at challenge point r_s* (8-variable MLE, 256 points)
+    ///
+    /// bit(s) = scalar_bits[s] for s ∈ {0,1}^8
+    /// MLE evaluation: Σ_s eq(r_s*, s) · bit_s
+    pub fn evaluate_bit_mle<F: JoltField>(&self, r_s_star: &[F]) -> F {
+        debug_assert_eq!(r_s_star.len(), NUM_STEP_VARS);
+        let eq_evals = EqPolynomial::<F>::evals(r_s_star);
+        self.scalar_bits
+            .iter()
+            .zip(eq_evals.iter())
+            .map(|(b, eq)| if *b { *eq } else { F::zero() })
+            .fold(F::zero(), |acc, x| acc + x)
+    }
+
+    /// Evaluate the base MLE at challenge point r_x* (4-variable MLE, 16 points)
+    ///
+    /// base(x) = fq12_to_multilinear_evals(base)[x] for x ∈ {0,1}^4
+    pub fn evaluate_base_mle<F: JoltField>(&self, r_x_star: &[F]) -> F {
+        use std::any::TypeId;
+
+        debug_assert_eq!(r_x_star.len(), NUM_ELEMENT_VARS);
+
+        // Runtime check that F = Fq for safe transmute
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("evaluate_base_mle requires F = Fq");
+        }
+
+        let base_mle_fq = fq12_to_multilinear_evals(&self.base); // 16 Fq values
+        let base_poly = DensePolynomial::new(base_mle_fq);
+
+        // Convert r_x_star to Fq slice
+        // SAFETY: F = Fq verified above, and slice references have same layout
+        let r_x_star_fq: &[Fq] = unsafe {
+            std::slice::from_raw_parts(r_x_star.as_ptr() as *const Fq, r_x_star.len())
+        };
+        let result_fq = base_poly.evaluate(r_x_star_fq);
+        unsafe { std::mem::transmute_copy(&result_fq) }
+    }
+}
 
 /// Constraint polynomials for a single packed GT exponentiation
 /// Used when extracting from the Dory matrix for the prover
@@ -266,6 +328,10 @@ impl Default for PackedGtExpParams {
 /// 2-phase sumcheck:
 /// - Phase 1 (rounds 0-7): bind step variables s (low bits)
 /// - Phase 2 (rounds 8-11): bind element variables x (high bits)
+///
+/// Note: bit_polys and base_polys are used internally during sumcheck computation
+/// but are NOT committed as virtual claims. The verifier computes these evaluations
+/// directly from public inputs (base Fq12 and scalar bits).
 pub struct PackedGtExpProver<F: JoltField> {
     /// Parameters
     pub params: PackedGtExpParams,
@@ -273,22 +339,24 @@ pub struct PackedGtExpProver<F: JoltField> {
     /// Number of witnesses (GT exp instances)
     pub num_witnesses: usize,
 
-    /// Packed rho polynomials (one per witness)
+    /// Packed rho polynomials (one per witness) - COMMITTED
     pub rho_polys: Vec<MultilinearPolynomial<F>>,
 
-    /// Packed rho_next polynomials (one per witness)
+    /// Packed rho_next polynomials (one per witness) - COMMITTED
     pub rho_next_polys: Vec<MultilinearPolynomial<F>>,
 
-    /// Packed quotient polynomials (one per witness)
+    /// Packed quotient polynomials (one per witness) - COMMITTED
     pub quotient_polys: Vec<MultilinearPolynomial<F>>,
 
-    /// Packed bit polynomials (one per witness)
+    /// Packed bit polynomials (one per witness) - NOT COMMITTED (public input)
+    /// Used internally for sumcheck computation only
     pub bit_polys: Vec<MultilinearPolynomial<F>>,
 
-    /// Packed base polynomials (one per witness)
+    /// Packed base polynomials (one per witness) - NOT COMMITTED (public input)
+    /// Used internally for sumcheck computation only
     pub base_polys: Vec<MultilinearPolynomial<F>>,
 
-    /// g(x) polynomial (padded to 12-var, shared across all witnesses)
+    /// g(x) polynomial (padded to 12-var, shared across all witnesses) - NOT COMMITTED (constant)
     pub g_poly: MultilinearPolynomial<F>,
 
     /// eq(r_x, x) polynomial for element batching (4-var, bound in Phase 1)
@@ -309,12 +377,10 @@ pub struct PackedGtExpProver<F: JoltField> {
     /// Current round (0 to 11)
     pub round: usize,
 
-    /// Final claims after all rounds (one per witness)
+    /// Final claims after all rounds (one per witness) - only for committed polynomials
     pub rho_claims: Vec<F>,
     pub rho_next_claims: Vec<F>,
     pub quotient_claims: Vec<F>,
-    pub bit_claims: Vec<F>,
-    pub base_claims: Vec<F>,
 }
 
 impl<F: JoltField> PackedGtExpProver<F> {
@@ -392,8 +458,6 @@ impl<F: JoltField> PackedGtExpProver<F> {
             rho_claims: vec![F::zero(); num_witnesses],
             rho_next_claims: vec![F::zero(); num_witnesses],
             quotient_claims: vec![F::zero(); num_witnesses],
-            bit_claims: vec![F::zero(); num_witnesses],
-            base_claims: vec![F::zero(); num_witnesses],
         }
     }
 
@@ -594,7 +658,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 
     #[tracing::instrument(skip_all, name = "PackedGtExp::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        // Bind witness polynomials (always)
+        // Bind committed witness polynomials
         self.g_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         for poly in &mut self.rho_polys {
             poly.bind_parallel(r_j, BindingOrder::LowToHigh);
@@ -605,6 +669,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
         for poly in &mut self.quotient_polys {
             poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
+
+        // Bind public input polynomials (used for sumcheck computation, not committed)
         for poly in &mut self.bit_polys {
             poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
@@ -624,14 +690,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 
         self.round = round + 1;
 
-        // After all 12 rounds, extract final claims for each witness
+        // After all 12 rounds, extract final claims for committed polynomials only
+        // (bit and base are public inputs, verifier computes them directly)
         if self.round == self.params.num_constraint_vars {
             for w in 0..self.num_witnesses {
                 self.rho_claims[w] = self.rho_polys[w].get_bound_coeff(0);
                 self.rho_next_claims[w] = self.rho_next_polys[w].get_bound_coeff(0);
                 self.quotient_claims[w] = self.quotient_polys[w].get_bound_coeff(0);
-                self.bit_claims[w] = self.bit_polys[w].get_bound_coeff(0);
-                self.base_claims[w] = self.base_polys[w].get_bound_coeff(0);
             }
         }
     }
@@ -644,14 +709,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
     ) {
         let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(sumcheck_challenges.to_vec());
 
-        // Cache the 5 polynomial opening claims for each witness
+        // Cache only the 3 committed polynomial opening claims for each witness
+        // (bit and base are public inputs - verifier computes them directly)
         for w in 0..self.num_witnesses {
             let claims = virtual_claims![
                 VirtualPolynomial::PackedGtExpRho(w) => self.rho_claims[w],
                 VirtualPolynomial::PackedGtExpRhoNext(w) => self.rho_next_claims[w],
                 VirtualPolynomial::PackedGtExpQuotient(w) => self.quotient_claims[w],
-                VirtualPolynomial::PackedGtExpBit(w) => self.bit_claims[w],
-                VirtualPolynomial::PackedGtExpBase(w) => self.base_claims[w],
             ];
             append_virtual_claims(
                 accumulator,
@@ -674,16 +738,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 /// 2-phase sumcheck verification:
 /// - Phase 1 (rounds 0-7): step variables s
 /// - Phase 2 (rounds 8-11): element variables x
+///
+/// The verifier computes bit and base polynomial evaluations directly from
+/// public inputs, rather than receiving them as claims from the prover.
 pub struct PackedGtExpVerifier<F: JoltField> {
     pub params: PackedGtExpParams,
     pub r_x: Vec<F::Challenge>,
     pub r_s: Vec<F::Challenge>,
     pub gamma: F,
     pub num_witnesses: usize,
+    /// Public inputs for each witness (base Fq12 and scalar bits)
+    pub public_inputs: Vec<PackedGtExpPublicInputs>,
 }
 
 impl<F: JoltField> PackedGtExpVerifier<F> {
-    pub fn new<T: Transcript>(params: PackedGtExpParams, num_witnesses: usize, transcript: &mut T) -> Self {
+    pub fn new<T: Transcript>(
+        params: PackedGtExpParams,
+        public_inputs: Vec<PackedGtExpPublicInputs>,
+        transcript: &mut T,
+    ) -> Self {
+        let num_witnesses = public_inputs.len();
+
         // Sample challenges for element variables (4) - must match prover sampling order
         // These form the eq_x polynomial for Phase 2 (rounds 8-11)
         let r_x: Vec<F::Challenge> = (0..params.num_element_vars)
@@ -699,7 +774,14 @@ impl<F: JoltField> PackedGtExpVerifier<F> {
         // Sample gamma for batching across witnesses (must match prover)
         let gamma: F = transcript.challenge_scalar_optimized::<F>().into();
 
-        Self { params, r_x, r_s, gamma, num_witnesses }
+        Self {
+            params,
+            r_x,
+            r_s,
+            gamma,
+            num_witnesses,
+            public_inputs,
+        }
     }
 }
 
@@ -771,20 +853,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
         let mut gamma_power = self.gamma;
 
         for w in 0..self.num_witnesses {
-            // Get polynomial claims for this witness from accumulator
+            // Get committed polynomial claims from accumulator (only 3 now)
             let polynomials = vec![
                 VirtualPolynomial::PackedGtExpRho(w),
                 VirtualPolynomial::PackedGtExpRhoNext(w),
                 VirtualPolynomial::PackedGtExpQuotient(w),
-                VirtualPolynomial::PackedGtExpBit(w),
-                VirtualPolynomial::PackedGtExpBase(w),
             ];
             let claims = get_virtual_claims(accumulator, self.params.sumcheck_id, &polynomials);
             let rho_claim = claims[0];
             let rho_next_claim = claims[1];
             let quotient_claim = claims[2];
-            let bit_claim = claims[3];
-            let base_claim = claims[4];
+
+            // Compute bit and base evaluations directly from public inputs
+            let bit_claim = self.public_inputs[w].evaluate_bit_mle(&r_s_star);
+            let base_claim = self.public_inputs[w].evaluate_base_mle(&r_x_star);
 
             // base^{bit} using linear interpolation
             let base_power = F::one() - bit_claim + bit_claim * base_claim;
@@ -810,14 +892,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
     ) {
         let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(sumcheck_challenges.to_vec());
 
-        // Cache openings for each witness
+        // Cache openings for committed polynomials only (3 per witness)
+        // bit and base are public inputs - verifier computes them directly
         for w in 0..self.num_witnesses {
             let polynomials = vec![
                 VirtualPolynomial::PackedGtExpRho(w),
                 VirtualPolynomial::PackedGtExpRhoNext(w),
                 VirtualPolynomial::PackedGtExpQuotient(w),
-                VirtualPolynomial::PackedGtExpBit(w),
-                VirtualPolynomial::PackedGtExpBase(w),
             ];
             append_virtual_openings(
                 accumulator,

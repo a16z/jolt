@@ -122,6 +122,12 @@ fn test_recursion_snark_e2e_with_dory() {
         .map(|c| c.constraint_type.clone())
         .collect();
 
+    // Extract packed GT exp public inputs for verifier
+    let packed_gt_exp_public_inputs = prover
+        .constraint_system
+        .packed_gt_exp_public_inputs
+        .clone();
+
     let _ = (num_constraints, num_vars, num_s_vars);
 
     // Create transcript for proving
@@ -156,6 +162,7 @@ fn test_recursion_snark_e2e_with_dory() {
         jagged_bijection,
         jagged_mapping,
         matrix_rows,
+        packed_gt_exp_public_inputs,
     };
 
     // Create verifier

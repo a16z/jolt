@@ -1,11 +1,11 @@
 //! Recursion SNARK implementation for Dory commitment scheme
 //!
-//! This module implements a two-stage SNARK protocol for proving recursion constraints
-//! that arise from the Dory polynomial commitment scheme.
+//! This module implements a three-stage SNARK protocol with optimizations for proving
+//! recursion constraints that arise from the Dory polynomial commitment scheme.
 //!
 //! ## Protocol Overview
 //!
-//! The recursion SNARK consists of two stages:
+//! The recursion SNARK consists of three stages plus optimizations:
 //!
 //! ### Stage 1: Constraint Sumchecks (Parallel)
 //! Three independent sumcheck instances prove different constraint types:
@@ -13,8 +13,16 @@
 //! - **GT Multiplication**: Proves constraints for pairing group multiplication
 //! - **G1 Scalar Multiplication**: Proves constraints for elliptic curve scalar multiplication
 //!
-//! ### Stage 2: Virtualization Sumcheck
-//! A single sumcheck that virtualizes all Stage 1 claims into a unified proof
+//! ### Stage 2: Direct Evaluation Protocol
+//! Verifies virtual polynomial claims from Stage 1 using direct evaluation instead
+//! of sumcheck, leveraging the special structure of the constraint matrix
+//!
+//! ### Stage 3: Sparse Polynomial Opening
+//! Uses sumcheck to open the sparse constraint matrix at a random point
+//!
+//! ### Stage 3b: Jagged Assist (Optimization)
+//! Batch verification protocol that reduces verifier cost for evaluating multiple
+//! polynomial openings from O(K × bits) to O(bits) operations
 //!
 //! ## Module Structure
 //! - `constraints_sys`: Constraint system management and matrix building

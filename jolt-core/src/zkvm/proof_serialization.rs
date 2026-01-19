@@ -25,6 +25,7 @@ use crate::{
             bijection::{ConstraintMapping, VarCountJaggedBijection},
             constraints_sys::ConstraintType,
             recursion_prover::RecursionProof,
+            stage1::packed_gt_exp::PackedGtExpPublicInputs,
         },
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -40,6 +41,8 @@ pub struct RecursionConstraintMetadata {
     pub jagged_mapping: ConstraintMapping,
     pub matrix_rows: Vec<usize>,
     pub dense_num_vars: usize,
+    /// Public inputs for packed GT exp (base Fq12 and scalar bits for each GT exp)
+    pub packed_gt_exp_public_inputs: Vec<PackedGtExpPublicInputs>,
 }
 
 /// Jolt proof structure organized by verification stages
@@ -670,14 +673,7 @@ impl CanonicalSerialize for VirtualPolynomial {
                 59u8.serialize_with_mode(&mut writer, compress)?;
                 (*i as u32).serialize_with_mode(&mut writer, compress)
             }
-            Self::PackedGtExpBit(i) => {
-                60u8.serialize_with_mode(&mut writer, compress)?;
-                (*i as u32).serialize_with_mode(&mut writer, compress)
-            }
-            Self::PackedGtExpBase(i) => {
-                61u8.serialize_with_mode(&mut writer, compress)?;
-                (*i as u32).serialize_with_mode(&mut writer, compress)
-            }
+            // Note: PackedGtExpBit and PackedGtExpBase removed - they are public inputs
         }
     }
 
@@ -723,9 +719,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::DorySparseConstraintMatrix => 1,
             Self::PackedGtExpRho(_)
             | Self::PackedGtExpRhoNext(_)
-            | Self::PackedGtExpQuotient(_)
-            | Self::PackedGtExpBit(_)
-            | Self::PackedGtExpBase(_) => 5,
+            | Self::PackedGtExpQuotient(_) => 5,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
@@ -893,14 +887,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::PackedGtExpQuotient(i as usize)
                 }
-                60 => {
-                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
-                    Self::PackedGtExpBit(i as usize)
-                }
-                61 => {
-                    let i = u32::deserialize_with_mode(&mut reader, compress, validate)?;
-                    Self::PackedGtExpBase(i as usize)
-                }
+                // Note: 60/61 (PackedGtExpBit/Base) removed - they are now public inputs
                 _ => return Err(SerializationError::InvalidData),
             },
         )
