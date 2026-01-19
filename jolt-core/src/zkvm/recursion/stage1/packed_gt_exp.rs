@@ -5,12 +5,14 @@
 //!
 //! Polynomial structure (committed by prover):
 //! - rho(s, x): 12-var (8 step + 4 element) - intermediate results
-//! - rho_next(s, x): 12-var - shifted: rho_next(i, x) = rho(i+1, x)
 //! - quotient(s, x): 12-var - quotient polynomials
 //!
 //! Public inputs (verifier computes directly, not committed):
 //! - bit(s): 8-var - scalar bits (derived from public scalar exponent)
 //! - base(x): 4-var - base element (derived from public Fq12 base)
+//!
+//! Virtual polynomial (verified via shift sumcheck, not committed):
+//! - rho_next(s, x): 12-var - shifted: rho_next(i, x) = rho(i+1, x)
 //!
 //! Constraint: C(s, x) = rho_next(s, x) - rho(s, x)² × base(x)^{bit(s)} - quotient(s, x) × g(x)
 //!
@@ -34,7 +36,10 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
+    zkvm::{
+        recursion::{stage1::shift_rho::ShiftClaim, utils::virtual_polynomial_utils::*},
+        witness::VirtualPolynomial
+    },
     virtual_claims,
 };
 use ark_bn254::{Fq, Fq12};
@@ -115,7 +120,6 @@ impl PackedGtExpPublicInputs {
 #[derive(Clone)]
 pub struct PackedGtExpConstraintPolynomials<F: JoltField> {
     pub rho: Vec<F>,
-    pub rho_next: Vec<F>,
     pub quotient: Vec<F>,
     pub bit: Vec<F>,
     pub base: Vec<F>,
@@ -467,6 +471,30 @@ impl<F: JoltField> PackedGtExpProver<F> {
     fn in_step_phase(&self) -> bool {
         self.round < self.params.num_step_vars
     }
+
+    /// Get shift claims for the shift sumcheck
+    pub fn get_shift_claims(&self) -> Vec<ShiftClaim> {
+        let mut claims = Vec::with_capacity(self.num_witnesses);
+
+        for w in 0..self.num_witnesses {
+            claims.push(ShiftClaim {
+                constraint_idx: w,
+            });
+        }
+
+        claims
+    }
+
+    /// Get rho polynomials for shift sumcheck
+    pub fn get_rho_polynomials(&self) -> Vec<Vec<F>> {
+        self.rho_polys
+            .iter()
+            .map(|poly| match poly {
+                MultilinearPolynomial::LargeScalars(p) => p.Z.to_vec(),
+                _ => panic!("Rho polynomials should be LargeScalars"),
+            })
+            .collect()
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpProver<F> {
@@ -709,8 +737,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
     ) {
         let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(sumcheck_challenges.to_vec());
 
-        // Cache only the 3 committed polynomial opening claims for each witness
-        // (bit and base are public inputs - verifier computes them directly)
+        // Cache all polynomial claims including rho_next as virtual
+        // rho and quotient are committed polynomials
+        // rho_next is virtual (will be verified via shift sumcheck)
         for w in 0..self.num_witnesses {
             let claims = virtual_claims![
                 VirtualPolynomial::PackedGtExpRho(w) => self.rho_claims[w],
@@ -853,7 +882,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
         let mut gamma_power = self.gamma;
 
         for w in 0..self.num_witnesses {
-            // Get committed polynomial claims from accumulator (only 3 now)
+            // Get all polynomial claims from accumulator (including virtual rho_next)
             let polynomials = vec![
                 VirtualPolynomial::PackedGtExpRho(w),
                 VirtualPolynomial::PackedGtExpRhoNext(w),
@@ -892,8 +921,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
     ) {
         let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(sumcheck_challenges.to_vec());
 
-        // Cache openings for committed polynomials only (3 per witness)
-        // bit and base are public inputs - verifier computes them directly
+        // Cache openings for all polynomials including virtual rho_next
+        // rho and quotient are committed polynomials
+        // rho_next is virtual (will be verified via shift sumcheck)
         for w in 0..self.num_witnesses {
             let polynomials = vec![
                 VirtualPolynomial::PackedGtExpRho(w),

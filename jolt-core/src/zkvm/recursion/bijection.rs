@@ -200,9 +200,8 @@ impl ConstraintSystemJaggedBuilder {
         for constraint in constraints.iter() {
             match &constraint.constraint_type {
                 ConstraintType::PackedGtExp => {
-                    // Base and Bit are public inputs, not committed polynomials
+                    // Base, Bit, and RhoNext are not committed polynomials
                     used_poly_types.insert(PolyType::RhoPrev);
-                    used_poly_types.insert(PolyType::RhoCurr);
                     used_poly_types.insert(PolyType::Quotient);
                 }
                 ConstraintType::GtMul => {
@@ -233,10 +232,10 @@ impl ConstraintSystemJaggedBuilder {
             for (idx, constraint) in constraints.iter().enumerate() {
                 let num_vars = match &constraint.constraint_type {
                     ConstraintType::PackedGtExp => {
-                        // Packed GT exp uses RhoPrev, RhoCurr, Quotient (all 12-var)
-                        // Base and Bit are public inputs, not committed
+                        // Packed GT exp uses RhoPrev and Quotient (all 12-var)
+                        // Base, Bit, and RhoNext are not committed polynomials
                         match poly_type {
-                            PolyType::RhoPrev | PolyType::RhoCurr | PolyType::Quotient => Some(12),
+                            PolyType::RhoPrev | PolyType::Quotient => Some(12),
                             _ => None,
                         }
                     }

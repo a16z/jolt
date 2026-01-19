@@ -70,9 +70,9 @@ use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 /// Number of polynomial types in the constraint system
-/// Note: This was reduced from 16 to 14 after removing Base and Bit polynomials
-/// (they are now computed from public inputs, not stored in the matrix)
-const NUM_POLY_TYPES: usize = 14;
+/// Note: This was reduced from 16 to 14 after removing Base and Bit polynomials,
+/// then to 13 after removing RhoCurr (rho_next is verified via shift sumcheck)
+const NUM_POLY_TYPES: usize = 13;
 
 /// Helper function to compute the index in the virtual claims array
 ///
@@ -317,8 +317,8 @@ impl DirectEvaluationVerifier {
 ///
 /// This function extracts the virtual polynomial claims from Stage 1 accumulators
 /// and organizes them in the standard layout expected by Stage 2:
-/// [constraint_0_poly_0, constraint_0_poly_1, ..., constraint_0_poly_14,
-///  constraint_1_poly_0, constraint_1_poly_1, ..., constraint_1_poly_14, ...]
+/// [constraint_0_poly_0, constraint_0_poly_1, ..., constraint_0_poly_12,
+///  constraint_1_poly_0, constraint_1_poly_1, ..., constraint_1_poly_12, ...]
 ///
 /// For PackedGtExp constraints, base and bit evaluations are computed directly from
 /// public inputs rather than being extracted from the accumulator.
@@ -348,8 +348,8 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
 
     // Process each constraint
     for (idx, constraint_type) in constraint_types.iter().enumerate() {
-        // For each constraint, we need to extract claims for all 14 polynomial types
-        // in the correct order matching the PolyType enum (0-13)
+        // For each constraint, we need to extract claims for all 13 polynomial types
+        // in the correct order matching the PolyType enum (0-12)
         // Note: Base and Bit are NOT in this array - they're computed from public inputs
         // and are not stored in the matrix
 
@@ -357,8 +357,8 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
 
         match constraint_type {
             ConstraintType::PackedGtExp => {
-                // Packed GT Exp uses polynomials 0-2 (RhoPrev, RhoCurr, Quotient)
-                // Base and bit are public inputs, not in the matrix
+                // Packed GT Exp uses polynomials 0-1 (RhoPrev, Quotient)
+                // Base, Bit, and RhoNext are public inputs or virtual polynomials, not in the matrix
                 tracing::debug!("[extract_constraint_claims] Getting PackedGtExp({}) openings for constraint {}", packed_gt_exp_idx, idx);
 
                 // Get committed polynomial claims
@@ -366,24 +366,20 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
                     VirtualPolynomial::PackedGtExpRho(packed_gt_exp_idx),
                     SumcheckId::PackedGtExp,
                 );
-                let (_, rho_curr) = accumulator.get_virtual_polynomial_opening(
-                    VirtualPolynomial::PackedGtExpRhoNext(packed_gt_exp_idx),
-                    SumcheckId::PackedGtExp,
-                );
                 let (_, quotient) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::PackedGtExpQuotient(packed_gt_exp_idx),
                     SumcheckId::PackedGtExp,
                 );
 
-                // New PolyType values: RhoPrev=0, RhoCurr=1, Quotient=2
+                // New PolyType values after removing RhoCurr: RhoPrev=0, Quotient=1
                 constraint_claims[0] = rho_prev;
-                constraint_claims[1] = rho_curr;
-                constraint_claims[2] = quotient;
+                constraint_claims[1] = quotient;
+                // Note: rho_next is verified separately via shift sumcheck, not included here
 
                 packed_gt_exp_idx += 1;
             }
             ConstraintType::GtMul { .. } => {
-                // GT Mul uses polynomials 3-6 (MulLhs, MulRhs, MulResult, MulQuotient)
+                // GT Mul uses polynomials 2-5 (MulLhs, MulRhs, MulResult, MulQuotient)
                 let (_, lhs) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::RecursionMulLhs(gt_mul_idx),
                     SumcheckId::GtMul,
@@ -401,16 +397,16 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
                     SumcheckId::GtMul,
                 );
 
-                // New PolyType values: MulLhs=3, MulRhs=4, MulResult=5, MulQuotient=6
-                constraint_claims[3] = lhs;
-                constraint_claims[4] = rhs;
-                constraint_claims[5] = result;
-                constraint_claims[6] = quotient;
+                // New PolyType values after removing RhoCurr: MulLhs=2, MulRhs=3, MulResult=4, MulQuotient=5
+                constraint_claims[2] = lhs;
+                constraint_claims[3] = rhs;
+                constraint_claims[4] = result;
+                constraint_claims[5] = quotient;
 
                 gt_mul_idx += 1;
             }
             ConstraintType::G1ScalarMul { .. } => {
-                // G1 Scalar Mul uses polynomials 7-13
+                // G1 Scalar Mul uses polynomials 6-12
                 let (_, x_a) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::RecursionG1ScalarMulXA(g1_scalar_mul_idx),
                     SumcheckId::G1ScalarMul,
@@ -440,14 +436,14 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
                     SumcheckId::G1ScalarMul,
                 );
 
-                // New PolyType values: G1ScalarMulXA=7, YA=8, XT=9, YT=10, XANext=11, YANext=12, Indicator=13
-                constraint_claims[7] = x_a;
-                constraint_claims[8] = y_a;
-                constraint_claims[9] = x_t;
-                constraint_claims[10] = y_t;
-                constraint_claims[11] = x_a_next;
-                constraint_claims[12] = y_a_next;
-                constraint_claims[13] = indicator;
+                // New PolyType values after removing RhoCurr: G1ScalarMulXA=6, YA=7, XT=8, YT=9, XANext=10, YANext=11, Indicator=12
+                constraint_claims[6] = x_a;
+                constraint_claims[7] = y_a;
+                constraint_claims[8] = x_t;
+                constraint_claims[9] = y_t;
+                constraint_claims[10] = x_a_next;
+                constraint_claims[11] = y_a_next;
+                constraint_claims[12] = indicator;
 
                 g1_scalar_mul_idx += 1;
             }

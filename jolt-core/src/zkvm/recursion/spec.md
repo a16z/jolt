@@ -201,6 +201,87 @@ Therefore, constraint satisfaction is preserved. □
 
 ---
 
+### 2.2.1 Shift Sumcheck Optimization
+
+The packed GT exponentiation can be further optimized by eliminating the `rho_next` polynomial commitment using a shift sumcheck protocol.
+
+#### The Problem
+
+Currently, we commit to three polynomials per packed GT exponentiation:
+- `rho(s,x)` - intermediate values at each step
+- `rho_next(s,x)` - shifted values where `rho_next(s,x) = rho(s+1,x)`
+- `quotient(s,x)` - quotient polynomials
+
+Since `rho_next` is completely determined by `rho` through the shift relationship, committing to it is redundant.
+
+#### The Solution: Shift Sumcheck
+
+Instead of committing to `rho_next`, we prove the shift relationship algebraically. After the constraint sumcheck completes at point `(r_s*, r_x*)`, we run an additional sumcheck to prove:
+
+$$v = \sum_{s \in \{0,1\}^8} \sum_{x \in \{0,1\}^4} \text{EqPlusOne}(r_s^*, s) \cdot \text{eq}(r_x^*, x) \cdot \rho(s,x)$$
+
+Where:
+- `EqPlusOne(r_s*, s)` = 1 if `s = r_s* + 1`, 0 otherwise
+- The sum evaluates to exactly `rho(r_s*+1, r_x*)` = `rho_next(r_s*, r_x*)`
+
+#### Modified Protocol Flow
+
+```
+Stage 1a: Packed GT Constraint Sumcheck
+  - Commits only to rho and quotient (NOT rho_next)
+  - Outputs: virtual claims for rho, quotient
+  - Outputs: unverified claim v = rho_next(r_s*, r_x*)
+  ↓
+Stage 1b: Shift Sumcheck (NEW)
+  - Proves that v = rho(r_s*+1, r_x*)
+  - 12 rounds, degree 2
+  - Outputs: verified rho_next claim
+  ↓
+Stage 2: Direct Evaluation Protocol
+  - Uses all virtual claims (including verified rho_next)
+  - No changes needed
+```
+
+#### Accumulator Communication
+
+The shift sumcheck integrates seamlessly with the existing virtual polynomial infrastructure:
+
+```rust
+// Stage 1a: After constraint sumcheck
+accumulator.append_virtual(
+    VirtualPolynomial::PackedGtExpRho(i),
+    SumcheckId::PackedGtExp,
+    (r_s_star, r_x_star),
+    rho_claim,
+);
+
+// Stage 1b: After shift sumcheck verification
+accumulator.append_virtual(
+    VirtualPolynomial::PackedGtExpRhoNext(i),
+    SumcheckId::ShiftSumcheck,  // Different sumcheck ID
+    (r_s_star, r_x_star),
+    verified_rho_next_claim,
+);
+```
+
+Stage 2 treats both virtual claims uniformly, regardless of their verification method.
+
+#### Benefits and Trade-offs
+
+**Benefits**:
+- Reduces committed polynomials from 5 to 4 per GT exp
+- Saves ~160 bytes per GT exp in proof size
+- Reduces memory requirements (no rho_next storage)
+
+**Trade-offs**:
+- Adds 12 sumcheck rounds
+- Slightly more complex verifier (+24 field ops per round)
+- Additional proof elements (+12 field elements)
+
+**Security**: Maintains same soundness guarantees with error ≤ 12 × 2^{-254} ≈ 2^{-250}
+
+---
+
 ### 2.3 GT Multiplication
 
 Proves $c = a \cdot b$ for $a, b, c \in \mathbb{G}_T$.

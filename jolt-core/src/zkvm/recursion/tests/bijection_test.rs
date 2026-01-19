@@ -278,7 +278,7 @@ fn test_constraint_mapping_consistency() {
                 assert!(
                     matches!(
                         poly_type,
-                        PolyType::RhoPrev | PolyType::RhoCurr | PolyType::Quotient
+                        PolyType::RhoPrev | PolyType::Quotient
                     ),
                     "Invalid poly type {:?} for GT exp constraint",
                     poly_type
@@ -729,7 +729,6 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
             // Base and Bit are public inputs, not committed polynomials
             ConstraintType::PackedGtExp => vec![
                 PolyType::RhoPrev,
-                PolyType::RhoCurr,
                 PolyType::Quotient,
             ],
             ConstraintType::GtMul => vec![
