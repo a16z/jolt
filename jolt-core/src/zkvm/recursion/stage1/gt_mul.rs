@@ -106,7 +106,7 @@ pub struct GtMulParams {
 impl GtMulParams {
     pub fn new(num_constraints: usize) -> Self {
         Self {
-            num_constraint_vars: 12, // 12 vars for uniform matrix (4 element + 8 step)
+            num_constraint_vars: 11, // 11 vars for uniform matrix (4 element + 7 padding)
             num_constraints,
             sumcheck_id: SumcheckId::GtMul,
         }
@@ -434,8 +434,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
 
             // Get 4-var g polynomial and pad to match constraint vars
             let g_mle_4var = get_g_mle();
-            let g_mle_padded = if r_star_f.len() == 12 {
-                DoryMatrixBuilder::pad_4var_to_12var_zero_padding(&g_mle_4var)
+            let g_mle_padded = if r_star_f.len() == 11 {
+                DoryMatrixBuilder::pad_4var_to_11var_zero_padding(&g_mle_4var)
             } else if r_star_f.len() == 8 {
                 DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var)
             } else {

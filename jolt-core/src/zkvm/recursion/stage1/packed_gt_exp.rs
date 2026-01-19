@@ -1,23 +1,23 @@
-//! Packed GT exponentiation sumcheck with 2-phase protocol
+//! Packed GT exponentiation sumcheck with 2-phase protocol (base-4 digits)
 //!
-//! This implements the optimized GT exponentiation verification that packs all 254 steps
-//! into larger MLEs, reducing claims from ~1,016 to 3 per GT exp.
+//! This packs ~127 base-4 steps into larger MLEs, reducing claims to 3 per GT exp.
 //!
 //! Polynomial structure (committed by prover):
-//! - rho(s, x): 12-var (8 step + 4 element) - intermediate results
-//! - quotient(s, x): 12-var - quotient polynomials
+//! - rho(s, x): 11-var (7 step + 4 element) - intermediate results
+//! - quotient(s, x): 11-var - quotient polynomials
 //!
 //! Public inputs (verifier computes directly, not committed):
-//! - bit(s): 8-var - scalar bits (derived from public scalar exponent)
+//! - digit_lo(s), digit_hi(s): 7-var - scalar digit bits (derived from public scalar exponent)
 //! - base(x): 4-var - base element (derived from public Fq12 base)
+//! - base2(x), base3(x): 4-var - base powers (derived from public base)
 //!
 //! Virtual polynomial (verified via shift sumcheck, not committed):
-//! - rho_next(s, x): 12-var - shifted: rho_next(i, x) = rho(i+1, x)
+//! - rho_next(s, x): 11-var - shifted: rho_next(i, x) = rho(i+1, x)
 //!
-//! Constraint: C(s, x) = rho_next(s, x) - rho(s, x)² × base(x)^{bit(s)} - quotient(s, x) × g(x)
+//! Constraint: C(s, x) = rho_next(s, x) - rho(s, x)^4 × base(x)^{digit(s)} - quotient(s, x) × g(x)
 //!
 //! 2-phase sumcheck:
-//! - Phase 1: 8 rounds over step variables (s)
+//! - Phase 1: 7 rounds over step variables (s)
 //! - Phase 2: 4 rounds over element variables (x)
 
 use crate::{
@@ -48,8 +48,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_optimizations::fq12_to_multilinear_evals;
 use rayon::prelude::*;
 
-/// Number of step variables (8 for 256 steps, sufficient for 254 scalar bits)
-pub const NUM_STEP_VARS: usize = 8;
+/// Number of step variables (7 for 128 base-4 steps)
+pub const NUM_STEP_VARS: usize = 7;
 
 /// Number of element variables (4 for Fq12 = 12 field elements, but we use 16 for power of 2)
 pub const NUM_ELEMENT_VARS: usize = 4;
@@ -60,12 +60,12 @@ pub const NUM_TOTAL_VARS: usize = NUM_STEP_VARS + NUM_ELEMENT_VARS;
 /// Public inputs for a single packed GT exponentiation.
 ///
 /// These are known to both prover and verifier, so the verifier can compute
-/// the bit and base polynomial evaluations directly without receiving claims.
+/// the digit and base polynomial evaluations directly without receiving claims.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PackedGtExpPublicInputs {
     /// Base GT element (Fq12) for this exponentiation
     pub base: Fq12,
-    /// Scalar bits (binary representation of the exponent)
+    /// Scalar bits (MSB-first, no leading zeros)
     pub scalar_bits: Vec<bool>,
 }
 
@@ -75,24 +75,63 @@ impl PackedGtExpPublicInputs {
         Self { base, scalar_bits }
     }
 
-    /// Evaluate the bit MLE at challenge point r_s* (8-variable MLE, 256 points)
-    ///
-    /// bit(s) = scalar_bits[s] for s ∈ {0,1}^8
-    /// MLE evaluation: Σ_s eq(r_s*, s) · bit_s
-    pub fn evaluate_bit_mle<F: JoltField>(&self, r_s_star: &[F]) -> F {
+    /// Evaluate digit_lo MLE at challenge point r_s* (7-variable MLE, 128 points).
+    pub fn evaluate_digit_lo_mle<F: JoltField>(&self, r_s_star: &[F]) -> F {
         debug_assert_eq!(r_s_star.len(), NUM_STEP_VARS);
         let eq_evals = EqPolynomial::<F>::evals(r_s_star);
-        self.scalar_bits
+        let digits = digits_from_bits_msb(&self.scalar_bits);
+
+        eq_evals
             .iter()
-            .zip(eq_evals.iter())
-            .map(|(b, eq)| if *b { *eq } else { F::zero() })
+            .enumerate()
+            .map(|(s, eq)| {
+                if s < digits.len() && digits[s].1 {
+                    *eq
+                } else {
+                    F::zero()
+                }
+            })
             .fold(F::zero(), |acc, x| acc + x)
     }
 
-    /// Evaluate the base MLE at challenge point r_x* (4-variable MLE, 16 points)
-    ///
-    /// base(x) = fq12_to_multilinear_evals(base)[x] for x ∈ {0,1}^4
+    /// Evaluate digit_hi MLE at challenge point r_s* (7-variable MLE, 128 points).
+    pub fn evaluate_digit_hi_mle<F: JoltField>(&self, r_s_star: &[F]) -> F {
+        debug_assert_eq!(r_s_star.len(), NUM_STEP_VARS);
+        let eq_evals = EqPolynomial::<F>::evals(r_s_star);
+        let digits = digits_from_bits_msb(&self.scalar_bits);
+
+        eq_evals
+            .iter()
+            .enumerate()
+            .map(|(s, eq)| {
+                if s < digits.len() && digits[s].0 {
+                    *eq
+                } else {
+                    F::zero()
+                }
+            })
+            .fold(F::zero(), |acc, x| acc + x)
+    }
+
+    /// Evaluate the base MLE at challenge point r_x* (4-variable MLE, 16 points).
     pub fn evaluate_base_mle<F: JoltField>(&self, r_x_star: &[F]) -> F {
+        self.evaluate_fq12_mle(&self.base, r_x_star)
+    }
+
+    /// Evaluate base^2 MLE at challenge point r_x* (4-variable MLE, 16 points).
+    pub fn evaluate_base2_mle<F: JoltField>(&self, r_x_star: &[F]) -> F {
+        let base2 = self.base * self.base;
+        self.evaluate_fq12_mle(&base2, r_x_star)
+    }
+
+    /// Evaluate base^3 MLE at challenge point r_x* (4-variable MLE, 16 points).
+    pub fn evaluate_base3_mle<F: JoltField>(&self, r_x_star: &[F]) -> F {
+        let base2 = self.base * self.base;
+        let base3 = base2 * self.base;
+        self.evaluate_fq12_mle(&base3, r_x_star)
+    }
+
+    fn evaluate_fq12_mle<F: JoltField>(&self, fq12: &Fq12, r_x_star: &[F]) -> F {
         use std::any::TypeId;
 
         debug_assert_eq!(r_x_star.len(), NUM_ELEMENT_VARS);
@@ -102,7 +141,7 @@ impl PackedGtExpPublicInputs {
             panic!("evaluate_base_mle requires F = Fq");
         }
 
-        let base_mle_fq = fq12_to_multilinear_evals(&self.base); // 16 Fq values
+        let base_mle_fq = fq12_to_multilinear_evals(fq12); // 16 Fq values
         let base_poly = DensePolynomial::new(base_mle_fq);
 
         // Convert r_x_star to Fq slice
@@ -121,67 +160,87 @@ impl PackedGtExpPublicInputs {
 pub struct PackedGtExpConstraintPolynomials<F: JoltField> {
     pub rho: Vec<F>,
     pub quotient: Vec<F>,
-    pub bit: Vec<F>,
+    pub digit_lo: Vec<F>,
+    pub digit_hi: Vec<F>,
     pub base: Vec<F>,
+    pub base2: Vec<F>,
+    pub base3: Vec<F>,
     pub constraint_index: usize,
 }
 
 /// Packed witness for GT exponentiation (used during matrix construction)
 ///
-/// Data layout: index = x * 256 + s (s in low 8 bits, x in high 4 bits)
+/// Data layout: index = x * 128 + s (s in low 7 bits, x in high 4 bits)
 /// This allows LowToHigh binding to give us:
-/// - Phase 1 (rounds 0-7): bind step variables s
-/// - Phase 2 (rounds 8-11): bind element variables x
+/// - Phase 1 (rounds 0-6): bind step variables s
+/// - Phase 2 (rounds 7-10): bind element variables x
 #[derive(Clone)]
 pub struct PackedGtExpWitness {
-    /// rho(s, x) - all intermediate results packed into 12-var MLE
-    /// Layout: rho[x * 256 + s] = ρ_s[x]
+    /// rho(s, x) - all intermediate results packed into 11-var MLE
+    /// Layout: rho[x * 128 + s] = ρ_s[x]
     pub rho_packed: Vec<Fq>,
 
     /// rho_next(s, x) = rho(s+1, x) - shifted intermediate results
-    /// Layout: rho_next[x * 256 + s] = ρ_{s+1}[x]
+    /// Layout: rho_next[x * 128 + s] = ρ_{s+1}[x]
     pub rho_next_packed: Vec<Fq>,
 
-    /// quotient(s, x) - all quotients packed into 12-var MLE
-    /// Layout: quotient[x * 256 + s] = Q_s[x]
+    /// quotient(s, x) - all quotients packed into 11-var MLE
+    /// Layout: quotient[x * 128 + s] = Q_s[x]
     pub quotient_packed: Vec<Fq>,
 
-    /// bit(s) - scalar bits replicated across x
-    /// Layout: bit[x * 256 + s] = b_s (same for all x)
-    pub bit_packed: Vec<Fq>,
+    /// digit_lo(s) - low digit bit replicated across x
+    /// Layout: digit_lo[x * 128 + s] = u_s (same for all x)
+    pub digit_lo_packed: Vec<Fq>,
+
+    /// digit_hi(s) - high digit bit replicated across x
+    /// Layout: digit_hi[x * 128 + s] = v_s (same for all x)
+    pub digit_hi_packed: Vec<Fq>,
 
     /// base(x) - base element replicated across s
-    /// Layout: base[x * 256 + s] = base[x] (same for all s)
+    /// Layout: base[x * 128 + s] = base[x] (same for all s)
     pub base_packed: Vec<Fq>,
 
-    /// Number of actual steps (254 for BN254 scalar)
+    /// base2(x) - base^2 element replicated across s
+    /// Layout: base2[x * 128 + s] = base2[x] (same for all s)
+    pub base2_packed: Vec<Fq>,
+
+    /// base3(x) - base^3 element replicated across s
+    /// Layout: base3[x * 128 + s] = base3[x] (same for all s)
+    pub base3_packed: Vec<Fq>,
+
+    /// Number of actual steps (<= 127 for BN254 scalar)
     pub num_steps: usize,
 }
 
 impl PackedGtExpWitness {
     /// Create packed witness from individual step data
     ///
-    /// Data layout: index = x * 256 + s (s in low 8 bits, x in high 4 bits)
+    /// Data layout: index = x * 128 + s (s in low 7 bits, x in high 4 bits)
     /// This allows LowToHigh binding to naturally give us:
-    /// - Phase 1 (rounds 0-7): bind step variables s (low bits)
-    /// - Phase 2 (rounds 8-11): bind element variables x (high bits)
+    /// - Phase 1 (rounds 0-6): bind step variables s (low bits)
+    /// - Phase 2 (rounds 7-10): bind element variables x (high bits)
     pub fn from_steps(
         rho_mles: &[Vec<Fq>],        // rho_mles[step][x] for step in 0..=num_steps
         quotient_mles: &[Vec<Fq>],   // quotient_mles[step][x] for step in 0..num_steps
-        bits: &[bool],               // bits[step] for step in 0..num_steps
+        bits: &[bool],               // bits (MSB first)
         base_mle: &[Fq],             // base[x] - 16 values
+        base2_mle: &[Fq],            // base^2[x] - 16 values
+        base3_mle: &[Fq],            // base^3[x] - 16 values
     ) -> Self {
-        let num_steps = bits.len();
+        let digits = digits_from_bits_msb(bits);
+        let num_steps = digits.len();
         assert_eq!(rho_mles.len(), num_steps + 1, "Need num_steps + 1 rho MLEs");
         assert_eq!(quotient_mles.len(), num_steps, "Need num_steps quotient MLEs");
         assert_eq!(base_mle.len(), 16, "Base must be 4-var MLE (16 values)");
+        assert_eq!(base2_mle.len(), 16, "Base2 must be 4-var MLE (16 values)");
+        assert_eq!(base3_mle.len(), 16, "Base3 must be 4-var MLE (16 values)");
 
-        let step_size = 1 << NUM_STEP_VARS;   // 256
+        let step_size = 1 << NUM_STEP_VARS;   // 128
         let elem_size = 1 << NUM_ELEMENT_VARS; // 16
-        let total_size = 1 << NUM_TOTAL_VARS;  // 4096
+        let total_size = 1 << NUM_TOTAL_VARS;  // 2048
 
-        // Pack rho: rho_packed[x * 256 + s] = rho_mles[s][x]
-        // s in low 8 bits, x in high 4 bits
+        // Pack rho: rho_packed[x * 128 + s] = rho_mles[s][x]
+        // s in low 7 bits, x in high 4 bits
         // NOTE: Only populate for s < num_steps (not s = num_steps) to ensure
         // the constraint at s = num_steps is zero (since rho_next[num_steps] = 0)
         let mut rho_packed = vec![Fq::zero(); total_size];
@@ -193,7 +252,7 @@ impl PackedGtExpWitness {
             }
         }
 
-        // Pack rho_next: rho_next_packed[x * 256 + s] = rho_mles[s+1][x]
+        // Pack rho_next: rho_next_packed[x * 128 + s] = rho_mles[s+1][x]
         let mut rho_next_packed = vec![Fq::zero(); total_size];
         for s in 0..num_steps.min(step_size) {
             for x in 0..elem_size {
@@ -203,7 +262,7 @@ impl PackedGtExpWitness {
             }
         }
 
-        // Pack quotient: quotient_packed[x * 256 + s] = quotient_mles[s][x]
+        // Pack quotient: quotient_packed[x * 128 + s] = quotient_mles[s][x]
         let mut quotient_packed = vec![Fq::zero(); total_size];
         for s in 0..num_steps.min(step_size) {
             for x in 0..elem_size {
@@ -213,17 +272,20 @@ impl PackedGtExpWitness {
             }
         }
 
-        // Pack bits: bit_packed[x * 256 + s] = bits[s] (replicated across x)
-        // bit only depends on s, so same value for all x with same s
-        let mut bit_packed = vec![Fq::zero(); total_size];
+        // Pack digit_lo and digit_hi: replicated across x
+        let mut digit_lo_packed = vec![Fq::zero(); total_size];
+        let mut digit_hi_packed = vec![Fq::zero(); total_size];
         for s in 0..num_steps.min(step_size) {
-            let bit_val = if bits[s] { Fq::from(1u64) } else { Fq::zero() };
+            let (digit_hi, digit_lo) = digits[s];
+            let lo_val = if digit_lo { Fq::from(1u64) } else { Fq::zero() };
+            let hi_val = if digit_hi { Fq::from(1u64) } else { Fq::zero() };
             for x in 0..elem_size {
-                bit_packed[x * step_size + s] = bit_val;
+                digit_lo_packed[x * step_size + s] = lo_val;
+                digit_hi_packed[x * step_size + s] = hi_val;
             }
         }
 
-        // Pack base: base_packed[x * 256 + s] = base_mle[x] (replicated across s)
+        // Pack base: base_packed[x * 128 + s] = base_mle[x] (replicated across s)
         // base only depends on x, so same value for all s with same x
         let mut base_packed = vec![Fq::zero(); total_size];
         for x in 0..elem_size {
@@ -232,12 +294,31 @@ impl PackedGtExpWitness {
             }
         }
 
+        // Pack base2: base2_packed[x * 128 + s] = base2_mle[x] (replicated across s)
+        let mut base2_packed = vec![Fq::zero(); total_size];
+        for x in 0..elem_size {
+            for s in 0..step_size {
+                base2_packed[x * step_size + s] = base2_mle[x];
+            }
+        }
+
+        // Pack base3: base3_packed[x * 128 + s] = base3_mle[x] (replicated across s)
+        let mut base3_packed = vec![Fq::zero(); total_size];
+        for x in 0..elem_size {
+            for s in 0..step_size {
+                base3_packed[x * step_size + s] = base3_mle[x];
+            }
+        }
+
         let witness = Self {
             rho_packed,
             rho_next_packed,
             quotient_packed,
-            bit_packed,
+            digit_lo_packed,
+            digit_hi_packed,
             base_packed,
+            base2_packed,
+            base3_packed,
             num_steps,
         };
 
@@ -251,22 +332,77 @@ impl PackedGtExpWitness {
 
             // Check C_s(x) = 0 for all valid (s, x) pairs
             for s in 0..num_steps {
-                let bit_val = if bits[s] { Fq::from(1u64) } else { Fq::zero() };
+                let (digit_hi, digit_lo) = digits[s];
+                let u = if digit_lo { Fq::from(1u64) } else { Fq::zero() };
+                let v = if digit_hi { Fq::from(1u64) } else { Fq::zero() };
+                let one = Fq::from(1u64);
+                let w0 = (one - u) * (one - v);
+                let w1 = u * (one - v);
+                let w2 = (one - u) * v;
+                let w3 = u * v;
 
                 for x in 0..16 {
                     let rho = rho_mles[s][x];
                     let rho_next = rho_mles[s + 1][x];
                     let quotient = quotient_mles[s][x];
                     let base = base_mle[x];
+                    let base2 = base2_mle[x];
+                    let base3 = base3_mle[x];
                     let g = g_mle[x];
 
-                    // base^{bit} via linear interpolation: (1 - bit) + bit * base
-                    let base_power = Fq::from(1u64) - bit_val + bit_val * base;
+                    let base_power = w0 + w1 * base + w2 * base2 + w3 * base3;
 
-                    // C_s(x) = rho_next - rho² × base_power - quotient × g
-                    let constraint = rho_next - rho * rho * base_power - quotient * g;
+                    let rho2 = rho * rho;
+                    let rho4 = rho2 * rho2;
+                    let constraint = rho_next - rho4 * base_power - quotient * g;
 
                     if !constraint.is_zero() {
+                        if failed_constraints.is_empty() {
+                            eprintln!(
+                                "PackedGtExpWitness debug: num_steps={}, first_fail s={}, x={}",
+                                num_steps, s, x
+                            );
+                            eprintln!(
+                                "  digit_hi={}, digit_lo={}",
+                                digit_hi, digit_lo
+                            );
+                            eprintln!(
+                                "  rho={:?}",
+                                rho
+                            );
+                            eprintln!(
+                                "  rho_next={:?}",
+                                rho_next
+                            );
+                            eprintln!(
+                                "  quotient={:?}",
+                                quotient
+                            );
+                            eprintln!(
+                                "  base={:?}",
+                                base
+                            );
+                            eprintln!(
+                                "  base2={:?}",
+                                base2
+                            );
+                            eprintln!(
+                                "  base3={:?}",
+                                base3
+                            );
+                            eprintln!(
+                                "  g={:?}",
+                                g
+                            );
+                            eprintln!(
+                                "  base_power={:?}",
+                                base_power
+                            );
+                            eprintln!(
+                                "  rho4={:?}",
+                                rho4
+                            );
+                        }
                         failed_constraints.push((s, x, constraint));
                     }
                 }
@@ -294,10 +430,30 @@ impl PackedGtExpWitness {
     }
 }
 
+fn digits_from_bits_msb(bits_msb: &[bool]) -> Vec<(bool, bool)> {
+    if bits_msb.is_empty() {
+        return vec![];
+    }
+
+    let mut padded = bits_msb.to_vec();
+    if padded.len() % 2 == 1 {
+        padded.insert(0, false);
+    }
+
+    let mut digits = Vec::with_capacity(padded.len() / 2);
+    for i in (0..padded.len()).step_by(2) {
+        let digit_hi = padded[i];
+        let digit_lo = padded[i + 1];
+        digits.push((digit_hi, digit_lo));
+    }
+
+    digits
+}
+
 /// Parameters for packed GT exp sumcheck
 #[derive(Clone)]
 pub struct PackedGtExpParams {
-    /// Total number of constraint variables (12 = 8 step + 4 element)
+    /// Total number of constraint variables (11 = 7 step + 4 element)
     pub num_constraint_vars: usize,
 
     /// Number of step variables
@@ -330,10 +486,10 @@ impl Default for PackedGtExpParams {
 /// Prover for packed GT exponentiation sumcheck
 ///
 /// 2-phase sumcheck:
-/// - Phase 1 (rounds 0-7): bind step variables s (low bits)
-/// - Phase 2 (rounds 8-11): bind element variables x (high bits)
+/// - Phase 1 (rounds 0-6): bind step variables s (low bits)
+/// - Phase 2 (rounds 7-10): bind element variables x (high bits)
 ///
-/// Note: bit_polys and base_polys are used internally during sumcheck computation
+/// Note: digit and base power polynomials are used internally during sumcheck computation
 /// but are NOT committed as virtual claims. The verifier computes these evaluations
 /// directly from public inputs (base Fq12 and scalar bits).
 pub struct PackedGtExpProver<F: JoltField> {
@@ -352,21 +508,31 @@ pub struct PackedGtExpProver<F: JoltField> {
     /// Packed quotient polynomials (one per witness) - COMMITTED
     pub quotient_polys: Vec<MultilinearPolynomial<F>>,
 
-    /// Packed bit polynomials (one per witness) - NOT COMMITTED (public input)
+    /// Packed digit_lo polynomials (one per witness) - NOT COMMITTED (public input)
     /// Used internally for sumcheck computation only
-    pub bit_polys: Vec<MultilinearPolynomial<F>>,
+    pub digit_lo_polys: Vec<MultilinearPolynomial<F>>,
+
+    /// Packed digit_hi polynomials (one per witness) - NOT COMMITTED (public input)
+    /// Used internally for sumcheck computation only
+    pub digit_hi_polys: Vec<MultilinearPolynomial<F>>,
 
     /// Packed base polynomials (one per witness) - NOT COMMITTED (public input)
     /// Used internally for sumcheck computation only
     pub base_polys: Vec<MultilinearPolynomial<F>>,
 
-    /// g(x) polynomial (padded to 12-var, shared across all witnesses) - NOT COMMITTED (constant)
+    /// Packed base2 polynomials (one per witness) - NOT COMMITTED (public input)
+    pub base2_polys: Vec<MultilinearPolynomial<F>>,
+
+    /// Packed base3 polynomials (one per witness) - NOT COMMITTED (public input)
+    pub base3_polys: Vec<MultilinearPolynomial<F>>,
+
+    /// g(x) polynomial (padded to 11-var, shared across all witnesses) - NOT COMMITTED (constant)
     pub g_poly: MultilinearPolynomial<F>,
 
     /// eq(r_x, x) polynomial for element batching (4-var, bound in Phase 1)
     pub eq_x: MultilinearPolynomial<F>,
 
-    /// eq(r_s, s) polynomial for step batching (8-var, bound in Phase 2)
+    /// eq(r_s, s) polynomial for step batching (7-var, bound in Phase 2)
     pub eq_s: MultilinearPolynomial<F>,
 
     /// Random challenges for element variables
@@ -378,7 +544,7 @@ pub struct PackedGtExpProver<F: JoltField> {
     /// Gamma coefficient for batching GT exp instances
     pub gamma: F,
 
-    /// Current round (0 to 11)
+    /// Current round (0 to 10)
     pub round: usize,
 
     /// Final claims after all rounds (one per witness) - only for committed polynomials
@@ -407,7 +573,7 @@ impl<F: JoltField> PackedGtExpProver<F> {
             .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
 
-        // Sample random challenges for step variables (8) - for eq_s polynomial
+        // Sample random challenges for step variables (7) - for eq_s polynomial
         let r_s: Vec<F::Challenge> = (0..params.num_step_vars)
             .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
@@ -416,9 +582,9 @@ impl<F: JoltField> PackedGtExpProver<F> {
         let gamma: F = transcript.challenge_scalar_optimized::<F>().into();
 
         // Create eq polynomials for 2-phase sumcheck
-        // Data layout: index = x * 256 + s (s in low 8 bits)
-        // Phase 1 (rounds 0-7): bind s variables, eq_s is sumchecked
-        // Phase 2 (rounds 8-11): bind x variables, eq_x is sumchecked
+        // Data layout: index = x * 128 + s (s in low 7 bits)
+        // Phase 1 (rounds 0-6): bind s variables, eq_s is sumchecked
+        // Phase 2 (rounds 7-10): bind x variables, eq_x is sumchecked
         let eq_x = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_x));
         let eq_s = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_s));
 
@@ -433,15 +599,21 @@ impl<F: JoltField> PackedGtExpProver<F> {
         let mut rho_polys = Vec::with_capacity(num_witnesses);
         let mut rho_next_polys = Vec::with_capacity(num_witnesses);
         let mut quotient_polys = Vec::with_capacity(num_witnesses);
-        let mut bit_polys = Vec::with_capacity(num_witnesses);
+        let mut digit_lo_polys = Vec::with_capacity(num_witnesses);
+        let mut digit_hi_polys = Vec::with_capacity(num_witnesses);
         let mut base_polys = Vec::with_capacity(num_witnesses);
+        let mut base2_polys = Vec::with_capacity(num_witnesses);
+        let mut base3_polys = Vec::with_capacity(num_witnesses);
 
         for witness in witnesses {
             rho_polys.push(MultilinearPolynomial::from(convert_vec(&witness.rho_packed)));
             rho_next_polys.push(MultilinearPolynomial::from(convert_vec(&witness.rho_next_packed)));
             quotient_polys.push(MultilinearPolynomial::from(convert_vec(&witness.quotient_packed)));
-            bit_polys.push(MultilinearPolynomial::from(convert_vec(&witness.bit_packed)));
+            digit_lo_polys.push(MultilinearPolynomial::from(convert_vec(&witness.digit_lo_packed)));
+            digit_hi_polys.push(MultilinearPolynomial::from(convert_vec(&witness.digit_hi_packed)));
             base_polys.push(MultilinearPolynomial::from(convert_vec(&witness.base_packed)));
+            base2_polys.push(MultilinearPolynomial::from(convert_vec(&witness.base2_packed)));
+            base3_polys.push(MultilinearPolynomial::from(convert_vec(&witness.base3_packed)));
         }
 
         Self {
@@ -450,8 +622,11 @@ impl<F: JoltField> PackedGtExpProver<F> {
             rho_polys,
             rho_next_polys,
             quotient_polys,
-            bit_polys,
+            digit_lo_polys,
+            digit_hi_polys,
             base_polys,
+            base2_polys,
+            base3_polys,
             g_poly: MultilinearPolynomial::LargeScalars(g_poly),
             eq_x,
             eq_s,
@@ -465,9 +640,9 @@ impl<F: JoltField> PackedGtExpProver<F> {
         }
     }
 
-    /// Check if we're in Phase 1 (step variable rounds 0-7)
-    /// Data layout: index = x * 256 + s (s in low 8 bits)
-    /// With LowToHigh binding: rounds 0-7 bind s (step), rounds 8-11 bind x (element)
+    /// Check if we're in Phase 1 (step variable rounds 0-6)
+    /// Data layout: index = x * 128 + s (s in low 7 bits)
+    /// With LowToHigh binding: rounds 0-6 bind s (step), rounds 7-10 bind x (element)
     fn in_step_phase(&self) -> bool {
         self.round < self.params.num_step_vars
     }
@@ -499,13 +674,12 @@ impl<F: JoltField> PackedGtExpProver<F> {
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpProver<F> {
     fn degree(&self) -> usize {
-        // Degree from constraint: rho² × base (degree 3) or rho² × bit × base (degree 4)
-        // With eq terms: eq_s × eq_x × constraint = up to degree 4
-        4
+        // Degree from constraint: rho^4 × digit selector (degree 6)
+        7
     }
 
     fn num_rounds(&self) -> usize {
-        self.params.num_constraint_vars // 12 rounds total
+        self.params.num_constraint_vars // 11 rounds total
     }
 
     fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
@@ -514,7 +688,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 
     #[tracing::instrument(skip_all, name = "PackedGtExp::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        const DEGREE: usize = 4;
+        const DEGREE: usize = 7;
 
         let half = if self.num_witnesses > 0 {
             self.rho_polys[0].len() / 2
@@ -526,9 +700,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
         let num_witnesses = self.num_witnesses;
         let in_step_phase = self.in_step_phase();
 
-        // Data layout: index = x * 256 + s (s in low 8 bits, x in high 4 bits)
-        // Phase 1 (rounds 0-7): bind s variables, eq_s is sumchecked, eq_x provides constants
-        // Phase 2 (rounds 8-11): bind x variables, eq_x is sumchecked, eq_s is constant
+        // Data layout: index = x * 128 + s (s in low 7 bits, x in high 4 bits)
+        // Phase 1 (rounds 0-6): bind s variables, eq_s is sumchecked, eq_x provides constants
+        // Phase 2 (rounds 7-10): bind x variables, eq_x is sumchecked, eq_s is constant
         let eq_s_half = self.eq_s.len() / 2;
         let eq_x_len = self.eq_x.len();
 
@@ -541,7 +715,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 
                 // Compute eq contributions based on phase
                 let (eq_s_evals, eq_x_evals) = if in_step_phase {
-                    // Phase 1 (rounds 0-7): sumcheck over s, eq_x is constant per x-block
+                    // Phase 1 (rounds 0-6): sumcheck over s, eq_x is constant per x-block
                     // Index i maps to: s_pair_idx = i % eq_s_half, x_idx = i / eq_s_half
                     let s_pair_idx = i % eq_s_half;
                     let x_idx = i / eq_s_half;
@@ -560,7 +734,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 
                     (eq_s_arr, eq_x_arr)
                 } else {
-                    // Phase 2 (rounds 8-11): eq_s is fully bound (constant), sumcheck over x
+                    // Phase 2 (rounds 7-10): eq_s is fully bound (constant), sumcheck over x
                     let eq_s_val = self.eq_s.get_bound_coeff(0);
                     let eq_s_arr = [eq_s_val; DEGREE];
 
@@ -582,19 +756,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
                         .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                     let quotient = self.quotient_polys[w]
                         .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
-                    let bit = self.bit_polys[w]
+                    let digit_lo = self.digit_lo_polys[w]
+                        .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    let digit_hi = self.digit_hi_polys[w]
                         .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                     let base = self.base_polys[w]
                         .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    let base2 = self.base2_polys[w]
+                        .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    let base3 = self.base3_polys[w]
+                        .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                     for t in 0..DEGREE {
-                        // base^{bit}: linear interpolation between 1 and base
-                        let base_power = F::one() - bit[t] + bit[t] * base[t];
+                        let u = digit_lo[t];
+                        let v = digit_hi[t];
+                        let w0 = (F::one() - u) * (F::one() - v);
+                        let w1 = u * (F::one() - v);
+                        let w2 = (F::one() - u) * v;
+                        let w3 = u * v;
+                        let base_power = w0 + w1 * base[t] + w2 * base2[t] + w3 * base3[t];
+                        let rho2 = rho[t] * rho[t];
+                        let rho4 = rho2 * rho2;
 
-                        // C(s, x) = rho_next - rho² × base_power - quotient × g
-                        let constraint = rho_next[t]
-                            - rho[t] * rho[t] * base_power
-                            - quotient[t] * g[t];
+                        // C(s, x) = rho_next - rho^4 × base_power - quotient × g
+                        let constraint = rho_next[t] - rho4 * base_power - quotient[t] * g[t];
 
                         term_evals[t] += eq_x_evals[t] * eq_s_evals[t] * gamma_power * constraint;
                     }
@@ -646,12 +831,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
                     let rho_val = self.rho_polys[w].get_bound_coeff(i);
                     let rho_next_val = self.rho_next_polys[w].get_bound_coeff(i);
                     let quotient_val = self.quotient_polys[w].get_bound_coeff(i);
-                    let bit_val = self.bit_polys[w].get_bound_coeff(i);
+                    let digit_lo_val = self.digit_lo_polys[w].get_bound_coeff(i);
+                    let digit_hi_val = self.digit_hi_polys[w].get_bound_coeff(i);
                     let base_val = self.base_polys[w].get_bound_coeff(i);
+                    let base2_val = self.base2_polys[w].get_bound_coeff(i);
+                    let base3_val = self.base3_polys[w].get_bound_coeff(i);
 
-                    let base_power = F::one() - bit_val + bit_val * base_val;
-                    let constraint =
-                        rho_next_val - rho_val * rho_val * base_power - quotient_val * g_val;
+                    let u = digit_lo_val;
+                    let v = digit_hi_val;
+                    let w0 = (F::one() - u) * (F::one() - v);
+                    let w1 = u * (F::one() - v);
+                    let w2 = (F::one() - u) * v;
+                    let w3 = u * v;
+                    let base_power = w0 + w1 * base_val + w2 * base2_val + w3 * base3_val;
+                    let rho2 = rho_val * rho_val;
+                    let rho4 = rho2 * rho2;
+                    let constraint = rho_next_val - rho4 * base_power - quotient_val * g_val;
 
                     let term = eq_combined * gamma_power * constraint;
 
@@ -672,6 +867,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
                     "PackedGtExp round {}: s(0) + s(1) != previous_claim!",
                     _round
                 );
+                eprintln!("  rho_len = {}", self.rho_polys[0].len());
+                eprintln!("  eq_s_len = {}", self.eq_s.len());
+                eprintln!("  eq_x_len = {}", eq_x_len);
+                eprintln!("  half = {}", half);
+                eprintln!("  full_len = {}", full_len);
+                eprintln!("  evals[0] = {:?}", evals[0]);
                 eprintln!("  s(0) = {:?}", s_0);
                 eprintln!("  s(1) = {:?}", s_1);
                 eprintln!("  s(0) + s(1) = {:?}", sum);
@@ -699,17 +900,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
         }
 
         // Bind public input polynomials (used for sumcheck computation, not committed)
-        for poly in &mut self.bit_polys {
+        for poly in &mut self.digit_lo_polys {
+            poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+        for poly in &mut self.digit_hi_polys {
             poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
         for poly in &mut self.base_polys {
             poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
+        for poly in &mut self.base2_polys {
+            poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+        for poly in &mut self.base3_polys {
+            poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
 
         // Bind eq polynomial based on phase
-        // Data layout: index = x * 256 + s (s in low 8 bits)
-        // Phase 1 (rounds 0-7): bind eq_s (step variables in low bits)
-        // Phase 2 (rounds 8-11): bind eq_x (element variables in high bits)
+        // Data layout: index = x * 128 + s (s in low 7 bits)
+        // Phase 1 (rounds 0-6): bind eq_s (step variables in low bits)
+        // Phase 2 (rounds 7-10): bind eq_x (element variables in high bits)
         if self.in_step_phase() {
             self.eq_s.bind_parallel(r_j, BindingOrder::LowToHigh);
         } else {
@@ -718,8 +928,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 
         self.round = round + 1;
 
-        // After all 12 rounds, extract final claims for committed polynomials only
-        // (bit and base are public inputs, verifier computes them directly)
+        // After all rounds, extract final claims for committed polynomials only.
         if self.round == self.params.num_constraint_vars {
             for w in 0..self.num_witnesses {
                 self.rho_claims[w] = self.rho_polys[w].get_bound_coeff(0);
@@ -765,10 +974,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 /// Verifier for packed GT exponentiation sumcheck
 ///
 /// 2-phase sumcheck verification:
-/// - Phase 1 (rounds 0-7): step variables s
-/// - Phase 2 (rounds 8-11): element variables x
+/// - Phase 1 (rounds 0-6): step variables s
+/// - Phase 2 (rounds 7-10): element variables x
 ///
-/// The verifier computes bit and base polynomial evaluations directly from
+/// The verifier computes digit and base polynomial evaluations directly from
 /// public inputs, rather than receiving them as claims from the prover.
 pub struct PackedGtExpVerifier<F: JoltField> {
     pub params: PackedGtExpParams,
@@ -789,13 +998,13 @@ impl<F: JoltField> PackedGtExpVerifier<F> {
         let num_witnesses = public_inputs.len();
 
         // Sample challenges for element variables (4) - must match prover sampling order
-        // These form the eq_x polynomial for Phase 2 (rounds 8-11)
+        // These form the eq_x polynomial for Phase 2 (rounds 7-10)
         let r_x: Vec<F::Challenge> = (0..params.num_element_vars)
             .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
 
-        // Sample challenges for step variables (8) - must match prover sampling order
-        // These form the eq_s polynomial for Phase 1 (rounds 0-7)
+        // Sample challenges for step variables (7) - must match prover sampling order
+        // These form the eq_s polynomial for Phase 1 (rounds 0-6)
         let r_s: Vec<F::Challenge> = (0..params.num_step_vars)
             .map(|_| transcript.challenge_scalar_optimized::<F>())
             .collect();
@@ -816,7 +1025,7 @@ impl<F: JoltField> PackedGtExpVerifier<F> {
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExpVerifier<F> {
     fn degree(&self) -> usize {
-        4
+        7
     }
 
     fn num_rounds(&self) -> usize {
@@ -841,10 +1050,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
             panic!("PackedGtExp requires F = Fq");
         }
 
-        // Data layout: index = x * 256 + s (s in low 8 bits, x in high 4 bits)
+        // Data layout: index = x * 128 + s (s in low 7 bits, x in high 4 bits)
         // With LowToHigh binding:
-        // - Phase 1 (rounds 0-7): bind s variables → challenges[0..8]
-        // - Phase 2 (rounds 8-11): bind x variables → challenges[8..12]
+        // - Phase 1 (rounds 0-6): bind s variables → challenges[0..7]
+        // - Phase 2 (rounds 7-10): bind x variables → challenges[7..11]
         // Each part is reversed to match the sampled challenge order (big-endian convention)
         let r_s_star: Vec<F> = sumcheck_challenges
             .iter()
@@ -893,17 +1102,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
             let rho_next_claim = claims[1];
             let quotient_claim = claims[2];
 
-            // Compute bit and base evaluations directly from public inputs
-            let bit_claim = self.public_inputs[w].evaluate_bit_mle(&r_s_star);
+            // Compute digit bits and base evaluations directly from public inputs
+            let digit_lo = self.public_inputs[w].evaluate_digit_lo_mle(&r_s_star);
+            let digit_hi = self.public_inputs[w].evaluate_digit_hi_mle(&r_s_star);
             let base_claim = self.public_inputs[w].evaluate_base_mle(&r_x_star);
+            let base2_claim = self.public_inputs[w].evaluate_base2_mle(&r_x_star);
+            let base3_claim = self.public_inputs[w].evaluate_base3_mle(&r_x_star);
 
-            // base^{bit} using linear interpolation
-            let base_power = F::one() - bit_claim + bit_claim * base_claim;
+            let u = digit_lo;
+            let v = digit_hi;
+            let w0 = (F::one() - u) * (F::one() - v);
+            let w1 = u * (F::one() - v);
+            let w2 = (F::one() - u) * v;
+            let w3 = u * v;
+            let base_power = w0 + w1 * base_claim + w2 * base2_claim + w3 * base3_claim;
 
             // Constraint at challenge point:
-            // C(r_s*, r_x*) = rho_next - rho² × base_power - quotient × g
-            let constraint_eval =
-                rho_next_claim - rho_claim * rho_claim * base_power - quotient_claim * g_eval;
+            // C(r_s*, r_x*) = rho_next - rho^4 × base_power - quotient × g
+            let rho2 = rho_claim * rho_claim;
+            let rho4 = rho2 * rho2;
+            let constraint_eval = rho_next_claim - rho4 * base_power - quotient_claim * g_eval;
 
             total_constraint += gamma_power * constraint_eval;
             gamma_power *= self.gamma;

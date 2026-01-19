@@ -232,15 +232,15 @@ impl ConstraintSystemJaggedBuilder {
             for (idx, constraint) in constraints.iter().enumerate() {
                 let num_vars = match &constraint.constraint_type {
                     ConstraintType::PackedGtExp => {
-                        // Packed GT exp uses RhoPrev and Quotient (all 12-var)
+                        // Packed GT exp uses RhoPrev and Quotient (all 11-var)
                         // Base, Bit, and RhoNext are not committed polynomials
                         match poly_type {
-                            PolyType::RhoPrev | PolyType::Quotient => Some(12),
+                            PolyType::RhoPrev | PolyType::Quotient => Some(11),
                             _ => None,
                         }
                     }
                     ConstraintType::GtMul => {
-                        // GT mul uses MulLhs, MulRhs, MulResult, MulQuotient (4-var padded to 12)
+                        // GT mul uses MulLhs, MulRhs, MulResult, MulQuotient (4-var padded to 11)
                         match poly_type {
                             PolyType::MulLhs
                             | PolyType::MulRhs
@@ -250,7 +250,7 @@ impl ConstraintSystemJaggedBuilder {
                         }
                     }
                     ConstraintType::G1ScalarMul { .. } => {
-                        // G1 scalar mul uses all G1ScalarMul* types (8-var padded to 12)
+                        // G1 scalar mul uses all G1ScalarMul* types (8-var padded to 11)
                         match poly_type {
                             PolyType::G1ScalarMulXA
                             | PolyType::G1ScalarMulYA

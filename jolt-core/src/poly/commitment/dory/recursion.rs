@@ -8,12 +8,12 @@ use dory::{
     recursion::{HintMap, TraceContext, WitnessBackend, WitnessGenerator, WitnessResult},
     verify_recursive,
 };
-use jolt_optimizations::witness_gen::ExponentiationSteps;
 use std::{marker::PhantomData, rc::Rc};
 
 use super::{
     commitment_scheme::DoryCommitmentScheme,
     g1_scalar_mul_witness::ScalarMultiplicationSteps,
+    gt_exp_witness::Base4ExponentiationSteps,
     gt_mul_witness::MultiplicationSteps,
     jolt_dory_routines::{JoltG1Routines, JoltG2Routines},
     wrappers::{
@@ -140,7 +140,7 @@ impl WitnessGenerator<JoltWitness, BN254> for JoltWitnessGenerator {
         let base_fq12 = base.0;
         let scalar_fr = ark_to_jolt(scalar);
 
-        let exp_steps = ExponentiationSteps::new(base_fq12, scalar_fr);
+        let exp_steps = Base4ExponentiationSteps::new(base_fq12, scalar_fr);
 
         debug_assert_eq!(
             exp_steps.result, result.0,
@@ -371,7 +371,7 @@ impl RecursionExt<Fr> for DoryCommitmentScheme {
             .zip(coeffs.iter())
             .map(|(comm, coeff)| {
                 let comm_fq12 = comm.borrow().0;
-                let exp_steps = ExponentiationSteps::new(comm_fq12, *coeff);
+                    let exp_steps = Base4ExponentiationSteps::new(comm_fq12, *coeff);
 
                 GTExpOpWitness {
                     base: exp_steps.base,

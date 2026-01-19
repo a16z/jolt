@@ -215,8 +215,8 @@ impl RecursionProver<Fq> {
 
         let g_mle_4var = get_g_mle();
 
-        // Pad g(x) to 12 variables (matching constraint system)
-        let g_poly_values = DoryMatrixBuilder::pad_4var_to_12var_zero_padding(&g_mle_4var);
+        // Pad g(x) to 11 variables (matching constraint system)
+        let g_poly_values = DoryMatrixBuilder::pad_4var_to_11var_zero_padding(&g_mle_4var);
         let g_poly = DensePolynomial::new(g_poly_values.clone());
         let g_values = g_poly_values;
         drop(g_poly_span);
@@ -348,8 +348,8 @@ impl RecursionProver<Fq> {
         use super::stage1::packed_gt_exp::PackedGtExpWitness;
         use jolt_optimizations::fq12_to_multilinear_evals;
 
-        // Use DoryMatrixBuilder with 12 variables for uniform matrix structure (packed GT exp)
-        let mut builder = DoryMatrixBuilder::new(12);
+        // Use DoryMatrixBuilder with 11 variables for uniform matrix structure (packed GT exp)
+        let mut builder = DoryMatrixBuilder::new(11);
 
         // Build packed GT exp witnesses and add to matrix
         tracing::info!(
@@ -366,6 +366,8 @@ impl RecursionProver<Fq> {
         for (_op_id, witness) in witness_collection.gt_exp.iter() {
             // Convert base ArkGT to 4-var MLE
             let base_mle = fq12_to_multilinear_evals(&witness.base);
+            let base2_mle = fq12_to_multilinear_evals(&(witness.base * witness.base));
+            let base3_mle = fq12_to_multilinear_evals(&(witness.base * witness.base * witness.base));
 
             // Create packed witness
             let packed = PackedGtExpWitness::from_steps(
@@ -373,6 +375,8 @@ impl RecursionProver<Fq> {
                 &witness.quotient_mles,
                 &witness.bits,
                 &base_mle,
+                &base2_mle,
+                &base3_mle,
             );
 
             // Add to matrix (ONE constraint per packed GT exp)
@@ -582,10 +586,10 @@ impl<F: JoltField> RecursionProver<F> {
         // Add packed GT exp prover (single prover handles all witnesses with gamma batching)
         let packed_witnesses = &self.constraint_system.packed_gt_exp_witnesses;
         if !packed_witnesses.is_empty() {
-            // Packed GT exp uses layout x * 256 + s (s in low bits), so g needs replication
+            // Packed GT exp uses layout x * 128 + s (s in low bits), so g needs replication
             // Extract 4-var g from the zero-padded version and replicate across s
             let g_4var: Vec<Fq> = self.constraint_system.g_poly.evals()[0..16].to_vec();
-            let g_replicated = DoryMatrixBuilder::pad_4var_to_12var_replicated(&g_4var);
+            let g_replicated = DoryMatrixBuilder::pad_4var_to_11var_replicated(&g_4var);
             let g_poly_replicated_f = unsafe {
                 std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
                     DensePolynomial::new(g_replicated),

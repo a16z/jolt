@@ -14,7 +14,7 @@ mod recursion_tests {
     use ark_bn254::{Fq12, Fr};
     use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
     use dory::{backends::arkworks::ArkGT, recursion::WitnessGenerator};
-    use jolt_optimizations::witness_gen::ExponentiationSteps;
+    use crate::poly::commitment::dory::gt_exp_witness::Base4ExponentiationSteps;
     use rand::thread_rng;
     use serial_test::serial;
 
@@ -36,7 +36,7 @@ mod recursion_tests {
         assert_eq!(witness.exponent, scalar_fr, "Exponent should match");
         assert_eq!(witness.result, result.0, "Result should match");
 
-        let exp_steps = ExponentiationSteps::new(base.0, scalar_fr);
+        let exp_steps = Base4ExponentiationSteps::new(base.0, scalar_fr);
         assert!(
             exp_steps.verify_result(),
             "ExponentiationSteps should verify correctly"
@@ -46,14 +46,15 @@ mod recursion_tests {
             "Results should match between witness and ExponentiationSteps"
         );
 
+        let expected_steps = (witness.bits.len() + 1) / 2;
         assert_eq!(
-            witness.bits.len(),
             witness.quotient_mles.len(),
-            "Should have one quotient per bit"
+            expected_steps,
+            "Should have one quotient per base-4 digit"
         );
         assert_eq!(
             witness.rho_mles.len(),
-            witness.bits.len() + 1,
+            expected_steps + 1,
             "Should have rho_0, ..., rho_t"
         );
     }

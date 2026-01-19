@@ -105,15 +105,15 @@ pub fn compute_constraint_formula(
 }
 
 /// Polynomial types stored in the matrix
-/// Note: Base and Bit are NOT stored in the matrix - verifier computes them from public inputs
+/// Note: Base and digit bits are NOT stored in the matrix - verifier computes them from public inputs
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(usize)]
 pub enum PolyType {
-    // Packed GT Exponentiation polynomials (12-var each, one constraint per GT exp)
-    // Note: base(x) and bit(s) are public inputs, not committed polynomials
+    // Packed GT Exponentiation polynomials (11-var each, one constraint per GT exp)
+    // Note: base(x) and digit bits are public inputs, not committed polynomials
     // Note: rho_next is no longer committed - verified via shift sumcheck
-    RhoPrev = 0,  // rho(s,x) - packed intermediate results (12-var)
-    Quotient = 1, // quotient(s,x) - packed quotients (12-var)
+    RhoPrev = 0,  // rho(s,x) - packed intermediate results (11-var)
+    Quotient = 1, // quotient(s,x) - packed quotients (11-var)
 
     // GT Multiplication polynomials
     MulLhs = 2,
@@ -323,83 +323,86 @@ impl DoryMatrixBuilder {
         mle_8var
     }
 
-    /// Pad a 4-variable MLE to 12 variables using zero padding for true jaggedness.
+    /// Pad a 4-variable MLE to 11 variables using zero padding for true jaggedness.
     /// For GT mul: index = s * 16 + x (x in low bits).
-    pub fn pad_4var_to_12var_zero_padding(mle_4var: &[Fq]) -> Vec<Fq> {
+    pub fn pad_4var_to_11var_zero_padding(mle_4var: &[Fq]) -> Vec<Fq> {
         assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
-        let mut mle_12var = Vec::with_capacity(4096);
+        let mut mle_11var = Vec::with_capacity(2048);
 
         // Copy original 16 values at the beginning
-        mle_12var.extend_from_slice(mle_4var);
+        mle_11var.extend_from_slice(mle_4var);
 
         // Pad with zeros for the remaining positions
-        mle_12var.resize(4096, Fq::zero());
+        mle_11var.resize(2048, Fq::zero());
 
-        assert_eq!(mle_12var.len(), 4096);
-        mle_12var
+        assert_eq!(mle_11var.len(), 2048);
+        mle_11var
     }
 
-    /// Pad a 4-variable MLE to 12 variables for packed GT exp layout.
-    /// Data layout: index = x * 256 + s (s in low 8 bits, x in high 4 bits).
-    /// g(x) doesn't depend on s, so we replicate each g[x] across all 256 s values.
-    pub fn pad_4var_to_12var_replicated(mle_4var: &[Fq]) -> Vec<Fq> {
+    /// Pad a 4-variable MLE to 11 variables for packed GT exp layout.
+    /// Data layout: index = x * 128 + s (s in low 7 bits, x in high 4 bits).
+    /// g(x) doesn't depend on s, so we replicate each g[x] across all 128 s values.
+    pub fn pad_4var_to_11var_replicated(mle_4var: &[Fq]) -> Vec<Fq> {
         assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
-        let mut mle_12var = vec![Fq::zero(); 4096];
+        let mut mle_11var = vec![Fq::zero(); 2048];
 
-        // For each x value (0-15), replicate g[x] across all s values (0-255)
-        // index = x * 256 + s
+        // For each x value (0-15), replicate g[x] across all s values (0-127)
+        // index = x * 128 + s
         for x in 0..16 {
             let g_x = mle_4var[x];
-            for s in 0..256 {
-                mle_12var[x * 256 + s] = g_x;
+            for s in 0..128 {
+                mle_11var[x * 128 + s] = g_x;
             }
         }
 
-        mle_12var
+        mle_11var
     }
 
-    /// Pad an 8-variable MLE to 12 variables using zero padding.
-    /// For G1 scalar mul: 8 vars → 12 vars.
-    pub fn pad_8var_to_12var_zero_padding(mle_8var: &[Fq]) -> Vec<Fq> {
+    /// Pad an 8-variable MLE to 11 variables using zero padding.
+    /// For G1 scalar mul: 8 vars → 11 vars.
+    pub fn pad_8var_to_11var_zero_padding(mle_8var: &[Fq]) -> Vec<Fq> {
         assert_eq!(mle_8var.len(), 256, "Input must be an 8-variable MLE");
-        let mut mle_12var = Vec::with_capacity(4096);
+        let mut mle_11var = Vec::with_capacity(2048);
 
         // Copy original 256 values at the beginning
-        mle_12var.extend_from_slice(mle_8var);
+        mle_11var.extend_from_slice(mle_8var);
 
         // Pad with zeros for the remaining positions
-        mle_12var.resize(4096, Fq::zero());
+        mle_11var.resize(2048, Fq::zero());
 
-        assert_eq!(mle_12var.len(), 4096);
-        mle_12var
+        assert_eq!(mle_11var.len(), 2048);
+        mle_11var
     }
 
     /// Add a packed GT exponentiation witness.
-    /// Creates ONE constraint per GT exp with packed polynomials (all 12-var):
-    /// - Base: base(x) - 4-var padded to 12-var (public input, not committed)
+    /// Creates ONE constraint per GT exp with packed polynomials (all 11-var):
+    /// - Base: base(x) - 4-var padded to 11-var (public input, not committed)
     /// - RhoPrev: rho(s,x) - all intermediate results packed
     /// - RhoNext: rho_next(s,x) - shifted intermediates (NOT COMMITTED - verified via shift sumcheck)
     /// - Quotient: quotient(s,x) - all quotients packed
-    /// - Bit: bit(s) - scalar bits (8-var padded to 12-var, public input, not committed)
+    /// - Digit bits: digit_lo/hi(s) - scalar digits (7-var padded to 11-var, public input)
     pub fn add_packed_gt_exp_witness(
         &mut self,
         witness: &super::stage1::packed_gt_exp::PackedGtExpWitness,
     ) {
         assert_eq!(
-            self.num_constraint_vars, 12,
-            "Packed GT exp requires 12 constraint variables"
+            self.num_constraint_vars, 11,
+            "Packed GT exp requires 11 constraint variables"
         );
 
-        let row_size = 1 << self.num_constraint_vars; // 4096
+        let row_size = 1 << self.num_constraint_vars; // 2048
 
-        // All packed polynomials are already 12-var (4096 elements)
+        // All packed polynomials are already 11-var (2048 elements)
         assert_eq!(witness.base_packed.len(), row_size);
         assert_eq!(witness.rho_packed.len(), row_size);
         assert_eq!(witness.rho_next_packed.len(), row_size);
         assert_eq!(witness.quotient_packed.len(), row_size);
-        assert_eq!(witness.bit_packed.len(), row_size);
+        assert_eq!(witness.digit_lo_packed.len(), row_size);
+        assert_eq!(witness.digit_hi_packed.len(), row_size);
+        assert_eq!(witness.base2_packed.len(), row_size);
+        assert_eq!(witness.base3_packed.len(), row_size);
 
-        // Add only the 2 committed GT exp polynomials (base, bit, and rho_next are not committed)
+        // Add only the 2 committed GT exp polynomials (base/digits/rho_next are not committed)
         self.rows_by_type[PolyType::RhoPrev as usize].push(witness.rho_packed.clone());
         self.rows_by_type[PolyType::Quotient as usize].push(witness.quotient_packed.clone());
 
@@ -455,13 +458,13 @@ impl DoryMatrixBuilder {
         );
 
         // Handle padding from 4-var to target vars
-        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 12 {
-            // Pad 4-variable MLEs to 12 variables using zero padding
+        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 11 {
+            // Pad 4-variable MLEs to 11 variables using zero padding
             (
-                Self::pad_4var_to_12var_zero_padding(&lhs_mle_4var),
-                Self::pad_4var_to_12var_zero_padding(&rhs_mle_4var),
-                Self::pad_4var_to_12var_zero_padding(&result_mle_4var),
-                Self::pad_4var_to_12var_zero_padding(&quotient_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&lhs_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&rhs_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&result_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&quotient_mle_4var),
             )
         } else if self.num_constraint_vars == 8 {
             // Pad 4-variable MLEs to 8 variables using zero padding
@@ -566,16 +569,16 @@ impl DoryMatrixBuilder {
         assert_eq!(t_is_infinity.len(), 1 << 8);
 
         // Pad 8-var MLEs to target constraint vars if needed
-        let (x_a, y_a, x_t, y_t, x_a_next, y_a_next, indicator) = if self.num_constraint_vars == 12
+        let (x_a, y_a, x_t, y_t, x_a_next, y_a_next, indicator) = if self.num_constraint_vars == 11
         {
             (
-                Self::pad_8var_to_12var_zero_padding(&witness.x_a_mles[0]),
-                Self::pad_8var_to_12var_zero_padding(&witness.y_a_mles[0]),
-                Self::pad_8var_to_12var_zero_padding(&witness.x_t_mles[0]),
-                Self::pad_8var_to_12var_zero_padding(&witness.y_t_mles[0]),
-                Self::pad_8var_to_12var_zero_padding(&witness.x_a_next_mles[0]),
-                Self::pad_8var_to_12var_zero_padding(&witness.y_a_next_mles[0]),
-                Self::pad_8var_to_12var_zero_padding(&t_is_infinity),
+                Self::pad_8var_to_11var_zero_padding(&witness.x_a_mles[0]),
+                Self::pad_8var_to_11var_zero_padding(&witness.y_a_mles[0]),
+                Self::pad_8var_to_11var_zero_padding(&witness.x_t_mles[0]),
+                Self::pad_8var_to_11var_zero_padding(&witness.y_t_mles[0]),
+                Self::pad_8var_to_11var_zero_padding(&witness.x_a_next_mles[0]),
+                Self::pad_8var_to_11var_zero_padding(&witness.y_a_next_mles[0]),
+                Self::pad_8var_to_11var_zero_padding(&t_is_infinity),
             )
         } else if self.num_constraint_vars == 8 {
             (
@@ -589,7 +592,7 @@ impl DoryMatrixBuilder {
             )
         } else {
             panic!(
-                "G1 scalar multiplication requires 8 or 12 constraint variables, but builder has {}",
+                "G1 scalar multiplication requires 8 or 11 constraint variables, but builder has {}",
                 self.num_constraint_vars
             );
         };
@@ -641,12 +644,12 @@ impl DoryMatrixBuilder {
         assert_eq!(result_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
         assert_eq!(quotient_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
 
-        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 12 {
+        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 11 {
             (
-                Self::pad_4var_to_12var_zero_padding(&lhs_mle_4var),
-                Self::pad_4var_to_12var_zero_padding(&rhs_mle_4var),
-                Self::pad_4var_to_12var_zero_padding(&result_mle_4var),
-                Self::pad_4var_to_12var_zero_padding(&quotient_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&lhs_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&rhs_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&result_mle_4var),
+                Self::pad_4var_to_11var_zero_padding(&quotient_mle_4var),
             )
         } else if self.num_constraint_vars == 8 {
             (
@@ -707,30 +710,24 @@ impl DoryMatrixBuilder {
                     "[add_combine_witness] GT exp witness {} has empty bits, creating minimal witness",
                     idx
                 );
-                // For trivial exponents (0 or 1), create a minimal packed witness
-                // with one step to maintain consistency
                 let base_mle = fq12_to_multilinear_evals(&exp_wit.base);
+                let base2_mle = fq12_to_multilinear_evals(&(exp_wit.base * exp_wit.base));
+                let base3_mle = fq12_to_multilinear_evals(&(exp_wit.base * exp_wit.base * exp_wit.base));
 
-                // Create minimal witness data
-                let bits = vec![false]; // One dummy bit
                 let rho_mles = if exp_wit.rho_mles.is_empty() {
-                    // Convert Fq12 to MLE for base and result
-                    let result_mle = fq12_to_multilinear_evals(&exp_wit.result);
-                    vec![base_mle.clone(), result_mle]
+                    vec![fq12_to_multilinear_evals(&exp_wit.result)]
                 } else {
                     exp_wit.rho_mles.clone()
                 };
-                let quotient_mles = if exp_wit.quotient_mles.is_empty() {
-                    vec![vec![Fq::zero(); 16]] // One zero quotient
-                } else {
-                    exp_wit.quotient_mles.clone()
-                };
+                let quotient_mles = exp_wit.quotient_mles.clone();
 
                 let packed = PackedGtExpWitness::from_steps(
                     &rho_mles,
                     &quotient_mles,
-                    &bits,
+                    &exp_wit.bits,
                     &base_mle,
+                    &base2_mle,
+                    &base3_mle,
                 );
                 self.add_packed_gt_exp_witness(&packed);
                 packed_witnesses.push(packed);
@@ -739,11 +736,13 @@ impl DoryMatrixBuilder {
 
             // Convert base Fq12 to 4-var MLE
             let base_mle = fq12_to_multilinear_evals(&exp_wit.base);
+            let base2_mle = fq12_to_multilinear_evals(&(exp_wit.base * exp_wit.base));
+            let base3_mle = fq12_to_multilinear_evals(&(exp_wit.base * exp_wit.base * exp_wit.base));
 
             // Validate and fix witness data if needed
-            let (rho_mles, quotient_mles) = if exp_wit.quotient_mles.len() != exp_wit.bits.len() {
+            let num_steps = (exp_wit.bits.len() + 1) / 2;
+            let (rho_mles, quotient_mles) = if exp_wit.quotient_mles.len() != num_steps {
                 // Fix mismatched sizes
-                let num_steps = exp_wit.bits.len();
                 let mut fixed_quotients = exp_wit.quotient_mles.clone();
 
                 // Ensure we have exactly num_steps quotient MLEs
@@ -770,6 +769,8 @@ impl DoryMatrixBuilder {
                 &quotient_mles,
                 &exp_wit.bits,
                 &base_mle,
+                &base2_mle,
+                &base3_mle,
             );
 
             // Add to matrix
@@ -940,11 +941,11 @@ pub struct ConstraintSystem {
     /// Constraint metadata: maps constraint index to matrix rows it references
     pub constraints: Vec<MatrixConstraint>,
 
-    /// Packed GT exp witnesses for Stage 1 prover (all 254 steps packed into 12-var MLEs)
+    /// Packed GT exp witnesses for Stage 1 prover (base-4 steps packed into 11-var MLEs)
     pub packed_gt_exp_witnesses: Vec<super::stage1::packed_gt_exp::PackedGtExpWitness>,
 
     /// Public inputs for packed GT exp (base Fq12 and scalar bits) - used by verifier
-    /// and Stage 2 to compute bit/base evaluations directly
+    /// and Stage 2 to compute digit/base evaluations directly
     pub packed_gt_exp_public_inputs: Vec<PackedGtExpPublicInputs>,
 }
 
@@ -956,7 +957,7 @@ impl ConstraintSystem {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // For now, create a simple matrix with padding
         let _num_constraints = constraint_types.len();
-        let num_constraint_vars = 12; // Using 12 for packed GT exp compatibility
+        let num_constraint_vars = 11; // Using 11 for packed GT exp base-4
 
         let mut builder = DoryMatrixBuilder::new(num_constraint_vars);
 
@@ -967,7 +968,7 @@ impl ConstraintSystem {
         for constraint_type in &constraint_types {
             match constraint_type {
                 ConstraintType::PackedGtExp => {
-                    // Add packed GT exp rows (2 committed polynomials - base/bit/rho_next are not committed)
+                    // Add packed GT exp rows (2 committed polynomials - base/digits/rho_next are not committed)
                     builder.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
                     builder.rows_by_type[PolyType::Quotient as usize].push(zero_row.clone());
 
@@ -1054,20 +1055,24 @@ impl ConstraintSystem {
             proof, setup, transcript, point, evaluation, commitment,
         )?;
 
-        // Always use 12 variables for uniform matrix structure
-        // GT operations (4-var) and G1 operations (8-var) will be padded to 12 vars
-        let mut builder = DoryMatrixBuilder::new(12);
+        // Always use 11 variables for uniform matrix structure
+        // GT operations (4-var) and G1 operations (8-var) will be padded to 11 vars
+        let mut builder = DoryMatrixBuilder::new(11);
 
         // Create packed GT exp witnesses and public inputs, add to matrix
         let mut packed_gt_exp_witnesses = Vec::with_capacity(witnesses.gt_exp.len());
         let mut packed_gt_exp_public_inputs = Vec::with_capacity(witnesses.gt_exp.len());
         for (_op_id, witness) in witnesses.gt_exp.iter() {
             let base_mle = fq12_to_multilinear_evals(&witness.base);
+            let base2_mle = fq12_to_multilinear_evals(&(witness.base * witness.base));
+            let base3_mle = fq12_to_multilinear_evals(&(witness.base * witness.base * witness.base));
             let packed = super::stage1::packed_gt_exp::PackedGtExpWitness::from_steps(
                 &witness.rho_mles,
                 &witness.quotient_mles,
                 &witness.bits,
                 &base_mle,
+                &base2_mle,
+                &base3_mle,
             );
             builder.add_packed_gt_exp_witness(&packed);
             packed_gt_exp_witnesses.push(packed);
@@ -1092,8 +1097,8 @@ impl ConstraintSystem {
         let g_mle_4var = get_g_mle();
 
         // Pad g(x) to match constraint vars
-        let g_poly = if matrix.num_constraint_vars == 12 {
-            let padded_g = DoryMatrixBuilder::pad_4var_to_12var_zero_padding(&g_mle_4var);
+        let g_poly = if matrix.num_constraint_vars == 11 {
+            let padded_g = DoryMatrixBuilder::pad_4var_to_11var_zero_padding(&g_mle_4var);
             DensePolynomial::new(padded_g)
         } else if matrix.num_constraint_vars == 8 {
             let padded_g = DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var);
@@ -1204,7 +1209,7 @@ impl ConstraintSystem {
 
     /// Extract packed GT exp constraint data for packed_gt_exp sumcheck
     /// Returns: (constraint_index, rho, quotient) for each PackedGtExp constraint
-    /// Note: bit, base, and rho_next are public inputs/virtual claims
+    /// Note: digit bits, base, and rho_next are public inputs/virtual claims
     pub fn extract_packed_gt_exp_constraints(
         &self,
     ) -> Vec<(usize, Vec<Fq>, Vec<Fq>)> {
@@ -1223,7 +1228,7 @@ impl ConstraintSystem {
             if let ConstraintType::PackedGtExp = constraint.constraint_type {
                 // Extract the 2 committed MLEs for this packed GT exp
                 // Note: RhoPrev = rho in the packed convention
-                // Base, Bit, and rho_next are not committed
+                // Base, digit bits, and rho_next are not committed
                 let rho = self.extract_row_poly(PolyType::RhoPrev, idx, row_size);
                 let quotient = self.extract_row_poly(PolyType::Quotient, idx, row_size);
 
@@ -1253,8 +1258,8 @@ impl ConstraintSystem {
         let idx = constraint.constraint_index;
         match constraint.constraint_type {
             ConstraintType::PackedGtExp => {
-                let g_eval = if x.len() == 12 {
-                    let x_elem_reversed: Vec<Fq> = x[8..12].iter().rev().copied().collect();
+                let g_eval = if x.len() == 11 {
+                    let x_elem_reversed: Vec<Fq> = x[7..11].iter().rev().copied().collect();
                     let g_4var = get_g_mle();
                     DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
                 } else {
@@ -1268,7 +1273,7 @@ impl ConstraintSystem {
                 let rho_prev = self.matrix.evaluate_row(rho_prev_row, x);
                 let quotient = self.matrix.evaluate_row(quotient_row, x);
 
-                // Get rho_next, base_eval and bit_eval from packed witness
+                // Get rho_next, base_eval and digit bits from packed witness
                 // Need to find GT exp witness index (count PackedGtExp constraints before this one)
                 let gt_exp_idx = self
                     .constraints
@@ -1279,11 +1284,23 @@ impl ConstraintSystem {
                 let packed = &self.packed_gt_exp_witnesses[gt_exp_idx];
                 let rho_curr = DensePolynomial::new(packed.rho_next_packed.clone()).evaluate(x);
                 let base_eval = DensePolynomial::new(packed.base_packed.clone()).evaluate(x);
-                let bit_eval = DensePolynomial::new(packed.bit_packed.clone()).evaluate(x);
+                let base2_eval = DensePolynomial::new(packed.base2_packed.clone()).evaluate(x);
+                let base3_eval = DensePolynomial::new(packed.base3_packed.clone()).evaluate(x);
+                let digit_lo_eval =
+                    DensePolynomial::new(packed.digit_lo_packed.clone()).evaluate(x);
+                let digit_hi_eval =
+                    DensePolynomial::new(packed.digit_hi_packed.clone()).evaluate(x);
 
-                let base_power = Fq::one() + (base_eval - Fq::one()) * bit_eval;
-                let constraint_eval =
-                    rho_curr - rho_prev.square() * base_power - quotient * g_eval;
+                let u = digit_lo_eval;
+                let v = digit_hi_eval;
+                let w0 = (Fq::one() - u) * (Fq::one() - v);
+                let w1 = u * (Fq::one() - v);
+                let w2 = (Fq::one() - u) * v;
+                let w3 = u * v;
+                let base_power = w0 + w1 * base_eval + w2 * base2_eval + w3 * base3_eval;
+                let rho2 = rho_prev * rho_prev;
+                let rho4 = rho2 * rho2;
+                let constraint_eval = rho_curr - rho4 * base_power - quotient * g_eval;
 
                 // Convert point to index
                 let mut index = 0usize;
@@ -1292,15 +1309,16 @@ impl ConstraintSystem {
                         index |= 1 << i;
                     }
                 }
-                let s_index = index & 0xFF; // low 8 bits
-                let x_index = (index >> 8) & 0xF; // high 4 bits
+                let s_index = index & 0x7F; // low 7 bits
+                let x_index = (index >> 7) & 0xF; // high 4 bits
 
                 println!("  s_index={}, x_index={}", s_index, x_index);
                 println!("  base_eval = {:?}", base_eval);
                 println!("  rho_prev = {:?}", rho_prev);
                 println!("  rho_curr = {:?}", rho_curr);
                 println!("  quotient = {:?}", quotient);
-                println!("  bit_eval = {:?}", bit_eval);
+                println!("  digit_lo_eval = {:?}", digit_lo_eval);
+                println!("  digit_hi_eval = {:?}", digit_hi_eval);
                 println!("  g_eval = {:?}", g_eval);
                 println!("  base_power = {:?}", base_power);
                 println!("  constraint = {:?}", constraint_eval);
@@ -1318,11 +1336,30 @@ impl ConstraintSystem {
                     index,
                     packed.quotient_packed.get(index)
                 );
-                println!("  bit_packed[{}] = {:?}", index, packed.bit_packed.get(index));
+                println!(
+                    "  digit_lo_packed[{}] = {:?}",
+                    index,
+                    packed.digit_lo_packed.get(index)
+                );
+                println!(
+                    "  digit_hi_packed[{}] = {:?}",
+                    index,
+                    packed.digit_hi_packed.get(index)
+                );
                 println!(
                     "  base_packed[{}] = {:?}",
                     index,
                     packed.base_packed.get(index)
+                );
+                println!(
+                    "  base2_packed[{}] = {:?}",
+                    index,
+                    packed.base2_packed.get(index)
+                );
+                println!(
+                    "  base3_packed[{}] = {:?}",
+                    index,
+                    packed.base3_packed.get(index)
                 );
             }
             _ => {
@@ -1333,7 +1370,7 @@ impl ConstraintSystem {
 
     /// Evaluate μ at a given point s
     /// This is used for testing/debugging - the actual evaluation should use the multilinear polynomial
-    /// Note: Base and Bit are public inputs computed by verifier, not committed polynomials
+    /// Note: Base and digit bits are public inputs computed by verifier, not committed polynomials
     pub fn evaluate_mu_at_binary_point(
         rho_prev_claim: Fq,
         _rho_curr_claim: Fq,
@@ -1435,12 +1472,12 @@ impl ConstraintSystem {
         match constraint.constraint_type {
             ConstraintType::PackedGtExp => {
                 // For packed GT exp, g(x) only depends on element variables (high 4 bits)
-                // Data layout: index = x_elem * 256 + s (s in low 8 bits, x_elem in high 4 bits)
-                // So for a 12-var point, element vars are x[8..12]
-                let g_eval = if x.len() == 12 {
+                // Data layout: index = x_elem * 128 + s (s in low 7 bits, x_elem in high 4 bits)
+                // So for an 11-var point, element vars are x[7..11]
+                let g_eval = if x.len() == 11 {
                     // Extract element variables (high 4 bits) and evaluate 4-var g
                     // Reverse for big-endian convention used by DensePolynomial::evaluate
-                    let x_elem_reversed: Vec<Fq> = x[8..12].iter().rev().copied().collect();
+                    let x_elem_reversed: Vec<Fq> = x[7..11].iter().rev().copied().collect();
                     let g_4var = get_g_mle();
                     DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
                 } else {
@@ -1467,22 +1504,34 @@ impl ConstraintSystem {
                 // Reverse for big-endian convention used by DensePolynomial::evaluate
                 let x_reversed: Vec<Fq> = x.iter().rev().copied().collect();
                 let rho_curr = DensePolynomial::new(packed.rho_next_packed.clone()).evaluate(&x_reversed);
-                let base_eval =
-                    DensePolynomial::new(packed.base_packed.clone()).evaluate(&x_reversed);
-                let bit_eval =
-                    DensePolynomial::new(packed.bit_packed.clone()).evaluate(&x_reversed);
+                let base_eval = DensePolynomial::new(packed.base_packed.clone()).evaluate(&x_reversed);
+                let base2_eval =
+                    DensePolynomial::new(packed.base2_packed.clone()).evaluate(&x_reversed);
+                let base3_eval =
+                    DensePolynomial::new(packed.base3_packed.clone()).evaluate(&x_reversed);
+                let digit_lo_eval =
+                    DensePolynomial::new(packed.digit_lo_packed.clone()).evaluate(&x_reversed);
+                let digit_hi_eval =
+                    DensePolynomial::new(packed.digit_hi_packed.clone()).evaluate(&x_reversed);
 
-                // base^bit = 1 + (base - 1) * bit (linear interpolation for bit ∈ {0,1})
-                let base_power = Fq::one() + (base_eval - Fq::one()) * bit_eval;
+                let u = digit_lo_eval;
+                let v = digit_hi_eval;
+                let w0 = (Fq::one() - u) * (Fq::one() - v);
+                let w1 = u * (Fq::one() - v);
+                let w2 = (Fq::one() - u) * v;
+                let w3 = u * v;
+                let base_power = w0 + w1 * base_eval + w2 * base2_eval + w3 * base3_eval;
+                let rho2 = rho_prev * rho_prev;
+                let rho4 = rho2 * rho2;
 
-                rho_curr - rho_prev.square() * base_power - quotient * g_eval
+                rho_curr - rho4 * base_power - quotient * g_eval
             }
             ConstraintType::GtMul => {
-                // GT mul uses 4-var polynomials with ZERO PADDING to 12-var
-                // Zero padding: data in low indices 0-15, zeros in 16-4095
+                // GT mul uses 4-var polynomials with ZERO PADDING to 11-var
+                // Zero padding: data in low indices 0-15, zeros in 16-2047
                 // So element variables are in the LOW 4 bits: x[0..4]
                 // Reverse for big-endian convention used by DensePolynomial::evaluate
-                let g_eval = if x.len() == 12 {
+                let g_eval = if x.len() == 11 {
                     let x_elem_reversed: Vec<Fq> = x[0..4].iter().rev().copied().collect();
                     let g_4var = get_g_mle();
                     DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
@@ -1687,12 +1736,12 @@ mod tests {
         use rand::{rngs::StdRng, Rng, SeedableRng};
 
         let mut rng = StdRng::seed_from_u64(42);
-        let num_x_vars = system.matrix.num_constraint_vars; // 8 variables
+        let num_x_vars = system.matrix.num_constraint_vars;
 
-        // For each constraint, test it at random 12-variable points
+        // For each constraint, test it at random x-variable points
         for (idx, constraint) in system.constraints.iter().enumerate() {
             // Test this constraint at 5 random points
-            for trial in 0..5 {
+            for _trial in 0..5 {
                 let mut x_point = Vec::with_capacity(num_x_vars);
                 for _ in 0..num_x_vars {
                     x_point.push(if rng.gen_bool(0.5) {

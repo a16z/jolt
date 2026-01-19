@@ -27,7 +27,7 @@ use rayon::prelude::*;
 /// Parameters for shift rho sumcheck
 #[derive(Clone)]
 pub struct ShiftRhoParams {
-    /// Number of variables (12 = 8 step + 4 element)
+    /// Number of variables (11 = 7 step + 4 element)
     pub num_vars: usize,
     /// Number of claims to verify
     pub num_claims: usize,
@@ -38,7 +38,7 @@ pub struct ShiftRhoParams {
 impl ShiftRhoParams {
     pub fn new(num_claims: usize) -> Self {
         Self {
-            num_vars: 12, // 8 step vars + 4 element vars
+            num_vars: 11, // 7 step vars + 4 element vars
             num_claims,
             sumcheck_id: SumcheckId::ShiftRho,
         }
@@ -117,20 +117,20 @@ impl<F: JoltField, T: Transcript> ShiftRhoProver<F, T> {
             claimed_values.push(value);
 
             // Split point into step and element parts
-            let r_s = &point.r[..8];
-            let r_x = &point.r[8..];
+            let r_s = &point.r[..7];
+            let r_x = &point.r[7..];
 
             // Create EqPlusOne polynomial for step variables
             let (_, eq_plus_one_evals) = EqPlusOnePolynomial::<F>::evals(r_s, None);
             eq_plus_one_polys.push(MultilinearPolynomial::from(eq_plus_one_evals));
 
-            // Create Eq polynomial for element variables (padded to full 12 vars)
+            // Create Eq polynomial for element variables (padded to full 11 vars)
             let eq_x_evals = EqPolynomial::<F>::evals(r_x);
-            // Pad to 12 variables by replicating across step dimension
+            // Pad to 11 variables by replicating across step dimension
             let mut padded_eq_x = vec![F::zero(); 1 << params.num_vars];
-            for s in 0..256 {
+            for s in 0..128 {
                 for x in 0..16 {
-                    padded_eq_x[x * 256 + s] = eq_x_evals[x];
+                    padded_eq_x[x * 128 + s] = eq_x_evals[x];
                 }
             }
             eq_x_polys.push(MultilinearPolynomial::from(padded_eq_x));
@@ -331,12 +331,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftRhoVer
             );
 
             // Split the original point into step and element parts
-            let r_s = &rho_next_point.r[..8];
-            let r_x = &rho_next_point.r[8..];
+            let r_s = &rho_next_point.r[..7];
+            let r_x = &rho_next_point.r[7..];
 
-            // Evaluate EqPlusOne(r_s, challenges[..8]) * Eq(r_x, challenges[8..])
-            let s_challenges = &sumcheck_challenges[..8];
-            let x_challenges = &sumcheck_challenges[8..];
+            // Evaluate EqPlusOne(r_s, challenges[..7]) * Eq(r_x, challenges[7..])
+            let s_challenges = &sumcheck_challenges[..7];
+            let x_challenges = &sumcheck_challenges[7..];
 
             let eq_plus_one = EqPlusOnePolynomial::<F>::mle(r_s, s_challenges);
             let eq_x = EqPolynomial::<F>::mle(r_x, x_challenges);

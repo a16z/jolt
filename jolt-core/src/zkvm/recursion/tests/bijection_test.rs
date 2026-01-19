@@ -54,7 +54,7 @@ fn create_mixed_constraint_system() -> ConstraintSystem {
         },
     ];
 
-    let g_poly = DensePolynomial::new(vec![Fq::one(); 256]);
+    let g_poly = DensePolynomial::new(vec![Fq::one(); 2048]);
 
     ConstraintSystem::from_witness(
         constraints.into_iter().map(|c| c.constraint_type).collect(),
@@ -69,21 +69,21 @@ fn test_bijection_with_constraint_system() {
     let builder = ConstraintSystemJaggedBuilder::from_constraints(&cs.constraints);
     let (bijection, mapping) = builder.build();
 
-    // PackedGtExp has 3 poly types (RhoPrev, RhoCurr, Quotient) - Base/Bit are public inputs: 3 × 3 = 9
+    // PackedGtExp has 2 poly types (RhoPrev, Quotient) - Base/Bit/RhoNext are public inputs: 3 × 2 = 6
     // GtMul has 4 poly types: 2 × 4 = 8
     // G1ScalarMul has 7 poly types: 1 × 7 = 7
-    // Total: 24 polynomials
-    assert_eq!(bijection.num_polynomials(), 24);
-    assert_eq!(mapping.num_polynomials(), 24);
+    // Total: 21 polynomials
+    assert_eq!(bijection.num_polynomials(), 21);
+    assert_eq!(mapping.num_polynomials(), 21);
 
     // Dense sizes:
-    // - PackedGtExp polynomials are 12-var (4096 each): 9 × 4096 = 36864
+    // - PackedGtExp polynomials are 11-var (2048 each): 6 × 2048 = 12288
     // - GtMul polynomials are 4-var (16 each): 8 × 16 = 128
     // - G1ScalarMul polynomials are 8-var (256 each): 7 × 256 = 1792
-    // Total: 38784
+    // Total: 14208
     assert_eq!(
         <VarCountJaggedBijection as JaggedTransform<Fq>>::dense_size(&bijection),
-        9 * 4096 + 8 * 16 + 7 * 256
+        6 * 2048 + 8 * 16 + 7 * 256
     );
 
     let (c_idx, p_type) = mapping.decode(0);
@@ -91,13 +91,13 @@ fn test_bijection_with_constraint_system() {
     // First poly type is now RhoPrev (Base was removed - it's a public input)
     assert_eq!(p_type as usize, PolyType::RhoPrev as usize);
 
-    // With 9 PackedGtExp polys (indices 0-8), index 9 is the first GtMul poly
-    let (c_idx, p_type) = mapping.decode(9);
+    // With 6 PackedGtExp polys (indices 0-5), index 6 is the first GtMul poly
+    let (c_idx, p_type) = mapping.decode(6);
     assert_eq!(c_idx, 3);
     assert_eq!(p_type as usize, PolyType::MulLhs as usize);
 
-    // Index 17 (9 GT exp + 8 GT mul = 17) is the first G1ScalarMul poly
-    let (c_idx, p_type) = mapping.decode(17);
+    // Index 14 (6 GT exp + 8 GT mul = 14) is the first G1ScalarMul poly
+    let (c_idx, p_type) = mapping.decode(14);
     assert_eq!(c_idx, 5);
     assert_eq!(p_type as usize, PolyType::G1ScalarMulXA as usize);
 }
@@ -418,8 +418,8 @@ fn test_jagged_bijection_with_real_dory_proof() {
         let num_vars =
             <VarCountJaggedBijection as JaggedTransform<Fq>>::poly_num_vars(&bijection, row);
         assert!(
-            num_vars == 4 || num_vars == 8 || num_vars == 12,
-            "Expected 4, 8, or 12 variables, got {}",
+            num_vars == 4 || num_vars == 8 || num_vars == 11,
+            "Expected 4, 8, or 11 variables, got {}",
             num_vars
         );
     }
@@ -748,9 +748,9 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
                 .row_index(poly_type, constraint_idx);
             let storage_offset = constraint_system.matrix.storage_offset(matrix_row);
 
-            // PackedGtExp uses 12-var, GtMul uses 4-var, G1ScalarMul uses 8-var
+            // PackedGtExp uses 11-var, GtMul uses 4-var, G1ScalarMul uses 8-var
             let num_vars = match constraint_type {
-                ConstraintType::PackedGtExp => 12,
+                ConstraintType::PackedGtExp => 11,
                 ConstraintType::GtMul => 4,
                 ConstraintType::G1ScalarMul { .. } => 8,
             };
@@ -787,7 +787,7 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
         }
     }
 
-    // Only test GtMul constraints for zero padding (PackedGtExp uses full 12-var, no padding)
+    // Only test GtMul constraints for zero padding (PackedGtExp uses full 11-var, no padding)
     for constraint_idx in 0..3.min(constraint_system.constraints.len()) {
         if let ConstraintType::GtMul = &constraint_system.constraints[constraint_idx].constraint_type
         {
@@ -808,8 +808,8 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
                 "Should have at least one non-zero value in first 16 positions"
             );
 
-            // GtMul is 4-var (16 elements) padded to 12-var (4096), so positions 16..4096 should be zero
-            for i in 16..4096 {
+            // GtMul is 4-var (16 elements) padded to 11-var (2048), so positions 16..2048 should be zero
+            for i in 16..2048 {
                 assert!(
                     constraint_system.matrix.evaluations[storage_offset + i].is_zero(),
                     "Position {} should be zero for 4-var polynomial with zero padding",
