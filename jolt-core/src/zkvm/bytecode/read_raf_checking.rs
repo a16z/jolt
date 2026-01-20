@@ -24,7 +24,10 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
-    utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
+    utils::{
+        errors::ProofVerifyError, math::Math, small_scalar::SmallScalar,
+        thread::unsafe_allocate_zero_vec,
+    },
     zkvm::{
         bytecode::BytecodePreprocessing,
         config::{BytecodeMode, OneHotParams},
@@ -1259,26 +1262,29 @@ pub struct BytecodeReadRafAddressSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     pub fn new(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        bytecode_preprocessing: Option<&BytecodePreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
         bytecode_mode: BytecodeMode,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let mut params = match bytecode_mode {
             // Commitment mode: verifier MUST avoid O(K_bytecode) work here, and later stages will
             // relate staged Val claims to committed bytecode.
             BytecodeMode::Committed => BytecodeReadRafSumcheckParams::gen_verifier(
-                bytecode_preprocessing,
                 n_cycle_vars,
                 one_hot_params,
                 opening_accumulator,
                 transcript,
             ),
-            // Legacy mode: verifier materializes/evaluates bytecode-dependent polynomials (O(K_bytecode)).
+            // Full mode: verifier materializes/evaluates bytecode-dependent polynomials (O(K_bytecode)).
             BytecodeMode::Full => BytecodeReadRafSumcheckParams::gen(
-                bytecode_preprocessing,
+                bytecode_preprocessing.ok_or_else(|| {
+                    ProofVerifyError::BytecodeTypeMismatch(
+                        "expected Full bytecode preprocessing, got Committed".to_string(),
+                    )
+                })?,
                 n_cycle_vars,
                 one_hot_params,
                 opening_accumulator,
@@ -1286,7 +1292,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
             ),
         };
         params.use_staged_val_claims = bytecode_mode == BytecodeMode::Committed;
-        Self { params }
+        Ok(Self { params })
     }
 
     /// Consume this verifier and return the underlying parameters (for Option B orchestration).
@@ -1542,7 +1548,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         transcript: &mut impl Transcript,
     ) -> Self {
         Self::gen_impl(
-            bytecode_preprocessing,
+            Some(bytecode_preprocessing),
             n_cycle_vars,
             one_hot_params,
             opening_accumulator,
@@ -1554,14 +1560,13 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     /// Verifier-side generator: avoids materializing Val(k) polynomials (O(K_bytecode)).
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen_verifier")]
     pub fn gen_verifier(
-        bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         Self::gen_impl(
-            bytecode_preprocessing,
+            None,
             n_cycle_vars,
             one_hot_params,
             opening_accumulator,
@@ -1572,7 +1577,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
     #[allow(clippy::too_many_arguments)]
     fn gen_impl(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        bytecode_preprocessing: Option<&BytecodePreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
@@ -1580,8 +1585,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         compute_val_polys: bool,
     ) -> Self {
         let gamma_powers = transcript.challenge_scalar_powers(7);
-
-        let bytecode = &bytecode_preprocessing.bytecode;
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
         let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
@@ -1599,6 +1602,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
 
         let val_polys = if compute_val_polys {
+            let bytecode = &bytecode_preprocessing
+                .expect("compute_val_polys requires bytecode preprocessing")
+                .bytecode;
             // Pre-compute eq_r_register for stages 4 and 5 (they use different r_register points)
             let r_register_4 = opening_accumulator
                 .get_virtual_polynomial_opening(

@@ -437,15 +437,22 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         anyhow::Error,
     > {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        // In Committed mode, this returns an error (Full bytecode not available)
+        let bytecode_preprocessing = match self.proof.bytecode_mode {
+            BytecodeMode::Committed => {
+                // Ensure we have committed bytecode commitments for committed mode.
+                let _ = self.preprocessing.bytecode.as_committed()?;
+                None
+            }
+            BytecodeMode::Full => Some(self.preprocessing.bytecode.as_full()?.as_ref()),
+        };
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
-            self.preprocessing.bytecode.as_full()?,
+            bytecode_preprocessing,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
             self.proof.bytecode_mode,
-        );
+        )?;
         let booleanity_params = BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
