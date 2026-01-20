@@ -17,6 +17,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
     utils::math::Math,
     zkvm::{ram::remap_address, witness::VirtualPolynomial},
 };
@@ -75,8 +76,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
         self.K.log_2()
     }
 
-    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
-        F::zero()
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
+        Ok(F::zero())
     }
 
     fn normalize_opening_point(
@@ -263,27 +264,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let val_final_claim = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
 
         let r_address = &self.params.r_address;
         // Derive r' using the same endianness conversion as used when caching openings
         let r_address_prime = self.params.normalize_opening_point(sumcheck_challenges).r;
         let program_io = &self.params.program_io;
 
-        let io_mask = RangeMaskPolynomial::<F>::new(
-            remap_address(
-                program_io.memory_layout.input_start,
-                &program_io.memory_layout,
-            )
-            .unwrap() as u128,
-            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as u128,
-        );
+        let input_start = program_io.memory_layout.input_start;
+        let io_start = remap_address(input_start, &program_io.memory_layout)
+            .ok_or(ProofVerifyError::AddressRemapFailed(input_start))?
+            as u128;
+        let ram_start = remap_address(RAM_START_ADDRESS, &program_io.memory_layout)
+            .ok_or(ProofVerifyError::AddressRemapFailed(RAM_START_ADDRESS))?
+            as u128;
+        let io_mask = RangeMaskPolynomial::<F>::new(io_start, ram_start);
         let val_io = ProgramIOPolynomial::new(program_io);
 
         let eq_eval: F = EqPolynomial::<F>::mle(r_address, &r_address_prime);
@@ -292,7 +293,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
 
         // Recall that the sumcheck expression is:
         //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
-        eq_eval * io_mask_eval * (val_final_claim - val_io_eval)
+        Ok(eq_eval * io_mask_eval * (val_final_claim - val_io_eval))
     }
 
     fn cache_openings(
@@ -300,19 +301,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamValFinal,
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
-        );
+        )?;
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamValInit,
             SumcheckId::RamOutputCheck,
             opening_point,
-        );
+        )?;
+        Ok(())
     }
 }

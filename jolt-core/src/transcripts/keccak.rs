@@ -35,29 +35,36 @@ impl KeccakTranscript {
             .chain_update(&packed)
     }
 
-    // Loads arbitrary byte lengths using ceil(out/32) invocations of 32 byte randoms
-    // Discards top bits when the size is less than 32 bytes
+    /// Fills `out` with challenge bytes. Uses `ceil(out.len()/32)` hash calls.
+    /// Empty `out` returns immediately without advancing transcript.
+    ///
+    /// Panic-free: iterator-only access, guarded `split_at_mut`, safe `zip`.
     fn challenge_bytes(&mut self, out: &mut [u8]) {
-        let mut remaining_len = out.len();
-        let mut start = 0;
-        while remaining_len > 32 {
-            self.challenge_bytes32(&mut out[start..start + 32]);
-            start += 32;
-            remaining_len -= 32;
+        let mut remaining = out;
+        // SAFETY: `split_at_mut(32)` only called when `remaining.len() > 32`.
+        while remaining.len() > 32 {
+            let rand = self.challenge_bytes32();
+            let (chunk, rest) = remaining.split_at_mut(32);
+            // SAFETY: `zip` stops at the shorter iterator.
+            for (dst, src) in chunk.iter_mut().zip(rand.iter()) {
+                *dst = *src;
+            }
+            remaining = rest;
         }
-        // We load a full 32 byte random region
-        let mut full_rand = vec![0_u8; 32];
-        self.challenge_bytes32(&mut full_rand);
-        // Then only clone the first bits of this random region to perfectly fill out
-        out[start..start + remaining_len].clone_from_slice(&full_rand[0..remaining_len]);
+        // SAFETY: `zip` stops at `remaining.len()` which is ≤ 32.
+        if !remaining.is_empty() {
+            let rand = self.challenge_bytes32();
+            for (dst, src) in remaining.iter_mut().zip(rand.iter()) {
+                *dst = *src;
+            }
+        }
     }
 
     // Loads exactly 32 bytes from the transcript by hashing the seed with the round constant
-    fn challenge_bytes32(&mut self, out: &mut [u8]) {
-        assert_eq!(32, out.len());
+    fn challenge_bytes32(&mut self) -> [u8; 32] {
         let rand: [u8; 32] = self.hasher().finalize().into();
-        out.clone_from_slice(rand.as_slice());
         self.update_state(rand);
+        rand
     }
 
     fn update_state(&mut self, new_state: [u8; 32]) {
@@ -194,10 +201,10 @@ impl Transcript for KeccakTranscript {
     }
 
     fn challenge_u128(&mut self) -> u128 {
-        let mut buf = vec![0u8; 16];
+        let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
-        buf = buf.into_iter().rev().collect();
-        u128::from_be_bytes(buf.try_into().unwrap())
+        buf.reverse();
+        u128::from_be_bytes(buf)
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
@@ -231,11 +238,11 @@ impl Transcript for KeccakTranscript {
 
     // New methods that return F::Challenge
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        let mut buf = vec![0u8; 16];
+        let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
 
-        buf = buf.into_iter().rev().collect();
-        F::Challenge::from(u128::from_be_bytes(buf.try_into().unwrap()))
+        buf.reverse();
+        F::Challenge::from(u128::from_be_bytes(buf))
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {

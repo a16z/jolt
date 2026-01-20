@@ -56,6 +56,7 @@ use crate::{
         },
     },
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
     utils::math::Math,
     zkvm::witness::VirtualPolynomial,
 };
@@ -130,11 +131,7 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     }
 
     let lowest_address = memory_layout.get_lowest_address();
-    if address >= lowest_address {
-        Some((address - lowest_address) / 8)
-    } else {
-        panic!("Unexpected address {address}")
-    }
+    address.checked_sub(lowest_address).map(|delta| delta / 8)
 }
 
 /// Populate memory states
@@ -187,10 +184,9 @@ pub fn prover_accumulate_advice<F: JoltField>(
     let total_variables = one_hot_params.ram_k.log_2();
 
     // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
-    let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
-        VirtualPolynomial::RamVal,
-        SumcheckId::RamReadWriteChecking,
-    );
+    let (r_rw, _) = opening_accumulator
+        .get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking)
+        .expect("prover should have RamVal opening");
     let (r_address_rw, _) = r_rw.split_at(total_variables);
 
     let compute_advice_opening = |advice_poly: &MultilinearPolynomial<F>,
@@ -218,10 +214,12 @@ pub fn prover_accumulate_advice<F: JoltField>(
 
         // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
         if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
+            let (r_raf, _) = opening_accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::RamValFinal,
+                    SumcheckId::RamOutputCheck,
+                )
+                .expect("prover should have RamValFinal opening");
             let (point_raf, eval_raf) =
                 compute_advice_opening(untrusted_advice_poly, &r_raf, max_size);
             opening_accumulator.append_untrusted_advice(
@@ -248,10 +246,12 @@ pub fn prover_accumulate_advice<F: JoltField>(
 
         // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
         if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
+            let (r_raf, _) = opening_accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::RamValFinal,
+                    SumcheckId::RamOutputCheck,
+                )
+                .expect("prover should have RamValFinal opening");
             let (point_raf, eval_raf) =
                 compute_advice_opening(trusted_advice_poly, &r_raf, max_size);
             opening_accumulator.append_trusted_advice(
@@ -280,14 +280,14 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
     single_opening: bool,
-) {
+) -> Result<(), ProofVerifyError> {
     let total_vars = ram_K.log_2();
 
     // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
     let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RamVal,
         SumcheckId::RamReadWriteChecking,
-    );
+    )?;
     let (r_address_rw, _) = r_rw.split_at(total_vars);
 
     let compute_advice_point = |r_address: &OpeningPoint<BIG_ENDIAN, F>, max_advice_size: usize| {
@@ -306,20 +306,20 @@ pub fn verifier_accumulate_advice<F: JoltField>(
             transcript,
             SumcheckId::RamValEvaluation,
             point_rw,
-        );
+        )?;
 
         // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
         if !single_opening {
             let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
-            );
+            )?;
             let point_raf = compute_advice_point(&r_raf, max_size);
             opening_accumulator.append_untrusted_advice(
                 transcript,
                 SumcheckId::RamValFinalEvaluation,
                 point_raf,
-            );
+            )?;
         }
     }
 
@@ -332,22 +332,23 @@ pub fn verifier_accumulate_advice<F: JoltField>(
             transcript,
             SumcheckId::RamValEvaluation,
             point_rw,
-        );
+        )?;
 
         // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
         if !single_opening {
             let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
-            );
+            )?;
             let point_raf = compute_advice_point(&r_raf, max_size);
             opening_accumulator.append_trusted_advice(
                 transcript,
                 SumcheckId::RamValFinalEvaluation,
                 point_raf,
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
 /// Calculates how advice inputs contribute to the evaluation of initial_ram_state at a given random point.

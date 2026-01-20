@@ -66,6 +66,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc6S;
+use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::witness::CommittedPolynomial;
@@ -88,7 +89,7 @@ impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let gamma: F = transcript.challenge_scalar();
         let gamma_sqr = gamma.square();
         let gamma_cub = gamma_sqr * gamma;
@@ -97,11 +98,11 @@ impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
         let (r_cycle_stage2, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
-        );
+        )?;
         let (r_cycle_stage4, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
             SumcheckId::RamValEvaluation,
-        );
+        )?;
 
         // Debug assert: ValEvaluation and ValFinal have same opening point
         #[cfg(debug_assertions)]
@@ -109,7 +110,7 @@ impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
             let (r_cycle_stage4_final, _) = accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamInc,
                 SumcheckId::RamValFinalEvaluation,
-            );
+            )?;
             debug_assert_eq!(
                 r_cycle_stage4.r, r_cycle_stage4_final.r,
                 "ValEvaluation and ValFinal should have same RamInc opening point"
@@ -119,47 +120,47 @@ impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
         let (s_cycle_stage4, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
-        );
+        )?;
         let (s_cycle_stage5, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
-        );
+        )?;
 
-        Self {
+        Ok(Self {
             gamma_powers: [gamma, gamma_sqr, gamma_cub],
             n_cycle_vars: trace_len.log_2(),
             r_cycle_stage2,
             r_cycle_stage4,
             s_cycle_stage4,
             s_cycle_stage5,
-        }
+        })
     }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams<F> {
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let [gamma, gamma_sqr, gamma_cub] = self.gamma_powers;
 
         let (_, v_1) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
-        );
+        )?;
         let (_, v_2) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
             SumcheckId::RamValEvaluation,
-        );
+        )?;
         // Note: v_2 already includes ValFinal claim (same point, combined)
 
         let (_, w_1) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
-        );
+        )?;
         let (_, w_2) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
-        );
+        )?;
 
-        v_1 + gamma * v_2 + gamma_sqr * w_1 + gamma_cub * w_2
+        Ok(v_1 + gamma * v_2 + gamma_sqr * w_1 + gamma_cub * w_2)
     }
 
     fn degree(&self) -> usize {
@@ -538,6 +539,7 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
         // Materialize Inc polynomials
         let eq_prefix_evals = EqPolynomial::evals(&r_prefix.r);
         let prefix_len = eq_prefix_evals.len();
+        let prefix_bits = prefix_len.log_2();
         let suffix_len = 1 << n_remaining_rounds;
         let mut ram_inc = unsafe_allocate_zero_vec(suffix_len);
         let mut rd_inc = unsafe_allocate_zero_vec(suffix_len);
@@ -558,7 +560,7 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
                     let mut acc_rd: Acc6S<F> = Acc6S::zero();
 
                     for (x_lo, eq_val) in eq_prefix_evals.iter().enumerate() {
-                        let x = x_lo + (x_hi << prefix_len.log_2());
+                        let x = x_lo + (x_hi << prefix_bits);
                         let cycle = &trace[x];
 
                         let ram_inc_val: S64 = match cycle.ram_access() {
@@ -647,9 +649,9 @@ impl<F: JoltField> IncClaimReductionSumcheckVerifier<F> {
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
-        let params = IncClaimReductionSumcheckParams::new(trace_len, accumulator, transcript);
-        Self { params }
+    ) -> Result<Self, ProofVerifyError> {
+        let params = IncClaimReductionSumcheckParams::new(trace_len, accumulator, transcript)?;
+        Ok(Self { params })
     }
 }
 
@@ -664,7 +666,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let [gamma, gamma_sqr, _] = self.params.gamma_powers;
 
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
@@ -683,13 +685,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let (_, ram_inc_claim) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
             SumcheckId::IncClaimReduction,
-        );
+        )?;
         let (_, rd_inc_claim) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::IncClaimReduction,
-        );
+        )?;
 
-        ram_inc_claim * eq_ram_combined + gamma_sqr * rd_inc_claim * eq_rd_combined
+        Ok(ram_inc_claim * eq_ram_combined + gamma_sqr * rd_inc_claim * eq_rd_combined)
     }
 
     fn cache_openings(
@@ -697,7 +699,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
@@ -706,12 +708,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             CommittedPolynomial::RamInc,
             SumcheckId::IncClaimReduction,
             opening_point.r.clone(),
-        );
+        )?;
         accumulator.append_dense(
             transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::IncClaimReduction,
             opening_point.r,
-        );
+        )?;
+        Ok(())
     }
 }

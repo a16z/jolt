@@ -97,6 +97,7 @@ use crate::subprotocols::{
     sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
 };
 use crate::transcripts::Transcript;
+use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::{
     config::OneHotParams,
     verifier::JoltSharedPreprocessing,
@@ -151,7 +152,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         one_hot_params: &OneHotParams,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let instruction_d = one_hot_params.instruction_d;
         let bytecode_d = one_hot_params.bytecode_d;
         let ram_d = one_hot_params.ram_d;
@@ -189,7 +190,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         let (unified_bool_point, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
             SumcheckId::Booleanity,
-        );
+        )?;
         // Keep both segments in BE: this matches the convention expected by `EqPolynomial::evals`
         // and `GruenSplitEqPolynomial` when used with `BindingOrder::LowToHigh` (LSB bound first).
         let r_addr_bool = unified_bool_point.r[..log_k_chunk].to_vec();
@@ -206,7 +207,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamHammingWeight,
                 SumcheckId::RamHammingBooleanity,
-            )
+            )?
             .1;
 
         for poly_type in polynomial_types.iter() {
@@ -224,17 +225,17 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
 
             // Booleanity claim (from booleanity sumcheck)
             let (_, bool_claim) =
-                accumulator.get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity);
+                accumulator.get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity)?;
             claims_bool.push(bool_claim);
 
             // Virtualization claim (with per-polynomial r_addr)
             let (virt_point, virt_claim) =
-                accumulator.get_committed_polynomial_opening(*poly_type, virt_sumcheck_id);
+                accumulator.get_committed_polynomial_opening(*poly_type, virt_sumcheck_id)?;
             r_addr_virt.push(virt_point.r[..log_k_chunk].to_vec());
             claims_virt.push(virt_claim);
         }
 
-        Self {
+        Ok(Self {
             gamma_powers,
             r_cycle,
             r_addr_bool,
@@ -244,12 +245,12 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             claims_virt,
             log_k_chunk,
             polynomial_types,
-        }
+        })
     }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionParams<F> {
-    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         // Σ_i (γ^{3i} · claim_hw_i + γ^{3i+1} · claim_bool_i + γ^{3i+2} · claim_virt_i)
         let mut claim = F::zero();
         for i in 0..self.polynomial_types.len() {
@@ -257,7 +258,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             claim += self.gamma_powers[3 * i + 1] * self.claims_bool[i];
             claim += self.gamma_powers[3 * i + 2] * self.claims_virt[i];
         }
-        claim
+        Ok(claim)
     }
 
     fn degree(&self) -> usize {
@@ -459,10 +460,10 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
         one_hot_params: &OneHotParams,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let params =
-            HammingWeightClaimReductionParams::new(one_hot_params, accumulator, transcript);
-        Self { params }
+            HammingWeightClaimReductionParams::new(one_hot_params, accumulator, transcript)?;
+        Ok(Self { params })
     }
 }
 
@@ -477,7 +478,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let N = self.params.polynomial_types.len();
 
         // When binding with LowToHigh, challenges[j] binds index bit j which corresponds to
@@ -498,7 +499,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             let (_, g_i_claim) = accumulator.get_committed_polynomial_opening(
                 self.params.polynomial_types[i],
                 SumcheckId::HammingWeightClaimReduction,
-            );
+            )?;
 
             // γ^{3i} · G_i(ρ) + γ^{3i+1} · eq_bool(ρ) · G_i(ρ) + γ^{3i+2} · eq_virt(ρ) · G_i(ρ)
             let gamma_hw = self.params.gamma_powers[3 * i];
@@ -510,7 +511,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 g_i_claim * (gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval);
         }
 
-        output_claim
+        Ok(output_claim)
     }
 
     fn cache_openings(
@@ -518,7 +519,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let N = self.params.polynomial_types.len();
 
         // Compute full opening point (r_address || r_cycle)
@@ -533,8 +534,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 vec![self.params.polynomial_types[i]],
                 SumcheckId::HammingWeightClaimReduction,
                 full_point.clone(),
-            );
+            )?;
         }
+        Ok(())
     }
 }
 

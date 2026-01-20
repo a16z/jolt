@@ -1,4 +1,4 @@
-use std::{array, iter::once, sync::Arc};
+use std::{array, sync::Arc};
 
 use num_traits::Zero;
 
@@ -24,7 +24,10 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
-    utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
+    utils::{
+        errors::ProofVerifyError, math::Math, small_scalar::SmallScalar,
+        thread::unsafe_allocate_zero_vec,
+    },
     zkvm::{
         bytecode::BytecodePreprocessing,
         config::OneHotParams,
@@ -595,16 +598,16 @@ impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ProofVerifyError> {
+        Ok(Self {
             params: BytecodeReadRafSumcheckParams::gen(
                 bytecode_preprocessing,
                 n_cycle_vars,
                 one_hot_params,
                 opening_accumulator,
                 transcript,
-            ),
-        }
+            )?,
+        })
     }
 }
 
@@ -619,21 +622,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.params.log_K);
         // r_cycle is bound LowToHigh, so reverse
 
         let int_poly = self.params.int_poly.evaluate(&r_address_prime.r);
 
-        let ra_claims = (0..self.params.d).map(|i| {
-            accumulator
-                .get_committed_polynomial_opening(
-                    CommittedPolynomial::BytecodeRa(i),
-                    SumcheckId::BytecodeReadRaf,
-                )
-                .1
-        });
+        let mut ra_claims = Vec::with_capacity(self.params.d);
+        for i in 0..self.params.d {
+            let (_, claim) = accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeRa(i),
+                SumcheckId::BytecodeReadRaf,
+            )?;
+            ra_claims.push(claim);
+        }
 
         // We have a separate Val polynomial for each stage
         // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
@@ -665,7 +668,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             })
             .sum::<F>();
 
-        ra_claims.fold(val, |running, ra_claim| running * ra_claim)
+        let result = ra_claims
+            .into_iter()
+            .fold(val, |running, ra_claim| running * ra_claim);
+        Ok(result)
     }
 
     fn cache_openings(
@@ -673,7 +679,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address, r_cycle) = opening_point.split_at(self.params.log_K);
 
@@ -683,15 +689,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             .one_hot_params
             .compute_r_address_chunks::<F>(&r_address.r);
 
-        (0..self.params.d).for_each(|i| {
+        for i in 0..self.params.d {
             let opening_point = [&r_address_chunks[i][..], &r_cycle.r].concat();
             accumulator.append_sparse(
                 transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 opening_point,
-            );
-        });
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -729,7 +736,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let gamma_powers = transcript.challenge_scalar_powers(7);
 
         let bytecode = &bytecode_preprocessing.bytecode;
@@ -742,11 +749,11 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let stage5_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
 
         // Compute rv_claims (these don't iterate bytecode, just query opening accumulator)
-        let rv_claim_1 = Self::compute_rv_claim_1(opening_accumulator, &stage1_gammas);
-        let rv_claim_2 = Self::compute_rv_claim_2(opening_accumulator, &stage2_gammas);
-        let rv_claim_3 = Self::compute_rv_claim_3(opening_accumulator, &stage3_gammas);
-        let rv_claim_4 = Self::compute_rv_claim_4(opening_accumulator, &stage4_gammas);
-        let rv_claim_5 = Self::compute_rv_claim_5(opening_accumulator, &stage5_gammas);
+        let rv_claim_1 = Self::compute_rv_claim_1(opening_accumulator, &stage1_gammas)?;
+        let rv_claim_2 = Self::compute_rv_claim_2(opening_accumulator, &stage2_gammas)?;
+        let rv_claim_3 = Self::compute_rv_claim_3(opening_accumulator, &stage3_gammas)?;
+        let rv_claim_4 = Self::compute_rv_claim_4(opening_accumulator, &stage4_gammas)?;
+        let rv_claim_5 = Self::compute_rv_claim_5(opening_accumulator, &stage5_gammas)?;
         let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
 
         // Pre-compute eq_r_register for stages 4 and 5 (they use different r_register points)
@@ -754,7 +761,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RdWa,
                 SumcheckId::RegistersReadWriteChecking,
-            )
+            )?
             .0
             .r;
         let eq_r_register_4 =
@@ -764,7 +771,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RdWa,
                 SumcheckId::RegistersValEvaluation,
-            )
+            )?
             .0
             .r;
         let eq_r_register_5 =
@@ -785,9 +792,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let int_poly = IdentityPolynomial::new(one_hot_params.bytecode_k.log_2());
 
         let (_, raf_claim) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter)?;
         let (_, raf_shift_claim) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift)?;
         let input_claim = [
             rv_claim_1,
             rv_claim_2,
@@ -803,24 +810,24 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         .sum();
 
         let (r_cycle_1, _) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter)?;
         let (r_cycle_2, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
             SumcheckId::SpartanProductVirtualization,
-        );
+        )?;
         let (r_cycle_3, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
-        );
+        )?;
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Ra,
             SumcheckId::RegistersReadWriteChecking,
-        );
+        )?;
         let (_, r_cycle_4) = r.split_at((REGISTER_COUNT as usize).log_2());
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
-        );
+        )?;
         let (_, r_cycle_5) = r.split_at((REGISTER_COUNT as usize).log_2());
         let r_cycles = [
             r_cycle_1.r,
@@ -832,7 +839,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
         // Note: We don't have r_address at this point (it comes from sumcheck_challenges),
         // so we initialize r_address_chunks as empty and will compute it later
-        Self {
+        Ok(Self {
             gamma_powers,
             input_claim,
             one_hot_params: one_hot_params.clone(),
@@ -846,7 +853,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             raf_shift_claim,
             int_poly,
             r_cycles,
-        }
+        })
     }
 
     /// Fused computation of all Val polynomials in a single parallel pass over bytecode.
@@ -1014,56 +1021,54 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     fn compute_rv_claim_1(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let (_, unexpanded_pc_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanOuter,
-        );
+        )?;
         let (_, imm_claim) = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter)?;
 
-        let circuit_flag_claims: Vec<F> = CircuitFlags::iter()
-            .map(|flag| {
-                opening_accumulator
-                    .get_virtual_polynomial_opening(
-                        VirtualPolynomial::OpFlags(flag),
-                        SumcheckId::SpartanOuter,
-                    )
-                    .1
-            })
-            .collect();
+        let mut circuit_flag_claims = Vec::with_capacity(CircuitFlags::COUNT);
+        for flag in CircuitFlags::iter() {
+            let (_, claim) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::OpFlags(flag),
+                SumcheckId::SpartanOuter,
+            )?;
+            circuit_flag_claims.push(claim);
+        }
 
-        std::iter::once(unexpanded_pc_claim)
+        Ok(std::iter::once(unexpanded_pc_claim)
             .chain(std::iter::once(imm_claim))
             .chain(circuit_flag_claims)
             .zip_eq(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
-            .sum()
+            .sum())
     }
 
     fn compute_rv_claim_2(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let (_, jump_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
             SumcheckId::SpartanProductVirtualization,
-        );
+        )?;
         let (_, branch_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
             SumcheckId::SpartanProductVirtualization,
-        );
+        )?;
         let (_, rd_wa_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
             SumcheckId::SpartanProductVirtualization,
-        );
+        )?;
         let (_, write_lookup_output_to_rd_flag_claim) = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
                 SumcheckId::SpartanProductVirtualization,
-            );
+            )?;
 
-        [
+        Ok([
             jump_claim,
             branch_claim,
             rd_wa_claim,
@@ -1072,64 +1077,65 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         .into_iter()
         .zip_eq(gamma_powers)
         .map(|(claim, gamma)| claim * gamma)
-        .sum()
+        .sum())
     }
 
     fn compute_rv_claim_3(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let (_, imm_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Imm,
             SumcheckId::InstructionInputVirtualization,
-        );
+        )?;
         let (_, spartan_shift_unexpanded_pc_claim) = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::UnexpandedPC,
                 SumcheckId::SpartanShift,
-            );
+            )?;
         let (_, instruction_input_unexpanded_pc_claim) = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::UnexpandedPC,
                 SumcheckId::InstructionInputVirtualization,
-            );
+            )?;
 
-        assert_eq!(
-            spartan_shift_unexpanded_pc_claim,
-            instruction_input_unexpanded_pc_claim
-        );
+        if spartan_shift_unexpanded_pc_claim != instruction_input_unexpanded_pc_claim {
+            return Err(ProofVerifyError::ClaimMismatch(
+                "unexpanded PC between shift and instruction input",
+            ));
+        }
 
         let unexpanded_pc_claim = spartan_shift_unexpanded_pc_claim;
         let (_, left_is_rs1_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
-        );
+        )?;
         let (_, left_is_pc_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
-        );
+        )?;
         let (_, right_is_rs2_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
-        );
+        )?;
         let (_, right_is_imm_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
-        );
+        )?;
         let (_, is_noop_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
-        );
+        )?;
         let (_, is_virtual_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
-        );
+        )?;
         let (_, is_first_in_sequence_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
-        );
+        )?;
 
-        [
+        let claims = [
             imm_claim,
             unexpanded_pc_claim,
             left_is_rs1_claim,
@@ -1139,44 +1145,48 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             is_noop_claim,
             is_virtual_claim,
             is_first_in_sequence_claim,
-        ]
-        .into_iter()
-        .zip_eq(gamma_powers)
-        .map(|(claim, gamma)| claim * gamma)
-        .sum()
+        ];
+        Ok(claims
+            .into_iter()
+            .zip_eq(gamma_powers)
+            .map(|(claim, gamma)| claim * gamma)
+            .sum())
     }
 
     fn compute_rv_claim_4(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
-    ) -> F {
-        std::iter::empty()
-            .chain(once(VirtualPolynomial::RdWa))
-            .chain(once(VirtualPolynomial::Rs1Ra))
-            .chain(once(VirtualPolynomial::Rs2Ra))
-            .map(|vp| {
-                opening_accumulator
-                    .get_virtual_polynomial_opening(vp, SumcheckId::RegistersReadWriteChecking)
-                    .1
-            })
+    ) -> Result<F, ProofVerifyError> {
+        let mut claims = Vec::with_capacity(3);
+        for vp in [
+            VirtualPolynomial::RdWa,
+            VirtualPolynomial::Rs1Ra,
+            VirtualPolynomial::Rs2Ra,
+        ] {
+            let (_, claim) = opening_accumulator
+                .get_virtual_polynomial_opening(vp, SumcheckId::RegistersReadWriteChecking)?;
+            claims.push(claim);
+        }
+        Ok(claims
+            .into_iter()
             .zip(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
-            .sum::<F>()
+            .sum::<F>())
     }
 
     fn compute_rv_claim_5(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         gamma_powers: &[F],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let (_, rd_wa_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
-        );
+        )?;
 
         let (_, raf_flag_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
-        );
+        )?;
 
         let mut sum = rd_wa_claim * gamma_powers[0];
         sum += raf_flag_claim * gamma_powers[1];
@@ -1186,11 +1196,11 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             let (_, claim) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
-            );
+            )?;
             sum += claim * gamma_powers[2 + i];
         }
 
-        sum
+        Ok(sum)
     }
 }
 
@@ -1203,8 +1213,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         self.log_K + self.log_T
     }
 
-    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
-        self.input_claim
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
+        Ok(self.input_claim)
     }
 
     fn normalize_opening_point(

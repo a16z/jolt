@@ -36,6 +36,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{
+        errors::ProofVerifyError,
         expanding_table::ExpandingTable,
         lookup_bits::LookupBits,
         math::Math,
@@ -117,23 +118,23 @@ impl<F: JoltField> InstructionReadRafSumcheckParams<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
         let phases = config::get_instruction_sumcheck_phases(n_cycle_vars);
         let (r_reduction, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
-        );
+        )?;
 
-        Self {
+        Ok(Self {
             gamma,
             gamma_sqr,
             log_T: n_cycle_vars,
             ra_virtual_log_k_chunk: one_hot_params.lookups_ra_virtual_log_k_chunk,
             phases,
             r_reduction,
-        }
+        })
     }
 }
 
@@ -142,26 +143,29 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
         LOG_K + self.log_T
     }
 
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let (_, rv_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
-        );
+        )?;
         let (_, rv_claim_branch) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanProductVirtualization,
-        );
-        // TODO: Make error and move to more appropriate place.
-        assert_eq!(rv_claim, rv_claim_branch);
+        )?;
+        if rv_claim != rv_claim_branch {
+            return Err(ProofVerifyError::ClaimMismatch(
+                "lookup output between reductions",
+            ));
+        }
         let (_, left_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
-        );
+        )?;
         let (_, right_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
-        );
-        rv_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
+        )?;
+        Ok(rv_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim)
     }
 
     fn degree(&self) -> usize {
@@ -1174,14 +1178,14 @@ impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let params = InstructionReadRafSumcheckParams::new(
             n_cycle_vars,
             one_hot_params,
             opening_accumulator,
             transcript,
-        );
-        Self { params }
+        )?;
+        Ok(Self { params })
     }
 }
 
@@ -1196,7 +1200,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         // Verifier's RHS reconstruction from virtual claims at r:
         //
         // Computes Val and RafVal contributions at r_address, forms EQ(r_cycle)
@@ -1218,39 +1222,35 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 VirtualPolynomial::LookupOutput,
                 SumcheckId::InstructionClaimReduction,
             )
-            .0
+            .map(|(point, _)| point)?
             .r;
         let eq_eval_r_reduction = EqPolynomial::<F>::mle(&r_reduction, &r_cycle_prime.r);
 
         let n_virtual_ra_polys = LOG_K / self.params.ra_virtual_log_k_chunk;
-        let ra_claim = (0..n_virtual_ra_polys)
-            .map(|i| {
-                accumulator
-                    .get_virtual_polynomial_opening(
-                        VirtualPolynomial::InstructionRa(i),
-                        SumcheckId::InstructionReadRaf,
-                    )
-                    .1
-            })
-            .product::<F>();
+        let mut ra_claim = F::one();
+        for i in 0..n_virtual_ra_polys {
+            let (_, claim) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionRa(i),
+                SumcheckId::InstructionReadRaf,
+            )?;
+            ra_claim *= claim;
+        }
 
-        let table_flag_claims: Vec<F> = (0..LookupTables::<XLEN>::COUNT)
-            .map(|i| {
-                accumulator
-                    .get_virtual_polynomial_opening(
-                        VirtualPolynomial::LookupTableFlag(i),
-                        SumcheckId::InstructionReadRaf,
-                    )
-                    .1
-            })
-            .collect();
+        let mut table_flag_claims = Vec::with_capacity(LookupTables::<XLEN>::COUNT);
+        for i in 0..LookupTables::<XLEN>::COUNT {
+            let (_, claim) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupTableFlag(i),
+                SumcheckId::InstructionReadRaf,
+            )?;
+            table_flag_claims.push(claim);
+        }
 
         let raf_flag_claim = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionRafFlag,
                 SumcheckId::InstructionReadRaf,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
 
         let val_claim = val_evals
             .into_iter()
@@ -1262,7 +1262,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             * (left_operand_eval + self.params.gamma * right_operand_eval)
             + raf_flag_claim * self.params.gamma * identity_poly_eval;
 
-        eq_eval_r_reduction * ra_claim * (val_claim + self.params.gamma * raf_claim)
+        Ok(eq_eval_r_reduction * ra_claim * (val_claim + self.params.gamma * raf_claim))
     }
 
     fn cache_openings(
@@ -1270,20 +1270,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
         // Verifier requests the virtual openings that the prover must provide
         // for this sumcheck (same set as published by the prover-side cache).
         let (r_address, r_cycle) = r_sumcheck.split_at(LOG_K);
 
-        (0..LookupTables::<XLEN>::COUNT).for_each(|i| {
+        for i in 0..LookupTables::<XLEN>::COUNT {
             accumulator.append_virtual(
                 transcript,
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
-            );
-        });
+            )?;
+        }
 
         for (i, r_address_chunk) in r_address
             .r
@@ -1297,7 +1297,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
                 opening_point,
-            );
+            )?;
         }
 
         accumulator.append_virtual(
@@ -1305,7 +1305,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
-        );
+        )?;
+        Ok(())
     }
 }
 
@@ -1469,7 +1470,8 @@ mod tests {
             &one_hot_params,
             &prover_opening_accumulator,
             prover_transcript,
-        );
+        )
+        .expect("params creation should succeed in test");
         let mut prover_sumcheck =
             InstructionReadRafSumcheckProver::initialize(params, Arc::clone(&trace));
 
@@ -1487,37 +1489,46 @@ mod tests {
                 .insert(*key, (empty_point, *value));
         }
 
-        verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::InstructionClaimReduction,
-            OpeningPoint::new(r_cycle.clone()),
-        );
-        verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::InstructionClaimReduction,
-            OpeningPoint::new(r_cycle.clone()),
-        );
-        verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
-            VirtualPolynomial::RightLookupOperand,
-            SumcheckId::InstructionClaimReduction,
-            OpeningPoint::new(r_cycle.clone()),
-        );
-        verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanProductVirtualization,
-            OpeningPoint::new(r_cycle.clone()),
-        );
+        verifier_opening_accumulator
+            .append_virtual(
+                verifier_transcript,
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::InstructionClaimReduction,
+                OpeningPoint::new(r_cycle.clone()),
+            )
+            .expect("failed to append LookupOutput for InstructionClaimReduction");
+        verifier_opening_accumulator
+            .append_virtual(
+                verifier_transcript,
+                VirtualPolynomial::LeftLookupOperand,
+                SumcheckId::InstructionClaimReduction,
+                OpeningPoint::new(r_cycle.clone()),
+            )
+            .expect("failed to append LeftLookupOperand for InstructionClaimReduction");
+        verifier_opening_accumulator
+            .append_virtual(
+                verifier_transcript,
+                VirtualPolynomial::RightLookupOperand,
+                SumcheckId::InstructionClaimReduction,
+                OpeningPoint::new(r_cycle.clone()),
+            )
+            .expect("failed to append RightLookupOperand for InstructionClaimReduction");
+        verifier_opening_accumulator
+            .append_virtual(
+                verifier_transcript,
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanProductVirtualization,
+                OpeningPoint::new(r_cycle.clone()),
+            )
+            .expect("failed to append LookupOutput for SpartanProductVirtualization");
 
         let mut verifier_sumcheck = InstructionReadRafSumcheckVerifier::new(
             trace.len().log_2(),
             &one_hot_params,
             &verifier_opening_accumulator,
             verifier_transcript,
-        );
+        )
+        .expect("verifier creation should succeed in test");
 
         let r_sumcheck_verif = BatchedSumcheck::verify(
             &proof,

@@ -27,6 +27,7 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S, Acc8S};
+use crate::utils::errors::ProofVerifyError;
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -102,8 +103,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
         1
     }
 
-    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
-        F::zero()
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
+        Ok(F::zero())
     }
 
     fn normalize_opening_point(
@@ -301,8 +302,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
         &self,
         _accumulator: &VerifierOpeningAccumulator<F>,
         _sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) -> F {
-        unimplemented!("Unused for univariate skip")
+    ) -> Result<F, ProofVerifyError> {
+        Err(ProofVerifyError::InternalError)
     }
 
     fn cache_openings(
@@ -310,7 +311,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         debug_assert_eq!(opening_point.len(), 1);
         accumulator.append_virtual(
@@ -318,7 +319,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanOuter,
             opening_point,
-        );
+        )?;
+        Ok(())
     }
 }
 
@@ -337,19 +339,19 @@ impl<F: JoltField> OuterRemainingSumcheckParams<F> {
         trace_len: usize,
         uni_skip_params: OuterUniSkipParams<F>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanOuter,
-        );
+        )?;
         debug_assert_eq!(r_uni_skip.len(), 1);
         let r0 = r_uni_skip[0];
 
-        Self {
+        Ok(Self {
             num_cycles_bits: trace_len.log_2(),
             tau: uni_skip_params.tau,
             r0,
-        }
+        })
     }
 }
 
@@ -370,12 +372,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
         OUTER_REMAINING_DEGREE_BOUND
     }
 
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanOuter,
-        );
-        uni_skip_claim
+        )?;
+        Ok(uni_skip_claim)
     }
 }
 
@@ -390,10 +392,10 @@ impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
         trace_len: usize,
         uni_skip_params: OuterUniSkipParams<F>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let params =
-            OuterRemainingSumcheckParams::new(trace_len, uni_skip_params, opening_accumulator);
-        Self { params, key }
+            OuterRemainingSumcheckParams::new(trace_len, uni_skip_params, opening_accumulator)?;
+        Ok(Self { params, key })
     }
 }
 
@@ -408,12 +410,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
-        let r1cs_input_evals = ALL_R1CS_INPUTS.map(|input| {
-            accumulator
-                .get_virtual_polynomial_opening((&input).into(), SumcheckId::SpartanOuter)
-                .1
-        });
+    ) -> Result<F, ProofVerifyError> {
+        let mut r1cs_input_evals = [F::zero(); ALL_R1CS_INPUTS.len()];
+        for (idx, input) in ALL_R1CS_INPUTS.iter().enumerate() {
+            r1cs_input_evals[idx] = accumulator
+                .get_virtual_polynomial_opening(input.into(), SumcheckId::SpartanOuter)?
+                .1;
+        }
 
         // Randomness used to bind the rows of R1CS matrices A,B.
         let rx_constr = &[sumcheck_challenges[0], self.params.r0];
@@ -432,7 +435,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r_tail_reversed: Vec<F::Challenge> =
             sumcheck_challenges.iter().rev().copied().collect();
         let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
-        tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod
+        Ok(tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod)
     }
 
     fn cache_openings(
@@ -440,7 +443,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         for input in &ALL_R1CS_INPUTS {
             accumulator.append_virtual(
@@ -448,8 +451,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
                 r_cycle.clone(),
-            );
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -467,10 +471,12 @@ impl<F: JoltField> OuterStreamingProverParams<F> {
         uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnivariateSkip,
-            SumcheckId::SpartanOuter,
-        );
+        let (r_uni_skip, _) = opening_accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::UnivariateSkip,
+                SumcheckId::SpartanOuter,
+            )
+            .expect("prover should have univariate skip opening");
         debug_assert_eq!(r_uni_skip.len(), 1);
         // tau.len() = num_rows_bits() = num_cycle_vars + 2
         // num_cycles_bits = num_cycle_vars = tau.len() - 2
@@ -774,10 +780,12 @@ impl<F: JoltField> SharedStreamingSumcheckState<F> for OuterSharedState<F> {
     }
 
     fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnivariateSkip,
-            SumcheckId::SpartanOuter,
-        );
+        let (_, uni_skip_claim) = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::UnivariateSkip,
+                SumcheckId::SpartanOuter,
+            )
+            .expect("prover should have univariate skip opening");
         uni_skip_claim
     }
 }

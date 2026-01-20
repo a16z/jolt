@@ -45,6 +45,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
     utils::{expanding_table::ExpandingTable, thread::drop_in_background_thread},
     zkvm::{
         bytecode::BytecodePreprocessing,
@@ -87,8 +88,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
         self.log_k_chunk + self.log_t
     }
 
-    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
-        F::zero()
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
+        Ok(F::zero())
     }
 
     fn normalize_opening_point(
@@ -113,7 +114,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         one_hot_params: &OneHotParams,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let log_k_chunk = one_hot_params.log_k_chunk;
         let instruction_d = one_hot_params.instruction_d;
         let bytecode_d = one_hot_params.bytecode_d;
@@ -126,7 +127,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         let (stage5_point, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa(0),
             SumcheckId::InstructionReadRaf,
-        );
+        )?;
 
         // Extract r_address and r_cycle.
         //
@@ -192,7 +193,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             gamma2_i *= gamma_sq;
         }
 
-        Self {
+        Ok(Self {
             log_k_chunk,
             log_t,
             gamma,
@@ -201,7 +202,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             r_cycle,
             polynomial_types,
             one_hot_params: one_hot_params.clone(),
-        }
+        })
     }
 }
 
@@ -503,17 +504,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
-        let ra_claims: Vec<F> = self
-            .params
-            .polynomial_types
-            .iter()
-            .map(|poly_type| {
-                accumulator
-                    .get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity)
-                    .1
-            })
-            .collect();
+    ) -> Result<F, ProofVerifyError> {
+        let mut ra_claims = Vec::with_capacity(self.params.polynomial_types.len());
+        for poly_type in self.params.polynomial_types.iter() {
+            let (_, claim) =
+                accumulator.get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity)?;
+            ra_claims.push(claim);
+        }
 
         let combined_r: Vec<F::Challenge> = self
             .params
@@ -524,10 +521,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
             .chain(self.params.r_cycle.iter().cloned().rev())
             .collect();
 
-        EqPolynomial::<F>::mle(sumcheck_challenges, &combined_r)
+        Ok(EqPolynomial::<F>::mle(sumcheck_challenges, &combined_r)
             * zip(&self.params.gamma_powers_square, ra_claims)
                 .map(|(gamma_2i, ra)| (ra.square() - ra) * gamma_2i)
-                .sum::<F>()
+                .sum::<F>())
     }
 
     fn cache_openings(
@@ -535,13 +532,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_sparse(
             transcript,
             self.params.polynomial_types.clone(),
             SumcheckId::Booleanity,
             opening_point.r,
-        );
+        )?;
+        Ok(())
     }
 }

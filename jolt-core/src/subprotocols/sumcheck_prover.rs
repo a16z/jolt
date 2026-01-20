@@ -38,7 +38,9 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
 
     /// Returns the initial claim of this sumcheck instance.
     fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        self.get_params().input_claim(accumulator)
+        self.get_params()
+            .input_claim(accumulator)
+            .expect("prover input_claim should have all openings")
     }
 
     /// Computes the prover's message for a specific round of the sumcheck protocol.

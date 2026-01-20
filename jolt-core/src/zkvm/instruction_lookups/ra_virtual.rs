@@ -23,6 +23,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
     zkvm::{
         config::OneHotParams,
         instruction::LookupQuery,
@@ -53,7 +54,7 @@ impl<F: JoltField> InstructionRaSumcheckParams<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         // Extract the full r_address from the virtual ra_i openings.
         let mut r_address = Vec::new();
 
@@ -68,7 +69,7 @@ impl<F: JoltField> InstructionRaSumcheckParams<F> {
             let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
-            );
+            )?;
 
             let (r_address_chunk, _) = r.split_at_r(ra_virtual_log_k_chunk);
             r_address.extend_from_slice(r_address_chunk);
@@ -77,11 +78,11 @@ impl<F: JoltField> InstructionRaSumcheckParams<F> {
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa(0),
             SumcheckId::InstructionReadRaf,
-        );
+        )?;
         let (_, r_cycle) = r.split_at(ra_virtual_log_k_chunk);
 
         let gamma_powers = transcript.challenge_scalar_powers(n_virtual_ra_polys);
-        Self {
+        Ok(Self {
             r_cycle,
             one_hot_params: one_hot_params.clone(),
             r_address: OpeningPoint::new(r_address),
@@ -89,7 +90,7 @@ impl<F: JoltField> InstructionRaSumcheckParams<F> {
             n_virtual_ra_polys,
             n_committed_ra_polys,
             n_committed_per_virtual,
-        }
+        })
     }
 }
 
@@ -98,18 +99,18 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
         self.r_cycle.len()
     }
 
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let mut res = F::zero();
 
         for i in 0..self.n_virtual_ra_polys {
             let (_, ra_i_claim) = accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
-            );
+            )?;
             res += self.gamma_powers[i] * ra_i_claim;
         }
 
-        res
+        Ok(res)
     }
 
     fn degree(&self) -> usize {
@@ -299,10 +300,10 @@ impl<F: JoltField> RaSumcheckVerifier<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let params =
-            InstructionRaSumcheckParams::new(one_hot_params, opening_accumulator, transcript);
-        Self { params }
+            InstructionRaSumcheckParams::new(one_hot_params, opening_accumulator, transcript)?;
+        Ok(Self { params })
     }
 }
 
@@ -315,29 +316,33 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let eq_eval = EqPolynomial::mle_endian(&self.params.r_cycle, &r);
 
         // Claims of the committed ra polynomials.
-        let mut committed_ra_claims = (0..self.params.n_committed_ra_polys).map(|i| {
+        let mut committed_ra_claims = Vec::with_capacity(self.params.n_committed_ra_polys);
+        for i in 0..self.params.n_committed_ra_polys {
             let (_, ra_i_claim) = accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::InstructionRa(i),
                 SumcheckId::InstructionRaVirtualization,
-            );
-            ra_i_claim
-        });
+            )?;
+            committed_ra_claims.push(ra_i_claim);
+        }
 
         // Compute sum_i VirtualRa_i(r)
         let mut ra_acc = F::zero();
         for i in 0..self.params.n_virtual_ra_polys {
-            let committed_ra_prod = (&mut committed_ra_claims)
-                .take(self.params.n_committed_per_virtual)
+            let start = i * self.params.n_committed_per_virtual;
+            let end = start + self.params.n_committed_per_virtual;
+            let committed_ra_prod = committed_ra_claims[start..end]
+                .iter()
+                .copied()
                 .product::<F>();
             ra_acc += self.params.gamma_powers[i] * committed_ra_prod;
         }
 
-        eq_eval * ra_acc
+        Ok(eq_eval * ra_acc)
     }
 
     fn cache_openings(
@@ -345,7 +350,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
 
         // Compute r_address_chunks with proper padding
@@ -362,7 +367,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
                 opening_point,
-            );
+            )?;
         }
+        Ok(())
     }
 }

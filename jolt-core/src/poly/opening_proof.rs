@@ -22,6 +22,7 @@ use super::{
 use crate::{
     field::JoltField,
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -210,19 +211,19 @@ pub trait OpeningAccumulator<F: JoltField> {
         &self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
+    ) -> Result<(OpeningPoint<BIG_ENDIAN, F>, F), ProofVerifyError>;
 
     fn get_committed_polynomial_opening(
         &self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
+    ) -> Result<(OpeningPoint<BIG_ENDIAN, F>, F), ProofVerifyError>;
 
     fn get_advice_opening(
         &self,
         kind: AdviceKind,
         sumcheck: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
+    ) -> Result<Option<(OpeningPoint<BIG_ENDIAN, F>, F)>, ProofVerifyError>;
 }
 
 /// State for Dory batch opening (Stage 8).
@@ -294,7 +295,7 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         &self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> Result<(OpeningPoint<BIG_ENDIAN, F>, F), ProofVerifyError> {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
@@ -309,32 +310,35 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
                 virtual_openings.remove(index);
             }
         }
-        (point.clone(), *claim)
+        Ok((point.clone(), *claim))
     }
 
     fn get_committed_polynomial_opening(
         &self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> Result<(OpeningPoint<BIG_ENDIAN, F>, F), ProofVerifyError> {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Committed(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
-        (point.clone(), *claim)
+        Ok((point.clone(), *claim))
     }
 
     fn get_advice_opening(
         &self,
         kind: AdviceKind,
         sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+    ) -> Result<Option<(OpeningPoint<BIG_ENDIAN, F>, F)>, ProofVerifyError> {
         let opening_id = match kind {
             AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
             AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
         };
-        let (point, claim) = self.openings.get(&opening_id)?;
-        Some((point.clone(), *claim))
+        let opening = self
+            .openings
+            .get(&opening_id)
+            .map(|(point, claim)| (point.clone(), *claim));
+        Ok(opening)
     }
 }
 
@@ -476,37 +480,44 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         &self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> Result<(OpeningPoint<BIG_ENDIAN, F>, F), ProofVerifyError> {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
-            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
-        (point.clone(), *claim)
+            .ok_or_else(|| {
+                ProofVerifyError::MissingVirtualOpening(format!("{polynomial:?} @ {sumcheck:?}"))
+            })?;
+        Ok((point.clone(), *claim))
     }
 
     fn get_committed_polynomial_opening(
         &self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> Result<(OpeningPoint<BIG_ENDIAN, F>, F), ProofVerifyError> {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Committed(polynomial, sumcheck))
-            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
-        (point.clone(), *claim)
+            .ok_or_else(|| {
+                ProofVerifyError::MissingCommittedOpening(format!("{polynomial:?} @ {sumcheck:?}"))
+            })?;
+        Ok((point.clone(), *claim))
     }
 
     fn get_advice_opening(
         &self,
         kind: AdviceKind,
         sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+    ) -> Result<Option<(OpeningPoint<BIG_ENDIAN, F>, F)>, ProofVerifyError> {
         let opening_id = match kind {
             AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
             AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
         };
-        let (point, claim) = self.openings.get(&opening_id)?;
-        Some((point.clone(), *claim))
+        let opening = self
+            .openings
+            .get(&opening_id)
+            .map(|(point, claim)| (point.clone(), *claim));
+        Ok(opening)
     }
 }
 
@@ -538,9 +549,15 @@ where
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let key = OpeningId::Committed(polynomial, sumcheck);
-        let claim = self.openings.get(&key).unwrap().1;
+        let claim = self
+            .openings
+            .get(&key)
+            .ok_or_else(|| {
+                ProofVerifyError::MissingCommittedOpening(format!("{polynomial:?} @ {sumcheck:?}"))
+            })?
+            .1;
         transcript.append_scalar(&claim);
 
         // Update the opening point in self.openings (it was initialized with default empty point)
@@ -551,6 +568,7 @@ where
                 claim,
             ),
         );
+        Ok(())
     }
 
     /// Adds openings to the accumulator. The polynomials underlying the given
@@ -564,10 +582,16 @@ where
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         for label in polynomials.into_iter() {
             let key = OpeningId::Committed(label, sumcheck);
-            let claim = self.openings.get(&key).unwrap().1;
+            let claim = self
+                .openings
+                .get(&key)
+                .ok_or_else(|| {
+                    ProofVerifyError::MissingCommittedOpening(format!("{label:?} @ {sumcheck:?}"))
+                })?
+                .1;
             transcript.append_scalar(&claim);
 
             // Update the opening point in self.openings (it was initialized with default empty point)
@@ -579,6 +603,7 @@ where
                 ),
             );
         }
+        Ok(())
     }
 
     /// Populates the opening point for an existing claim in the evaluation_openings map.
@@ -588,14 +613,17 @@ where
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let key = OpeningId::Virtual(polynomial, sumcheck);
         if let Some((_, claim)) = self.openings.get(&key) {
             transcript.append_scalar(claim);
             let claim = *claim; // Copy the claim value
             self.openings.insert(key, (opening_point.clone(), claim));
+            Ok(())
         } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+            Err(ProofVerifyError::MissingVirtualOpening(format!(
+                "{polynomial:?} @ {sumcheck:?}"
+            )))
         }
     }
 
@@ -604,14 +632,17 @@ where
         transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
             transcript.append_scalar(claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
+            Ok(())
         } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+            Err(ProofVerifyError::MissingAdviceOpening(format!(
+                "untrusted @ {sumcheck_id:?}"
+            )))
         }
     }
 
@@ -620,14 +651,17 @@ where
         transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let key = OpeningId::TrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
             transcript.append_scalar(claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
+            Ok(())
         } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+            Err(ProofVerifyError::MissingAdviceOpening(format!(
+                "trusted @ {sumcheck_id:?}"
+            )))
         }
     }
 }

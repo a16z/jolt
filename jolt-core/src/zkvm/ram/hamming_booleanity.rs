@@ -10,6 +10,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
+use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::witness::VirtualPolynomial;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -34,13 +35,13 @@ pub struct HammingBooleanitySumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckParams<F> {
-    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
+    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Result<Self, ProofVerifyError> {
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
-        );
+        )?;
 
-        Self { r_cycle }
+        Ok(Self { r_cycle })
     }
 }
 
@@ -53,8 +54,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingBooleanitySumcheckParams
         self.r_cycle.len()
     }
 
-    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
-        F::zero()
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
+        Ok(F::zero())
     }
 
     fn normalize_opening_point(
@@ -148,10 +149,10 @@ pub struct HammingBooleanitySumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
-    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Self {
-        Self {
-            params: HammingBooleanitySumcheckParams::new(opening_accumulator),
-        }
+    pub fn new(opening_accumulator: &dyn OpeningAccumulator<F>) -> Result<Self, ProofVerifyError> {
+        Ok(Self {
+            params: HammingBooleanitySumcheckParams::new(opening_accumulator)?,
+        })
     }
 }
 
@@ -166,18 +167,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let H_claim = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamHammingWeight,
                 SumcheckId::RamHammingBooleanity,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
 
         let (r_cycle, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
-        );
+        )?;
 
         let eq = EqPolynomial::<F>::mle(
             sumcheck_challenges,
@@ -189,7 +190,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 .collect::<Vec<F::Challenge>>(),
         );
 
-        (H_claim.square() - H_claim) * eq
+        Ok((H_claim.square() - H_claim) * eq)
     }
 
     fn cache_openings(
@@ -197,12 +198,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
             self.params.normalize_opening_point(sumcheck_challenges),
-        );
+        )?;
+        Ok(())
     }
 }
