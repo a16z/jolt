@@ -370,6 +370,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
             }
         }
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 pub struct BytecodeClaimReductionVerifier<F: JoltField> {
