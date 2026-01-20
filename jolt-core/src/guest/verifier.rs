@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
@@ -6,6 +8,7 @@ use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
@@ -18,14 +21,17 @@ pub fn preprocess(
     max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
 ) -> JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
-    let (bytecode, memory_init, program_size) = guest.decode();
+    let (bytecode_instructions, memory_init, program_size) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
+
+    let bytecode: Arc<BytecodePreprocessing> =
+        BytecodePreprocessing::preprocess(bytecode_instructions).into();
     let shared =
-        JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length);
-    JoltVerifierPreprocessing::new(shared, verifier_setup)
+        JoltSharedPreprocessing::new(&bytecode, memory_layout, memory_init, max_trace_length);
+    JoltVerifierPreprocessing::new_full(shared, verifier_setup, bytecode)
 }
 
 pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(

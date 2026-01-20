@@ -36,4 +36,6 @@ pub enum ProofVerifyError {
     SumcheckVerificationError,
     #[error("Univariate-skip round verification failed")]
     UniSkipVerificationError,
+    #[error("Bytecode type mismatch: {0}")]
+    BytecodeTypeMismatch(String),
 }

@@ -446,11 +446,10 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_fn_name(program: &mut jolt::host::Program)
-                -> jolt::JoltSharedPreprocessing
+                -> (jolt::JoltSharedPreprocessing, jolt::BytecodePreprocessing)
             {
                 #imports
-
-                let (bytecode, memory_init, program_size) = program.decode();
+                let (instructions, memory_init, program_size) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
@@ -461,15 +460,14 @@ impl MacroBuilder {
                     program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
-
+                let bytecode = BytecodePreprocessing::preprocess(instructions);
                 let preprocessing = JoltSharedPreprocessing::new(
-                    bytecode,
+                    &bytecode,
                     memory_layout,
                     memory_init,
                     #max_trace_length,
                 );
-
-                preprocessing
+                (preprocessing, bytecode)
             }
         }
     }
@@ -482,15 +480,13 @@ impl MacroBuilder {
             Ident::new(&format!("preprocess_prover_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_prover_fn_name(shared_preprocessing: jolt::JoltSharedPreprocessing)
-                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
+            pub fn #preprocess_prover_fn_name(
+                shared_preprocessing: jolt::JoltSharedPreprocessing,
+                bytecode: std::sync::Arc<jolt::BytecodePreprocessing>,
+            ) -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
             {
                 #imports
-                let prover_preprocessing = JoltProverPreprocessing::new(
-                    shared_preprocessing,
-                );
-
-                prover_preprocessing
+                JoltProverPreprocessing::new(shared_preprocessing, bytecode)
             }
         }
     }
@@ -506,11 +502,11 @@ impl MacroBuilder {
             pub fn #preprocess_verifier_fn_name(
                 shared_preprocess: jolt::JoltSharedPreprocessing,
                 generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
+                bytecode: std::sync::Arc<jolt::BytecodePreprocessing>,
             ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
             {
                 #imports
-                let preprocessing = JoltVerifierPreprocessing::new(shared_preprocess, generators);
-                preprocessing
+                JoltVerifierPreprocessing::new_full(shared_preprocess, generators, bytecode)
             }
         }
     }

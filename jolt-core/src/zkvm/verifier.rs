@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
-use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::bytecode::{BytecodePreprocessing, TrustedBytecodeCommitments, VerifierBytecode};
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::BytecodeMode;
@@ -77,7 +77,6 @@ use anyhow::Context;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
-use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -438,8 +437,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         anyhow::Error,
     > {
         let n_cycle_vars = self.proof.trace_length.log_2();
+        // In Committed mode, this returns an error (Full bytecode not available)
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
-            &self.preprocessing.shared.bytecode,
+            self.preprocessing.bytecode.as_full()?,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -801,81 +801,35 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 }
 
-#[derive(Debug, Clone)]
+/// Shared preprocessing between prover and verifier.
+///
+/// **Note**: This struct does NOT contain the full bytecode data.
+/// - Bytecode size K is stored here as the single source of truth.
+/// - Full bytecode data is in `JoltProverPreprocessing.bytecode`.
+/// - Verifier bytecode (Full or Committed) is in `JoltVerifierPreprocessing.bytecode`.
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltSharedPreprocessing {
-    pub bytecode: Arc<BytecodePreprocessing>,
+    pub bytecode_size: usize,
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
 }
 
-impl CanonicalSerialize for JoltSharedPreprocessing {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        // Serialize the inner BytecodePreprocessing (not the Arc wrapper)
-        self.bytecode
-            .as_ref()
-            .serialize_with_mode(&mut writer, compress)?;
-        self.ram.serialize_with_mode(&mut writer, compress)?;
-        self.memory_layout
-            .serialize_with_mode(&mut writer, compress)?;
-        self.max_padded_trace_length
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.bytecode.serialized_size(compress)
-            + self.ram.serialized_size(compress)
-            + self.memory_layout.serialized_size(compress)
-            + self.max_padded_trace_length.serialized_size(compress)
-    }
-}
-
-impl CanonicalDeserialize for JoltSharedPreprocessing {
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        let bytecode =
-            BytecodePreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
-        let ram = RAMPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
-        let memory_layout = MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
-        let max_padded_trace_length =
-            usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self {
-            bytecode: Arc::new(bytecode),
-            ram,
-            memory_layout,
-            max_padded_trace_length,
-        })
-    }
-}
-
-impl ark_serialize::Valid for JoltSharedPreprocessing {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.bytecode.check()?;
-        self.ram.check()?;
-        self.memory_layout.check()
-    }
-}
-
 impl JoltSharedPreprocessing {
+    /// Create shared preprocessing from bytecode.
+    ///
+    /// Bytecode size K is derived from `bytecode.bytecode.len()` (already padded).
+    /// The caller is responsible for wrapping bytecode in `Arc` and passing to prover/verifier.
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
-        bytecode: Vec<Instruction>,
+        bytecode: &BytecodePreprocessing,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,
     ) -> JoltSharedPreprocessing {
-        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode));
         let ram = RAMPreprocessing::preprocess(memory_init);
         Self {
-            bytecode,
+            bytecode_size: bytecode.bytecode.len(),
             ram,
             memory_layout,
             max_padded_trace_length,
@@ -883,7 +837,7 @@ impl JoltSharedPreprocessing {
     }
 }
 
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone)]
 pub struct JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
@@ -891,6 +845,69 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
+    /// Bytecode information for verification.
+    ///
+    /// In Full mode: contains full bytecode preprocessing (O(K) data).
+    /// In Committed mode: contains only commitments (succinct).
+    pub bytecode: VerifierBytecode<PCS>,
+}
+
+impl<F, PCS> CanonicalSerialize for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.serialize_with_mode(&mut writer, compress)?;
+        self.shared.serialize_with_mode(&mut writer, compress)?;
+        self.bytecode.serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.generators.serialized_size(compress)
+            + self.shared.serialized_size(compress)
+            + self.bytecode.serialized_size(compress)
+    }
+}
+
+impl<F, PCS> ark_serialize::Valid for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.check()?;
+        self.shared.check()?;
+        self.bytecode.check()
+    }
+}
+
+impl<F, PCS> CanonicalDeserialize for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let generators =
+            PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
+        let shared =
+            JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
+        let bytecode = VerifierBytecode::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(Self {
+            generators,
+            shared,
+            bytecode,
+        })
+    }
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -924,14 +941,39 @@ where
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS> {
-    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
-    pub fn new(
+    /// Create verifier preprocessing in Full mode (verifier has full bytecode).
+    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_full")]
+    pub fn new_full(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
+        bytecode: Arc<BytecodePreprocessing>,
     ) -> JoltVerifierPreprocessing<F, PCS> {
         Self {
             generators,
-            shared: shared.clone(),
+            shared,
+            bytecode: VerifierBytecode::Full(bytecode),
+        }
+    }
+
+    /// Create verifier preprocessing in Committed mode with trusted commitments.
+    ///
+    /// This is the "fast path" for online verification. The `TrustedBytecodeCommitments`
+    /// type guarantees (at the type level) that these commitments were derived from
+    /// actual bytecode via `TrustedBytecodeCommitments::derive()`.
+    ///
+    /// # Trust Model
+    /// The caller must ensure the commitments were honestly derived (e.g., loaded from
+    /// a trusted file or received from trusted preprocessing).
+    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_committed")]
+    pub fn new_committed(
+        shared: JoltSharedPreprocessing,
+        generators: PCS::VerifierSetup,
+        bytecode_commitments: TrustedBytecodeCommitments<PCS>,
+    ) -> JoltVerifierPreprocessing<F, PCS> {
+        Self {
+            generators,
+            shared,
+            bytecode: VerifierBytecode::Committed(bytecode_commitments),
         }
     }
 }
@@ -942,9 +984,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
 {
     fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
+        // Choose VerifierBytecode variant based on whether prover has bytecode commitments
+        let bytecode = match &prover_preprocessing.bytecode_commitments {
+            Some(commitments) => VerifierBytecode::Committed(commitments.clone()),
+            None => VerifierBytecode::Full(Arc::clone(&prover_preprocessing.bytecode)),
+        };
         Self {
             generators,
             shared: prover_preprocessing.shared.clone(),
+            bytecode,
         }
     }
 }
