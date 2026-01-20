@@ -37,33 +37,7 @@ impl Blake2bTranscript {
             .chain_update(&packed)
     }
 
-    /// Fills `out` with challenge bytes. Uses `ceil(out.len()/32)` hash calls.
-    /// Empty `out` returns immediately without advancing transcript.
-    ///
-    /// Panic-free: iterator-only access, guarded `split_at_mut`, safe `zip`.
-    fn challenge_bytes(&mut self, out: &mut [u8]) {
-        let mut remaining = out;
-        // SAFETY: `split_at_mut(32)` only called when `remaining.len() > 32`.
-        while remaining.len() > 32 {
-            let rand = self.challenge_bytes32();
-            let (chunk, rest) = remaining.split_at_mut(32);
-            // SAFETY: `zip` stops at the shorter iterator.
-            for (dst, src) in chunk.iter_mut().zip(rand.iter()) {
-                *dst = *src;
-            }
-            remaining = rest;
-        }
-        // SAFETY: `zip` stops at `remaining.len()` which is ≤ 32.
-        if !remaining.is_empty() {
-            let rand = self.challenge_bytes32();
-            for (dst, src) in remaining.iter_mut().zip(rand.iter()) {
-                *dst = *src;
-            }
-        }
-    }
-
-    // Loads exactly 32 bytes from the transcript by hashing the seed with the round constant
-    fn challenge_bytes32(&mut self) -> [u8; 32] {
+    fn challenge_bytes32_inner(&mut self) -> [u8; 32] {
         let rand: [u8; 32] = self.hasher().finalize().into();
         self.update_state(rand);
         rand
@@ -260,6 +234,10 @@ impl Transcript for Blake2bTranscript {
             q_powers[i] = q * q_powers[i - 1]; // this is optimised
         }
         q_powers
+    }
+
+    fn challenge_bytes32(&mut self) -> [u8; 32] {
+        self.challenge_bytes32_inner()
     }
 }
 

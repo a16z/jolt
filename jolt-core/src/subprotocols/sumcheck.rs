@@ -282,7 +282,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut r: Vec<F::Challenge> = Vec::new();
 
         // verify that there is a univariate polynomial for each round
-        assert_eq!(self.compressed_polys.len(), num_rounds);
+        if self.compressed_polys.len() != num_rounds {
+            return Err(ProofVerifyError::InvalidRoundCount {
+                expected: num_rounds,
+                actual: self.compressed_polys.len(),
+            });
+        }
         for i in 0..self.compressed_polys.len() {
             // verify degree bound
             if self.compressed_polys[i].degree() > degree_bound {

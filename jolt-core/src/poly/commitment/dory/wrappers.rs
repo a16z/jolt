@@ -418,14 +418,8 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        // dory-pcs assumes its Fiat-Shamir challenges are invertible (non-zero) and will
-        // `expect()` on inverses internally. We therefore resample if we ever hit 0.
-        loop {
-            let scalar = transcript.challenge_scalar::<Fr>();
-            if !scalar.is_zero() {
-                return jolt_to_ark(&scalar);
-            }
-        }
+        let scalar = transcript.challenge_scalar::<Fr>();
+        jolt_to_ark(&scalar)
     }
 
     fn reset(&mut self, _domain_label: &[u8]) {
