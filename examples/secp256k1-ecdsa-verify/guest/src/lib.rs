@@ -17,5 +17,15 @@ fn secp256k1_ecdsa_verify(
     let r = Secp256k1Fr::from_u64_arr(&r)?;
     let s = Secp256k1Fr::from_u64_arr(&s)?;
     let q = Secp256k1Point::from_u64_arr(&q)?;
+    /*let mut x = q.x();
+    let mut y = q.y();
+    for _ in 0..300 {
+        //q = q.double_and_add(&q);
+        x = x.mul(&y);
+    }
+    if x.is_zero() {
+        return Err(Secp256k1Error::RxMismatch); // dummy error for now, just to get cycle counts
+    }*/
+    //Ok(())
     ecdsa_verify(z, r, s, q)
 }

@@ -5,6 +5,7 @@
 //! 0x00: base field division
 //! 0x01: scalar field division
 //! 0x02: scalar field GLV decomposition
+//! 0x03: base field multiplication helper
 //! Additionally contains high-level SDK functions for ECDSA verification
 
 #![cfg_attr(not(feature = "host"), no_std)]
@@ -16,6 +17,11 @@ pub const SECP256K1_FUNCT7: u32 = 0x05;
 // that is, given a and b in Fq, compute c = a / b
 pub const SECP256K1_DIVQ_ADV_FUNCT3: u32 = 0x00;
 pub const SECP256K1_DIVQ_ADV_NAME: &str = "SECP256K1_DIVQ_ADV";
+
+// base field (q) multiplication helper
+// that is, given a and b in Fq, compute w such that ab - wq = c with c in [0, q)
+pub const SECP256K1_UNNAMED_FUNCT3: u32 = 0x03;
+pub const SECP256K1_UNNAMED_NAME: &str = "SECP256K1_UNNAMED";
 
 // scalar field (r) division (pure non-deterministic advice, no checks)
 // that is, given a and b in Fr, compute c = a / b
