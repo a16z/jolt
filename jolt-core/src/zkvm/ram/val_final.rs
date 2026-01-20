@@ -8,12 +8,13 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         unipoly::UniPoly,
     },
     subprotocols::{
+        blindfold::{OutputClaimConstraint, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -291,6 +292,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
             wa_opening_point,
             self.wa.final_sumcheck_claim(),
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = inc_claim * wa_claim
+        let inc_opening = OpeningId::Committed(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamValFinalEvaluation,
+        );
+        let wa_opening = OpeningId::Virtual(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamValFinalEvaluation,
+        );
+
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::Opening(inc_opening),
+            ValueSource::Opening(wa_opening),
+        ]))
     }
 
     #[cfg(feature = "allocative")]

@@ -13,18 +13,54 @@
 //! - [`BlindFoldWitness`]: Witness assignment for the verifier circuit
 
 mod folding;
+mod output_constraint;
 mod protocol;
 mod r1cs;
 mod relaxed_r1cs;
 mod witness;
 
 pub use folding::{compute_cross_term, sample_random_satisfying_pair};
+pub use output_constraint::{OutputClaimConstraint, ProductTerm, ValueSource};
 pub use protocol::{BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifyError};
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
-pub use witness::{BlindFoldWitness, RoundWitness, StageWitness};
+pub use witness::{BlindFoldWitness, FinalOutputWitness, RoundWitness, StageWitness};
 
 use crate::field::JoltField;
+
+/// Configuration for final output binding at end of a chain.
+///
+/// Supports two modes:
+/// 1. Simple linear: final_claim = Σⱼ αⱼ · yⱼ (legacy, num_evaluations only)
+/// 2. General sum-of-products: output = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ (uses constraint)
+#[derive(Clone, Debug, Default)]
+pub struct FinalOutputConfig {
+    /// Number of batched polynomial evaluations in this final constraint.
+    /// Used for simple linear constraints. Each evaluation yⱼ is a witness variable.
+    pub num_evaluations: usize,
+
+    /// General constraint description for sum-of-products form.
+    /// When present, overrides the simple linear constraint.
+    pub constraint: Option<OutputClaimConstraint>,
+}
+
+impl FinalOutputConfig {
+    pub fn new(num_evaluations: usize) -> Self {
+        Self {
+            num_evaluations,
+            constraint: None,
+        }
+    }
+
+    /// Create a final output config with a general sum-of-products constraint.
+    pub fn with_constraint(constraint: OutputClaimConstraint) -> Self {
+        let num_evaluations = constraint.required_openings.len();
+        Self {
+            num_evaluations,
+            constraint: Some(constraint),
+        }
+    }
+}
 
 /// Configuration for a single sumcheck stage
 #[derive(Clone, Debug)]
@@ -42,6 +78,9 @@ pub struct StageConfig {
     /// For uni-skip, contains `[PowerSum[0], PowerSum[1], ...]` where
     /// `PowerSum[k] = Σ_{t in symmetric domain} t^k`.
     pub uniskip_power_sums: Option<Vec<i128>>,
+    /// Final output binding configuration.
+    /// If set, adds constraint at end of this stage's chain: final_claim = Σⱼ αⱼ · yⱼ
+    pub final_output: Option<FinalOutputConfig>,
 }
 
 impl StageConfig {
@@ -51,6 +90,7 @@ impl StageConfig {
             poly_degree,
             starts_new_chain: false,
             uniskip_power_sums: None,
+            final_output: None,
         }
     }
 
@@ -61,6 +101,7 @@ impl StageConfig {
             poly_degree,
             starts_new_chain: true,
             uniskip_power_sums: None,
+            final_output: None,
         }
     }
 
@@ -72,6 +113,7 @@ impl StageConfig {
             poly_degree,
             starts_new_chain: false,
             uniskip_power_sums: Some(power_sums),
+            final_output: None,
         }
     }
 
@@ -82,7 +124,22 @@ impl StageConfig {
             poly_degree,
             starts_new_chain: true,
             uniskip_power_sums: Some(power_sums),
+            final_output: None,
         }
+    }
+
+    /// Set final output binding for this stage.
+    /// Adds constraint: final_claim = Σⱼ αⱼ · yⱼ at end of this stage's chain.
+    pub fn with_final_output(mut self, num_evaluations: usize) -> Self {
+        self.final_output = Some(FinalOutputConfig::new(num_evaluations));
+        self
+    }
+
+    /// Set final output binding with a general sum-of-products constraint.
+    /// The constraint describes: output = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ
+    pub fn with_constraint(mut self, constraint: OutputClaimConstraint) -> Self {
+        self.final_output = Some(FinalOutputConfig::with_constraint(constraint));
+        self
     }
 
     /// Returns true if this is a uni-skip round.

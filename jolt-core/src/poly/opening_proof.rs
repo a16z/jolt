@@ -197,6 +197,19 @@ pub struct ZkStageData<F: JoltField> {
     pub blinding_factors: Vec<F>,
     /// Challenges derived during this sumcheck
     pub challenges: Vec<F::Challenge>,
+    /// Batching coefficients for this stage (one per batched instance).
+    /// Used in final output constraint: final_claim = Σⱼ αⱼ · yⱼ
+    pub batching_coefficients: Vec<F>,
+    /// Expected output evaluations for each batched instance.
+    /// These are the polynomial evaluations at the random sumcheck point,
+    /// proven correct via ZK-Dory externally.
+    pub expected_evaluations: Vec<F>,
+    /// Output claim constraints from each sumcheck instance.
+    /// Used by BlindFold to generate R1CS constraints binding final claims to openings.
+    pub output_constraints: Vec<Option<crate::subprotocols::blindfold::OutputClaimConstraint>>,
+    /// Challenge values for each instance's constraint.
+    /// For instance j, contains the values for Challenge(0), Challenge(1), etc. in its constraint.
+    pub constraint_challenge_values: Vec<Vec<F>>,
 }
 
 /// ZK data for uni-skip first round (Stages 1-2).

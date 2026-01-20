@@ -1,4 +1,5 @@
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::blindfold::OutputClaimConstraint;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::transcripts::Transcript;
 
@@ -65,6 +66,27 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
+
+    /// Returns the constraint describing how the final output claim relates to polynomial
+    /// evaluations. Used by BlindFold R1CS to generate constraints.
+    ///
+    /// Returns `None` for uni-skip instances that don't need a final output constraint,
+    /// or when the constraint is not yet implemented.
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    /// Returns the challenge values needed for the output claim constraint.
+    ///
+    /// These are computed values like eq_eval, gamma, lt_eval that appear in the constraint.
+    /// Called after cache_openings() when sumcheck challenges are available.
+    /// The indices correspond to Challenge(idx) in the constraint.
+    fn output_constraint_challenge_values(
+        &self,
+        _sumcheck_challenges: &[F::Challenge],
+    ) -> Vec<F> {
+        Vec::new()
+    }
 
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder);

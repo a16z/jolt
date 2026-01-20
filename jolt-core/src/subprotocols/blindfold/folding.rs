@@ -13,6 +13,21 @@ use rand_core::CryptoRngCore;
 
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
+use super::OutputClaimConstraint;
+
+fn estimate_aux_var_count(constraint: &OutputClaimConstraint) -> usize {
+    let mut count = 0;
+    for term in &constraint.terms {
+        if term.factors.is_empty() {
+            count += 1;
+        } else if term.factors.len() == 1 {
+            count += 1;
+        } else {
+            count += term.factors.len();
+        }
+    }
+    count
+}
 
 /// Compute the cross-term T for folding two R1CS instances.
 ///
@@ -98,6 +113,32 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
             round_blindings.push(blinding);
             round_commitments.push(commitment);
         }
+
+        // Handle final_output witness variables (if present)
+        // NOTE: This must match the R1CS builder's variable allocation order
+        if let Some(ref fo_config) = config.final_output {
+            if let Some(ref constraint) = fo_config.constraint {
+                // General constraint: opening_vars (unique) + challenge_vars + aux_vars
+                let num_openings = constraint.required_openings.len();
+                let num_challenges = constraint.num_challenges;
+                let num_aux = estimate_aux_var_count(constraint);
+
+                for _ in 0..(num_openings + num_challenges + num_aux) {
+                    W.push(F::random(rng));
+                }
+            } else {
+                // Simple constraint: evaluation_vars + accumulator_vars
+                let num_evals = fo_config.num_evaluations;
+                for _ in 0..num_evals {
+                    W.push(F::random(rng));
+                }
+                if num_evals > 1 {
+                    for _ in 0..(num_evals - 1) {
+                        W.push(F::random(rng));
+                    }
+                }
+            }
+        }
     }
 
     // Sample random public inputs
@@ -118,6 +159,25 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     z.push(u);
     z.extend_from_slice(&x);
     z.extend_from_slice(&W);
+
+    assert_eq!(
+        z.len(),
+        r1cs.num_vars,
+        "sample_random_satisfying_pair: z.len()={} != r1cs.num_vars={}. x.len()={}, W.len()={}",
+        z.len(),
+        r1cs.num_vars,
+        x.len(),
+        W.len()
+    );
+
+    let expected_rounds: usize = r1cs.stage_configs.iter().map(|s| s.num_rounds).sum();
+    assert_eq!(
+        round_coefficients.len(),
+        expected_rounds,
+        "sample_random_satisfying_pair: round_coefficients.len()={} != expected_rounds={}",
+        round_coefficients.len(),
+        expected_rounds
+    );
 
     // Compute E to make the instance satisfy: E = (AZ) ∘ (BZ) - u*(CZ)
     let az = r1cs.a.mul_vector(&z);

@@ -4,7 +4,7 @@
 //! from sumcheck proof transcripts.
 
 use super::r1cs::VerifierR1CS;
-use super::StageConfig;
+use super::{OutputClaimConstraint, StageConfig};
 use crate::field::JoltField;
 use crate::poly::unipoly::CompressedUniPoly;
 
@@ -94,11 +94,86 @@ impl<F: JoltField> RoundWitness<F> {
 pub struct StageWitness<F> {
     /// Witness for each round in the stage
     pub rounds: Vec<RoundWitness<F>>,
+    /// Final output witness (if this stage has final_output constraint)
+    pub final_output: Option<FinalOutputWitness<F>>,
 }
 
 impl<F: JoltField> StageWitness<F> {
     pub fn new(rounds: Vec<RoundWitness<F>>) -> Self {
-        Self { rounds }
+        Self {
+            rounds,
+            final_output: None,
+        }
+    }
+
+    pub fn with_final_output(
+        rounds: Vec<RoundWitness<F>>,
+        final_output: FinalOutputWitness<F>,
+    ) -> Self {
+        Self {
+            rounds,
+            final_output: Some(final_output),
+        }
+    }
+}
+
+/// Witness data for final output binding constraint.
+///
+/// Supports two modes:
+/// 1. Simple linear: uses batching_coefficients and evaluations
+/// 2. General constraint: uses challenge_values and opening_values
+#[derive(Clone, Debug, Default)]
+pub struct FinalOutputWitness<F> {
+    /// Batching coefficients αⱼ (public inputs, derived from transcript)
+    /// Used for simple linear constraints.
+    pub batching_coefficients: Vec<F>,
+    /// Expected polynomial evaluations yⱼ (witness, proven via ZK-Dory)
+    /// Used for simple linear constraints.
+    pub evaluations: Vec<F>,
+    /// Challenge values for general constraints.
+    /// Layout: [batching_coeffs..., instance0_challenges..., instance1_challenges..., ...]
+    pub challenge_values: Vec<F>,
+    /// Opening values for general constraints.
+    /// Maps OpeningId to its evaluation value.
+    pub opening_values: Vec<F>,
+    /// Whether this uses the general constraint format.
+    pub is_general_constraint: bool,
+}
+
+impl<F: JoltField> FinalOutputWitness<F> {
+    pub fn new(batching_coefficients: Vec<F>, evaluations: Vec<F>) -> Self {
+        debug_assert_eq!(
+            batching_coefficients.len(),
+            evaluations.len(),
+            "Batching coefficients and evaluations must have same length"
+        );
+        Self {
+            batching_coefficients,
+            evaluations,
+            challenge_values: Vec::new(),
+            opening_values: Vec::new(),
+            is_general_constraint: false,
+        }
+    }
+
+    /// Create a general constraint witness with challenge and opening values.
+    pub fn new_general(challenge_values: Vec<F>, opening_values: Vec<F>) -> Self {
+        Self {
+            batching_coefficients: Vec::new(),
+            evaluations: Vec::new(),
+            challenge_values,
+            opening_values,
+            is_general_constraint: true,
+        }
+    }
+
+    /// Compute the expected final claim: Σⱼ αⱼ · yⱼ
+    pub fn compute_expected_final_claim(&self) -> F {
+        self.batching_coefficients
+            .iter()
+            .zip(&self.evaluations)
+            .map(|(alpha, y)| *alpha * *y)
+            .sum()
     }
 }
 
@@ -155,12 +230,23 @@ impl<F: JoltField> BlindFoldWitness<F> {
             .filter(|s| s.starts_new_chain)
             .count();
 
+        // Count total batching coefficients (only for simple constraints, not general ones)
+        let total_batching_coeffs: usize = r1cs
+            .stage_configs
+            .iter()
+            .filter_map(|s| s.final_output.as_ref())
+            .filter(|fo| fo.constraint.is_none())
+            .map(|fo| fo.num_evaluations)
+            .sum();
+
         // Public input layout:
         // - Indices 1..=total_rounds are challenges
         // - Indices total_rounds+1..=total_rounds+num_chains are initial_claims
+        // - Indices after that are batching_coefficients
         let challenge_start = 1;
         let initial_claims_start = total_rounds + 1;
-        let witness_start = initial_claims_start + num_chains;
+        let batching_coeffs_start = initial_claims_start + num_chains;
+        let witness_start = batching_coeffs_start + total_batching_coeffs;
 
         // Assign initial claims
         for (i, claim) in self.initial_claims.iter().enumerate() {
@@ -168,6 +254,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         }
 
         let mut challenge_idx = challenge_start;
+        let mut batching_coeff_idx = batching_coeffs_start;
         let mut witness_idx = witness_start;
 
         for (stage_idx, stage_witness) in self.stages.iter().enumerate() {
@@ -212,6 +299,88 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 // Assign next_claim
                 z[witness_idx] = next_claim;
                 witness_idx += 1;
+            }
+
+            // Assign final output witness if present
+            if let Some(ref fo_config) = config.final_output {
+                let fo_witness = stage_witness.final_output.as_ref();
+
+                if let Some(constraint) = &fo_config.constraint {
+                    // General constraint path
+                    // R1CS allocates: opening_vars (unique) + challenge_vars + aux_vars
+                    let num_openings = constraint.required_openings.len();
+                    let num_challenges = constraint.num_challenges;
+                    let num_aux_vars = Self::estimate_aux_var_count(constraint);
+
+                    if let Some(fw) = fo_witness {
+                        // Assign opening values (witness variables)
+                        debug_assert_eq!(
+                            fw.opening_values.len(),
+                            num_openings,
+                            "Opening values count mismatch"
+                        );
+                        for val in &fw.opening_values {
+                            z[witness_idx] = *val;
+                            witness_idx += 1;
+                        }
+
+                        // Assign challenge values (witness variables)
+                        debug_assert_eq!(
+                            fw.challenge_values.len(),
+                            num_challenges,
+                            "Challenge values count mismatch"
+                        );
+                        for val in &fw.challenge_values {
+                            z[witness_idx] = *val;
+                            witness_idx += 1;
+                        }
+
+                        // Aux vars are allocated but computed by R1CS constraints
+                        witness_idx += num_aux_vars;
+                    } else {
+                        // No witness provided - skip past allocated variables
+                        witness_idx += num_openings + num_challenges + num_aux_vars;
+                    }
+                } else {
+                    // Simple linear constraint path
+                    let fw = fo_witness
+                        .expect("Stage has final_output config but witness has no final_output");
+
+                    assert_eq!(
+                        fw.batching_coefficients.len(),
+                        fo_config.num_evaluations,
+                        "Wrong number of batching coefficients"
+                    );
+                    assert_eq!(
+                        fw.evaluations.len(),
+                        fo_config.num_evaluations,
+                        "Wrong number of evaluations"
+                    );
+
+                    // Assign batching coefficients (public inputs)
+                    for coeff in &fw.batching_coefficients {
+                        z[batching_coeff_idx] = *coeff;
+                        batching_coeff_idx += 1;
+                    }
+
+                    // Assign evaluations (witness variables)
+                    for eval in &fw.evaluations {
+                        z[witness_idx] = *eval;
+                        witness_idx += 1;
+                    }
+
+                    // Assign accumulator variables for multi-evaluation constraints
+                    let n = fo_config.num_evaluations;
+                    if n > 1 {
+                        // Compute accumulator values: acc_j = Σ_{i=0}^j αᵢ · yᵢ
+                        let mut acc = F::zero();
+                        for j in 0..n - 1 {
+                            acc += fw.batching_coefficients[j] * fw.evaluations[j];
+                            z[witness_idx] = acc;
+                            witness_idx += 1;
+                        }
+                    }
+                }
             }
         }
 
@@ -271,6 +440,29 @@ impl<F: JoltField> BlindFoldWitness<F> {
         }
 
         Self::new(initial_claim, stages)
+    }
+
+    /// Estimate the number of auxiliary variables needed for a general constraint.
+    ///
+    /// The R1CS builder allocates aux vars for intermediate products in sum-of-products.
+    /// This needs to match the allocation in `add_sum_of_products_constraint`.
+    fn estimate_aux_var_count(constraint: &OutputClaimConstraint) -> usize {
+        let mut count = 0;
+        for term in &constraint.terms {
+            if term.factors.is_empty() {
+                // Single coefficient: 1 aux var
+                count += 1;
+            } else if term.factors.len() == 1 {
+                // Single factor: 1 aux var
+                count += 1;
+            } else {
+                // Multiple factors: (n-1) aux vars for chain multiplication + 1 for final
+                count += term.factors.len();
+            }
+        }
+        // Plus 1 for the final sum constraint (if more than 1 term)
+        // Actually the final sum uses a linear combination, not aux vars
+        count
     }
 }
 

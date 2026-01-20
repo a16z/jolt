@@ -18,6 +18,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand_core::CryptoRngCore;
 
 use super::r1cs::VerifierR1CS;
+use super::OutputClaimConstraint;
 
 /// Relaxed R1CS Instance (public data)
 ///
@@ -316,9 +317,41 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
                 w_idx += num_coeffs + num_intermediates + 1;
                 round_idx += 1;
             }
+
+            // Skip past final_output variables if present
+            if let Some(ref fo_config) = config.final_output {
+                if let Some(ref constraint) = fo_config.constraint {
+                    // General constraint: opening_vars + challenge_vars + aux_vars
+                    let num_openings = constraint.required_openings.len();
+                    let num_challenges = constraint.num_challenges;
+                    let num_aux = Self::estimate_aux_var_count(constraint);
+                    w_idx += num_openings + num_challenges + num_aux;
+                } else {
+                    // Simple constraint: evaluation_vars + accumulator_vars
+                    let num_evals = fo_config.num_evaluations;
+                    w_idx += num_evals;
+                    if num_evals > 1 {
+                        w_idx += num_evals - 1;
+                    }
+                }
+            }
         }
 
         Ok(())
+    }
+
+    fn estimate_aux_var_count(constraint: &OutputClaimConstraint) -> usize {
+        let mut count = 0;
+        for term in &constraint.terms {
+            if term.factors.is_empty() {
+                count += 1;
+            } else if term.factors.len() == 1 {
+                count += 1;
+            } else {
+                count += term.factors.len();
+            }
+        }
+        count
     }
 }
 

@@ -3,8 +3,10 @@
 //! Builds sparse R1CS matrices for verifying sumcheck rounds.
 //! The circuit is O(log n) in size - only encoding the verifier's algebraic checks.
 
-use super::{Constraint, LinearCombination, StageConfig, Variable};
+use super::{Constraint, LinearCombination, OutputClaimConstraint, StageConfig, ValueSource, Variable};
 use crate::field::JoltField;
+use crate::poly::opening_proof::OpeningId;
+use std::collections::HashMap;
 
 /// Sparse R1CS matrix stored as (row, col, value) triplets
 #[derive(Clone, Debug, Default)]
@@ -120,6 +122,21 @@ impl<F: JoltField> VerifierR1CS<F> {
     }
 }
 
+/// Variables for final output binding constraint
+#[derive(Clone, Debug)]
+pub struct FinalOutputVariables {
+    /// Batching coefficient variables (public inputs) - α_j (for simple linear constraints)
+    pub batching_coeff_vars: Vec<Variable>,
+    /// Expected evaluation variables (witness) - y_j (for simple linear constraints)
+    pub evaluation_vars: Vec<Variable>,
+    /// Mapping from OpeningId to witness variable (for general constraints)
+    pub opening_vars: HashMap<OpeningId, Variable>,
+    /// Challenge variables for the constraint (public inputs)
+    pub constraint_challenge_vars: Vec<Variable>,
+    /// Auxiliary variables for intermediate products
+    pub aux_vars: Vec<Variable>,
+}
+
 /// Builder for constructing the verifier R1CS
 pub struct VerifierR1CSBuilder<F: JoltField> {
     /// Constraints accumulated so far
@@ -130,10 +147,14 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     challenge_vars: Vec<Variable>,
     /// Initial claim variables (public inputs) - one per independent chain
     initial_claim_vars: Vec<Variable>,
+    /// Batching coefficient variables (public inputs) for final output constraints
+    batching_coeff_vars: Vec<Variable>,
     /// Stage configurations
     stage_configs: Vec<StageConfig>,
     /// Mapping from (stage, round) to the round's variables
     round_vars: Vec<Vec<RoundVariables>>,
+    /// Final output variables for each stage with final_output config
+    final_output_vars: Vec<Option<FinalOutputVariables>>,
 }
 
 /// Variables allocated for a single sumcheck round
@@ -163,23 +184,38 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             .filter(|s| s.starts_new_chain)
             .count();
 
-        // Allocate public inputs: challenges + initial claims (one per chain)
+        // Count total batching coefficients for simple final output constraints.
+        // General constraints (with fo.constraint.is_some()) handle their own variables.
+        let total_batching_coeffs: usize = stage_configs
+            .iter()
+            .filter_map(|s| s.final_output.as_ref())
+            .filter(|fo| fo.constraint.is_none()) // Only simple constraints
+            .map(|fo| fo.num_evaluations)
+            .sum();
+
+        // Allocate public inputs: challenges + initial claims + batching coefficients
         // Index 0 is the constant 1 (u scalar)
         // Indices 1..=total_rounds are challenges
         // Indices total_rounds+1..=total_rounds+num_chains are initial claims
+        // Indices total_rounds+num_chains+1..=... are batching coefficients
         let challenge_vars: Vec<Variable> = (1..=total_rounds).map(Variable::new).collect();
         let initial_claim_vars: Vec<Variable> = (0..num_chains)
             .map(|i| Variable::new(total_rounds + 1 + i))
             .collect();
-        let next_var = total_rounds + 1 + num_chains; // Start witness allocation after public inputs
+        let batching_coeff_vars: Vec<Variable> = (0..total_batching_coeffs)
+            .map(|i| Variable::new(total_rounds + 1 + num_chains + i))
+            .collect();
+        let next_var = total_rounds + 1 + num_chains + total_batching_coeffs;
 
         Self {
             constraints: Vec::new(),
             next_var,
             challenge_vars,
             initial_claim_vars,
+            batching_coeff_vars,
             stage_configs: stage_configs.to_vec(),
             round_vars: Vec::new(),
+            final_output_vars: Vec::new(),
         }
     }
 
@@ -316,10 +352,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
     pub fn build(mut self) -> VerifierR1CS<F> {
         let mut challenge_idx = 0;
         let mut chain_idx = 0;
+        let mut batching_coeff_idx = 0;
         let mut current_claim = self.initial_claim_vars[chain_idx];
 
-        // Clone stage configs to avoid borrow conflict
+        // Clone data to avoid borrow conflict
         let stage_configs = self.stage_configs.clone();
+        let batching_coeff_vars = self.batching_coeff_vars.clone();
 
         // Allocate variables and build constraints for each stage/round
         for (stage_idx, config) in stage_configs.iter().enumerate() {
@@ -374,12 +412,93 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                 stage_rounds.push(vars);
             }
 
+            // Add final output constraint if configured
+            let final_output_vars = if let Some(ref fo_config) = config.final_output {
+                let last_round = stage_rounds
+                    .last()
+                    .expect("Stage must have at least one round");
+
+                if let Some(ref constraint) = fo_config.constraint {
+                    // General sum-of-products constraint
+
+                    // Allocate witness variables for required openings
+                    let mut opening_vars_map: HashMap<OpeningId, Variable> = HashMap::new();
+                    for opening_id in &constraint.required_openings {
+                        if !opening_vars_map.contains_key(opening_id) {
+                            let var = Variable::new(self.next_var);
+                            self.next_var += 1;
+                            opening_vars_map.insert(*opening_id, var);
+                        }
+                    }
+
+                    // Allocate public input variables for challenges needed by the constraint
+                    let constraint_challenge_vars: Vec<Variable> = (0..constraint.num_challenges)
+                        .map(|_| {
+                            let var = Variable::new(self.next_var);
+                            self.next_var += 1;
+                            var
+                        })
+                        .collect();
+
+                    // Add the sum-of-products constraint
+                    let aux_vars = self.add_sum_of_products_constraint(
+                        last_round.next_claim,
+                        constraint,
+                        &opening_vars_map,
+                        &constraint_challenge_vars,
+                    );
+
+                    Some(FinalOutputVariables {
+                        batching_coeff_vars: Vec::new(),
+                        evaluation_vars: Vec::new(),
+                        opening_vars: opening_vars_map,
+                        constraint_challenge_vars,
+                        aux_vars,
+                    })
+                } else {
+                    // Simple linear constraint: final_claim = Σⱼ αⱼ · yⱼ
+                    let num_evals = fo_config.num_evaluations;
+
+                    // Get batching coefficient variables (public inputs)
+                    let coeff_vars: Vec<Variable> = batching_coeff_vars
+                        [batching_coeff_idx..batching_coeff_idx + num_evals]
+                        .to_vec();
+                    batching_coeff_idx += num_evals;
+
+                    // Allocate witness variables for expected evaluations
+                    let eval_vars: Vec<Variable> = (0..num_evals)
+                        .map(|_| {
+                            let var = Variable::new(self.next_var);
+                            self.next_var += 1;
+                            var
+                        })
+                        .collect();
+
+                    // Add final output constraint: final_claim = Σⱼ αⱼ · yⱼ
+                    self.add_final_output_constraint(last_round.next_claim, &coeff_vars, &eval_vars);
+
+                    Some(FinalOutputVariables {
+                        batching_coeff_vars: coeff_vars,
+                        evaluation_vars: eval_vars,
+                        opening_vars: HashMap::new(),
+                        constraint_challenge_vars: Vec::new(),
+                        aux_vars: Vec::new(),
+                    })
+                }
+            } else {
+                None
+            };
+
             self.round_vars.push(stage_rounds);
+            self.final_output_vars.push(final_output_vars);
         }
 
         let num_constraints = self.constraints.len();
         let num_vars = self.next_var;
-        let num_public_inputs = self.challenge_vars.len() + self.initial_claim_vars.len(); // challenges + initial_claims
+        // Public inputs: challenges + initial_claims + batching_coeffs
+        let num_public_inputs = self.challenge_vars.len()
+            + self.initial_claim_vars.len()
+            + self.batching_coeff_vars.len();
 
         // Build sparse matrices
         let mut a = SparseR1CSMatrix::new(num_constraints, num_vars);
@@ -409,6 +528,232 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
     }
 
+    /// Add final output constraint: final_claim = Σⱼ αⱼ · yⱼ
+    ///
+    /// This constraint binds the sumcheck's final output to the expected polynomial
+    /// evaluations. The evaluations yⱼ are witness variables proven correct via ZK-Dory.
+    fn add_final_output_constraint(
+        &mut self,
+        final_claim: Variable,
+        batching_coeffs: &[Variable],
+        evaluations: &[Variable],
+    ) {
+        debug_assert_eq!(
+            batching_coeffs.len(),
+            evaluations.len(),
+            "Batching coefficients and evaluations must have same length"
+        );
+
+        // We want: final_claim = Σⱼ αⱼ · yⱼ
+        // But R1CS requires A * B = C form.
+        //
+        // For a single evaluation (n=1): α₀ * y₀ = final_claim
+        // For multiple evaluations: we need auxiliary variables.
+        //
+        // Strategy: Add one constraint per evaluation using accumulator pattern.
+        // Let acc_0 = α₀ · y₀
+        // Let acc_j = acc_{j-1} + αⱼ · yⱼ for j > 0
+        // Final: acc_{n-1} = final_claim
+
+        let n = batching_coeffs.len();
+        if n == 0 {
+            return;
+        }
+
+        if n == 1 {
+            // Single evaluation: α₀ * y₀ = final_claim
+            let a = LinearCombination::variable(batching_coeffs[0]);
+            let b = LinearCombination::variable(evaluations[0]);
+            let c = LinearCombination::variable(final_claim);
+            self.add_constraint(a, b, c);
+            return;
+        }
+
+        // Multiple evaluations: use accumulator variables
+        // We need n-1 accumulator variables for n evaluations
+        let mut accumulators: Vec<Variable> = Vec::with_capacity(n - 1);
+        for _ in 0..n - 1 {
+            let var = Variable::new(self.next_var);
+            self.next_var += 1;
+            accumulators.push(var);
+        }
+
+        // First constraint: α₀ * y₀ = acc₀
+        let a = LinearCombination::variable(batching_coeffs[0]);
+        let b = LinearCombination::variable(evaluations[0]);
+        let c = LinearCombination::variable(accumulators[0]);
+        self.add_constraint(a, b, c);
+
+        // Middle constraints: αⱼ * yⱼ = accⱼ - acc_{j-1}
+        for j in 1..n - 1 {
+            let a = LinearCombination::variable(batching_coeffs[j]);
+            let b = LinearCombination::variable(evaluations[j]);
+            let c = LinearCombination::variable(accumulators[j]).sub_var(accumulators[j - 1]);
+            self.add_constraint(a, b, c);
+        }
+
+        // Final constraint: α_{n-1} * y_{n-1} = final_claim - acc_{n-2}
+        let a = LinearCombination::variable(batching_coeffs[n - 1]);
+        let b = LinearCombination::variable(evaluations[n - 1]);
+        let c = LinearCombination::variable(final_claim).sub_var(accumulators[n - 2]);
+        self.add_constraint(a, b, c);
+    }
+
+    /// Add general sum-of-products constraint: final_claim = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ
+    ///
+    /// This method handles the general constraint form described by `OutputClaimConstraint`.
+    /// It allocates auxiliary variables for intermediate products and generates R1CS constraints.
+    ///
+    /// Returns the auxiliary variables allocated for intermediate products.
+    fn add_sum_of_products_constraint(
+        &mut self,
+        final_claim: Variable,
+        constraint: &OutputClaimConstraint,
+        opening_vars: &HashMap<OpeningId, Variable>,
+        challenge_vars: &[Variable],
+    ) -> Vec<Variable> {
+        let mut aux_vars = Vec::new();
+
+        if constraint.terms.is_empty() {
+            return aux_vars;
+        }
+
+        // Helper to resolve a ValueSource to a LinearCombination
+        let resolve_value = |vs: &ValueSource| -> LinearCombination<F> {
+            match vs {
+                ValueSource::Opening(id) => {
+                    LinearCombination::variable(*opening_vars.get(id).unwrap_or_else(|| {
+                        panic!("Opening {id:?} not found in variable map")
+                    }))
+                }
+                ValueSource::Challenge(idx) => {
+                    LinearCombination::variable(challenge_vars[*idx])
+                }
+                ValueSource::Constant(val) => {
+                    LinearCombination::constant(F::from_i128(*val))
+                }
+            }
+        };
+
+        // For each term, compute the product and collect the result variable
+        let mut term_results: Vec<(LinearCombination<F>, Variable)> = Vec::with_capacity(constraint.terms.len());
+
+        for term in &constraint.terms {
+            let coeff_lc = resolve_value(&term.coeff);
+
+            if term.factors.is_empty() {
+                // No factors: the term is just the coefficient
+                // Allocate aux var for the coefficient value
+                let aux = Variable::new(self.next_var);
+                self.next_var += 1;
+                aux_vars.push(aux);
+
+                // Constraint: coeff * u = aux (where u is the scalar, 1 for non-relaxed)
+                let a = coeff_lc;
+                let b = LinearCombination::constant(F::one());
+                let c = LinearCombination::variable(aux);
+                self.add_constraint(a, b, c);
+
+                term_results.push((LinearCombination::constant(F::one()), aux));
+            } else if term.factors.len() == 1 {
+                // Single factor: product = coeff * factor
+                let factor_lc = resolve_value(&term.factors[0]);
+
+                let aux = Variable::new(self.next_var);
+                self.next_var += 1;
+                aux_vars.push(aux);
+
+                // Constraint: coeff * factor = aux
+                self.add_constraint(coeff_lc, factor_lc, LinearCombination::variable(aux));
+
+                term_results.push((LinearCombination::constant(F::one()), aux));
+            } else {
+                // Multiple factors: use chain of multiplications
+                // First, compute the product of all factors
+                // Then multiply by the coefficient
+
+                // Product of factors: f0 * f1 * ... * fn
+                let factor0_lc = resolve_value(&term.factors[0]);
+                let factor1_lc = resolve_value(&term.factors[1]);
+
+                // First multiplication: aux0 = f0 * f1
+                let mut current_product = Variable::new(self.next_var);
+                self.next_var += 1;
+                aux_vars.push(current_product);
+
+                self.add_constraint(
+                    factor0_lc,
+                    factor1_lc,
+                    LinearCombination::variable(current_product),
+                );
+
+                // Chain remaining factors: aux_{i} = aux_{i-1} * f_{i+1}
+                for factor in &term.factors[2..] {
+                    let factor_lc = resolve_value(factor);
+                    let next_product = Variable::new(self.next_var);
+                    self.next_var += 1;
+                    aux_vars.push(next_product);
+
+                    self.add_constraint(
+                        LinearCombination::variable(current_product),
+                        factor_lc,
+                        LinearCombination::variable(next_product),
+                    );
+
+                    current_product = next_product;
+                }
+
+                // Now multiply by coefficient: final_term = coeff * product
+                let final_term = Variable::new(self.next_var);
+                self.next_var += 1;
+                aux_vars.push(final_term);
+
+                self.add_constraint(
+                    coeff_lc,
+                    LinearCombination::variable(current_product),
+                    LinearCombination::variable(final_term),
+                );
+
+                term_results.push((LinearCombination::constant(F::one()), final_term));
+            }
+        }
+
+        // Sum all term results: final_claim = Σᵢ term_results[i]
+        // We use the same accumulator pattern as add_final_output_constraint
+        let n = term_results.len();
+
+        if n == 1 {
+            // Single term: final_claim = term_result
+            // Constraint: 1 * term = final_claim
+            let (_, term_var) = &term_results[0];
+            let a = LinearCombination::constant(F::one());
+            let b = LinearCombination::variable(*term_var);
+            let c = LinearCombination::variable(final_claim);
+            self.add_constraint(a, b, c);
+        } else {
+            // Multiple terms: use accumulator pattern
+            // But since all coefficients in term_results are 1, we just need to sum the variables
+            // acc_0 = term_0
+            // acc_1 = acc_0 + term_1
+            // ...
+            // final_claim = acc_{n-1}
+
+            // Build linear combination for the sum
+            let mut sum_lc = LinearCombination::new();
+            for (_, term_var) in &term_results {
+                sum_lc = sum_lc.add_var(*term_var);
+            }
+
+            // Constraint: 1 * sum = final_claim
+            let a = LinearCombination::constant(F::one());
+            let b = sum_lc;
+            let c = LinearCombination::variable(final_claim);
+            self.add_constraint(a, b, c);
+        }
+
+        aux_vars
+    }
+
     /// Get the round variables for witness assignment
     pub fn get_round_vars(&self) -> &Vec<Vec<RoundVariables>> {
         &self.round_vars
@@ -422,6 +767,16 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
     /// Get the challenge variable indices
     pub fn challenge_vars(&self) -> &[Variable] {
         &self.challenge_vars
+    }
+
+    /// Get the batching coefficient variable indices (public inputs)
+    pub fn batching_coeff_vars(&self) -> &[Variable] {
+        &self.batching_coeff_vars
+    }
+
+    /// Get the final output variables for each stage
+    pub fn final_output_vars(&self) -> &[Option<FinalOutputVariables>] {
+        &self.final_output_vars
     }
 }
 
@@ -616,6 +971,129 @@ mod tests {
         assert!(
             r1cs.check_satisfaction(&z).is_err(),
             "R1CS should NOT be satisfied with invalid uni-skip witness"
+        );
+    }
+
+    #[test]
+    fn test_final_output_constraint_single_eval() {
+        use crate::subprotocols::blindfold::witness::FinalOutputWitness;
+
+        type F = Fr;
+
+        // Stage with final output constraint (1 evaluation)
+        let config = super::super::StageConfig::new(1, 3).with_final_output(1);
+        let builder = VerifierR1CSBuilder::<F>::new(&[config]);
+        let r1cs = builder.build();
+
+        // 4 constraints per round + 1 final output constraint = 5
+        assert_eq!(r1cs.num_constraints, 5);
+
+        // Set up valid round: 2*c0 + c1 + c2 + c3 = 100
+        let c0 = F::from_u64(40);
+        let c1 = F::from_u64(5);
+        let c2 = F::from_u64(10);
+        let c3 = F::from_u64(5);
+        let initial_claim = F::from_u64(100);
+        let r = F::from_u64(3);
+
+        let round = RoundWitness::new(vec![c0, c1, c2, c3], r);
+        let final_claim = round.evaluate(r);
+
+        // Final output constraint: α * y = final_claim
+        let alpha = F::from_u64(1);
+        let y = final_claim; // Single eval means y = final_claim / alpha
+
+        let fo_witness = FinalOutputWitness::new(vec![alpha], vec![y]);
+        let stage = StageWitness::with_final_output(vec![round], fo_witness);
+        let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
+
+        let z = witness.assign(&r1cs);
+        match r1cs.check_satisfaction(&z) {
+            Ok(()) => {}
+            Err(row) => panic!("Constraint {row} failed"),
+        }
+    }
+
+    #[test]
+    fn test_final_output_constraint_multiple_evals() {
+        use crate::subprotocols::blindfold::witness::FinalOutputWitness;
+
+        type F = Fr;
+
+        // Stage with final output constraint (3 evaluations)
+        let config = super::super::StageConfig::new(1, 3).with_final_output(3);
+        let builder = VerifierR1CSBuilder::<F>::new(&[config]);
+        let r1cs = builder.build();
+
+        // 4 constraints per round + 3 final output constraints = 7
+        assert_eq!(r1cs.num_constraints, 7);
+
+        // Set up valid round
+        let c0 = F::from_u64(40);
+        let c1 = F::from_u64(5);
+        let c2 = F::from_u64(10);
+        let c3 = F::from_u64(5);
+        let initial_claim = F::from_u64(100);
+        let r = F::from_u64(3);
+
+        let round = RoundWitness::new(vec![c0, c1, c2, c3], r);
+        let final_claim = round.evaluate(r);
+
+        // Final output constraint: α₀*y₀ + α₁*y₁ + α₂*y₂ = final_claim
+        let alpha0 = F::from_u64(2);
+        let alpha1 = F::from_u64(3);
+        let alpha2 = F::from_u64(5);
+        // Choose y values such that α₀*y₀ + α₁*y₁ + α₂*y₂ = final_claim
+        let y0 = F::from_u64(10);
+        let y1 = F::from_u64(20);
+        // y2 = (final_claim - α₀*y₀ - α₁*y₁) / α₂
+        let partial_sum = alpha0 * y0 + alpha1 * y1;
+        let y2 = (final_claim - partial_sum) * alpha2.inverse().unwrap();
+
+        let fo_witness = FinalOutputWitness::new(vec![alpha0, alpha1, alpha2], vec![y0, y1, y2]);
+        let stage = StageWitness::with_final_output(vec![round], fo_witness);
+        let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
+
+        let z = witness.assign(&r1cs);
+        match r1cs.check_satisfaction(&z) {
+            Ok(()) => {}
+            Err(row) => panic!("Constraint {row} failed"),
+        }
+    }
+
+    #[test]
+    fn test_final_output_constraint_invalid_fails() {
+        use crate::subprotocols::blindfold::witness::FinalOutputWitness;
+
+        type F = Fr;
+
+        let config = super::super::StageConfig::new(1, 3).with_final_output(1);
+        let builder = VerifierR1CSBuilder::<F>::new(&[config]);
+        let r1cs = builder.build();
+
+        // Set up valid round
+        let c0 = F::from_u64(40);
+        let c1 = F::from_u64(5);
+        let c2 = F::from_u64(10);
+        let c3 = F::from_u64(5);
+        let initial_claim = F::from_u64(100);
+        let r = F::from_u64(3);
+
+        let round = RoundWitness::new(vec![c0, c1, c2, c3], r);
+        let final_claim = round.evaluate(r);
+
+        // Invalid: y doesn't satisfy α * y = final_claim
+        let alpha = F::from_u64(1);
+        let y = final_claim + F::from_u64(1); // Wrong value!
+
+        let fo_witness = FinalOutputWitness::new(vec![alpha], vec![y]);
+        let stage = StageWitness::with_final_output(vec![round], fo_witness);
+        let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
+
+        let z = witness.assign(&r1cs);
+        assert!(
+            r1cs.check_satisfaction(&z).is_err(),
+            "R1CS should NOT be satisfied with invalid final output"
         );
     }
 }

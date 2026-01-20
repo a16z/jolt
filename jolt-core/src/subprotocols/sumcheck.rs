@@ -339,13 +339,32 @@ impl BatchedSumcheck {
             sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
         }
 
+        // Collect output constraints and challenge values from each sumcheck instance
+        let output_constraints: Vec<_> = sumcheck_instances
+            .iter()
+            .map(|sumcheck| sumcheck.output_claim_constraint())
+            .collect();
+
+        let constraint_challenge_values: Vec<Vec<F>> = sumcheck_instances
+            .iter()
+            .map(|sumcheck| {
+                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                sumcheck.output_constraint_challenge_values(r_slice)
+            })
+            .collect();
+
         // Store ZK data in accumulator for BlindFold to retrieve later
+        let batching_coefficients_f: Vec<F> = batching_coeffs.to_vec();
         opening_accumulator.push_zk_stage_data(ZkStageData {
             initial_claim: initial_batched_claim,
             round_commitments: round_commitments_bytes,
             poly_coeffs,
             blinding_factors,
             challenges: r_sumcheck.clone(),
+            batching_coefficients: batching_coefficients_f,
+            expected_evaluations: Vec::new(),
+            output_constraints,
+            constraint_challenge_values,
         });
 
         (

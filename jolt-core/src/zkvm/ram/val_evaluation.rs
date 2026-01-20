@@ -12,13 +12,14 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
     },
     subprotocols::{
+        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -308,6 +309,55 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
             r_cycle_prime.r,
             self.inc.final_sumcheck_claim(),
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = inc_claim * wa_claim * lt_eval
+        //
+        // Where:
+        // - inc_claim = CommittedPolynomial::RamInc @ RamValEvaluation
+        // - wa_claim = VirtualPolynomial::RamRa @ RamValEvaluation
+        // - lt_eval = LT polynomial evaluation (Challenge(0))
+
+        let inc = OpeningId::Committed(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamValEvaluation,
+        );
+        let wa = OpeningId::Virtual(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamValEvaluation,
+        );
+
+        let lt_eval = ValueSource::Challenge(0);
+
+        let terms = vec![
+            ProductTerm::product(vec![
+                ValueSource::Opening(inc),
+                ValueSource::Opening(wa),
+                lt_eval,
+            ]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> Vec<F> {
+        // Challenge(0) = lt_eval
+        // Compute LT(r, r_cycle) using the MLE formula
+
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
+
+        let mut lt_eval = F::zero();
+        let mut eq_term = F::one();
+        for (x, y) in zip(&r.r, &self.params.r_cycle.r) {
+            lt_eval += (F::one() - *x) * *y * eq_term;
+            eq_term *= F::one() - *x - *y + *x * *y + *x * *y;
+        }
+
+        vec![lt_eval]
     }
 
     #[cfg(feature = "allocative")]
