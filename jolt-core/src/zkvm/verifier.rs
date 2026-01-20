@@ -23,9 +23,10 @@ use crate::zkvm::{
         BytecodeReadRafSumcheckParams,
     },
     claim_reductions::{
-        AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
-        IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
-        RamRaClaimReductionSumcheckVerifier,
+        AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
+        BytecodeClaimReductionVerifier, BytecodeReductionPhase,
+        HammingWeightClaimReductionVerifier, IncClaimReductionSumcheckVerifier,
+        InstructionLookupsClaimReductionSumcheckVerifier, RamRaClaimReductionSumcheckVerifier,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
@@ -96,6 +97,9 @@ pub struct JoltVerifier<
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the verifier state here between stages.
     advice_reduction_verifier_untrusted: Option<AdviceClaimReductionVerifier<F>>,
+    /// The bytecode claim reduction sumcheck effectively spans two stages (6b and 7).
+    /// Cache the verifier state here between stages.
+    bytecode_reduction_verifier: Option<BytecodeClaimReductionVerifier<F>>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
 }
@@ -177,6 +181,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             opening_accumulator,
             advice_reduction_verifier_trusted: None,
             advice_reduction_verifier_untrusted: None,
+            bytecode_reduction_verifier: None,
             spartan_key,
             one_hot_params,
         })
@@ -457,7 +462,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         booleanity_params: BooleanitySumcheckParams<F>,
     ) -> Result<(), anyhow::Error> {
         // Initialize Stage 6b cycle verifiers from scratch (Option B).
-        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(bytecode_read_raf_params);
         let booleanity = BooleanityCycleSumcheckVerifier::new(booleanity_params);
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
@@ -477,6 +481,26 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
             &mut self.transcript,
         );
+
+        // Bytecode claim reduction (Phase 1 in Stage 6b): consumes Val_s(r_bc) from Stage 6a and
+        // caches an intermediate claim for Stage 7.
+        //
+        // IMPORTANT: This must be sampled *after* other Stage 6b params (e.g. lookup/inc gammas),
+        // to match the prover's transcript order.
+        if bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K {
+            let bytecode_reduction_params = BytecodeClaimReductionParams::new(
+                &bytecode_read_raf_params,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+            self.bytecode_reduction_verifier = Some(BytecodeClaimReductionVerifier::new(
+                bytecode_reduction_params,
+            ));
+        } else {
+            // Not enough cycle randomness to embed the bytecode index vars into Stage 6b.
+            // Fall back to the legacy verifier path (O(K_bytecode) in Stage 6b) by not running the reduction.
+            self.bytecode_reduction_verifier = None;
+        }
 
         // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.trusted_advice_commitment.is_some() {
@@ -504,6 +528,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             ));
         }
 
+        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(bytecode_read_raf_params);
+
         let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
             &bytecode_read_raf,
             &ram_hamming_booleanity,
@@ -512,6 +538,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &lookups_ra_virtual,
             &inc_reduction,
         ];
+        if let Some(ref bytecode) = self.bytecode_reduction_verifier {
+            instances.push(bytecode);
+        }
         if let Some(ref advice) = self.advice_reduction_verifier_trusted {
             instances.push(advice);
         }
@@ -542,6 +571,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
             vec![&hw_verifier];
+
+        if let Some(bytecode_reduction_verifier) = self.bytecode_reduction_verifier.as_mut() {
+            bytecode_reduction_verifier.params.borrow_mut().phase =
+                BytecodeReductionPhase::LaneVariables;
+            instances.push(bytecode_reduction_verifier);
+        }
         if let Some(advice_reduction_verifier_trusted) =
             self.advice_reduction_verifier_trusted.as_mut()
         {

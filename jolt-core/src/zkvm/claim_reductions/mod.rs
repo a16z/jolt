@@ -1,4 +1,5 @@
 pub mod advice;
+pub mod bytecode;
 pub mod hamming_weight;
 pub mod increments;
 pub mod instruction_lookups;
@@ -8,6 +9,10 @@ pub mod registers;
 pub use advice::{
     AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceClaimReductionVerifier,
     AdviceKind,
+};
+pub use bytecode::{
+    BytecodeClaimReductionParams, BytecodeClaimReductionProver, BytecodeClaimReductionVerifier,
+    BytecodeReductionPhase,
 };
 pub use hamming_weight::{
     HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,

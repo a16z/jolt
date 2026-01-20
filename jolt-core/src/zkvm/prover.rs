@@ -55,6 +55,7 @@ use crate::{
         bytecode::read_raf_checking::BytecodeReadRafSumcheckParams,
         claim_reductions::{
             AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
+            BytecodeClaimReductionParams, BytecodeClaimReductionProver, BytecodeReductionPhase,
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
             IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
@@ -158,6 +159,9 @@ pub struct JoltCpuProver<
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the prover state here between stages.
     advice_reduction_prover_untrusted: Option<AdviceClaimReductionProver<F>>,
+    /// The bytecode claim reduction sumcheck effectively spans two stages (6b and 7).
+    /// Cache the prover state here between stages.
+    bytecode_reduction_prover: Option<BytecodeClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -407,6 +411,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             },
             advice_reduction_prover_trusted: None,
             advice_reduction_prover_untrusted: None,
+            bytecode_reduction_prover: None,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -1170,6 +1175,24 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
+        // Bytecode claim reduction (Phase 1 in Stage 6b): consumes Val_s(r_bc) from Stage 6a and
+        // caches an intermediate claim for Stage 7.
+        if bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K {
+            let bytecode_reduction_params = BytecodeClaimReductionParams::new(
+                &bytecode_read_raf_params,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+            self.bytecode_reduction_prover = Some(BytecodeClaimReductionProver::initialize(
+                bytecode_reduction_params,
+                Arc::clone(&self.preprocessing.shared.bytecode),
+            ));
+        } else {
+            // Not enough cycle randomness to embed the bytecode index vars into Stage 6b.
+            // Fall back to the legacy verifier path (O(K_bytecode) in Stage 6b) by not running the reduction.
+            self.bytecode_reduction_prover = None;
+        }
+
         // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.advice.trusted_advice_polynomial.is_some() {
             let trusted_advice_params = AdviceClaimReductionParams::new(
@@ -1279,6 +1302,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut lookups_ra_virtual,
             &mut inc_reduction,
         ];
+        if let Some(bytecode) = self.bytecode_reduction_prover.as_mut() {
+            instances.push(bytecode);
+        }
         if let Some(advice) = self.advice_reduction_prover_trusted.as_mut() {
             instances.push(advice);
         }
@@ -1289,6 +1315,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6b_start_flamechart.svg");
         tracing::info!("Stage 6b proving");
+
         let (sumcheck_proof, _r_stage6b) = BatchedSumcheck::prove(
             instances.iter_mut().map(|v| &mut **v as _).collect(),
             &mut self.opening_accumulator,
@@ -1327,9 +1354,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
 
         // Run Stage 7 batched sumcheck (address rounds only).
-        // Includes HammingWeightClaimReduction plus address phase of advice reduction instances (if needed).
+        // Includes HammingWeightClaimReduction plus lane/address-phase reductions (if needed).
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
             vec![Box::new(hw_prover)];
+
+        if let Some(mut bytecode_reduction_prover) = self.bytecode_reduction_prover.take() {
+            bytecode_reduction_prover.params.phase = BytecodeReductionPhase::LaneVariables;
+            instances.push(Box::new(bytecode_reduction_prover));
+        }
 
         if let Some(mut advice_reduction_prover_trusted) =
             self.advice_reduction_prover_trusted.take()

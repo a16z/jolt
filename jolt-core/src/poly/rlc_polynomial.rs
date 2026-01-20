@@ -191,6 +191,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                 | CommittedPolynomial::RamRa(_) => {
                     onehot_polys.push((*poly_id, *coeff));
                 }
+                CommittedPolynomial::BytecodeChunk(_) => {
+                    // Bytecode chunk polynomials are staged for later integration into Stage 8
+                    // streaming (see bytecode commitment track).
+                    panic!("BytecodeChunk polynomials are not yet supported in streaming RLC");
+                }
                 CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
                     // Advice polynomials are passed in directly (not streamed from trace)
                     if advice_poly_map.contains_key(poly_id) {
