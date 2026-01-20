@@ -1,0 +1,4 @@
+jolt-verifier/tests/fib_io_device_bytes.rs linguist-generated=true
+jolt-verifier/tests/fib_proof_bytes.rs linguist-generated=true
+jolt-verifier/tests/jolt_verifier_preprocessing_bytes.rs linguist-generated=true
+jolt-verifier/tests/fixtures/* binary

@@ -1,0 +1,27 @@
+[package]
+name = "common"
+version = "0.2.0"
+edition = "2021"
+
+[features]
+default = ["std"]
+std = [
+    "ark-serialize/std",
+    "serde/std",
+    "serde_json/std",
+    "strum/std",
+    "syn/full",
+]
+
+[dependencies]
+derive_more.workspace = true
+allocative.workspace = true
+ark-serialize = { workspace = true, default-features = false }
+serde = { workspace = true, default-features = false }
+serde_json = { workspace = true, features = [
+    "alloc",
+], default-features = false }
+strum_macros.workspace = true
+strum = { workspace = true, default-features = false }
+syn = { workspace = true, optional = true }
+tracing.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "sha3-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
+jolt-inlines-keccak256.workspace = true

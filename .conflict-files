@@ -1,0 +1,3 @@
+ancestorEntries = ["jolt-core/src/zkvm/instruction/mod.rs", "tracer/src/emulator/cpu.rs", "tracer/src/instruction/mod.rs"]
+ourEntries = ["jolt-core/src/zkvm/instruction/mod.rs", "tracer/src/emulator/cpu.rs", "tracer/src/instruction/advice_sb.rs", "tracer/src/instruction/advice_sd.rs", "tracer/src/instruction/advice_sh.rs", "tracer/src/instruction/advice_sw.rs", "tracer/src/instruction/mod.rs", "tracer/src/instruction/virtual_assert.rs"]
+theirEntries = ["jolt-core/src/zkvm/instruction/mod.rs", "tracer/src/emulator/cpu.rs", "tracer/src/instruction/advice_sb.rs", "tracer/src/instruction/advice_sd.rs", "tracer/src/instruction/advice_sh.rs", "tracer/src/instruction/advice_sw.rs", "tracer/src/instruction/mod.rs", "tracer/src/instruction/virtual_assert.rs"]

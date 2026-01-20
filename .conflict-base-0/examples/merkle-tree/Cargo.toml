@@ -1,0 +1,13 @@
+[package]
+name = "merkle-tree"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+guest = { package = "merkle-tree-guest", path = "./guest" }
+
+hex.workspace = true

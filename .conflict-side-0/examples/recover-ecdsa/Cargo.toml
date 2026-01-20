@@ -1,0 +1,11 @@
+[package]
+name = "recover-ecdsa"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+guest = { package = "recover-ecdsa-guest", path = "./guest" }
+secp256k1 = { version = "0.30", default-features = false, features = ["alloc", "recovery", "serde"] }
