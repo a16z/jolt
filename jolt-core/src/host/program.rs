@@ -89,7 +89,7 @@ impl Program {
             // Use cargo-jolt to build the guest program
             // CARGO_JOLT_PATH can be set to override (for development/testing)
             let cargo_jolt_path = std::env::var("CARGO_JOLT_PATH")
-                .unwrap_or_else(|_| "cargo-jolt".to_string());
+                .unwrap_or_else(|_| "cargo".to_string());
 
             // Build base arguments for cargo-jolt
             // cargo-jolt is invoked as: cargo-jolt jolt build -p <package> --release [--std] -- --target-dir <dir> --features guest
