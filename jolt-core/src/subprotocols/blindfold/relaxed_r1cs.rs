@@ -18,7 +18,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand_core::CryptoRngCore;
 
 use super::r1cs::VerifierR1CS;
-use super::OutputClaimConstraint;
 
 /// Relaxed R1CS Instance (public data)
 ///
@@ -279,17 +278,24 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
     pub fn verify_round_coefficients_consistency(
         &self,
         r1cs: &VerifierR1CS<F>,
+        final_output_info: &[super::protocol::FinalOutputInfo],
     ) -> Result<(), usize> {
         // Skip check if no round coefficients (unit tests without round commitment data)
         if self.round_coefficients.is_empty() {
             return Ok(());
         }
 
+        // Build a map of stage_idx -> num_variables for quick lookup
+        let fo_map: std::collections::HashMap<usize, usize> = final_output_info
+            .iter()
+            .map(|info| (info.stage_idx, info.num_variables))
+            .collect();
+
         let mut w_idx = 0;
         let mut round_idx = 0;
 
-        for config in &r1cs.stage_configs {
-            for _ in 0..config.num_rounds {
+        for (stage_idx, config) in r1cs.stage_configs.iter().enumerate() {
+            for _round_in_stage in 0..config.num_rounds {
                 let num_coeffs = config.poly_degree + 1;
                 let num_intermediates = config.poly_degree.saturating_sub(1);
 
@@ -318,40 +324,13 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
                 round_idx += 1;
             }
 
-            // Skip past final_output variables if present
-            if let Some(ref fo_config) = config.final_output {
-                if let Some(ref constraint) = fo_config.constraint {
-                    // General constraint: opening_vars + challenge_vars + aux_vars
-                    let num_openings = constraint.required_openings.len();
-                    let num_challenges = constraint.num_challenges;
-                    let num_aux = Self::estimate_aux_var_count(constraint);
-                    w_idx += num_openings + num_challenges + num_aux;
-                } else {
-                    // Simple constraint: evaluation_vars + accumulator_vars
-                    let num_evals = fo_config.num_evaluations;
-                    w_idx += num_evals;
-                    if num_evals > 1 {
-                        w_idx += num_evals - 1;
-                    }
-                }
+            // Skip past final_output variables if present (from proof's final_output_info)
+            if let Some(&skip_amount) = fo_map.get(&stage_idx) {
+                w_idx += skip_amount;
             }
         }
 
         Ok(())
-    }
-
-    fn estimate_aux_var_count(constraint: &OutputClaimConstraint) -> usize {
-        let mut count = 0;
-        for term in &constraint.terms {
-            if term.factors.is_empty() {
-                count += 1;
-            } else if term.factors.len() == 1 {
-                count += 1;
-            } else {
-                count += term.factors.len();
-            }
-        }
-        count
     }
 }
 

@@ -8,7 +8,9 @@ use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
-use crate::subprotocols::blindfold::{BlindFoldVerifier, StageConfig, VerifierR1CSBuilder};
+use crate::subprotocols::blindfold::{
+    BlindFoldVerifier, FinalOutputConfig, OutputClaimConstraint, StageConfig, VerifierR1CSBuilder,
+};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -76,6 +78,37 @@ use crate::{
     zkvm::witness::CommittedPolynomial,
 };
 use anyhow::Context;
+
+/// Result of verifying a sumcheck stage.
+struct StageVerifyResult<F: JoltField> {
+    /// Sumcheck challenges from this stage
+    challenges: Vec<F::Challenge>,
+    /// Batched output constraint (if any instances have constraints)
+    batched_constraint: Option<OutputClaimConstraint>,
+}
+
+impl<F: JoltField> StageVerifyResult<F> {
+    fn with_constraint(
+        challenges: Vec<F::Challenge>,
+        constraint: Option<OutputClaimConstraint>,
+    ) -> Self {
+        Self {
+            challenges,
+            batched_constraint: constraint,
+        }
+    }
+}
+
+/// Collect and batch output constraints from sumcheck verifier instances.
+fn batch_constraints<F: JoltField, T: Transcript>(
+    instances: &[&dyn SumcheckInstanceVerifier<F, T>],
+) -> Option<OutputClaimConstraint> {
+    let constraints: Vec<Option<OutputClaimConstraint>> = instances
+        .iter()
+        .map(|instance| instance.output_claim_constraint())
+        .collect();
+    OutputClaimConstraint::batch(&constraints, instances.len())
+}
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
@@ -225,15 +258,34 @@ impl<
         let (r_stage1, uniskip_challenge1) = self.verify_stage1()?;
         let (r_stage2, uniskip_challenge2) = self.verify_stage2()?;
         let r_stage3 = self.verify_stage3()?;
-        let r_stage4 = self.verify_stage4()?;
+        let stage4_result = self.verify_stage4()?;
         let r_stage5 = self.verify_stage5()?;
         let r_stage6 = self.verify_stage6()?;
         let r_stage7 = self.verify_stage7()?;
         let sumcheck_challenges = [
-            r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
+            r_stage1,
+            r_stage2,
+            r_stage3,
+            stage4_result.challenges,
+            r_stage5,
+            r_stage6,
+            r_stage7,
         ];
         let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
-        self.verify_blindfold(&sumcheck_challenges, uniskip_challenges)?;
+
+        // Collect batched constraints for each stage (indexed 0-6)
+        // Stages without constraints return None
+        let stage_constraints = [
+            None,                             // Stage 0 (outer remaining)
+            None,                             // Stage 1 (product virtual + ram)
+            None, // Stage 2 (shift + instruction input + registers claim reduction)
+            stage4_result.batched_constraint, // Stage 3 (registers rw + ram val eval + ram val final)
+            None, // Stage 4 (registers val eval + ram ra reduction + lookups read raf)
+            None, // Stage 5 (bytecode + booleanity + etc)
+            None, // Stage 6 (stage 7 in 1-indexed prover)
+        ];
+
+        self.verify_blindfold(&sumcheck_challenges, uniskip_challenges, &stage_constraints)?;
         self.verify_stage8()?;
 
         Ok(())
@@ -347,7 +399,7 @@ impl<
         Ok(r_stage3)
     }
 
-    fn verify_stage4(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
+    fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
@@ -397,7 +449,18 @@ impl<
         )
         .context("Stage 4")?;
 
-        Ok(r_stage4)
+        // Collect and batch output constraints from verifier instances
+        let instances: &[&dyn SumcheckInstanceVerifier<F, ProofTranscript>] = &[
+            &registers_read_write_checking,
+            &ram_val_evaluation,
+            &ram_val_final,
+        ];
+        let batched_constraint = batch_constraints(instances);
+
+        Ok(StageVerifyResult::with_constraint(
+            r_stage4,
+            batched_constraint,
+        ))
     }
 
     fn verify_stage5(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
@@ -533,6 +596,7 @@ impl<
         &mut self,
         sumcheck_challenges: &[Vec<F::Challenge>; 7],
         uniskip_challenges: [F::Challenge; 2],
+        stage_constraints: &[Option<OutputClaimConstraint>; 7],
     ) -> Result<(), anyhow::Error> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
@@ -558,6 +622,8 @@ impl<
 
         let mut stage_configs = Vec::new();
         let mut total_rounds = 0usize;
+        // Track which stage_config index corresponds to the last round of each zk_stage
+        let mut last_round_indices: Vec<usize> = Vec::new();
 
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
             // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip config first
@@ -608,6 +674,18 @@ impl<
                 };
                 stage_configs.push(config);
                 total_rounds += 1;
+            }
+
+            // Record the index of the last round for this stage
+            last_round_indices.push(stage_configs.len() - 1);
+        }
+
+        // Add final_output configurations using the batched constraints from verifier instances
+        for (stage_idx, constraint) in stage_constraints.iter().enumerate() {
+            if let Some(batched) = constraint {
+                let last_round_idx = last_round_indices[stage_idx];
+                stage_configs[last_round_idx].final_output =
+                    Some(FinalOutputConfig::with_constraint(batched.clone()));
             }
         }
 

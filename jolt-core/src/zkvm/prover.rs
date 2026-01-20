@@ -1399,43 +1399,46 @@ impl<
                 let starts_new_chain = round_idx == 0;
                 let is_last_round = round_idx == num_rounds - 1;
 
-                let mut config = if starts_new_chain {
+                let config = if starts_new_chain {
                     StageConfig::new_chain(1, poly_degree)
                 } else {
                     StageConfig::new(1, poly_degree)
                 };
 
-                // For the last round, try to attach the combined output constraint
-                let mut final_output_witness = None;
-                if is_last_round {
-                    if let Some(combined_constraint) = OutputClaimConstraint::batch(
+                let (config, final_output_witness) = if is_last_round {
+                    let batched = OutputClaimConstraint::batch(
                         &zk_data.output_constraints,
                         zk_data.batching_coefficients.len(),
-                    ) {
-                        // Build challenge values: batching_coeffs + instance challenges
+                    );
+
+                    if let Some(batched_constraint) = batched {
+                        // Build challenge values: batching_coeffs + individual challenge values
                         let mut challenge_values: Vec<F> = zk_data.batching_coefficients.clone();
-                        for instance_challenges in &zk_data.constraint_challenge_values {
-                            challenge_values.extend(instance_challenges.iter().cloned());
+                        for cv in &zk_data.constraint_challenge_values {
+                            challenge_values.extend(cv.iter().cloned());
                         }
 
-                        // Collect opening values from the accumulator
-                        let mut opening_values = Vec::new();
-                        for opening_id in &combined_constraint.required_openings {
-                            let value = self.opening_accumulator.get_opening(*opening_id);
-                            opening_values.push(value);
-                        }
+                        // Collect opening values from the accumulator using the batched constraint's required_openings
+                        let opening_values: Vec<F> = batched_constraint
+                            .required_openings
+                            .iter()
+                            .map(|id| self.opening_accumulator.get_opening(*id))
+                            .collect();
 
-                        final_output_witness = Some(FinalOutputWitness::new_general(
-                            challenge_values,
-                            opening_values,
-                        ));
-
-                        config = config.with_constraint(combined_constraint);
+                        let final_output =
+                            FinalOutputWitness::new_general(challenge_values, opening_values);
+                        let config_with_fo = config.with_constraint(batched_constraint);
+                        (config_with_fo, Some(final_output))
+                    } else {
+                        (config, None)
                     }
-                }
+                } else {
+                    (config, None)
+                };
 
                 stage_configs.push(config);
-                let round_witness = RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
+                let round_witness =
+                    RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
                 let stage_witness = if let Some(fw) = final_output_witness {
                     StageWitness::with_final_output(vec![round_witness], fw)
                 } else {

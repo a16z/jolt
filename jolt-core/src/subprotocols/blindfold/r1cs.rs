@@ -3,7 +3,9 @@
 //! Builds sparse R1CS matrices for verifying sumcheck rounds.
 //! The circuit is O(log n) in size - only encoding the verifier's algebraic checks.
 
-use super::{Constraint, LinearCombination, OutputClaimConstraint, StageConfig, ValueSource, Variable};
+use super::{
+    Constraint, LinearCombination, OutputClaimConstraint, StageConfig, ValueSource, Variable,
+};
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
 use std::collections::HashMap;
@@ -418,7 +420,21 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     .last()
                     .expect("Stage must have at least one round");
 
-                if let Some(ref constraint) = fo_config.constraint {
+                if let Some(exact_vars) = fo_config.exact_num_witness_vars {
+                    // Verifier placeholder: allocate exact number of witness variables
+                    // without adding any constraints
+                    for _ in 0..exact_vars {
+                        self.next_var += 1;
+                    }
+
+                    Some(FinalOutputVariables {
+                        batching_coeff_vars: Vec::new(),
+                        evaluation_vars: Vec::new(),
+                        opening_vars: HashMap::new(),
+                        constraint_challenge_vars: Vec::new(),
+                        aux_vars: Vec::new(),
+                    })
+                } else if let Some(ref constraint) = fo_config.constraint {
                     // General sum-of-products constraint
 
                     // Allocate witness variables for required openings
@@ -475,7 +491,11 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                         .collect();
 
                     // Add final output constraint: final_claim = Σⱼ αⱼ · yⱼ
-                    self.add_final_output_constraint(last_round.next_claim, &coeff_vars, &eval_vars);
+                    self.add_final_output_constraint(
+                        last_round.next_claim,
+                        &coeff_vars,
+                        &eval_vars,
+                    );
 
                     Some(FinalOutputVariables {
                         batching_coeff_vars: coeff_vars,
@@ -621,22 +641,19 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         // Helper to resolve a ValueSource to a LinearCombination
         let resolve_value = |vs: &ValueSource| -> LinearCombination<F> {
             match vs {
-                ValueSource::Opening(id) => {
-                    LinearCombination::variable(*opening_vars.get(id).unwrap_or_else(|| {
-                        panic!("Opening {id:?} not found in variable map")
-                    }))
-                }
-                ValueSource::Challenge(idx) => {
-                    LinearCombination::variable(challenge_vars[*idx])
-                }
-                ValueSource::Constant(val) => {
-                    LinearCombination::constant(F::from_i128(*val))
-                }
+                ValueSource::Opening(id) => LinearCombination::variable(
+                    *opening_vars
+                        .get(id)
+                        .unwrap_or_else(|| panic!("Opening {id:?} not found in variable map")),
+                ),
+                ValueSource::Challenge(idx) => LinearCombination::variable(challenge_vars[*idx]),
+                ValueSource::Constant(val) => LinearCombination::constant(F::from_i128(*val)),
             }
         };
 
         // For each term, compute the product and collect the result variable
-        let mut term_results: Vec<(LinearCombination<F>, Variable)> = Vec::with_capacity(constraint.terms.len());
+        let mut term_results: Vec<(LinearCombination<F>, Variable)> =
+            Vec::with_capacity(constraint.terms.len());
 
         for term in &constraint.terms {
             let coeff_lc = resolve_value(&term.coeff);

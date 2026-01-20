@@ -300,10 +300,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
             CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
         );
-        let wa_opening = OpeningId::Virtual(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamValFinalEvaluation,
-        );
+        let wa_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation);
 
         Some(OutputClaimConstraint::product(vec![
             ValueSource::Opening(inc_opening),
@@ -392,5 +390,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = inc_claim * wa_claim
+        let inc_opening = OpeningId::Committed(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamValFinalEvaluation,
+        );
+        let wa_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation);
+
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::Opening(inc_opening),
+            ValueSource::Opening(wa_opening),
+        ]))
     }
 }

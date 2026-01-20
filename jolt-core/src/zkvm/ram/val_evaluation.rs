@@ -319,32 +319,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
         // - wa_claim = VirtualPolynomial::RamRa @ RamValEvaluation
         // - lt_eval = LT polynomial evaluation (Challenge(0))
 
-        let inc = OpeningId::Committed(
-            CommittedPolynomial::RamInc,
-            SumcheckId::RamValEvaluation,
-        );
-        let wa = OpeningId::Virtual(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamValEvaluation,
-        );
+        let inc = OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation);
+        let wa = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
 
         let lt_eval = ValueSource::Challenge(0);
 
-        let terms = vec![
-            ProductTerm::product(vec![
-                ValueSource::Opening(inc),
-                ValueSource::Opening(wa),
-                lt_eval,
-            ]),
-        ];
+        let terms = vec![ProductTerm::product(vec![
+            ValueSource::Opening(inc),
+            ValueSource::Opening(wa),
+            lt_eval,
+        ])];
 
         Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
-    fn output_constraint_challenge_values(
-        &self,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> Vec<F> {
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         // Challenge(0) = lt_eval
         // Compute LT(r, r_cycle) using the MLE formula
 
@@ -462,5 +451,33 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamValEvaluation,
             r_cycle_prime.r,
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let inc = OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation);
+        let wa = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
+
+        let lt_eval = ValueSource::Challenge(0);
+
+        let terms = vec![ProductTerm::product(vec![
+            ValueSource::Opening(inc),
+            ValueSource::Opening(wa),
+            lt_eval,
+        ])];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
+
+        let mut lt_eval = F::zero();
+        let mut eq_term = F::one();
+        for (x, y) in zip(&r.r, &self.params.r_cycle.r) {
+            lt_eval += (F::one() - x) * y * eq_term;
+            eq_term *= F::one() - x - y + *x * y + *x * y;
+        }
+
+        vec![lt_eval]
     }
 }

@@ -829,10 +829,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
-    fn output_constraint_challenge_values(
-        &self,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> Vec<F> {
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         // Challenge(0) = eq_eval
         // Challenge(1) = γ
         // Challenge(2) = γ²
@@ -971,5 +968,70 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let val = OpeningId::Virtual(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let rs1_ra = OpeningId::Virtual(
+            VirtualPolynomial::Rs1Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let rs2_ra = OpeningId::Virtual(
+            VirtualPolynomial::Rs2Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let rd_wa = OpeningId::Virtual(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let inc = OpeningId::Committed(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+
+        let eq_eval = ValueSource::Challenge(0);
+        let gamma = ValueSource::Challenge(1);
+        let gamma_sq = ValueSource::Challenge(2);
+
+        let terms = vec![
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                ValueSource::Opening(rd_wa),
+                ValueSource::Opening(inc),
+            ]),
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                ValueSource::Opening(rd_wa),
+                ValueSource::Opening(val),
+            ]),
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                gamma,
+                ValueSource::Opening(rs1_ra),
+                ValueSource::Opening(val),
+            ]),
+            ProductTerm::product(vec![
+                eq_eval,
+                gamma_sq,
+                ValueSource::Opening(rs2_ra),
+                ValueSource::Opening(val),
+            ]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
+        let (_, r_cycle) = r.split_at(LOG_K);
+
+        let eq_eval = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle);
+        let gamma = self.params.gamma;
+        let gamma_sq = gamma * gamma;
+
+        vec![eq_eval, gamma, gamma_sq]
     }
 }

@@ -10,3 +10,10 @@ extend-exclude = ["patches/*.patch"]
 "thre" = "thre"
 "numer" = "numer"
 "Toom" = "Toom"
+
+[default.extend-identifiers]
+"fo" = "fo"
+"fo_config" = "fo_config"
+"fo_witness" = "fo_witness"
+"fo_map" = "fo_map"
+"config_with_fo" = "config_with_fo"

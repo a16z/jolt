@@ -81,10 +81,7 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     /// These are computed values like eq_eval, gamma, lt_eval that appear in the constraint.
     /// Called after cache_openings() when sumcheck challenges are available.
     /// The indices correspond to Challenge(idx) in the constraint.
-    fn output_constraint_challenge_values(
-        &self,
-        _sumcheck_challenges: &[F::Challenge],
-    ) -> Vec<F> {
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         Vec::new()
     }
 

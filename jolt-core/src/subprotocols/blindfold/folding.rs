@@ -18,9 +18,7 @@ use super::OutputClaimConstraint;
 fn estimate_aux_var_count(constraint: &OutputClaimConstraint) -> usize {
     let mut count = 0;
     for term in &constraint.terms {
-        if term.factors.is_empty() {
-            count += 1;
-        } else if term.factors.len() == 1 {
+        if term.factors.len() <= 1 {
             count += 1;
         } else {
             count += term.factors.len();

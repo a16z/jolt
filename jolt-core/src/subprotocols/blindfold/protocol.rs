@@ -26,6 +26,16 @@ use super::folding::{compute_cross_term, sample_random_satisfying_pair};
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 
+/// Information about final_output variables at specific stages.
+/// Used by verifier to properly skip these variables during coefficient consistency checking.
+#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct FinalOutputInfo {
+    /// Stage index (0-indexed) that has final_output
+    pub stage_idx: usize,
+    /// Number of witness variables for this final_output
+    pub num_variables: usize,
+}
+
 /// BlindFold proof containing the data needed for verification.
 ///
 /// The proof reveals the folded witness, but this is zero-knowledge because
@@ -41,6 +51,8 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     pub cross_term_commitment: C::G1,
     /// Folded witness (masked by random witness)
     pub folded_witness: RelaxedR1CSWitness<F>,
+    /// Information about final_output variables for verifier coefficient consistency checking
+    pub final_output_info: Vec<FinalOutputInfo>,
 }
 
 /// BlindFold prover.
@@ -129,13 +141,55 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             "Internal error: E commitment mismatch"
         );
 
+        // Collect final_output info for verifier
+        let final_output_info: Vec<FinalOutputInfo> = self
+            .r1cs
+            .stage_configs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, config)| {
+                config.final_output.as_ref().map(|fo| {
+                    let num_variables = if let Some(ref constraint) = fo.constraint {
+                        let num_openings = constraint.required_openings.len();
+                        let num_challenges = constraint.num_challenges;
+                        let num_aux = estimate_aux_var_count(constraint);
+                        num_openings + num_challenges + num_aux
+                    } else {
+                        let n = fo.num_evaluations;
+                        if n > 1 {
+                            n + n - 1
+                        } else {
+                            n
+                        }
+                    };
+                    FinalOutputInfo {
+                        stage_idx: idx,
+                        num_variables,
+                    }
+                })
+            })
+            .collect();
+
         BlindFoldProof {
             real_instance: real_instance.clone(),
             random_instance,
             cross_term_commitment: T_bar,
             folded_witness,
+            final_output_info,
         }
     }
+}
+
+fn estimate_aux_var_count(constraint: &super::OutputClaimConstraint) -> usize {
+    let mut count = 0;
+    for term in &constraint.terms {
+        if term.factors.len() <= 1 {
+            count += 1;
+        } else {
+            count += term.factors.len();
+        }
+    }
+    count
 }
 
 /// BlindFold verifier.
@@ -235,7 +289,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         // This binds the coefficients used in R1CS to those verified via commitment opening.
         proof
             .folded_witness
-            .verify_round_coefficients_consistency(self.r1cs)
+            .verify_round_coefficients_consistency(self.r1cs, &proof.final_output_info)
             .map_err(BlindFoldVerifyError::RoundCoefficientsMismatch)?;
 
         // Step 4: Verify R1CS satisfaction

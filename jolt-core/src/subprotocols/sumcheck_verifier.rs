@@ -1,4 +1,5 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN};
+use crate::subprotocols::blindfold::OutputClaimConstraint;
 use crate::transcripts::Transcript;
 
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
@@ -49,6 +50,19 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
+
+    /// Returns the output claim constraint for this sumcheck instance.
+    /// This describes how the final sumcheck claim relates to polynomial evaluations.
+    /// Returns None if this instance has no output constraint (e.g., round verification only).
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    /// Returns the challenge values needed to evaluate the output constraint.
+    /// These are the values for Challenge(0), Challenge(1), etc. in the constraint.
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
 }
 
 pub trait SumcheckInstanceParams<F: JoltField> {

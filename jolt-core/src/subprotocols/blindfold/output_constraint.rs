@@ -106,9 +106,7 @@ impl OutputClaimConstraint {
     pub fn new(terms: Vec<ProductTerm>, required_openings: Vec<OpeningId>) -> Self {
         let num_challenges = terms
             .iter()
-            .flat_map(|t| {
-                std::iter::once(&t.coeff).chain(t.factors.iter())
-            })
+            .flat_map(|t| std::iter::once(&t.coeff).chain(t.factors.iter()))
             .filter_map(|v| match v {
                 ValueSource::Challenge(idx) => Some(*idx + 1),
                 _ => None,
@@ -159,15 +157,10 @@ impl OutputClaimConstraint {
     /// Scaled linear: output = multiplier * Σᵢ αᵢ * evalᵢ
     /// Expands to: Σᵢ (multiplier * αᵢ) * evalᵢ if multiplier is constant.
     /// For non-constant multiplier, creates product terms.
-    pub fn scaled_linear(
-        multiplier: ValueSource,
-        terms: Vec<(ValueSource, ValueSource)>,
-    ) -> Self {
+    pub fn scaled_linear(multiplier: ValueSource, terms: Vec<(ValueSource, ValueSource)>) -> Self {
         let product_terms: Vec<ProductTerm> = terms
             .into_iter()
-            .map(|(coeff, val)| {
-                ProductTerm::scaled(coeff, vec![multiplier.clone(), val])
-            })
+            .map(|(coeff, val)| ProductTerm::scaled(coeff, vec![multiplier.clone(), val]))
             .collect();
 
         let required_openings = Self::collect_unique_openings(&product_terms);
@@ -268,7 +261,10 @@ mod tests {
     use crate::zkvm::witness::CommittedPolynomial;
 
     fn test_opening(idx: usize) -> OpeningId {
-        OpeningId::Committed(CommittedPolynomial::RamRa(idx), SumcheckId::RamReadWriteChecking)
+        OpeningId::Committed(
+            CommittedPolynomial::RamRa(idx),
+            SumcheckId::RamReadWriteChecking,
+        )
     }
 
     #[test]
@@ -290,10 +286,7 @@ mod tests {
         let y0 = ValueSource::Opening(test_opening(0));
         let y1 = ValueSource::Opening(test_opening(1));
 
-        let constraint = OutputClaimConstraint::linear(vec![
-            (alpha, y0),
-            (beta, y1),
-        ]);
+        let constraint = OutputClaimConstraint::linear(vec![(alpha, y0), (beta, y1)]);
 
         assert_eq!(constraint.terms.len(), 2);
         assert_eq!(constraint.required_openings.len(), 2);

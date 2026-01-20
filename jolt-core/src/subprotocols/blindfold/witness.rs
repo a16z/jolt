@@ -4,8 +4,9 @@
 //! from sumcheck proof transcripts.
 
 use super::r1cs::VerifierR1CS;
-use super::{OutputClaimConstraint, StageConfig};
+use super::{OutputClaimConstraint, StageConfig, ValueSource};
 use crate::field::JoltField;
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::unipoly::CompressedUniPoly;
 
 /// Witness data for a single sumcheck round
@@ -335,8 +336,23 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             witness_idx += 1;
                         }
 
-                        // Aux vars are allocated but computed by R1CS constraints
-                        witness_idx += num_aux_vars;
+                        // Compute and assign aux vars for intermediate products
+                        let aux_values = Self::compute_aux_vars(
+                            constraint,
+                            &fw.opening_values,
+                            &fw.challenge_values,
+                        );
+                        debug_assert_eq!(
+                            aux_values.len(),
+                            num_aux_vars,
+                            "Aux var count mismatch: computed {} but expected {}",
+                            aux_values.len(),
+                            num_aux_vars
+                        );
+                        for val in aux_values {
+                            z[witness_idx] = val;
+                            witness_idx += 1;
+                        }
                     } else {
                         // No witness provided - skip past allocated variables
                         witness_idx += num_openings + num_challenges + num_aux_vars;
@@ -463,6 +479,75 @@ impl<F: JoltField> BlindFoldWitness<F> {
         // Plus 1 for the final sum constraint (if more than 1 term)
         // Actually the final sum uses a linear combination, not aux vars
         count
+    }
+
+    /// Compute auxiliary variables for a general constraint.
+    ///
+    /// This must match the order of aux var allocation in `add_sum_of_products_constraint`.
+    /// The R1CS builder allocates aux vars in this order per term:
+    /// - No factors: 1 aux var (coeff * 1)
+    /// - Single factor: 1 aux var (coeff * factor)
+    /// - Multiple factors: (n-1) aux vars for chain multiplication + 1 for coeff*product
+    fn compute_aux_vars(
+        constraint: &OutputClaimConstraint,
+        opening_values: &[F],
+        challenge_values: &[F],
+    ) -> Vec<F> {
+        // Build a map from OpeningId to value index
+        let opening_map: std::collections::HashMap<OpeningId, usize> = constraint
+            .required_openings
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, i))
+            .collect();
+
+        // Helper to resolve a ValueSource to a field element
+        let resolve = |vs: &ValueSource| -> F {
+            match vs {
+                ValueSource::Opening(id) => {
+                    let idx = *opening_map
+                        .get(id)
+                        .unwrap_or_else(|| panic!("Opening {id:?} not found in required_openings"));
+                    opening_values[idx]
+                }
+                ValueSource::Challenge(idx) => challenge_values[*idx],
+                ValueSource::Constant(val) => F::from_i128(*val),
+            }
+        };
+
+        let mut aux_vars = Vec::new();
+
+        for term in &constraint.terms {
+            let coeff = resolve(&term.coeff);
+
+            if term.factors.is_empty() {
+                // No factors: aux = coeff * 1 = coeff
+                aux_vars.push(coeff);
+            } else if term.factors.len() == 1 {
+                // Single factor: aux = coeff * factor
+                let factor = resolve(&term.factors[0]);
+                aux_vars.push(coeff * factor);
+            } else {
+                // Multiple factors: chain multiplication
+                // aux0 = f0 * f1
+                let f0 = resolve(&term.factors[0]);
+                let f1 = resolve(&term.factors[1]);
+                let mut current_product = f0 * f1;
+                aux_vars.push(current_product);
+
+                // aux_i = aux_{i-1} * f_{i+1}
+                for factor in &term.factors[2..] {
+                    let f = resolve(factor);
+                    current_product *= f;
+                    aux_vars.push(current_product);
+                }
+
+                // final_aux = coeff * product
+                aux_vars.push(coeff * current_product);
+            }
+        }
+
+        aux_vars
     }
 }
 

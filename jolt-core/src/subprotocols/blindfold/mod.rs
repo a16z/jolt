@@ -21,7 +21,9 @@ mod witness;
 
 pub use folding::{compute_cross_term, sample_random_satisfying_pair};
 pub use output_constraint::{OutputClaimConstraint, ProductTerm, ValueSource};
-pub use protocol::{BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifyError};
+pub use protocol::{
+    BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifyError, FinalOutputInfo,
+};
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 pub use witness::{BlindFoldWitness, FinalOutputWitness, RoundWitness, StageWitness};
@@ -42,6 +44,11 @@ pub struct FinalOutputConfig {
     /// General constraint description for sum-of-products form.
     /// When present, overrides the simple linear constraint.
     pub constraint: Option<OutputClaimConstraint>,
+
+    /// Exact number of witness variables to allocate (verifier-only).
+    /// When set, bypasses normal variable calculation.
+    /// Used by verifier to match prover's R1CS structure without knowing constraint details.
+    pub exact_num_witness_vars: Option<usize>,
 }
 
 impl FinalOutputConfig {
@@ -49,6 +56,7 @@ impl FinalOutputConfig {
         Self {
             num_evaluations,
             constraint: None,
+            exact_num_witness_vars: None,
         }
     }
 
@@ -58,6 +66,17 @@ impl FinalOutputConfig {
         Self {
             num_evaluations,
             constraint: Some(constraint),
+            exact_num_witness_vars: None,
+        }
+    }
+
+    /// Create a verifier-only config that allocates exactly the specified number of witness variables.
+    /// Used by verifier to match prover's R1CS structure.
+    pub fn verifier_placeholder(num_witness_vars: usize) -> Self {
+        Self {
+            num_evaluations: 0,
+            constraint: None,
+            exact_num_witness_vars: Some(num_witness_vars),
         }
     }
 }
