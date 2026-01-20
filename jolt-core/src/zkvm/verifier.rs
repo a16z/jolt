@@ -10,6 +10,7 @@ use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
+use crate::zkvm::config::BytecodeCommitmentMode;
 use crate::zkvm::config::OneHotParams;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
@@ -167,6 +168,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .rw_config
             .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
+
+        // If the proof claims it used bytecode commitment mode, it must have enough cycle vars
+        // to embed bytecode address variables (log_T >= log_K_bytecode), i.e. T >= K_bytecode.
+        if proof.bytecode_mode == BytecodeCommitmentMode::Commitment
+            && proof.trace_length < proof.bytecode_K
+        {
+            return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
+                "bytecode commitment mode requires trace_length >= bytecode_K (got trace_length={}, bytecode_K={})",
+                proof.trace_length, proof.bytecode_K
+            )));
+        }
 
         // Construct full params from the validated config
         let one_hot_params =
@@ -434,6 +446,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
+            self.proof.bytecode_mode,
         );
         let booleanity_params = BooleanitySumcheckParams::new(
             n_cycle_vars,
@@ -487,7 +500,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         //
         // IMPORTANT: This must be sampled *after* other Stage 6b params (e.g. lookup/inc gammas),
         // to match the prover's transcript order.
-        if bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K {
+        if self.proof.bytecode_mode == BytecodeCommitmentMode::Commitment {
+            debug_assert!(
+                bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K,
+                "commitment mode requires log_T >= log_K_bytecode"
+            );
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 &bytecode_read_raf_params,
                 &self.opening_accumulator,
@@ -497,8 +514,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 bytecode_reduction_params,
             ));
         } else {
-            // Not enough cycle randomness to embed the bytecode index vars into Stage 6b.
-            // Fall back to the legacy verifier path (O(K_bytecode) in Stage 6b) by not running the reduction.
+            // Legacy mode: do not run the bytecode claim reduction.
             self.bytecode_reduction_verifier = None;
         }
 

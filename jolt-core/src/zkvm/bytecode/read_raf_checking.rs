@@ -27,7 +27,7 @@ use crate::{
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        config::OneHotParams,
+        config::{BytecodeCommitmentMode, OneHotParams},
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
@@ -859,9 +859,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             address_claim,
         );
 
-        // Emit Val-only claims at the Stage 6a boundary only when the cycle phase has enough
-        // randomness to support the bytecode claim reduction path (`log_T >= log_K`).
-        if self.params.log_T >= self.params.log_K {
+        // Emit Val-only claims at the Stage 6a boundary only when the staged-Val/claim-reduction
+        // path is enabled.
+        if self.params.use_staged_val_claims {
             for stage in 0..N_STAGES {
                 let claim = self.params.val_polys[stage].final_sumcheck_claim();
                 accumulator.append_virtual(
@@ -1264,33 +1264,29 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
+        bytecode_mode: BytecodeCommitmentMode,
     ) -> Self {
-        let log_k = one_hot_params.bytecode_k.log_2();
-        Self {
-            // If `log_T >= log_K_bytecode`, the verifier can use the fast path (no bytecode-length
-            // work) by consuming `Val_s(r_bc)` from Stage 6a and (eventually) checking them via
-            // BytecodeClaimReduction + committed bytecode.
-            //
-            // Otherwise, we fall back to the legacy path and materialize the Val polynomials
-            // (O(K_bytecode)) to keep soundness without requiring extra padding.
-            params: if n_cycle_vars >= log_k {
-                BytecodeReadRafSumcheckParams::gen_verifier(
-                    bytecode_preprocessing,
-                    n_cycle_vars,
-                    one_hot_params,
-                    opening_accumulator,
-                    transcript,
-                )
-            } else {
-                BytecodeReadRafSumcheckParams::gen(
-                    bytecode_preprocessing,
-                    n_cycle_vars,
-                    one_hot_params,
-                    opening_accumulator,
-                    transcript,
-                )
-            },
-        }
+        let mut params = match bytecode_mode {
+            // Commitment mode: verifier MUST avoid O(K_bytecode) work here, and later stages will
+            // relate staged Val claims to committed bytecode.
+            BytecodeCommitmentMode::Commitment => BytecodeReadRafSumcheckParams::gen_verifier(
+                bytecode_preprocessing,
+                n_cycle_vars,
+                one_hot_params,
+                opening_accumulator,
+                transcript,
+            ),
+            // Legacy mode: verifier materializes/evaluates bytecode-dependent polynomials (O(K_bytecode)).
+            BytecodeCommitmentMode::Legacy => BytecodeReadRafSumcheckParams::gen(
+                bytecode_preprocessing,
+                n_cycle_vars,
+                one_hot_params,
+                opening_accumulator,
+                transcript,
+            ),
+        };
+        params.use_staged_val_claims = bytecode_mode == BytecodeCommitmentMode::Commitment;
+        Self { params }
     }
 
     /// Consume this verifier and return the underlying parameters (for Option B orchestration).
@@ -1350,8 +1346,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
 
         // Populate opening points for the Val-only bytecode stage claims emitted in Stage 6a,
-        // but only when that fast path is enabled (`log_T >= log_K`).
-        if self.params.log_T >= self.params.log_K {
+        // but only when the staged-Val/claim-reduction path is enabled.
+        if self.params.use_staged_val_claims {
             for stage in 0..N_STAGES {
                 accumulator.append_virtual(
                     transcript,
@@ -1428,7 +1424,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             F::zero(),                              // There's no raf for Stage4
             F::zero(),                              // There's no raf for Stage5
         ];
-        let val = if self.params.val_polys[0].original_len() == 0 {
+        let val = if self.params.use_staged_val_claims {
             // Fast verifier path: consume Val_s(r_bc) claims emitted at the Stage 6a boundary,
             // rather than re-evaluating `val_polys` (O(K_bytecode)).
             (0..N_STAGES)
@@ -1513,6 +1509,9 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
     /// log2(K) and log2(T) used to determine round counts.
     pub log_K: usize,
     pub log_T: usize,
+    /// If true, Stage 6a emits `Val_s(r_bc)` as virtual openings and Stage 6b consumes them
+    /// (instead of verifier re-materializing/evaluating `val_polys`).
+    pub use_staged_val_claims: bool,
     /// Number of address chunks (and RA polynomials in the product).
     pub d: usize,
     /// Stage Val polynomials evaluated over address vars.
@@ -1695,6 +1694,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             log_K: one_hot_params.bytecode_k.log_2(),
             d: one_hot_params.bytecode_d,
             log_T: n_cycle_vars,
+            use_staged_val_claims: false,
             val_polys,
             rv_claims,
             raf_claim,

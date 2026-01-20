@@ -16,7 +16,7 @@ use std::{
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::zkvm::config::ReadWriteConfig;
+use crate::zkvm::config::{BytecodeCommitmentMode, ReadWriteConfig};
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -171,6 +171,8 @@ pub struct JoltCpuProver<
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
     pub rw_config: ReadWriteConfig,
+    /// First-class selection of legacy vs bytecode-commitment/claim-reduction mode.
+    pub bytecode_mode: BytecodeCommitmentMode,
 }
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
@@ -183,6 +185,29 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
+    ) -> Self {
+        Self::gen_from_elf_with_bytecode_mode(
+            preprocessing,
+            elf_contents,
+            inputs,
+            untrusted_advice,
+            trusted_advice,
+            trusted_advice_commitment,
+            trusted_advice_hint,
+            BytecodeCommitmentMode::Legacy,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn gen_from_elf_with_bytecode_mode(
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        elf_contents: &[u8],
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+        trusted_advice_commitment: Option<PCS::Commitment>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        bytecode_mode: BytecodeCommitmentMode,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -228,7 +253,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace.len(),
         );
 
-        Self::gen_from_trace(
+        Self::gen_from_trace_with_bytecode_mode(
             preprocessing,
             lazy_trace,
             trace,
@@ -236,6 +261,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trusted_advice_commitment,
             trusted_advice_hint,
             final_memory_state,
+            bytecode_mode,
         )
     }
 
@@ -319,11 +345,34 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     pub fn gen_from_trace(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         lazy_trace: LazyTraceIterator,
+        trace: Vec<Cycle>,
+        program_io: JoltDevice,
+        trusted_advice_commitment: Option<PCS::Commitment>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        final_memory_state: Memory,
+    ) -> Self {
+        Self::gen_from_trace_with_bytecode_mode(
+            preprocessing,
+            lazy_trace,
+            trace,
+            program_io,
+            trusted_advice_commitment,
+            trusted_advice_hint,
+            final_memory_state,
+            BytecodeCommitmentMode::Legacy,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn gen_from_trace_with_bytecode_mode(
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        lazy_trace: LazyTraceIterator,
         mut trace: Vec<Cycle>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
+        bytecode_mode: BytecodeCommitmentMode,
     ) -> Self {
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -341,6 +390,22 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         } else {
             (trace.len() + 1).next_power_of_two()
         };
+
+        // If we intend to use the bytecode-commitment/claim-reduction path, we must ensure
+        // `log_T >= log_K_bytecode`, i.e. `T >= K_bytecode`. Enforce by padding up-front.
+        let mut padded_trace_len = padded_trace_len;
+        if bytecode_mode == BytecodeCommitmentMode::Commitment {
+            let bytecode_k = preprocessing.shared.bytecode.code_size;
+            if bytecode_k > preprocessing.shared.max_padded_trace_length {
+                panic!(
+                    "Bytecode commitment mode requires max_padded_trace_length >= bytecode_K.\n\
+                     bytecode_K={} > max_padded_trace_length={}\n\
+                     Increase max_trace_length in preprocessing (JoltSharedPreprocessing::new).",
+                    bytecode_k, preprocessing.shared.max_padded_trace_length
+                );
+            }
+            padded_trace_len = padded_trace_len.max(bytecode_k);
+        }
         // We may need extra padding so the main Dory matrix has enough (row, col) variables
         // to embed advice commitments committed in their own preprocessing-only contexts.
         let has_trusted_advice = !program_io.trusted_advice.is_empty();
@@ -421,6 +486,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             final_ram_state,
             one_hot_params,
             rw_config,
+            bytecode_mode,
         }
     }
 
@@ -509,6 +575,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
+            bytecode_mode: self.bytecode_mode,
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
             dory_layout: DoryGlobals::get_layout(),
@@ -1094,13 +1161,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6a baseline");
 
-        let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
+        let mut bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
             &self.preprocessing.shared.bytecode,
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        bytecode_read_raf_params.use_staged_val_claims =
+            self.bytecode_mode == BytecodeCommitmentMode::Commitment;
 
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
@@ -1177,7 +1246,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Bytecode claim reduction (Phase 1 in Stage 6b): consumes Val_s(r_bc) from Stage 6a and
         // caches an intermediate claim for Stage 7.
-        if bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K {
+        if self.bytecode_mode == BytecodeCommitmentMode::Commitment {
+            debug_assert!(
+                bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K,
+                "commitment mode requires log_T >= log_K_bytecode"
+            );
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 &bytecode_read_raf_params,
                 &self.opening_accumulator,
@@ -1188,8 +1261,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 Arc::clone(&self.preprocessing.shared.bytecode),
             ));
         } else {
-            // Not enough cycle randomness to embed the bytecode index vars into Stage 6b.
-            // Fall back to the legacy verifier path (O(K_bytecode) in Stage 6b) by not running the reduction.
+            // Legacy mode: do not run the bytecode claim reduction.
             self.bytecode_reduction_prover = None;
         }
 

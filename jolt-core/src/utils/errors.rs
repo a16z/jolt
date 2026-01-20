@@ -28,6 +28,8 @@ pub enum ProofVerifyError {
     InvalidReadWriteConfig(String),
     #[error("Invalid one-hot configuration: {0}")]
     InvalidOneHotConfig(String),
+    #[error("Invalid bytecode commitment configuration: {0}")]
+    InvalidBytecodeConfig(String),
     #[error("Dory proof verification failed: {0}")]
     DoryError(String),
     #[error("Sumcheck verification failed")]

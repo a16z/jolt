@@ -1,5 +1,8 @@
 use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
+use std::io::{Read, Write};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
@@ -17,6 +20,58 @@ pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
         16
     } else {
         8
+    }
+}
+
+/// Controls whether the prover/verifier use the **legacy** bytecode path (verifier may do O(K))
+/// or the new **bytecode-commitment/claim-reduction** path (requires padding so `T >= K_bytecode`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative)]
+pub enum BytecodeCommitmentMode {
+    /// Legacy mode: verifier may materialize bytecode-dependent polynomials (O(K_bytecode)).
+    Legacy = 0,
+    /// Commitment mode: use staged Val claims + BytecodeClaimReduction; requires `log_T >= log_K`.
+    Commitment = 1,
+}
+
+impl Default for BytecodeCommitmentMode {
+    fn default() -> Self {
+        Self::Legacy
+    }
+}
+
+impl CanonicalSerialize for BytecodeCommitmentMode {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (*self as u8).serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        (*self as u8).serialized_size(compress)
+    }
+}
+
+impl Valid for BytecodeCommitmentMode {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for BytecodeCommitmentMode {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u8::deserialize_with_mode(reader, compress, validate)?;
+        match value {
+            0 => Ok(Self::Legacy),
+            1 => Ok(Self::Commitment),
+            _ => Err(SerializationError::InvalidData),
+        }
     }
 }
 
