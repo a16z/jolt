@@ -70,9 +70,8 @@ impl MacroBuilder {
         let analyze_fn = self.make_analyze_function();
         let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
+        let preprocess_fn = self.make_preprocess_func();
         let preprocess_shared_fn = self.make_preprocess_shared_func();
-        let preprocess_prover_fn = self.make_preprocess_prover_func();
-        let preprocess_verifier_fn = self.make_preprocess_verifier_func();
         let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
         let commit_trusted_advice_fn = self.make_commit_trusted_advice_func();
         let prove_fn = self.make_prove_func();
@@ -101,9 +100,8 @@ impl MacroBuilder {
             #analyze_fn
             #trace_to_file_fn
             #compile_fn
+            #preprocess_fn
             #preprocess_shared_fn
-            #preprocess_prover_fn
-            #preprocess_verifier_fn
             #verifier_preprocess_from_prover_fn
             #commit_trusted_advice_fn
             #prove_fn
@@ -427,6 +425,52 @@ impl MacroBuilder {
         }
     }
 
+    fn make_preprocess_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_untrusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        let max_trusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
+        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
+        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+        let imports = self.make_imports();
+
+        let fn_name = self.get_func_name();
+        let preprocess_fn_name = Ident::new(&format!("preprocess_{fn_name}"), fn_name.span());
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #preprocess_fn_name(program: &mut jolt::host::Program)
+                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
+            {
+                #imports
+
+                let (instructions, memory_init, program_size) = program.decode();
+                let memory_config = MemoryConfig {
+                    max_input_size: #max_input_size,
+                    max_output_size: #max_output_size,
+                    max_untrusted_advice_size: #max_untrusted_advice_size,
+                    max_trusted_advice_size: #max_trusted_advice_size,
+                    stack_size: #stack_size,
+                    memory_size: #memory_size,
+                    program_size: Some(program_size),
+                };
+                let memory_layout = MemoryLayout::new(&memory_config);
+
+                let bytecode = BytecodePreprocessing::preprocess(instructions);
+                let shared = JoltSharedPreprocessing::new(
+                    &bytecode,
+                    memory_layout,
+                    memory_init,
+                    #max_trace_length,
+                );
+                JoltProverPreprocessing::new(shared, std::sync::Arc::new(bytecode))
+            }
+        }
+    }
+
     fn make_preprocess_shared_func(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -468,45 +512,6 @@ impl MacroBuilder {
                     #max_trace_length,
                 );
                 (preprocessing, bytecode)
-            }
-        }
-    }
-
-    fn make_preprocess_prover_func(&self) -> TokenStream2 {
-        let imports = self.make_imports();
-
-        let fn_name = self.get_func_name();
-        let preprocess_prover_fn_name =
-            Ident::new(&format!("preprocess_prover_{fn_name}"), fn_name.span());
-        quote! {
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_prover_fn_name(
-                shared_preprocessing: jolt::JoltSharedPreprocessing,
-                bytecode: std::sync::Arc<jolt::BytecodePreprocessing>,
-            ) -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
-            {
-                #imports
-                JoltProverPreprocessing::new(shared_preprocessing, bytecode)
-            }
-        }
-    }
-
-    fn make_preprocess_verifier_func(&self) -> TokenStream2 {
-        let imports = self.make_imports();
-
-        let fn_name = self.get_func_name();
-        let preprocess_verifier_fn_name =
-            Ident::new(&format!("preprocess_verifier_{fn_name}"), fn_name.span());
-        quote! {
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_verifier_fn_name(
-                shared_preprocess: jolt::JoltSharedPreprocessing,
-                generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                bytecode: std::sync::Arc<jolt::BytecodePreprocessing>,
-            ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
-            {
-                #imports
-                JoltVerifierPreprocessing::new_full(shared_preprocess, generators, bytecode)
             }
         }
     }
@@ -886,6 +891,7 @@ impl MacroBuilder {
                 RV64IMACVerifier,
                 RV64IMACProof,
                 host::Program,
+                BytecodePreprocessing,
                 JoltProverPreprocessing,
                 MemoryConfig,
                 MemoryLayout,

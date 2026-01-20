@@ -2,6 +2,94 @@
 
 This file is a **living design doc** for implementing **bytecode commitment** to remove verifier work linear in bytecode size \(K\), especially in recursion contexts (e.g. `examples/recursion/`).
 
+This is the **single authoritative document** for:
+- bytecode commitment design + implementation progress
+- the bytecode preprocessing refactor (Full vs Committed split via `BytecodeMode`)
+
+## Current architecture baseline (post-refactor)
+
+Bytecode preprocessing is now split between prover and verifier based on `BytecodeMode`:
+
+- **Full mode**: verifier has access to full bytecode (may do \(O(K)\) work).
+- **Committed mode**: verifier only has bytecode *commitments* (succinct), and verification uses claim reductions.
+
+### Data structures (single source of truth for bytecode size \(K\))
+
+```
+BytecodePreprocessing  ← O(K) data, created first via preprocess()
+├── bytecode: Vec<Instruction>
+└── pc_map: BytecodePCMapper
+
+JoltSharedPreprocessing  ← Truly shared, single source of truth for size
+├── bytecode_size: usize            ← Derived from bytecode.bytecode.len()
+├── ram: RAMPreprocessing
+├── memory_layout: MemoryLayout
+└── max_padded_trace_length: usize
+
+JoltProverPreprocessing  ← Prover always has full bytecode
+├── generators: PCS::ProverSetup
+├── shared: JoltSharedPreprocessing
+├── bytecode: Arc<BytecodePreprocessing>        ← Full bytecode (always)
+├── bytecode_commitments: Option<TrustedBytecodeCommitments<PCS>>  ← Only in Committed mode
+└── bytecode_commitment_hints: Option<Vec<PCS::OpeningProofHint>>  ← Only in Committed mode
+
+JoltVerifierPreprocessing  ← Verifier has mode-dependent bytecode
+├── generators: PCS::VerifierSetup
+├── shared: JoltSharedPreprocessing
+└── bytecode: VerifierBytecode<PCS>        ← Full OR Committed
+
+VerifierBytecode<PCS>  ← Mode-dependent bytecode info
+├── Full(Arc<BytecodePreprocessing>)              ← Full mode
+└── Committed(TrustedBytecodeCommitments<PCS>)    ← Committed mode
+```
+
+`BytecodeMode` is the first-class “full vs committed” selector (`jolt-core/src/zkvm/config.rs`).
+
+### Trace-like `Arc` pattern (parallel to trace handling)
+
+```rust
+// Trace:
+let trace: std::sync::Arc<Vec<Cycle>> = trace.into();
+
+// Bytecode (parallel):
+let bytecode: std::sync::Arc<BytecodePreprocessing> =
+    BytecodePreprocessing::preprocess(instructions).into();
+```
+
+### Key design decisions (implemented)
+
+- `BytecodePreprocessing::preprocess()` returns `Self` (callers wrap in `Arc<Self>` as needed).
+- `JoltSharedPreprocessing::new()` takes `&BytecodePreprocessing` and stores only `bytecode_size` (single source of truth for \(K\)).
+- `TrustedBytecodeCommitments<PCS>` is a trust-typed wrapper: create via `derive()` (offline preprocessing) or trusted deserialization.
+- `VerifierBytecode::as_full()` / `as_committed()` return `Result<_, ProofVerifyError>` (no panics for mismatched mode).
+
+### SDK macro API (current)
+
+The `#[jolt::provable]` macro generates a **2-call** preprocessing workflow for the common case:
+
+```rust
+let prover_pp = guest::preprocess_<func>(&mut program);
+let verifier_pp = guest::verifier_preprocessing_from_prover_<func>(&prover_pp);
+```
+
+Advanced/secondary API (still generated):
+
+- `preprocess_shared_<func>(&mut Program) -> (JoltSharedPreprocessing, BytecodePreprocessing)`
+
+### TODO (SDK): expose Committed bytecode mode end-to-end
+
+Committed mode requires **both**:
+
+1. **Committed preprocessing**: create prover preprocessing via `JoltProverPreprocessing::new_committed(...)`
+2. **Committed proving**: prove via `RV64IMACProver::gen_from_elf_with_bytecode_mode(..., BytecodeMode::Committed)`
+
+TODO items:
+
+- Generate `preprocess_committed_<func>(&mut Program) -> JoltProverPreprocessing<...>` (calls `JoltProverPreprocessing::new_committed`).
+- Generate a committed proving entrypoint (either `prove_committed_<func>` / `build_prover_committed_<func>`, or add a `bytecode_mode: BytecodeMode` parameter to the existing prover entrypoints).
+- Re-export `BytecodeMode` from the SDK host surface (or otherwise make it available to macro-generated code).
+- Keep committed mode behind an explicit opt-in until bytecode commitment derivation + Stage 8 batching are complete (`TrustedBytecodeCommitments::derive` is currently a stub).
+
 ## Problem statement (what is slow today?)
 
 ### Where the verifier is doing \(O(K)\) work
@@ -367,6 +455,7 @@ Immediate next steps:
 2. Wire BytecodeChunk into Stage 8 batching and RLC streaming; add BytecodeChunk to committed polynomial list and witness generation (`jolt-core/src/zkvm/witness.rs` **L34–L61**, **L121–L171**; `jolt-core/src/poly/rlc_polynomial.rs` **L184–L198**; `jolt-core/src/zkvm/prover.rs` **L1504–L1567**).
 3. Add/enable tests (lane ordering, padding, committed mode e2e) and remove ignores once commitments + Stage 8 batching are wired (`jolt-core/src/zkvm/tests.rs` **L426–L486**; `jolt-core/src/zkvm/prover.rs` **L395–L409**; `jolt-core/src/zkvm/verifier.rs` **L171–L177**).
 4. Consider streaming/implicit bytecode chunk representation to avoid `k_chunk * T` materialization (`jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L216–L239**).
+5. Expose Committed bytecode mode in the SDK (opt-in): macro-generated committed preprocessing + committed proving entrypoint / `BytecodeMode` parameter (see “TODO (SDK): expose Committed bytecode mode end-to-end” above).
 
 Concerns / risks:
 - BytecodeClaimReduction currently materializes `weight_chunks` and `bytecode_chunks` of size `k_chunk * T` (memory heavy for large bytecode) (`jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L216–L239**).
