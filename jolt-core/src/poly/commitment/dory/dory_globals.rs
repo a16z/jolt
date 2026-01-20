@@ -151,7 +151,12 @@ static mut UNTRUSTED_ADVICE_T: OnceLock<usize> = OnceLock::new();
 static mut UNTRUSTED_ADVICE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
 static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 
-// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice
+// Bytecode globals
+static mut BYTECODE_T: OnceLock<usize> = OnceLock::new();
+static mut BYTECODE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
+static mut BYTECODE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
+
+// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice, 3=Bytecode
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
 // Layout tracking: 0=CycleMajor, 1=AddressMajor
@@ -163,6 +168,7 @@ pub enum DoryContext {
     Main = 0,
     TrustedAdvice = 1,
     UntrustedAdvice = 2,
+    Bytecode = 3,
 }
 
 impl From<u8> for DoryContext {
@@ -171,6 +177,7 @@ impl From<u8> for DoryContext {
             0 => DoryContext::Main,
             1 => DoryContext::TrustedAdvice,
             2 => DoryContext::UntrustedAdvice,
+            3 => DoryContext::Bytecode,
             _ => panic!("Invalid DoryContext value: {value}"),
         }
     }
@@ -305,6 +312,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => {
                     let _ = UNTRUSTED_ADVICE_MAX_NUM_ROWS.set(max_num_rows);
                 }
+                DoryContext::Bytecode => {
+                    let _ = BYTECODE_MAX_NUM_ROWS.set(max_num_rows);
+                }
             }
         }
     }
@@ -321,6 +331,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_MAX_NUM_ROWS
                     .get()
                     .expect("untrusted_advice max_num_rows not initialized"),
+                DoryContext::Bytecode => *BYTECODE_MAX_NUM_ROWS
+                    .get()
+                    .expect("bytecode max_num_rows not initialized"),
             }
         }
     }
@@ -338,6 +351,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => {
                     let _ = UNTRUSTED_ADVICE_NUM_COLUMNS.set(num_columns);
                 }
+                DoryContext::Bytecode => {
+                    let _ = BYTECODE_NUM_COLUMNS.set(num_columns);
+                }
             }
         }
     }
@@ -354,6 +370,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_NUM_COLUMNS
                     .get()
                     .expect("untrusted_advice num_columns not initialized"),
+                DoryContext::Bytecode => *BYTECODE_NUM_COLUMNS
+                    .get()
+                    .expect("bytecode num_columns not initialized"),
             }
         }
     }
@@ -371,6 +390,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => {
                     let _ = UNTRUSTED_ADVICE_T.set(t);
                 }
+                DoryContext::Bytecode => {
+                    let _ = BYTECODE_T.set(t);
+                }
             }
         }
     }
@@ -387,6 +409,7 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_T
                     .get()
                     .expect("untrusted_advice t not initialized"),
+                DoryContext::Bytecode => *BYTECODE_T.get().expect("bytecode t not initialized"),
             }
         }
     }
@@ -414,7 +437,7 @@ impl DoryGlobals {
     /// # Arguments
     /// * `K` - Maximum address space size (K in OneHot polynomials)
     /// * `T` - Maximum trace length (cycle count)
-    /// * `context` - The Dory context to initialize (Main, TrustedAdvice, or UntrustedAdvice)
+    /// * `context` - The Dory context to initialize (Main, TrustedAdvice, UntrustedAdvice, Bytecode)
     /// * `layout` - Optional layout for the Dory matrix. Only applies to Main context.
     ///   If `Some(layout)`, sets the layout. If `None`, leaves the existing layout
     ///   unchanged (defaults to `CycleMajor` after `reset()`). Ignored for advice contexts.
@@ -466,6 +489,11 @@ impl DoryGlobals {
             let _ = UNTRUSTED_ADVICE_T.take();
             let _ = UNTRUSTED_ADVICE_MAX_NUM_ROWS.take();
             let _ = UNTRUSTED_ADVICE_NUM_COLUMNS.take();
+
+            // Reset bytecode globals
+            let _ = BYTECODE_T.take();
+            let _ = BYTECODE_MAX_NUM_ROWS.take();
+            let _ = BYTECODE_NUM_COLUMNS.take();
         }
 
         // Reset context to Main

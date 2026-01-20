@@ -227,28 +227,50 @@ where
     let dory_layout = DoryGlobals::get_layout();
 
     // Dense polynomials (all scalar variants except OneHot/RLC) are committed row-wise.
-    // Under AddressMajor, dense coefficients occupy evenly-spaced columns, so each row
-    // commitment uses `cycles_per_row` bases (one per occupied column).
-    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = match (dory_context, dory_layout)
+    //
+    // In `Main` + `AddressMajor`, we have two *representations* in this repo:
+    // - **Trace-dense**: length == T (e.g., `RdInc`, `RamInc`). These are embedded into the
+    //   main matrix by occupying evenly-spaced columns, so each row commitment uses
+    //   `cycles_per_row` bases (one per occupied column).
+    // - **Matrix-dense**: length == K*T (e.g., bytecode chunk polynomials). These occupy the
+    //   full matrix and must use the full `row_len` bases.
+    let is_trace_dense = match poly {
+        MultilinearPolynomial::LargeScalars(p) => p.Z.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::BoolScalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::U8Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::U16Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::U32Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::U64Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::U128Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::I64Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::I128Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::S128Scalars(p) => p.coeffs.len() == DoryGlobals::get_T(),
+        MultilinearPolynomial::OneHot(_) | MultilinearPolynomial::RLC(_) => false,
+    };
+
+    let is_trace_dense_main_addr_major = dory_context == DoryContext::Main
+        && dory_layout == DoryLayout::AddressMajor
+        && is_trace_dense;
+
+    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = if is_trace_dense_main_addr_major
     {
-        (DoryContext::Main, DoryLayout::AddressMajor) => {
-            let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
-            let bases: Vec<_> = g1_slice
-                .par_iter()
-                .take(row_len)
-                .step_by(row_len / cycles_per_row)
-                .map(|g| g.0.into_affine())
-                .collect();
-            (bases, cycles_per_row)
-        }
-        _ => (
+        let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+        let bases: Vec<_> = g1_slice
+            .par_iter()
+            .take(row_len)
+            .step_by(row_len / cycles_per_row)
+            .map(|g| g.0.into_affine())
+            .collect();
+        (bases, cycles_per_row)
+    } else {
+        (
             g1_slice
                 .par_iter()
                 .take(row_len)
                 .map(|g| g.0.into_affine())
                 .collect(),
             row_len,
-        ),
+        )
     };
 
     let result: Vec<ArkG1> = match poly {

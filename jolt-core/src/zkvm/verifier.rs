@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
+use crate::zkvm::bytecode::chunks::total_lanes;
 use crate::zkvm::bytecode::{BytecodePreprocessing, TrustedBytecodeCommitments, VerifierBytecode};
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -168,18 +169,33 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
-        // If the proof claims it used bytecode commitment mode, it must have enough cycle vars
-        // to embed bytecode address variables (log_T >= log_K_bytecode), i.e. T >= K_bytecode.
-        if proof.bytecode_mode == BytecodeMode::Committed && proof.trace_length < proof.bytecode_K {
-            return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
-                "bytecode commitment mode requires trace_length >= bytecode_K (got trace_length={}, bytecode_K={})",
-                proof.trace_length, proof.bytecode_K
-            )));
-        }
-
         // Construct full params from the validated config
         let one_hot_params =
             OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
+
+        if proof.bytecode_mode == BytecodeMode::Committed {
+            let committed = preprocessing.bytecode.as_committed()?;
+            if committed.log_k_chunk != proof.one_hot_config.log_k_chunk {
+                return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
+                    "bytecode log_k_chunk mismatch: commitments={}, proof={}",
+                    committed.log_k_chunk, proof.one_hot_config.log_k_chunk
+                )));
+            }
+            if committed.bytecode_len != preprocessing.shared.bytecode_size {
+                return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
+                    "bytecode length mismatch: commitments={}, shared={}",
+                    committed.bytecode_len, preprocessing.shared.bytecode_size
+                )));
+            }
+            let k_chunk = 1usize << (committed.log_k_chunk as usize);
+            let expected_chunks = total_lanes().div_ceil(k_chunk);
+            if committed.commitments.len() != expected_chunks {
+                return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
+                    "expected {expected_chunks} bytecode commitments, got {}",
+                    committed.commitments.len()
+                )));
+            }
+        }
 
         Ok(Self {
             trusted_advice_commitment,
@@ -220,6 +236,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             self.transcript
                 .append_serializable(trusted_advice_commitment);
+        }
+        if self.proof.bytecode_mode == BytecodeMode::Committed {
+            let trusted = self.preprocessing.bytecode.as_committed()?;
+            for commitment in &trusted.commitments {
+                self.transcript.append_serializable(commitment);
+            }
         }
 
         self.verify_stage1()?;
@@ -506,10 +528,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // IMPORTANT: This must be sampled *after* other Stage 6b params (e.g. lookup/inc gammas),
         // to match the prover's transcript order.
         if self.proof.bytecode_mode == BytecodeMode::Committed {
-            debug_assert!(
-                bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K,
-                "commitment mode requires log_T >= log_K_bytecode"
-            );
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 &bytecode_read_raf_params,
                 &self.opening_accumulator,
@@ -720,6 +738,51 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             ));
         }
 
+        // Bytecode chunk polynomials: committed in Bytecode context and embedded into the
+        // main opening point by fixing the extra cycle variables to 0.
+        if self.proof.bytecode_mode == BytecodeMode::Committed {
+            let (bytecode_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeChunk(0),
+                SumcheckId::BytecodeClaimReduction,
+            );
+            let log_t = opening_point.r.len() - log_k_chunk;
+            let log_k = bytecode_point.r.len() - log_k_chunk;
+            if log_k > log_t {
+                return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
+                    "bytecode folding requires log_T >= log_K (got log_T={log_t}, log_K={log_k})"
+                ))
+                .into());
+            }
+            #[cfg(test)]
+            {
+                if log_k == log_t {
+                    assert_eq!(
+                        bytecode_point.r, opening_point.r,
+                        "BytecodeChunk opening point must equal unified opening point when log_K == log_T"
+                    );
+                } else {
+                    let (r_lane_main, r_cycle_main) = opening_point.split_at(log_k_chunk);
+                    let (r_lane_bc, r_cycle_bc) = bytecode_point.split_at(log_k_chunk);
+                    debug_assert_eq!(r_lane_main.r, r_lane_bc.r);
+                    debug_assert_eq!(&r_cycle_main.r[(log_t - log_k)..], r_cycle_bc.r.as_slice());
+                }
+            }
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &bytecode_point.r);
+
+            let num_chunks = total_lanes().div_ceil(self.one_hot_params.k_chunk);
+            for i in 0..num_chunks {
+                let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::BytecodeChunk(i),
+                    SumcheckId::BytecodeClaimReduction,
+                );
+                polynomial_claims.push((
+                    CommittedPolynomial::BytecodeChunk(i),
+                    claim * lagrange_factor,
+                ));
+            }
+        }
+
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
@@ -758,6 +821,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .any(|(p, _)| *p == CommittedPolynomial::UntrustedAdvice)
             {
                 commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
+            }
+        }
+
+        if self.proof.bytecode_mode == BytecodeMode::Committed {
+            let committed = self.preprocessing.bytecode.as_committed()?;
+            for (idx, commitment) in committed.commitments.iter().enumerate() {
+                commitments_map
+                    .entry(CommittedPolynomial::BytecodeChunk(idx))
+                    .or_insert_with(|| commitment.clone());
             }
         }
 

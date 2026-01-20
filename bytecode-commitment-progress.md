@@ -76,19 +76,24 @@ Advanced/secondary API (still generated):
 
 - `preprocess_shared_<func>(&mut Program) -> (JoltSharedPreprocessing, BytecodePreprocessing)`
 
-### TODO (SDK): expose Committed bytecode mode end-to-end
+### SDK status (2026-01-20): Committed bytecode mode exposed end-to-end
 
 Committed mode requires **both**:
 
 1. **Committed preprocessing**: create prover preprocessing via `JoltProverPreprocessing::new_committed(...)`
 2. **Committed proving**: prove via `RV64IMACProver::gen_from_elf_with_bytecode_mode(..., BytecodeMode::Committed)`
 
-TODO items:
+**Done in this branch:**
+- Macro generates committed APIs:
+  - `preprocess_committed_<func>`
+  - `build_prover_committed_<func>`
+  - `prove_committed_<func>`
+- `BytecodeMode` is re-exported from the SDK host surface (`jolt-sdk/src/host_utils.rs`).
+- Example CLI surfaced (`examples/fibonacci --committed-bytecode`), using the committed APIs.
 
-- Generate `preprocess_committed_<func>(&mut Program) -> JoltProverPreprocessing<...>` (calls `JoltProverPreprocessing::new_committed`).
-- Generate a committed proving entrypoint (either `prove_committed_<func>` / `build_prover_committed_<func>`, or add a `bytecode_mode: BytecodeMode` parameter to the existing prover entrypoints).
-- Re-export `BytecodeMode` from the SDK host surface (or otherwise make it available to macro-generated code).
-- Keep committed mode behind an explicit opt-in until bytecode commitment derivation + Stage 8 batching are complete (`TrustedBytecodeCommitments::derive` is currently a stub).
+**Remaining SDK work (polish):**
+- Decide whether “committed” should remain separate entrypoints or become a `bytecode_mode: BytecodeMode` parameter on the default APIs.
+- Optionally propagate `--committed-bytecode` to other examples / docs.
 
 ## Problem statement (what is slow today?)
 
@@ -448,18 +453,119 @@ High-level status (diff vs main):
 - Booleanity split into address/cycle sumchecks; advice round alignment updated (`jolt-core/src/subprotocols/booleanity.rs` **L497–L736**; `jolt-core/src/poly/opening_proof.rs` **L157–L158**; `jolt-core/src/zkvm/witness.rs` **L285–L287**; `jolt-core/src/zkvm/claim_reductions/advice.rs` **L521–L526**).
 - BytecodeReadRaf split + staged Val claims + committed verifier Stage 6a path wired (`jolt-core/src/zkvm/bytecode/read_raf_checking.rs` **L1261–L1288**, **L1554–L1636**; `jolt-core/src/zkvm/verifier.rs` **L430–L455**).
 - BytecodeClaimReduction implemented with canonical lane ordering and BytecodeChunk openings (`jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L1–L15**, **L193–L236**, **L470–L488**, **L494–L671**).
-- Bytecode commitment plumbing is in place (BytecodeMode + preprocessing + VerifierBytecode), but commitment derivation and Stage 8 batching are still TODO (`jolt-core/src/zkvm/config.rs` **L26–L35**; `jolt-core/src/zkvm/prover.rs` **L1688–L1760**; `jolt-core/src/zkvm/verifier.rs` **L840–L976**; `jolt-core/src/zkvm/bytecode/mod.rs` **L41–L59**; `jolt-core/src/poly/rlc_polynomial.rs` **L184–L198**).
+- Bytecode commitment plumbing is in place (BytecodeMode + preprocessing + VerifierBytecode), and commitment derivation + Stage 8 batching/folding are now implemented (see next update).
 
 Immediate next steps:
-1. Implement `TrustedBytecodeCommitments::derive` and add BytecodeChunk commitments + hints; consider new Dory context if needed (`jolt-core/src/zkvm/bytecode/mod.rs` **L41–L59**; `jolt-core/src/zkvm/prover.rs` **L1688–L1760**).
-2. Wire BytecodeChunk into Stage 8 batching and RLC streaming; add BytecodeChunk to committed polynomial list and witness generation (`jolt-core/src/zkvm/witness.rs` **L34–L61**, **L121–L171**; `jolt-core/src/poly/rlc_polynomial.rs` **L184–L198**; `jolt-core/src/zkvm/prover.rs` **L1504–L1567**).
-3. Add/enable tests (lane ordering, padding, committed mode e2e) and remove ignores once commitments + Stage 8 batching are wired (`jolt-core/src/zkvm/tests.rs` **L426–L486**; `jolt-core/src/zkvm/prover.rs` **L395–L409**; `jolt-core/src/zkvm/verifier.rs` **L171–L177**).
-4. Consider streaming/implicit bytecode chunk representation to avoid `k_chunk * T` materialization (`jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L216–L239**).
-5. Expose Committed bytecode mode in the SDK (opt-in): macro-generated committed preprocessing + committed proving entrypoint / `BytecodeMode` parameter (see “TODO (SDK): expose Committed bytecode mode end-to-end” above).
+1. Add/enable tests (lane ordering, committed mode e2e, Stage 8 folding) and remove ignores once committed mode is fully wired (`jolt-core/src/zkvm/tests.rs` **L426–L486**).
+2. Optimize bytecode VMV contribution in streaming RLC (current path iterates `K * k_chunk * num_chunks`) (`jolt-core/src/poly/rlc_polynomial.rs` **L420–L485**).
+3. Enforce or document the `log_T >= log_K_bytecode` requirement for Stage 8 folding; decide whether to lift this (see “log_K > log_T” discussion below).
+4. Expose Committed bytecode mode in the SDK (opt-in): macro-generated committed preprocessing + committed proving entrypoint / `BytecodeMode` parameter (see “TODO (SDK): expose Committed bytecode mode end-to-end” above).
 
 Concerns / risks:
-- BytecodeClaimReduction currently materializes `weight_chunks` and `bytecode_chunks` of size `k_chunk * T` (memory heavy for large bytecode) (`jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L216–L239**).
-- BytecodeChunk polynomials are placeholders and not yet supported by streaming RLC or witness generation (`jolt-core/src/zkvm/witness.rs` **L121–L123**, **L169–L171**; `jolt-core/src/poly/rlc_polynomial.rs` **L184–L198**).
+- BytecodeClaimReduction still materializes `weight_chunks` and `bytecode_chunks` of size `k_chunk * K_bytecode` (no longer `k_chunk * T`), but this can be large for big bytecode (`jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L190–L218**).
+- Streaming RLC bytecode contribution currently iterates `K * k_chunk * num_chunks` (needs optimization) (`jolt-core/src/poly/rlc_polynomial.rs` **L420–L485**).
+
+---
+
+## Progress update (2026-01-20, continued)
+
+High-level status (diff vs previous update):
+- BytecodeClaimReduction now runs over `log_K` (no `log_T` padding) and consumes `r_bc` directly (`jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L73–L215**).
+- Canonical lane ordering + lane value logic centralized in `bytecode::chunks`, used by both commitment derivation and claim reduction (`jolt-core/src/zkvm/bytecode/chunks.rs` **L11–L138**).
+- `TrustedBytecodeCommitments::derive` implemented and commits in a dedicated `DoryContext::Bytecode`, carrying `log_k_chunk` + `bytecode_len` metadata (`jolt-core/src/zkvm/bytecode/mod.rs` **L33–L79**; `jolt-core/src/poly/commitment/dory/dory_globals.rs` **L154–L171**).
+- Stage 8 now *folds bytecode chunk openings into the joint opening proof* via a Lagrange selector over missing cycle vars (prover+verifier) (`jolt-core/src/zkvm/prover.rs` **L1618–L1664**; `jolt-core/src/zkvm/verifier.rs` **L741–L788**).
+- Streaming RLC now supports bytecode chunk contributions in the VMV pass (`jolt-core/src/poly/rlc_polynomial.rs` **L420–L539**).
+
+---
+
+## Progress update (2026-01-20, AddressMajor correctness)
+
+Status:
+- **Committed bytecode now passes in both layouts** (CycleMajor + AddressMajor). In particular,
+  `fib_e2e_committed_bytecode_address_major` passes.
+
+Root cause:
+- Under `DoryLayout::AddressMajor`, the bytecode chunk coefficient order makes
+  `BindingOrder::LowToHigh` bind **lane/address** bits first. But `BytecodeClaimReduction` Phase 1
+  (Stage 6b) must bind **cycle** bits first to match the staged `r_bc` semantics.
+
+Fix:
+- Keep bytecode commitments in the layout’s native order for Dory opening, but in the **claim
+  reduction prover** permute AddressMajor chunk coefficients into **CycleMajor** order so Phase 1
+  binds cycle variables first.
+- Implemented by `permute_address_major_to_cycle_major` and applied in
+  `BytecodeClaimReductionProver::initialize` (`jolt-core/src/zkvm/claim_reductions/bytecode.rs`).
+
+---
+
+## Remaining work (as of 2026-01-20)
+
+Cleanup / correctness hardening:
+- Remove temporary debug-only code in `jolt-core/src/zkvm/tests.rs` (env-var gated bytecode/Dory open checks).
+- Add the new module file to git: `jolt-core/src/zkvm/bytecode/chunks.rs` is currently untracked in `git status`.
+
+Perf / scalability:
+- Optimize Stage 8 bytecode VMV contribution (currently iterates `K * k_chunk * num_chunks`) (`jolt-core/src/poly/rlc_polynomial.rs`).
+- Consider making `BytecodeClaimReduction` avoid materializing `k_chunk * K_bytecode` dense polynomials (streaming / implicit evaluation).
+
+Repo hygiene:
+- Before committing: run `cargo fmt` and `cargo clippy` and fix warnings.
+
+## Handling arbitrary `log_K` vs `log_T` (design sketch, not pursued)
+
+We may want to allow `log_K_bytecode > log_T` without a separate opening proof by **padding the cycle dimension** and embedding all trace-derived polynomials into a larger main opening domain.
+
+### Padding semantics: selector vs repetition
+
+There are two incompatible padding semantics today:
+
+1) **Selector padding (zero outside domain)**  
+   Embed a polynomial `P(a, c)` defined on `c ∈ {0,1}^{log_T}` into a larger `c' ∈ {0,1}^{log_T'}` (`log_T' = max(log_T, log_K)`) via:
+   - `P'(a, c, z) = P(a, c) · ∏_{i=1..Δ} (1 - z_i)`, where `Δ = log_T' - log_T`
+   - So `P' = P` when `z=0…0` and **0** elsewhere.
+
+2) **Repetition padding (independent vars)**  
+   Treat `P` as independent of the extra variables, so it repeats across them.
+   - In sumcheck batching, inactive rounds are dummy constants, which implies repetition.
+   - Batched sumcheck multiplies the input claim by `2^Δ` (see `BatchedSumcheck` in `jolt-core/src/subprotocols/sumcheck.rs` **L52–L91**).
+
+**Important:** selector padding and repetition padding are not equivalent; they lead to different claims and different opening proofs. Current sumcheck batching implements repetition padding.
+
+### What would need to change (high-level steps)
+
+To support arbitrary `log_K` and `log_T` while keeping a *single* Stage 8 opening:
+
+1) **Stage 6b round count becomes `log_T' = max(log_T, log_K)`**
+   - All cycle-phase instances must run in a batched sumcheck of length `log_T'`.
+   - Instances with `log_T` rounds become inactive for the first `Δ` rounds (front-loaded).
+
+2) **BatchedSumcheck must support selector padding**
+   - Today, inactive rounds use a constant univariate and the input claim is scaled by `2^Δ` (repetition semantics).
+   - To get selector padding, inactive rounds must instead use `H(z) = prev · (1 - z)` and **no `2^Δ` scaling**.
+   - This requires new per-instance hooks (inactive-round univariate + scaling policy) in `BatchedSumcheck` (`jolt-core/src/subprotocols/sumcheck.rs` **L52–L91**).
+
+3) **Main Dory matrix size uses `T'`**
+   - Stage 8’s main context must be initialized with `T'`, not the trace length.
+   - This affects the unified opening point and all VMV paths (`jolt-core/src/zkvm/prover.rs` **L1493–L1498**, `jolt-core/src/zkvm/verifier.rs` **L653–L661**).
+
+4) **All trace-derived polynomials must be embedded with selector padding**
+   - Add a Lagrange selector `∏(1 - r_extra)` to **every** claim whose cycle dimension is `log_T`.
+   - This includes dense polys and all RA polys (not just bytecode). The bytecode folding logic already does this (see `jolt-core/src/zkvm/prover.rs` **L1618–L1664** and `jolt-core/src/zkvm/verifier.rs` **L741–L788**).
+
+5) **Commitment and streaming need a zero-padding mode**
+   - Current trace padding uses `Cycle::NoOp`, which does **not** imply zero rows for all polynomials.
+   - For selector padding, padded cycles must contribute zero for **all** polynomials; this requires a new “zero row” padding mode in witness generation and streaming VMV.
+
+### Why this is not pursued now
+
+This change is cross-cutting and affects:
+- Batched sumcheck semantics,
+- Stage 6b scheduling,
+- Main Dory context sizing,
+- Stage 8 claim embedding for *all* polynomials,
+- Streaming witness/VMV paths.
+
+Given scope and risk, we are **not pursuing arbitrary `log_K` vs `log_T` support right now**. The current design assumes `log_T >= log_K` for the folded Stage 8 bytecode opening path.
 
 ---
 
@@ -730,10 +836,10 @@ We will also add **new `VirtualPolynomial` variants** for scalar claims that are
 
 ### Step 6 — Bytecode commitments in preprocessing + transcript
 
-**Status (2026-01-20)**: PARTIAL  
+**Status (2026-01-20)**: DONE (functionality)  
 - Bytecode commitment plumbing added (types + preprocessing + proof field): `jolt-core/src/zkvm/bytecode/mod.rs` **L30–L111**; `jolt-core/src/zkvm/prover.rs` **L1688–L1760**; `jolt-core/src/zkvm/verifier.rs` **L840–L976**; `jolt-core/src/zkvm/proof_serialization.rs` **L43–L47**.  
-- Commitment derivation still TODO: `jolt-core/src/zkvm/bytecode/mod.rs` **L41–L59**.  
-- Canonical lane ordering implemented in BytecodeClaimReduction: `jolt-core/src/zkvm/claim_reductions/bytecode.rs` **L494–L671**.
+- Commitment derivation implemented: `TrustedBytecodeCommitments::derive` in `jolt-core/src/zkvm/bytecode/mod.rs`.  
+- Canonical lane ordering + lane materialization centralized in `jolt-core/src/zkvm/bytecode/chunks.rs` (used by both commitment derivation and claim reduction).
 
 #### 6.1 New Dory context + storage
 
@@ -756,9 +862,9 @@ This ordering must be used consistently by:
 
 ### Step 7 — Stage 8 batching integration (bytecode polynomials)
 
-**Status (2026-01-20)**: NOT STARTED / TODO  
-- BytecodeChunk polynomials not yet supported by witness generation or streaming RLC (panic placeholders): `jolt-core/src/zkvm/witness.rs` **L121–L123**, **L169–L171**; `jolt-core/src/poly/rlc_polynomial.rs` **L184–L198**.  
-- Stage 8 currently batches dense + RA + advice only (no BytecodeChunk): `jolt-core/src/zkvm/prover.rs` **L1504–L1567**.
+**Status (2026-01-20)**: DONE (functionality)  
+- Stage 8 folds bytecode chunk openings into the joint opening proof via a Lagrange selector over missing cycle vars (`jolt-core/src/zkvm/prover.rs` and `jolt-core/src/zkvm/verifier.rs`).
+- Streaming RLC includes bytecode chunk contributions in the VMV pass (`jolt-core/src/poly/rlc_polynomial.rs`).
 
 Stage 8 currently builds a streaming `RLCPolynomial` from:
 - dense trace polys
@@ -791,9 +897,10 @@ This is analogous to `adjust_trace_length_for_advice` in `jolt-core/src/zkvm/pro
 
 ### Step 9 — Tests / validation
 
-**Status (2026-01-20)**: PARTIAL  
-- New e2e harness + bytecode-mode detection tests added locally: `jolt-core/src/zkvm/tests.rs` **L1–L486** (file currently untracked).  
-- Committed-mode e2e tests currently ignored: `jolt-core/src/zkvm/tests.rs` **L426–L447**.
+**Status (2026-01-20)**: DONE (core coverage)  
+- Lane ordering + chunking tests added.
+- E2E committed-bytecode tests enabled and passing for both layouts (CycleMajor + AddressMajor).
+- Note: `jolt-core/src/zkvm/tests.rs` still contains some env-var gated debug helpers; remove once stabilized.
 
 - Unit tests:
   - lane ordering + chunking (k_chunk=16 ⇒ 28 chunks, k_chunk=256 ⇒ 2 chunks)

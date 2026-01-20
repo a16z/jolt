@@ -4,8 +4,10 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::Acc6S;
 use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::bytecode::chunks::{lane_value, total_lanes};
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::instruction::LookupQuery;
+use crate::zkvm::instruction::{Flags, InstructionLookup, LookupQuery};
+use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
 use allocative::Allocative;
@@ -16,7 +18,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracer::ChunksIterator;
-use tracer::{instruction::Cycle, LazyTraceIterator};
+use tracer::{instruction::Cycle, instruction::Instruction, LazyTraceIterator};
 
 #[derive(Clone, Debug)]
 pub struct RLCStreamingData {
@@ -56,6 +58,8 @@ impl TraceSource {
 pub struct StreamingRLCContext<F: JoltField> {
     pub dense_polys: Vec<(CommittedPolynomial, F)>,
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
+    /// Bytecode chunk polynomials with their RLC coefficients.
+    pub bytecode_polys: Vec<(usize, F)>,
     /// Advice polynomials with their RLC coefficients.
     /// These are NOT streamed from trace - they're passed in directly.
     pub advice_polys: Vec<(F, MultilinearPolynomial<F>)>,
@@ -179,6 +183,7 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         let mut dense_polys = Vec::new();
         let mut onehot_polys = Vec::new();
+        let mut bytecode_polys = Vec::new();
         let mut advice_polys = Vec::new();
 
         for (poly_id, coeff) in poly_ids.iter().zip(coefficients.iter()) {
@@ -192,9 +197,9 @@ impl<F: JoltField> RLCPolynomial<F> {
                     onehot_polys.push((*poly_id, *coeff));
                 }
                 CommittedPolynomial::BytecodeChunk(_) => {
-                    // Bytecode chunk polynomials are staged for later integration into Stage 8
-                    // streaming (see bytecode commitment track).
-                    panic!("BytecodeChunk polynomials are not yet supported in streaming RLC");
+                    if let CommittedPolynomial::BytecodeChunk(idx) = poly_id {
+                        bytecode_polys.push((*idx, *coeff));
+                    }
                 }
                 CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
                     // Advice polynomials are passed in directly (not streamed from trace)
@@ -211,6 +216,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             streaming_context: Some(Arc::new(StreamingRLCContext {
                 dense_polys,
                 onehot_polys,
+                bytecode_polys,
                 advice_polys,
                 trace_source,
                 preprocessing,
@@ -404,6 +410,87 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
             });
     }
 
+    /// Adds the bytecode chunk polynomial contribution to the vector-matrix-vector product result.
+    ///
+    /// Bytecode chunk polynomials are embedded in the top-left block by fixing the extra cycle
+    /// variables to 0, so we only iterate cycles in `[0, bytecode_len)`.
+    fn vmp_bytecode_contribution(
+        result: &mut [F],
+        left_vec: &[F],
+        num_columns: usize,
+        ctx: &StreamingRLCContext<F>,
+    ) {
+        if ctx.bytecode_polys.is_empty() {
+            return;
+        }
+
+        let layout = DoryGlobals::get_layout();
+        let k_chunk = ctx.one_hot_params.k_chunk;
+        let bytecode = &ctx.preprocessing.bytecode;
+        let bytecode_len = bytecode.bytecode.len();
+        let (sigma_bc, _nu_bc) = DoryGlobals::balanced_sigma_nu((k_chunk * bytecode_len).log_2());
+        let bytecode_cols = 1usize << sigma_bc;
+        let total = total_lanes();
+
+        debug_assert!(
+            bytecode_cols <= num_columns,
+            "Bytecode columns (2^{{sigma_bc}}={bytecode_cols}) must fit in main num_columns={num_columns}; \
+guardrail in gen_from_trace should ensure sigma_main >= sigma_bc."
+        );
+
+        for (chunk_idx, coeff) in ctx.bytecode_polys.iter() {
+            if coeff.is_zero() {
+                continue;
+            }
+            for (cycle, instr) in bytecode.bytecode.iter().enumerate().take(bytecode_len) {
+                let normalized = instr.normalize();
+                let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
+                let instr_flags = <Instruction as Flags>::instruction_flags(instr);
+                let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
+                    .map(|t| LookupTables::<XLEN>::enum_index(&t));
+                let raf_flag =
+                    !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
+                        &circuit_flags,
+                    );
+
+                let unexpanded_pc = F::from_u64(normalized.address as u64);
+                let imm = F::from_i128(normalized.operands.imm);
+                let rs1 = normalized.operands.rs1;
+                let rs2 = normalized.operands.rs2;
+                let rd = normalized.operands.rd;
+
+                for lane in 0..k_chunk {
+                    let global_lane = chunk_idx * k_chunk + lane;
+                    if global_lane >= total {
+                        break;
+                    }
+                    let value = lane_value::<F>(
+                        global_lane,
+                        rs1,
+                        rs2,
+                        rd,
+                        unexpanded_pc,
+                        imm,
+                        &circuit_flags,
+                        &instr_flags,
+                        lookup_idx,
+                        raf_flag,
+                    );
+                    if value.is_zero() {
+                        continue;
+                    }
+                    let global_index =
+                        layout.address_cycle_to_index(lane, cycle, k_chunk, bytecode_len);
+                    let row_index = global_index / bytecode_cols;
+                    let col_index = global_index % bytecode_cols;
+                    if row_index < left_vec.len() {
+                        result[col_index] += left_vec[row_index] * (*coeff) * value;
+                    }
+                }
+            }
+        }
+    }
+
     /// Streaming VMP implementation that generates rows on-demand from trace.
     /// Achieves O(sqrt(n)) space complexity by lazily generating the witness.
     /// Single pass through trace for both dense and one-hot polynomials.
@@ -455,6 +542,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         let mut result = materialized.vector_matrix_product(left_vec);
 
         Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
+        Self::vmp_bytecode_contribution(&mut result, left_vec, num_columns, ctx);
 
         result
     }
@@ -578,6 +666,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
 
         // Advice contribution is small and independent of the trace; add it after the streamed pass.
         Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
+        Self::vmp_bytecode_contribution(&mut result, left_vec, num_columns, ctx);
         result
     }
 
@@ -632,6 +721,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
 
         // Advice contribution is small and independent of the trace; add it after the streamed pass.
         Self::vmp_advice_contribution(&mut result, left_vec, num_columns, ctx);
+        Self::vmp_bytecode_contribution(&mut result, left_vec, num_columns, ctx);
         result
     }
 }

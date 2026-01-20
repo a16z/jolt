@@ -24,13 +24,15 @@ pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
 }
 
 /// Controls whether the prover/verifier use the **full** bytecode path (verifier may do O(K))
-/// or the **committed** bytecode path (requires padding so `T >= K_bytecode`).
+/// or the **committed** bytecode path (staged Val claims + claim reduction + folded Stage 8
+/// opening for bytecode chunk commitments).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative)]
 pub enum BytecodeMode {
     /// Full mode: verifier may materialize bytecode-dependent polynomials (O(K_bytecode)).
     Full = 0,
-    /// Committed mode: use staged Val claims + BytecodeClaimReduction; requires `log_T >= log_K`.
+    /// Committed mode: use staged Val claims + `BytecodeClaimReduction`, and fold committed
+    /// bytecode chunk openings into the joint Stage 8 opening (Bytecode context embedding).
     Committed = 1,
 }
 
@@ -201,6 +203,22 @@ impl OneHotConfig {
 
         Self {
             log_k_chunk: log_k_chunk as u8,
+            lookups_ra_virtual_log_k_chunk: lookups_ra_virtual_log_k_chunk as u8,
+        }
+    }
+
+    /// Create a OneHotConfig with an explicit log_k_chunk.
+    pub fn from_log_k_chunk(log_k_chunk: usize) -> Self {
+        debug_assert!(log_k_chunk == 4 || log_k_chunk == 8);
+        let log_k_chunk = log_k_chunk as u8;
+        let lookups_ra_virtual_log_k_chunk = if log_k_chunk == 4 {
+            LOG_K / 8
+        } else {
+            LOG_K / 4
+        };
+
+        Self {
+            log_k_chunk,
             lookups_ra_virtual_log_k_chunk: lookups_ra_virtual_log_k_chunk as u8,
         }
     }

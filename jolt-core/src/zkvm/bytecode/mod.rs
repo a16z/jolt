@@ -8,8 +8,12 @@ use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use tracer::instruction::{Cycle, Instruction};
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::bytecode::chunks::{build_bytecode_chunks, total_lanes};
+use rayon::prelude::*;
 
+pub(crate) mod chunks;
 pub mod read_raf_checking;
 
 /// Bytecode commitments that were derived from actual bytecode.
@@ -31,6 +35,10 @@ pub struct TrustedBytecodeCommitments<PCS: CommitmentScheme> {
     /// The bytecode chunk commitments.
     /// Trust is enforced by the type - create via `derive()` or deserialize from trusted source.
     pub commitments: Vec<PCS::Commitment>,
+    /// log2(k_chunk) used for lane chunking.
+    pub log_k_chunk: u8,
+    /// Bytecode length (power-of-two padded).
+    pub bytecode_len: usize,
 }
 
 impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
@@ -40,22 +48,33 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
     /// Returns trusted commitments + hints for opening proofs.
     #[tracing::instrument(skip_all, name = "TrustedBytecodeCommitments::derive")]
     pub fn derive(
-        _bytecode: &BytecodePreprocessing,
-        _generators: &PCS::ProverSetup,
+        bytecode: &BytecodePreprocessing,
+        generators: &PCS::ProverSetup,
+        log_k_chunk: usize,
     ) -> (Self, Vec<PCS::OpeningProofHint>) {
-        // TODO: Implement bytecode chunk polynomial commitment computation.
-        // This will:
-        // 1. Build bytecode chunk polynomials based on lane ordering
-        //    (see bytecode-commitment-progress.md for the canonical ordering)
-        // 2. Commit each polynomial using PCS
-        // 3. Return commitments and opening hints (e.g., Dory tier-1 data)
-        //
-        // For now, return empty vectors as placeholder.
+        let k_chunk = 1usize << log_k_chunk;
+        let bytecode_len = bytecode.bytecode.len();
+        let num_chunks = total_lanes().div_ceil(k_chunk);
+
+        let _guard =
+            DoryGlobals::initialize_context(k_chunk, bytecode_len, DoryContext::Bytecode, None);
+        let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
+
+        let bytecode_chunks = build_bytecode_chunks::<PCS::Field>(bytecode, log_k_chunk);
+        debug_assert_eq!(bytecode_chunks.len(), num_chunks);
+
+        let (commitments, hints): (Vec<_>, Vec<_>) = bytecode_chunks
+            .par_iter()
+            .map(|poly| PCS::commit(poly, generators))
+            .unzip();
+
         (
             Self {
-                commitments: Vec::new(),
+                commitments,
+                log_k_chunk: log_k_chunk as u8,
+                bytecode_len,
             },
-            Vec::new(),
+            hints,
         )
     }
 }

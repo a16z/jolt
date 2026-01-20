@@ -20,9 +20,9 @@ use std::sync::Arc;
 use allocative::Allocative;
 use itertools::Itertools;
 use rayon::prelude::*;
-use strum::EnumCount;
 
 use crate::field::JoltField;
+use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -37,27 +37,45 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::bytecode::chunks::{build_bytecode_chunks, total_lanes};
 use crate::zkvm::bytecode::read_raf_checking::BytecodeReadRafSumcheckParams;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
-    CircuitFlags, Flags, InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS,
-    NUM_INSTRUCTION_FLAGS,
+    CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use common::constants::{REGISTER_COUNT, XLEN};
+use strum::EnumCount;
 
 const DEGREE_BOUND: usize = 2;
 const NUM_VAL_STAGES: usize = 5;
 
-/// Total lanes (authoritative ordering; see design doc).
-const fn total_lanes() -> usize {
-    3 * (REGISTER_COUNT as usize) // rs1, rs2, rd one-hot lanes
-        + 2 // unexpanded_pc, imm
-        + NUM_CIRCUIT_FLAGS
-        + NUM_INSTRUCTION_FLAGS
-        + LookupTables::<XLEN>::COUNT
-        + 1 // raf flag
+/// For `DoryLayout::AddressMajor`, committed bytecode chunks are stored in "cycle-major" index order
+/// (cycle*K + address), which makes `BindingOrder::LowToHigh` bind **lane** bits first.
+///
+/// The claim reduction sumcheck needs to bind **cycle** bits first in Stage 6b, so we permute
+/// dense coefficient vectors into the `DoryLayout::CycleMajor` order (address*T + cycle) when
+/// running the reduction. This is a pure index permutation, i.e. a variable renaming, and the
+/// resulting evaluations match the committed polynomial when the opening point is interpreted in
+/// the unified `[lane || cycle]` order.
+fn permute_address_major_to_cycle_major<F: JoltField>(
+    coeffs: Vec<F>,
+    k_chunk: usize,
+    t_size: usize,
+) -> Vec<F> {
+    debug_assert_eq!(coeffs.len(), k_chunk * t_size);
+    let mut out: Vec<F> = unsafe_allocate_zero_vec(k_chunk * t_size);
+    for lane in 0..k_chunk {
+        for k in 0..t_size {
+            // AddressMajor: idx = cycle * K + address
+            let idx_in = k * k_chunk + lane;
+            // CycleMajor: idx = address * T + cycle
+            let idx_out = lane * t_size + k;
+            out[idx_out] = coeffs[idx_in];
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
@@ -71,11 +89,11 @@ pub struct BytecodeClaimReductionParams<F: JoltField> {
     pub phase: BytecodeReductionPhase,
     pub eta: F,
     pub eta_powers: [F; NUM_VAL_STAGES],
-    pub log_t: usize,
+    pub log_k: usize,
     pub log_k_chunk: usize,
     pub num_chunks: usize,
-    /// Bytecode address point, embedded into `log_t` bits by prefixing MSB zeros (BE).
-    pub r_bc_ext: OpeningPoint<BIG_ENDIAN, F>,
+    /// Bytecode address point (log_K bits, big-endian).
+    pub r_bc: OpeningPoint<BIG_ENDIAN, F>,
     /// Per-chunk lane weight tables (length = k_chunk) for `W_eta`.
     pub chunk_lane_weights: Vec<Vec<F>>,
     /// (little-endian) challenges used in the cycle phase.
@@ -88,14 +106,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let log_t = bytecode_read_raf_params.log_T;
         let log_k = bytecode_read_raf_params.log_K;
-        if log_t < log_k {
-            panic!(
-                "BytecodeClaimReduction requires log_T >= log_K_bytecode (got log_T={log_t}, log_K={log_k}). \
-                 Pad trace length to at least bytecode_len when enabling bytecode commitment/reduction."
-            );
-        }
 
         let eta: F = transcript.challenge_scalar();
         let mut eta_powers = [F::one(); NUM_VAL_STAGES];
@@ -108,9 +119,6 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
             VirtualPolynomial::BytecodeReadRafAddrClaim,
             SumcheckId::BytecodeReadRafAddressPhase,
         );
-        let mut r_bc_ext: Vec<F::Challenge> = vec![F::Challenge::from(0u128); log_t - r_bc.len()];
-        r_bc_ext.extend_from_slice(&r_bc.r);
-        let r_bc_ext = OpeningPoint::<BIG_ENDIAN, F>::new(r_bc_ext);
 
         let log_k_chunk = bytecode_read_raf_params.one_hot_params.log_k_chunk;
         let k_chunk = 1 << log_k_chunk;
@@ -128,10 +136,10 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
             phase: BytecodeReductionPhase::CycleVariables,
             eta,
             eta_powers,
-            log_t,
+            log_k,
             log_k_chunk,
             num_chunks,
-            r_bc_ext,
+            r_bc,
             chunk_lane_weights,
             cycle_var_challenges: vec![],
         }
@@ -167,7 +175,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
 
     fn num_rounds(&self) -> usize {
         match self.phase {
-            BytecodeReductionPhase::CycleVariables => self.log_t,
+            BytecodeReductionPhase::CycleVariables => self.log_k,
             BytecodeReductionPhase::LaneVariables => self.log_k_chunk,
         }
     }
@@ -205,12 +213,13 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
         params: BytecodeClaimReductionParams<F>,
         bytecode: Arc<BytecodePreprocessing>,
     ) -> Self {
-        let log_t = params.log_t;
-        let t_size = 1 << log_t;
+        let log_k = params.log_k;
+        let t_size = 1 << log_k;
         let k_chunk = 1 << params.log_k_chunk;
+        let layout = DoryGlobals::get_layout();
 
-        // Eq table over the (embedded) bytecode address point.
-        let eq_r_bc = EqPolynomial::<F>::evals(&params.r_bc_ext.r);
+        // Eq table over the bytecode address point.
+        let eq_r_bc = EqPolynomial::<F>::evals(&params.r_bc.r);
         debug_assert_eq!(eq_r_bc.len(), t_size);
 
         // Build per-chunk weight polynomials as an outer product (lane_weight ⊗ eq_r_bc).
@@ -222,9 +231,12 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
                 let mut coeffs: Vec<F> = unsafe_allocate_zero_vec(k_chunk * t_size);
                 for lane in 0..k_chunk {
                     let w = lane_weights[lane];
-                    let base = lane * t_size;
                     for k in 0..t_size {
-                        coeffs[base + k] = w * eq_r_bc[k];
+                        // Claim reduction always uses CycleMajor ordering so that
+                        // `BindingOrder::LowToHigh` binds cycle bits first in Stage 6b.
+                        let idx =
+                            DoryLayout::CycleMajor.address_cycle_to_index(lane, k, k_chunk, t_size);
+                        coeffs[idx] = w * eq_r_bc[k];
                     }
                 }
                 MultilinearPolynomial::from(coeffs)
@@ -233,57 +245,19 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
 
         // Build per-chunk bytecode polynomials B_i(lane, k).
         let bytecode_len = bytecode.bytecode.len();
-        let total = total_lanes();
-        let bytecode_chunks: Vec<MultilinearPolynomial<F>> = (0..params.num_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let mut coeffs: Vec<F> = unsafe_allocate_zero_vec(k_chunk * t_size);
-                for k in 0..t_size {
-                    if k >= bytecode_len {
-                        break;
-                    }
-                    let instr = &bytecode.bytecode[k];
-                    let normalized = instr.normalize();
-                    let circuit_flags = instr.circuit_flags();
-                    let instr_flags = instr.instruction_flags();
-                    let lookup_idx = instr
-                        .lookup_table()
-                        .map(|t| LookupTables::<XLEN>::enum_index(&t));
-                    let raf_flag =
-                        !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
-                            &circuit_flags,
-                        );
-
-                    // Common scalars
-                    let unexpanded_pc = F::from_u64(normalized.address as u64);
-                    let imm = F::from_i128(normalized.operands.imm);
-                    let rs1 = normalized.operands.rs1;
-                    let rs2 = normalized.operands.rs2;
-                    let rd = normalized.operands.rd;
-
-                    for lane in 0..k_chunk {
-                        let global_lane = chunk_idx * k_chunk + lane;
-                        if global_lane >= total {
-                            break;
-                        }
-                        let value = lane_value::<F>(
-                            global_lane,
-                            rs1,
-                            rs2,
-                            rd,
-                            unexpanded_pc,
-                            imm,
-                            &circuit_flags,
-                            &instr_flags,
-                            lookup_idx,
-                            raf_flag,
-                        );
-                        coeffs[lane * t_size + k] = value;
-                    }
+        debug_assert_eq!(bytecode_len, t_size);
+        let mut bytecode_chunks = build_bytecode_chunks::<F>(&bytecode, params.log_k_chunk);
+        if layout == DoryLayout::AddressMajor {
+            // Permute committed AddressMajor coefficient order into CycleMajor for the reduction.
+            for poly in bytecode_chunks.iter_mut() {
+                if let MultilinearPolynomial::LargeScalars(p) = poly {
+                    let old = std::mem::take(&mut p.Z);
+                    p.Z = permute_address_major_to_cycle_major(old, k_chunk, t_size);
+                } else {
+                    unreachable!("bytecode chunks are dense field polynomials");
                 }
-                MultilinearPolynomial::from(coeffs)
-            })
-            .collect();
+            }
+        }
 
         debug_assert_eq!(bytecode_chunks.len(), params.num_chunks);
         debug_assert_eq!(weight_chunks.len(), params.num_chunks);
@@ -436,7 +410,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 let opening_point = params.normalize_opening_point(sumcheck_challenges);
                 let (r_lane, r_cycle) = opening_point.split_at(params.log_k_chunk);
 
-                let eq_eval = EqPolynomial::<F>::mle(&r_cycle.r, &params.r_bc_ext.r);
+                let eq_eval = EqPolynomial::<F>::mle(&r_cycle.r, &params.r_bc.r);
 
                 // Evaluate each chunk's lane-weight polynomial at r_lane and combine with chunk openings.
                 let mut sum = F::zero();
@@ -607,66 +581,4 @@ fn compute_chunk_lane_weights<F: JoltField>(
                 .collect_vec()
         })
         .collect_vec()
-}
-
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn lane_value<F: JoltField>(
-    global_lane: usize,
-    rs1: Option<u8>,
-    rs2: Option<u8>,
-    rd: Option<u8>,
-    unexpanded_pc: F,
-    imm: F,
-    circuit_flags: &[bool; NUM_CIRCUIT_FLAGS],
-    instr_flags: &[bool; NUM_INSTRUCTION_FLAGS],
-    lookup_idx: Option<usize>,
-    raf_flag: bool,
-) -> F {
-    let reg_count = REGISTER_COUNT as usize;
-    let rs1_start = 0usize;
-    let rs2_start = rs1_start + reg_count;
-    let rd_start = rs2_start + reg_count;
-    let unexp_pc_idx = rd_start + reg_count;
-    let imm_idx = unexp_pc_idx + 1;
-    let circuit_start = imm_idx + 1;
-    let instr_start = circuit_start + NUM_CIRCUIT_FLAGS;
-    let lookup_start = instr_start + NUM_INSTRUCTION_FLAGS;
-    let raf_flag_idx = lookup_start + LookupTables::<XLEN>::COUNT;
-
-    if global_lane < rs2_start {
-        // rs1 one-hot
-        let r = global_lane as u8;
-        return F::from_bool(rs1 == Some(r));
-    }
-    if global_lane < rd_start {
-        // rs2 one-hot
-        let r = (global_lane - rs2_start) as u8;
-        return F::from_bool(rs2 == Some(r));
-    }
-    if global_lane < unexp_pc_idx {
-        // rd one-hot
-        let r = (global_lane - rd_start) as u8;
-        return F::from_bool(rd == Some(r));
-    }
-    if global_lane == unexp_pc_idx {
-        return unexpanded_pc;
-    }
-    if global_lane == imm_idx {
-        return imm;
-    }
-    if global_lane < instr_start {
-        let flag_idx = global_lane - circuit_start;
-        return F::from_bool(circuit_flags[flag_idx]);
-    }
-    if global_lane < lookup_start {
-        let flag_idx = global_lane - instr_start;
-        return F::from_bool(instr_flags[flag_idx]);
-    }
-    if global_lane < raf_flag_idx {
-        let table_idx = global_lane - lookup_start;
-        return F::from_bool(lookup_idx == Some(table_idx));
-    }
-    debug_assert_eq!(global_lane, raf_flag_idx);
-    F::from_bool(raf_flag)
 }

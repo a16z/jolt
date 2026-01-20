@@ -16,6 +16,7 @@ use std::{
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+use crate::zkvm::bytecode::chunks::total_lanes;
 use crate::zkvm::bytecode::{BytecodePreprocessing, TrustedBytecodeCommitments};
 use crate::zkvm::config::{BytecodeMode, ReadWriteConfig};
 use crate::zkvm::verifier::JoltSharedPreprocessing;
@@ -392,21 +393,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             (trace.len() + 1).next_power_of_two()
         };
 
-        // If we intend to use the bytecode-commitment/claim-reduction path, we must ensure
-        // `log_T >= log_K_bytecode`, i.e. `T >= K_bytecode`. Enforce by padding up-front.
-        let mut padded_trace_len = padded_trace_len;
-        if bytecode_mode == BytecodeMode::Committed {
-            let bytecode_k = preprocessing.shared.bytecode_size;
-            if bytecode_k > preprocessing.shared.max_padded_trace_length {
-                panic!(
-                    "Bytecode commitment mode requires max_padded_trace_length >= bytecode_K.\n\
-                     bytecode_K={} > max_padded_trace_length={}\n\
-                     Increase max_trace_length in preprocessing (JoltSharedPreprocessing::new).",
-                    bytecode_k, preprocessing.shared.max_padded_trace_length
-                );
-            }
-            padded_trace_len = padded_trace_len.max(bytecode_k);
-        }
+        // In Committed mode, Stage 8 folds bytecode chunk openings into the *joint* opening.
+        // That folding currently requires log_T >= log_K_bytecode, so we ensure the padded trace
+        // length is at least the (power-of-two padded) bytecode size.
+        let padded_trace_len = if bytecode_mode == BytecodeMode::Committed {
+            padded_trace_len.max(preprocessing.shared.bytecode_size)
+        } else {
+            padded_trace_len
+        };
         // We may need extra padding so the main Dory matrix has enough (row, col) variables
         // to embed advice commitments committed in their own preprocessing-only contexts.
         let has_trusted_advice = !program_io.trusted_advice.is_empty();
@@ -460,7 +454,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let log_T = trace.len().log_2();
         let ram_log_K = ram_K.log_2();
         let rw_config = ReadWriteConfig::new(log_T, ram_log_K);
-        let one_hot_params = OneHotParams::new(log_T, preprocessing.shared.bytecode_size, ram_K);
+        let one_hot_params = if bytecode_mode == BytecodeMode::Committed {
+            let committed = preprocessing
+                .bytecode_commitments
+                .as_ref()
+                .expect("bytecode commitments missing in committed mode");
+            let config = OneHotConfig::from_log_k_chunk(committed.log_k_chunk as usize);
+            OneHotParams::from_config(&config, preprocessing.shared.bytecode_size, ram_K)
+        } else {
+            OneHotParams::new(log_T, preprocessing.shared.bytecode_size, ram_K)
+        };
 
         Self {
             preprocessing,
@@ -514,12 +517,28 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
+        if self.bytecode_mode == BytecodeMode::Committed {
+            if let Some(trusted) = &self.preprocessing.bytecode_commitments {
+                for commitment in &trusted.commitments {
+                    self.transcript.append_serializable(commitment);
+                }
+            }
+        }
+
         // Add advice hints for batched Stage 8 opening
         if let Some(hint) = self.advice.trusted_advice_hint.take() {
             opening_proof_hints.insert(CommittedPolynomial::TrustedAdvice, hint);
         }
         if let Some(hint) = self.advice.untrusted_advice_hint.take() {
             opening_proof_hints.insert(CommittedPolynomial::UntrustedAdvice, hint);
+        }
+        if self.bytecode_mode == BytecodeMode::Committed {
+            if let Some(hints) = self.preprocessing.bytecode_commitment_hints.as_ref() {
+                for (idx, hint) in hints.iter().enumerate() {
+                    opening_proof_hints
+                        .insert(CommittedPolynomial::BytecodeChunk(idx), hint.clone());
+                }
+            }
         }
 
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
@@ -1245,10 +1264,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Bytecode claim reduction (Phase 1 in Stage 6b): consumes Val_s(r_bc) from Stage 6a and
         // caches an intermediate claim for Stage 7.
         if self.bytecode_mode == BytecodeMode::Committed {
-            debug_assert!(
-                bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K,
-                "commitment mode requires log_T >= log_K_bytecode"
-            );
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 &bytecode_read_raf_params,
                 &self.opening_accumulator,
@@ -1605,6 +1620,49 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             ));
         }
 
+        // Bytecode chunk polynomials: committed in Bytecode context and embedded into the
+        // main opening point by fixing the extra cycle variables to 0.
+        if self.bytecode_mode == BytecodeMode::Committed {
+            let (bytecode_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeChunk(0),
+                SumcheckId::BytecodeClaimReduction,
+            );
+            let log_t = opening_point.r.len() - log_k_chunk;
+            let log_k = bytecode_point.r.len() - log_k_chunk;
+            assert!(
+                log_k <= log_t,
+                "bytecode folding requires log_T >= log_K (got log_T={log_t}, log_K={log_k})"
+            );
+            #[cfg(test)]
+            {
+                if log_k == log_t {
+                    assert_eq!(
+                        bytecode_point.r, opening_point.r,
+                        "BytecodeChunk opening point must equal unified opening point when log_K == log_T"
+                    );
+                } else {
+                    let (r_lane_main, r_cycle_main) = opening_point.split_at(log_k_chunk);
+                    let (r_lane_bc, r_cycle_bc) = bytecode_point.split_at(log_k_chunk);
+                    debug_assert_eq!(r_lane_main.r, r_lane_bc.r);
+                    debug_assert_eq!(&r_cycle_main.r[(log_t - log_k)..], r_cycle_bc.r.as_slice());
+                }
+            }
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &bytecode_point.r);
+
+            let num_chunks = total_lanes().div_ceil(self.one_hot_params.k_chunk);
+            for i in 0..num_chunks {
+                let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::BytecodeChunk(i),
+                    SumcheckId::BytecodeClaimReduction,
+                );
+                polynomial_claims.push((
+                    CommittedPolynomial::BytecodeChunk(i),
+                    claim * lagrange_factor,
+                ));
+            }
+        }
+
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
@@ -1707,7 +1765,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Setup generators based on trace length.
+    /// Setup generators based on trace length (Main context).
     fn setup_generators(shared: &JoltSharedPreprocessing) -> PCS::ProverSetup {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
@@ -1719,6 +1777,24 @@ where
             8
         };
         PCS::setup_prover(max_log_k_chunk + max_log_T)
+    }
+
+    /// Setup generators for Committed mode, ensuring capacity for both:
+    /// - Main context up to `max_padded_trace_length`
+    /// - Bytecode context up to `bytecode_size`
+    fn setup_generators_committed(shared: &JoltSharedPreprocessing) -> PCS::ProverSetup {
+        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
+        let max_t_any: usize = shared
+            .max_padded_trace_length
+            .max(shared.bytecode_size)
+            .next_power_of_two();
+        let max_log_t_any = max_t_any.log_2();
+        let max_log_k_chunk = if max_log_t_any < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
+        PCS::setup_prover(max_log_k_chunk + max_log_t_any)
     }
 
     /// Create prover preprocessing in Full mode (no bytecode commitments).
@@ -1748,9 +1824,19 @@ where
         shared: JoltSharedPreprocessing,
         bytecode: Arc<BytecodePreprocessing>,
     ) -> JoltProverPreprocessing<F, PCS> {
-        let generators = Self::setup_generators(&shared);
+        let generators = Self::setup_generators_committed(&shared);
+        let max_t_any: usize = shared
+            .max_padded_trace_length
+            .max(shared.bytecode_size)
+            .next_power_of_two();
+        let max_log_t = max_t_any.log_2();
+        let log_k_chunk = if max_log_t < common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
         let (trusted_commitments, hints) =
-            TrustedBytecodeCommitments::derive(&bytecode, &generators);
+            TrustedBytecodeCommitments::derive(&bytecode, &generators, log_k_chunk);
         JoltProverPreprocessing {
             generators,
             shared,

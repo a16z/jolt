@@ -18,8 +18,10 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryCommitmentScheme, DoryContext, DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
+use crate::zkvm::bytecode::chunks::total_lanes;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::AdviceKind;
+use crate::zkvm::config::BytecodeMode;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
@@ -266,7 +268,12 @@ pub fn run_e2e_test(config: E2ETestConfig) {
 
     // Create prover and prove
     let elf_contents = program.get_elf_contents().expect("elf contents is None");
-    let prover = RV64IMACProver::gen_from_elf(
+    let bytecode_mode = if config.committed_bytecode {
+        BytecodeMode::Committed
+    } else {
+        BytecodeMode::Full
+    };
+    let prover = RV64IMACProver::gen_from_elf_with_bytecode_mode(
         &prover_preprocessing,
         &elf_contents,
         &config.inputs,
@@ -274,9 +281,11 @@ pub fn run_e2e_test(config: E2ETestConfig) {
         &config.trusted_advice,
         trusted_commitment,
         trusted_hint,
+        bytecode_mode,
     );
     let io_device = prover.program_io.clone();
     let (jolt_proof, debug_info) = prover.prove();
+    assert_eq!(jolt_proof.bytecode_mode, bytecode_mode);
 
     // Create verifier preprocessing from prover (respects mode)
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
@@ -419,27 +428,37 @@ fn advice_merkle_tree_e2e_address_major() {
 // ============================================================================
 // New Tests - Committed Bytecode Mode
 //
-// These tests are ignored until the verifier is fully updated to support
-// Committed mode (currently it calls as_full() which fails in Committed mode).
-// See verifier.rs line 442 - needs to branch on bytecode mode.
+// These tests exercise the end-to-end committed bytecode path.
 // ============================================================================
 
 #[test]
 #[serial]
-#[ignore = "Verifier not yet updated for Committed mode"]
 fn fib_e2e_committed_bytecode() {
     run_e2e_test(E2ETestConfig::default().with_committed_bytecode());
 }
 
 #[test]
 #[serial]
-#[ignore = "Verifier not yet updated for Committed mode"]
 fn fib_e2e_committed_bytecode_address_major() {
     run_e2e_test(
         E2ETestConfig::default()
             .with_committed_bytecode()
             .with_dory_layout(DoryLayout::AddressMajor),
     );
+}
+
+// ============================================================================
+// New Tests - Bytecode Lane Ordering / Chunking
+// ============================================================================
+
+#[test]
+fn bytecode_lane_chunking_counts() {
+    // Canonical lane spec (see bytecode-commitment-progress.md):
+    // 3*REGISTER_COUNT (rs1/rs2/rd) + 2 scalars + 13 circuit flags + 7 instr flags
+    // + 41 lookup selector + 1 raf flag = 448 (with REGISTER_COUNT=128).
+    assert_eq!(total_lanes(), 448);
+    assert_eq!(total_lanes().div_ceil(16), 28);
+    assert_eq!(total_lanes().div_ceil(256), 2);
 }
 
 // ============================================================================
