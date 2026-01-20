@@ -26,6 +26,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::backends::arkworks::ArkGT;
 use jolt_optimizations::{fq12_to_multilinear_evals, get_g_mle};
 
+pub mod constraint_config;
+use self::constraint_config::{ConstraintSystemConfig, CONFIG};
+
 /// Convert index to binary representation as field elements (little-endian)
 pub fn index_to_binary<F: JoltField>(index: usize, num_vars: usize) -> Vec<F> {
     let mut binary = Vec::with_capacity(num_vars);
@@ -104,6 +107,62 @@ pub fn compute_constraint_formula(
     rho_curr - rho_prev.square() * base_power - quotient * g_val
 }
 
+/// Type-safe array indexed by PolyType, eliminating the need for `as usize` casting
+#[derive(Clone)]
+pub struct PolyTypeArray<T>([T; PolyType::NUM_TYPES]);
+
+impl<T: Default> Default for PolyTypeArray<T> {
+    fn default() -> Self {
+        Self(std::array::from_fn(|_| T::default()))
+    }
+}
+
+impl<T> std::ops::Index<PolyType> for PolyTypeArray<T> {
+    type Output = T;
+
+    #[inline]
+    fn index(&self, poly_type: PolyType) -> &Self::Output {
+        unsafe {
+            // SAFETY: PolyType values are guaranteed to be 0..NUM_TYPES
+            self.0.get_unchecked(poly_type as usize)
+        }
+    }
+}
+
+impl<T> std::ops::IndexMut<PolyType> for PolyTypeArray<T> {
+    #[inline]
+    fn index_mut(&mut self, poly_type: PolyType) -> &mut Self::Output {
+        unsafe {
+            // SAFETY: PolyType values are guaranteed to be 0..NUM_TYPES
+            self.0.get_unchecked_mut(poly_type as usize)
+        }
+    }
+}
+
+impl<T> PolyTypeArray<T> {
+    /// Create a new PolyTypeArray with the given initial value for all elements
+    pub fn new_with<F>(mut f: F) -> Self
+    where
+        F: FnMut(PolyType) -> T,
+    {
+        Self([
+            f(PolyType::RhoPrev),
+            f(PolyType::Quotient),
+            f(PolyType::MulLhs),
+            f(PolyType::MulRhs),
+            f(PolyType::MulResult),
+            f(PolyType::MulQuotient),
+            f(PolyType::G1ScalarMulXA),
+            f(PolyType::G1ScalarMulYA),
+            f(PolyType::G1ScalarMulXT),
+            f(PolyType::G1ScalarMulYT),
+            f(PolyType::G1ScalarMulXANext),
+            f(PolyType::G1ScalarMulYANext),
+            f(PolyType::G1ScalarMulIndicator),
+        ])
+    }
+}
+
 /// Polynomial types stored in the matrix
 /// Note: Base and digit bits are NOT stored in the matrix - verifier computes them from public inputs
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -134,22 +193,30 @@ pub enum PolyType {
 impl PolyType {
     pub const NUM_TYPES: usize = 13;
 
+    /// All polynomial types as a constant array
+    pub const ALL: [PolyType; 13] = [
+        PolyType::RhoPrev,
+        PolyType::Quotient,
+        PolyType::MulLhs,
+        PolyType::MulRhs,
+        PolyType::MulResult,
+        PolyType::MulQuotient,
+        PolyType::G1ScalarMulXA,
+        PolyType::G1ScalarMulYA,
+        PolyType::G1ScalarMulXT,
+        PolyType::G1ScalarMulYT,
+        PolyType::G1ScalarMulXANext,
+        PolyType::G1ScalarMulYANext,
+        PolyType::G1ScalarMulIndicator,
+    ];
+
     pub fn all() -> [PolyType; 13] {
-        [
-            PolyType::RhoPrev,
-            PolyType::Quotient,
-            PolyType::MulLhs,
-            PolyType::MulRhs,
-            PolyType::MulResult,
-            PolyType::MulQuotient,
-            PolyType::G1ScalarMulXA,
-            PolyType::G1ScalarMulYA,
-            PolyType::G1ScalarMulXT,
-            PolyType::G1ScalarMulYT,
-            PolyType::G1ScalarMulXANext,
-            PolyType::G1ScalarMulYANext,
-            PolyType::G1ScalarMulIndicator,
-        ]
+        Self::ALL
+    }
+
+    /// Iterator over all polynomial types
+    pub fn iter() -> impl Iterator<Item = PolyType> {
+        Self::ALL.iter().copied()
     }
 
     /// Get polynomial type from row index
@@ -254,32 +321,21 @@ impl DoryMultilinearMatrix {
 /// Row index = poly_type * num_constraints_padded + constraint_index
 pub struct DoryMatrixBuilder {
     num_constraint_vars: usize,
-    /// Rows grouped by polynomial type (16 types total)
-    rows_by_type: [Vec<Vec<Fq>>; PolyType::NUM_TYPES],
+    /// Rows grouped by polynomial type using type-safe array
+    rows_by_type: PolyTypeArray<Vec<Vec<Fq>>>,
     /// Constraint types for each constraint
     constraint_types: Vec<ConstraintType>,
+    /// Configuration for the constraint system
+    config: ConstraintSystemConfig,
 }
 
 impl DoryMatrixBuilder {
     pub fn new(num_constraint_vars: usize) -> Self {
         Self {
             num_constraint_vars,
-            rows_by_type: [
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ],
+            rows_by_type: PolyTypeArray::default(),
             constraint_types: Vec::new(),
+            config: ConstraintSystemConfig::default(),
         }
     }
 
@@ -288,90 +344,121 @@ impl DoryMatrixBuilder {
         self.constraint_types.len()
     }
 
+    /// Add any witness implementing the ConstraintWitness trait
+    pub fn add_witness<W: ConstraintWitness>(&mut self, witness: &W) -> Result<(), String> {
+        // Validate constraint vars
+        if witness.required_constraint_vars() != self.num_constraint_vars {
+            return Err(format!(
+                "Witness requires {} vars but builder has {}",
+                witness.required_constraint_vars(),
+                self.num_constraint_vars
+            ));
+        }
+
+        let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
+        let active_types = witness.active_poly_types();
+
+        // Add data for all poly types
+        for poly_type in PolyType::iter() {
+            let data = if active_types.contains(&poly_type) {
+                witness.get_poly_data(poly_type, &self.config)
+                    .ok_or_else(|| format!("Missing data for {:?}", poly_type))?
+            } else {
+                zero_row.clone()
+            };
+
+            self.rows_by_type[poly_type].push(data);
+        }
+
+        self.constraint_types.push(witness.constraint_type());
+        Ok(())
+    }
+
+    /// Generic zero padding from one variable count to another
+    /// Fills remaining positions with zeros to maintain true jaggedness
+    pub fn pad_with_zeros(data: &[Fq], from_vars: usize, to_vars: usize) -> Vec<Fq> {
+        assert_eq!(data.len(), 1 << from_vars,
+            "Input must have {} elements for {}-var MLE", 1 << from_vars, from_vars);
+        assert!(to_vars >= from_vars, "Cannot pad from {} vars to {} vars", from_vars, to_vars);
+
+        let mut result = Vec::with_capacity(1 << to_vars);
+        result.extend_from_slice(data);
+        result.resize(1 << to_vars, Fq::zero());
+        result
+    }
+
+    /// Generic replication padding from one variable count to another
+    /// Replicates values across new dimensions (used for g(x) style padding)
+    pub fn pad_with_replication(data: &[Fq], from_vars: usize, to_vars: usize) -> Vec<Fq> {
+        assert_eq!(data.len(), 1 << from_vars,
+            "Input must have {} elements for {}-var MLE", 1 << from_vars, from_vars);
+        assert!(to_vars >= from_vars, "Cannot pad from {} vars to {} vars", from_vars, to_vars);
+
+        let mut result = Vec::with_capacity(1 << to_vars);
+        let repeat_factor = 1 << (to_vars - from_vars);
+
+        for &val in data {
+            for _ in 0..repeat_factor {
+                result.push(val);
+            }
+        }
+
+        assert_eq!(result.len(), 1 << to_vars);
+        result
+    }
+
+    /// Special padding for packed GT exp layout
+    /// Data layout: index = x * 128 + s (s in low 7 bits, x in high 4 bits)
+    /// g(x) doesn't depend on s, so we replicate each g[x] across all 128 s values
+    pub fn pad_packed_gt_exp(data: &[Fq], element_vars: usize, step_vars: usize) -> Vec<Fq> {
+        assert_eq!(data.len(), 1 << element_vars,
+            "Input must have {} elements for {}-var MLE", 1 << element_vars, element_vars);
+
+        let total_vars = element_vars + step_vars;
+        let mut result = vec![Fq::zero(); 1 << total_vars];
+        let step_count = 1 << step_vars;
+
+        // For each x value, replicate g[x] across all s values
+        // index = x * step_count + s
+        for x in 0..data.len() {
+            let g_x = data[x];
+            for s in 0..step_count {
+                result[x * step_count + s] = g_x;
+            }
+        }
+
+        result
+    }
+
     /// Pad a 4-variable MLE to 8 variables by repeating the values.
     /// For a 4-var MLE f(x0,x1,x2,x3), the 8-var version is f(x0,x1,x2,x3,0,0,0,0).
     /// This means we repeat each 4-var evaluation 2^4 = 16 times.
     pub fn pad_4var_to_8var(mle_4var: &[Fq]) -> Vec<Fq> {
-        assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
-        let mut mle_8var = Vec::with_capacity(256);
-
-        // For each 4-var evaluation, repeat it 16 times
-        // This corresponds to all possible values of the last 4 variables
-        for &val in mle_4var {
-            for _ in 0..16 {
-                mle_8var.push(val);
-            }
-        }
-
-        assert_eq!(mle_8var.len(), 256);
-        mle_8var
+        Self::pad_with_replication(mle_4var, 4, 8)
     }
 
     /// Pad a 4-variable MLE to 8 variables using zero padding for true jaggedness.
     pub fn pad_4var_to_8var_zero_padding(mle_4var: &[Fq]) -> Vec<Fq> {
-        assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
-        let mut mle_8var = Vec::with_capacity(256);
-
-        // Copy original 16 values at the beginning
-        mle_8var.extend_from_slice(mle_4var);
-
-        // Pad with zeros for the remaining positions
-        // This creates true jaggedness - non-zero values only at the start
-        mle_8var.resize(256, Fq::zero());
-
-        assert_eq!(mle_8var.len(), 256);
-        mle_8var
+        Self::pad_with_zeros(mle_4var, 4, 8)
     }
 
     /// Pad a 4-variable MLE to 11 variables using zero padding for true jaggedness.
     /// For GT mul: index = s * 16 + x (x in low bits).
     pub fn pad_4var_to_11var_zero_padding(mle_4var: &[Fq]) -> Vec<Fq> {
-        assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
-        let mut mle_11var = Vec::with_capacity(2048);
-
-        // Copy original 16 values at the beginning
-        mle_11var.extend_from_slice(mle_4var);
-
-        // Pad with zeros for the remaining positions
-        mle_11var.resize(2048, Fq::zero());
-
-        assert_eq!(mle_11var.len(), 2048);
-        mle_11var
+        Self::pad_with_zeros(mle_4var, 4, 11)
     }
 
     /// Pad a 4-variable MLE to 11 variables for packed GT exp layout.
     /// Data layout: index = x * 128 + s (s in low 7 bits, x in high 4 bits).
     /// g(x) doesn't depend on s, so we replicate each g[x] across all 128 s values.
     pub fn pad_4var_to_11var_replicated(mle_4var: &[Fq]) -> Vec<Fq> {
-        assert_eq!(mle_4var.len(), 16, "Input must be a 4-variable MLE");
-        let mut mle_11var = vec![Fq::zero(); 2048];
-
-        // For each x value (0-15), replicate g[x] across all s values (0-127)
-        // index = x * 128 + s
-        for x in 0..16 {
-            let g_x = mle_4var[x];
-            for s in 0..128 {
-                mle_11var[x * 128 + s] = g_x;
-            }
-        }
-
-        mle_11var
+        Self::pad_packed_gt_exp(mle_4var, 4, 7) // 4 element vars, 7 step vars
     }
 
     /// Pad an 8-variable MLE to 11 variables using zero padding.
     /// For G1 scalar mul: 8 vars → 11 vars.
     pub fn pad_8var_to_11var_zero_padding(mle_8var: &[Fq]) -> Vec<Fq> {
-        assert_eq!(mle_8var.len(), 256, "Input must be an 8-variable MLE");
-        let mut mle_11var = Vec::with_capacity(2048);
-
-        // Copy original 256 values at the beginning
-        mle_11var.extend_from_slice(mle_8var);
-
-        // Pad with zeros for the remaining positions
-        mle_11var.resize(2048, Fq::zero());
-
-        assert_eq!(mle_11var.len(), 2048);
-        mle_11var
+        Self::pad_with_zeros(mle_8var, 8, 11)
     }
 
     /// Add a packed GT exponentiation witness.
@@ -386,8 +473,8 @@ impl DoryMatrixBuilder {
         witness: &super::stage1::packed_gt_exp::PackedGtExpWitness,
     ) {
         assert_eq!(
-            self.num_constraint_vars, 11,
-            "Packed GT exp requires 11 constraint variables"
+            self.num_constraint_vars, CONFIG.packed_vars,
+            "Packed GT exp requires {} constraint variables", CONFIG.packed_vars
         );
 
         let row_size = 1 << self.num_constraint_vars; // 2048
@@ -403,22 +490,22 @@ impl DoryMatrixBuilder {
         assert_eq!(witness.base3_packed.len(), row_size);
 
         // Add only the 2 committed GT exp polynomials (base/digits/rho_next are not committed)
-        self.rows_by_type[PolyType::RhoPrev as usize].push(witness.rho_packed.clone());
-        self.rows_by_type[PolyType::Quotient as usize].push(witness.quotient_packed.clone());
+        self.rows_by_type[PolyType::RhoPrev].push(witness.rho_packed.clone());
+        self.rows_by_type[PolyType::Quotient].push(witness.quotient_packed.clone());
 
         // Add empty rows for GT mul and G1 types to maintain consistent indexing
         let zero_row = vec![Fq::zero(); row_size];
-        self.rows_by_type[PolyType::MulLhs as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::MulRhs as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::MulResult as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::MulQuotient as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(zero_row);
+        self.rows_by_type[PolyType::MulLhs].push(zero_row.clone());
+        self.rows_by_type[PolyType::MulRhs].push(zero_row.clone());
+        self.rows_by_type[PolyType::MulResult].push(zero_row.clone());
+        self.rows_by_type[PolyType::MulQuotient].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXA].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYA].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXT].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYT].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXANext].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYANext].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulIndicator].push(zero_row);
 
         // Store ONE constraint entry for this packed GT exp
         self.constraint_types.push(ConstraintType::PackedGtExp);
@@ -458,7 +545,7 @@ impl DoryMatrixBuilder {
         );
 
         // Handle padding from 4-var to target vars
-        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 11 {
+        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == CONFIG.packed_vars {
             // Pad 4-variable MLEs to 11 variables using zero padding
             (
                 Self::pad_4var_to_11var_zero_padding(&lhs_mle_4var),
@@ -466,7 +553,7 @@ impl DoryMatrixBuilder {
                 Self::pad_4var_to_11var_zero_padding(&result_mle_4var),
                 Self::pad_4var_to_11var_zero_padding(&quotient_mle_4var),
             )
-        } else if self.num_constraint_vars == 8 {
+        } else if self.num_constraint_vars == CONFIG.g1_vars {
             // Pad 4-variable MLEs to 8 variables using zero padding
             (
                 Self::pad_4var_to_8var_zero_padding(&lhs_mle_4var),
@@ -474,7 +561,7 @@ impl DoryMatrixBuilder {
                 Self::pad_4var_to_8var_zero_padding(&result_mle_4var),
                 Self::pad_4var_to_8var_zero_padding(&quotient_mle_4var),
             )
-        } else if self.num_constraint_vars == 4 {
+        } else if self.num_constraint_vars == CONFIG.element_vars {
             // Use MLEs as-is
             (
                 lhs_mle_4var,
@@ -495,22 +582,22 @@ impl DoryMatrixBuilder {
         assert_eq!(quotient_mle.len(), 1 << self.num_constraint_vars);
 
         // Add rows for GT mul polynomials (keeping GT exp rows empty)
-        self.rows_by_type[PolyType::MulLhs as usize].push(lhs_mle);
-        self.rows_by_type[PolyType::MulRhs as usize].push(rhs_mle);
-        self.rows_by_type[PolyType::MulResult as usize].push(result_mle);
-        self.rows_by_type[PolyType::MulQuotient as usize].push(quotient_mle);
+        self.rows_by_type[PolyType::MulLhs].push(lhs_mle);
+        self.rows_by_type[PolyType::MulRhs].push(rhs_mle);
+        self.rows_by_type[PolyType::MulResult].push(result_mle);
+        self.rows_by_type[PolyType::MulQuotient].push(quotient_mle);
 
         // Add empty rows for GT exp and G1 types to maintain consistent indexing
         let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
-        self.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::Quotient as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(zero_row);
+        self.rows_by_type[PolyType::RhoPrev].push(zero_row.clone());
+        self.rows_by_type[PolyType::Quotient].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXA].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYA].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXT].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYT].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXANext].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYANext].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulIndicator].push(zero_row);
 
         // Store constraint type
         self.constraint_types.push(ConstraintType::GtMul);
@@ -544,14 +631,14 @@ impl DoryMatrixBuilder {
         // Each MLE should have 256 evaluations for 8 variables
         assert_eq!(
             witness.x_a_mles[0].len(),
-            1 << 8,
+            CONFIG.g1_size,
             "Expected 256 evaluations for 8 variables"
         );
-        assert_eq!(witness.y_a_mles[0].len(), 1 << 8);
-        assert_eq!(witness.x_t_mles[0].len(), 1 << 8);
-        assert_eq!(witness.y_t_mles[0].len(), 1 << 8);
-        assert_eq!(witness.x_a_next_mles[0].len(), 1 << 8);
-        assert_eq!(witness.y_a_next_mles[0].len(), 1 << 8);
+        assert_eq!(witness.y_a_mles[0].len(), CONFIG.g1_size);
+        assert_eq!(witness.x_t_mles[0].len(), CONFIG.g1_size);
+        assert_eq!(witness.y_t_mles[0].len(), CONFIG.g1_size);
+        assert_eq!(witness.x_a_next_mles[0].len(), CONFIG.g1_size);
+        assert_eq!(witness.y_a_next_mles[0].len(), CONFIG.g1_size);
 
         // Compute infinity indicator from T coordinates
         use ark_ff::Zero;
@@ -566,10 +653,10 @@ impl DoryMatrixBuilder {
                 }
             })
             .collect();
-        assert_eq!(t_is_infinity.len(), 1 << 8);
+        assert_eq!(t_is_infinity.len(), CONFIG.g1_size);
 
         // Pad 8-var MLEs to target constraint vars if needed
-        let (x_a, y_a, x_t, y_t, x_a_next, y_a_next, indicator) = if self.num_constraint_vars == 11
+        let (x_a, y_a, x_t, y_t, x_a_next, y_a_next, indicator) = if self.num_constraint_vars == CONFIG.packed_vars
         {
             (
                 Self::pad_8var_to_11var_zero_padding(&witness.x_a_mles[0]),
@@ -580,7 +667,7 @@ impl DoryMatrixBuilder {
                 Self::pad_8var_to_11var_zero_padding(&witness.y_a_next_mles[0]),
                 Self::pad_8var_to_11var_zero_padding(&t_is_infinity),
             )
-        } else if self.num_constraint_vars == 8 {
+        } else if self.num_constraint_vars == CONFIG.g1_vars {
             (
                 witness.x_a_mles[0].clone(),
                 witness.y_a_mles[0].clone(),
@@ -598,22 +685,22 @@ impl DoryMatrixBuilder {
         };
 
         // Add the entire MLEs (one per variable type for this scalar multiplication)
-        self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(x_a);
-        self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(y_a);
-        self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(x_t);
-        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(y_t);
-        self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(x_a_next);
-        self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(y_a_next);
-        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(indicator);
+        self.rows_by_type[PolyType::G1ScalarMulXA].push(x_a);
+        self.rows_by_type[PolyType::G1ScalarMulYA].push(y_a);
+        self.rows_by_type[PolyType::G1ScalarMulXT].push(x_t);
+        self.rows_by_type[PolyType::G1ScalarMulYT].push(y_t);
+        self.rows_by_type[PolyType::G1ScalarMulXANext].push(x_a_next);
+        self.rows_by_type[PolyType::G1ScalarMulYANext].push(y_a_next);
+        self.rows_by_type[PolyType::G1ScalarMulIndicator].push(indicator);
 
         // Add empty rows for GT types to maintain consistent indexing
         let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
-        self.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::Quotient as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::MulLhs as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::MulRhs as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::MulResult as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::MulQuotient as usize].push(zero_row);
+        self.rows_by_type[PolyType::RhoPrev].push(zero_row.clone());
+        self.rows_by_type[PolyType::Quotient].push(zero_row.clone());
+        self.rows_by_type[PolyType::MulLhs].push(zero_row.clone());
+        self.rows_by_type[PolyType::MulRhs].push(zero_row.clone());
+        self.rows_by_type[PolyType::MulResult].push(zero_row.clone());
+        self.rows_by_type[PolyType::MulQuotient].push(zero_row);
 
         // Store one constraint entry for this G1 scalar multiplication
         // The constraint evaluation will handle accessing different indices within the MLEs
@@ -644,21 +731,21 @@ impl DoryMatrixBuilder {
         assert_eq!(result_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
         assert_eq!(quotient_mle_4var.len(), 16, "GT mul witness should have 4-variable MLEs");
 
-        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == 11 {
+        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if self.num_constraint_vars == CONFIG.packed_vars {
             (
                 Self::pad_4var_to_11var_zero_padding(&lhs_mle_4var),
                 Self::pad_4var_to_11var_zero_padding(&rhs_mle_4var),
                 Self::pad_4var_to_11var_zero_padding(&result_mle_4var),
                 Self::pad_4var_to_11var_zero_padding(&quotient_mle_4var),
             )
-        } else if self.num_constraint_vars == 8 {
+        } else if self.num_constraint_vars == CONFIG.g1_vars {
             (
                 Self::pad_4var_to_8var_zero_padding(&lhs_mle_4var),
                 Self::pad_4var_to_8var_zero_padding(&rhs_mle_4var),
                 Self::pad_4var_to_8var_zero_padding(&result_mle_4var),
                 Self::pad_4var_to_8var_zero_padding(&quotient_mle_4var),
             )
-        } else if self.num_constraint_vars == 4 {
+        } else if self.num_constraint_vars == CONFIG.element_vars {
             (lhs_mle_4var, rhs_mle_4var, result_mle_4var, quotient_mle_4var)
         } else {
             panic!(
@@ -672,21 +759,21 @@ impl DoryMatrixBuilder {
         assert_eq!(result_mle.len(), 1 << self.num_constraint_vars);
         assert_eq!(quotient_mle.len(), 1 << self.num_constraint_vars);
 
-        self.rows_by_type[PolyType::MulLhs as usize].push(lhs_mle);
-        self.rows_by_type[PolyType::MulRhs as usize].push(rhs_mle);
-        self.rows_by_type[PolyType::MulResult as usize].push(result_mle);
-        self.rows_by_type[PolyType::MulQuotient as usize].push(quotient_mle);
+        self.rows_by_type[PolyType::MulLhs].push(lhs_mle);
+        self.rows_by_type[PolyType::MulRhs].push(rhs_mle);
+        self.rows_by_type[PolyType::MulResult].push(result_mle);
+        self.rows_by_type[PolyType::MulQuotient].push(quotient_mle);
 
         let zero_row = vec![Fq::zero(); 1 << self.num_constraint_vars];
-        self.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::Quotient as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXA as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYA as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXT as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYT as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulXANext as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulYANext as usize].push(zero_row.clone());
-        self.rows_by_type[PolyType::G1ScalarMulIndicator as usize].push(zero_row);
+        self.rows_by_type[PolyType::RhoPrev].push(zero_row.clone());
+        self.rows_by_type[PolyType::Quotient].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXA].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYA].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXT].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYT].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulXANext].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulYANext].push(zero_row.clone());
+        self.rows_by_type[PolyType::G1ScalarMulIndicator].push(zero_row);
 
         self.constraint_types.push(ConstraintType::GtMul);
     }
@@ -797,12 +884,12 @@ impl DoryMatrixBuilder {
     }
 
     pub fn build(self) -> (DoryMultilinearMatrix, Vec<MatrixConstraint>) {
-        let num_constraints = self.rows_by_type[0].len();
+        let num_constraints = self.rows_by_type[PolyType::RhoPrev].len();
         assert!(num_constraints > 0, "No constraints added");
 
         // Debug: print constraint counts for each type
         for poly_type in PolyType::all() {
-            let count = self.rows_by_type[poly_type as usize].len();
+            let count = self.rows_by_type[poly_type].len();
             if count != num_constraints {
                 eprintln!(
                     "Row type {:?} has {} constraints, expected {}",
@@ -813,7 +900,7 @@ impl DoryMatrixBuilder {
 
         for poly_type in PolyType::all() {
             assert_eq!(
-                self.rows_by_type[poly_type as usize].len(),
+                self.rows_by_type[poly_type].len(),
                 num_constraints,
                 "Row type {:?} has wrong number of constraints",
                 poly_type
@@ -864,7 +951,7 @@ impl DoryMatrixBuilder {
             let mut offset = 0;
 
             for poly_type in PolyType::all() {
-                let rows = &self.rows_by_type[poly_type as usize];
+                let rows = &self.rows_by_type[poly_type];
 
                 // Copy actual rows
                 for row in rows {
@@ -929,6 +1016,162 @@ pub struct MatrixConstraint {
     pub constraint_type: ConstraintType,
 }
 
+/// Trait for any witness that can be added to the constraint system
+pub trait ConstraintWitness {
+    /// Which polynomial types this witness provides data for
+    fn active_poly_types(&self) -> &'static [PolyType];
+
+    /// Get polynomial data for a specific type
+    fn get_poly_data(&self, poly_type: PolyType, config: &ConstraintSystemConfig) -> Option<Vec<Fq>>;
+
+    /// The constraint type this witness represents
+    fn constraint_type(&self) -> ConstraintType;
+
+    /// Number of constraint variables needed
+    fn required_constraint_vars(&self) -> usize;
+}
+
+/// ConstraintWitness implementation for PackedGtExpWitness
+impl ConstraintWitness for super::stage1::packed_gt_exp::PackedGtExpWitness {
+    fn active_poly_types(&self) -> &'static [PolyType] {
+        &[PolyType::RhoPrev, PolyType::Quotient]
+    }
+
+    fn get_poly_data(&self, poly_type: PolyType, _config: &ConstraintSystemConfig) -> Option<Vec<Fq>> {
+        match poly_type {
+            PolyType::RhoPrev => Some(self.rho_packed.clone()),
+            PolyType::Quotient => Some(self.quotient_packed.clone()),
+            _ => None,
+        }
+    }
+
+    fn constraint_type(&self) -> ConstraintType {
+        ConstraintType::PackedGtExp
+    }
+
+    fn required_constraint_vars(&self) -> usize {
+        CONFIG.packed_vars // Packed GT exp always uses packed (11) variables
+    }
+}
+
+/// ConstraintWitness implementation for JoltGtMulWitness
+impl ConstraintWitness for crate::poly::commitment::dory::recursion::JoltGtMulWitness {
+    fn active_poly_types(&self) -> &'static [PolyType] {
+        &[PolyType::MulLhs, PolyType::MulRhs, PolyType::MulResult, PolyType::MulQuotient]
+    }
+
+    fn get_poly_data(&self, poly_type: PolyType, _config: &ConstraintSystemConfig) -> Option<Vec<Fq>> {
+        let num_vars = self.required_constraint_vars();
+
+        // Get 4-var MLEs
+        let lhs_mle_4var = fq12_to_multilinear_evals(&self.lhs);
+        let rhs_mle_4var = fq12_to_multilinear_evals(&self.rhs);
+        let result_mle_4var = fq12_to_multilinear_evals(&self.result);
+        let quotient_mle_4var = &self.quotient_mle;
+
+        // Pad to target size based on num_constraint_vars
+        let (lhs_mle, rhs_mle, result_mle, quotient_mle) = if num_vars == CONFIG.packed_vars {
+            (
+                DoryMatrixBuilder::pad_4var_to_11var_zero_padding(&lhs_mle_4var),
+                DoryMatrixBuilder::pad_4var_to_11var_zero_padding(&rhs_mle_4var),
+                DoryMatrixBuilder::pad_4var_to_11var_zero_padding(&result_mle_4var),
+                DoryMatrixBuilder::pad_4var_to_11var_zero_padding(quotient_mle_4var),
+            )
+        } else if num_vars == 8 {
+            (
+                DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&lhs_mle_4var),
+                DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&rhs_mle_4var),
+                DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&result_mle_4var),
+                DoryMatrixBuilder::pad_4var_to_8var_zero_padding(quotient_mle_4var),
+            )
+        } else {
+            (lhs_mle_4var, rhs_mle_4var, result_mle_4var, quotient_mle_4var.clone())
+        };
+
+        match poly_type {
+            PolyType::MulLhs => Some(lhs_mle),
+            PolyType::MulRhs => Some(rhs_mle),
+            PolyType::MulResult => Some(result_mle),
+            PolyType::MulQuotient => Some(quotient_mle),
+            _ => None,
+        }
+    }
+
+    fn constraint_type(&self) -> ConstraintType {
+        ConstraintType::GtMul
+    }
+
+    fn required_constraint_vars(&self) -> usize {
+        CONFIG.packed_vars // TODO: Make this configurable
+    }
+}
+
+/// ConstraintWitness implementation for JoltG1ScalarMulWitness
+impl ConstraintWitness for crate::poly::commitment::dory::recursion::JoltG1ScalarMulWitness {
+    fn active_poly_types(&self) -> &'static [PolyType] {
+        &[
+            PolyType::G1ScalarMulXA,
+            PolyType::G1ScalarMulYA,
+            PolyType::G1ScalarMulXT,
+            PolyType::G1ScalarMulYT,
+            PolyType::G1ScalarMulXANext,
+            PolyType::G1ScalarMulYANext,
+            PolyType::G1ScalarMulIndicator,
+        ]
+    }
+
+    fn get_poly_data(&self, poly_type: PolyType, _config: &ConstraintSystemConfig) -> Option<Vec<Fq>> {
+        let num_vars = self.required_constraint_vars();
+
+        // The witness MLEs are already 8-var
+        assert_eq!(self.x_a_mles.len(), 1, "Expected single MLE");
+        assert_eq!(self.x_a_mles[0].len(), CONFIG.g1_size, "Expected 256 evaluations for 8 variables");
+
+        // Pad from 8-var to target vars if needed
+        let pad_if_needed = |mle: &[Fq]| -> Vec<Fq> {
+            if num_vars == CONFIG.packed_vars {
+                DoryMatrixBuilder::pad_8var_to_11var_zero_padding(mle)
+            } else {
+                mle.to_vec()
+            }
+        };
+
+        match poly_type {
+            PolyType::G1ScalarMulXA => Some(pad_if_needed(&self.x_a_mles[0])),
+            PolyType::G1ScalarMulYA => Some(pad_if_needed(&self.y_a_mles[0])),
+            PolyType::G1ScalarMulXT => Some(pad_if_needed(&self.x_t_mles[0])),
+            PolyType::G1ScalarMulYT => Some(pad_if_needed(&self.y_t_mles[0])),
+            PolyType::G1ScalarMulXANext => Some(pad_if_needed(&self.x_a_next_mles[0])),
+            PolyType::G1ScalarMulYANext => Some(pad_if_needed(&self.y_a_next_mles[0])),
+            PolyType::G1ScalarMulIndicator => {
+                // Compute T_i = O indicator (1 if point at infinity, 0 otherwise)
+                let n = self.bits.len();
+                let t_is_infinity: Vec<Fq> = (0..(CONFIG.g1_size))
+                    .map(|i| {
+                        if i < n && self.x_t_mles[0][i] == Fq::zero() && self.y_t_mles[0][i] == Fq::zero() {
+                            Fq::one()
+                        } else {
+                            Fq::zero()
+                        }
+                    })
+                    .collect();
+                Some(pad_if_needed(&t_is_infinity))
+            },
+            _ => None,
+        }
+    }
+
+    fn constraint_type(&self) -> ConstraintType {
+        ConstraintType::G1ScalarMul {
+            base_point: (self.point_base.x, self.point_base.y),
+        }
+    }
+
+    fn required_constraint_vars(&self) -> usize {
+        CONFIG.packed_vars // TODO: Make this configurable
+    }
+}
+
 /// Constraint system using a giant multilinear matrix for all witness polynomials
 #[derive(Clone)]
 pub struct ConstraintSystem {
@@ -957,7 +1200,7 @@ impl ConstraintSystem {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // For now, create a simple matrix with padding
         let _num_constraints = constraint_types.len();
-        let num_constraint_vars = 11; // Using 11 for packed GT exp base-4
+        let num_constraint_vars = CONFIG.packed_vars; // Using packed vars for packed GT exp base-4
 
         let mut builder = DoryMatrixBuilder::new(num_constraint_vars);
 
@@ -969,11 +1212,11 @@ impl ConstraintSystem {
             match constraint_type {
                 ConstraintType::PackedGtExp => {
                     // Add packed GT exp rows (2 committed polynomials - base/digits/rho_next are not committed)
-                    builder.rows_by_type[PolyType::RhoPrev as usize].push(zero_row.clone());
-                    builder.rows_by_type[PolyType::Quotient as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::RhoPrev].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::Quotient].push(zero_row.clone());
 
                     // Add empty rows for other types (GT mul + G1)
-                    for poly_type in 2..PolyType::NUM_TYPES {
+                    for poly_type in PolyType::iter().skip(2) {
                         builder.rows_by_type[poly_type].push(zero_row.clone());
                     }
 
@@ -981,18 +1224,17 @@ impl ConstraintSystem {
                 }
                 ConstraintType::GtMul => {
                     // Add empty rows for packed GT exp types
-                    for poly_type in 0..2 {
-                        builder.rows_by_type[poly_type].push(zero_row.clone());
-                    }
+                    builder.rows_by_type[PolyType::RhoPrev].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::Quotient].push(zero_row.clone());
 
                     // Add GT mul rows
-                    builder.rows_by_type[PolyType::MulLhs as usize].push(zero_row.clone());
-                    builder.rows_by_type[PolyType::MulRhs as usize].push(zero_row.clone());
-                    builder.rows_by_type[PolyType::MulResult as usize].push(zero_row.clone());
-                    builder.rows_by_type[PolyType::MulQuotient as usize].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::MulLhs].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::MulRhs].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::MulResult].push(zero_row.clone());
+                    builder.rows_by_type[PolyType::MulQuotient].push(zero_row.clone());
 
                     // Add empty rows for G1 types
-                    for poly_type in (PolyType::G1ScalarMulXA as usize)..PolyType::NUM_TYPES {
+                    for poly_type in PolyType::iter().skip(PolyType::G1ScalarMulXA as usize) {
                         builder.rows_by_type[poly_type].push(zero_row.clone());
                     }
 
@@ -1000,12 +1242,12 @@ impl ConstraintSystem {
                 }
                 ConstraintType::G1ScalarMul { .. } => {
                     // Add empty rows for GT types (packed GT exp + GT mul)
-                    for poly_type in 0..(PolyType::G1ScalarMulXA as usize) {
+                    for poly_type in PolyType::iter().take(PolyType::G1ScalarMulXA as usize) {
                         builder.rows_by_type[poly_type].push(zero_row.clone());
                     }
 
                     // Add G1 scalar mul rows
-                    for poly_type in (PolyType::G1ScalarMulXA as usize)..PolyType::NUM_TYPES {
+                    for poly_type in PolyType::iter().skip(PolyType::G1ScalarMulXA as usize) {
                         builder.rows_by_type[poly_type].push(zero_row.clone());
                     }
 
@@ -1097,10 +1339,10 @@ impl ConstraintSystem {
         let g_mle_4var = get_g_mle();
 
         // Pad g(x) to match constraint vars
-        let g_poly = if matrix.num_constraint_vars == 11 {
+        let g_poly = if matrix.num_constraint_vars == CONFIG.packed_vars {
             let padded_g = DoryMatrixBuilder::pad_4var_to_11var_zero_padding(&g_mle_4var);
             DensePolynomial::new(padded_g)
-        } else if matrix.num_constraint_vars == 8 {
+        } else if matrix.num_constraint_vars == CONFIG.g1_vars {
             let padded_g = DoryMatrixBuilder::pad_4var_to_8var_zero_padding(&g_mle_4var);
             DensePolynomial::new(padded_g)
         } else {
@@ -1258,8 +1500,8 @@ impl ConstraintSystem {
         let idx = constraint.constraint_index;
         match constraint.constraint_type {
             ConstraintType::PackedGtExp => {
-                let g_eval = if x.len() == 11 {
-                    let x_elem_reversed: Vec<Fq> = x[7..11].iter().rev().copied().collect();
+                let g_eval = if x.len() == CONFIG.packed_vars {
+                    let x_elem_reversed: Vec<Fq> = x[CONFIG.step_vars..CONFIG.packed_vars].iter().rev().copied().collect();
                     let g_4var = get_g_mle();
                     DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
                 } else {
@@ -1465,31 +1707,69 @@ impl ConstraintSystem {
         result
     }
 
+    /// Helper to evaluate g(x) based on constraint type and variable count
+    fn evaluate_g_poly(&self, x: &[Fq], constraint_type: &ConstraintType) -> Fq {
+        match constraint_type {
+            ConstraintType::PackedGtExp if x.len() == CONFIG.packed_vars => {
+                // For packed GT exp, g(x) only depends on element vars (high 4 bits)
+                let x_elem_reversed: Vec<Fq> = x[CONFIG.step_vars..CONFIG.packed_vars]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .collect();
+                let g_4var = get_g_mle();
+                DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
+            }
+            ConstraintType::GtMul if x.len() == CONFIG.packed_vars => {
+                // For GT mul with zero padding, element vars are in low 4 bits
+                let x_elem_reversed: Vec<Fq> = x[0..CONFIG.element_vars]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .collect();
+                let g_4var = get_g_mle();
+                DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
+            }
+            _ => {
+                let x_reversed: Vec<Fq> = x.iter().rev().copied().collect();
+                self.g_poly.evaluate(&x_reversed)
+            }
+        }
+    }
+
+    /// Helper to get polynomial evaluations for a constraint
+    fn get_poly_evaluations(
+        &self,
+        constraint_idx: usize,
+        x: &[Fq],
+        poly_types: &[PolyType],
+    ) -> Vec<Fq> {
+        poly_types
+            .iter()
+            .map(|&pt| {
+                let row = self.matrix.row_index(pt, constraint_idx);
+                self.matrix.evaluate_row(row, x)
+            })
+            .collect()
+    }
+
     /// Evaluate a single constraint C_i(x) using the matrix layout.
     fn evaluate_constraint(&self, constraint: &MatrixConstraint, x: &[Fq]) -> Fq {
         let idx = constraint.constraint_index;
 
         match constraint.constraint_type {
             ConstraintType::PackedGtExp => {
-                // For packed GT exp, g(x) only depends on element variables (high 4 bits)
-                // Data layout: index = x_elem * 128 + s (s in low 7 bits, x_elem in high 4 bits)
-                // So for an 11-var point, element vars are x[7..11]
-                let g_eval = if x.len() == 11 {
-                    // Extract element variables (high 4 bits) and evaluate 4-var g
-                    // Reverse for big-endian convention used by DensePolynomial::evaluate
-                    let x_elem_reversed: Vec<Fq> = x[7..11].iter().rev().copied().collect();
-                    let g_4var = get_g_mle();
-                    DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
-                } else {
-                    let x_reversed: Vec<Fq> = x.iter().rev().copied().collect();
-                    self.g_poly.evaluate(&x_reversed)
-                };
+                // Evaluate g(x) using helper
+                let g_eval = self.evaluate_g_poly(x, &constraint.constraint_type);
 
-                let rho_prev_row = self.matrix.row_index(PolyType::RhoPrev, idx);
-                let quotient_row = self.matrix.row_index(PolyType::Quotient, idx);
-
-                let rho_prev = self.matrix.evaluate_row(rho_prev_row, x);
-                let quotient = self.matrix.evaluate_row(quotient_row, x);
+                // Get polynomial evaluations
+                let evals = self.get_poly_evaluations(
+                    idx,
+                    x,
+                    &[PolyType::RhoPrev, PolyType::Quotient],
+                );
+                let rho_prev = evals[0];
+                let quotient = evals[1];
 
                 // Compute rho_next on the fly from packed witness
                 // During constraint evaluation, we use the precomputed rho_next_packed
@@ -1527,51 +1807,32 @@ impl ConstraintSystem {
                 rho_curr - rho4 * base_power - quotient * g_eval
             }
             ConstraintType::GtMul => {
-                // GT mul uses 4-var polynomials with ZERO PADDING to 11-var
-                // Zero padding: data in low indices 0-15, zeros in 16-2047
-                // So element variables are in the LOW 4 bits: x[0..4]
-                // Reverse for big-endian convention used by DensePolynomial::evaluate
-                let g_eval = if x.len() == 11 {
-                    let x_elem_reversed: Vec<Fq> = x[0..4].iter().rev().copied().collect();
-                    let g_4var = get_g_mle();
-                    DensePolynomial::new(g_4var).evaluate(&x_elem_reversed)
-                } else {
-                    let x_reversed: Vec<Fq> = x.iter().rev().copied().collect();
-                    self.g_poly.evaluate(&x_reversed)
-                };
+                let g_eval = self.evaluate_g_poly(x, &constraint.constraint_type);
 
-                let lhs_row = self.matrix.row_index(PolyType::MulLhs, idx);
-                let rhs_row = self.matrix.row_index(PolyType::MulRhs, idx);
-                let result_row = self.matrix.row_index(PolyType::MulResult, idx);
-                let quotient_row = self.matrix.row_index(PolyType::MulQuotient, idx);
-
-                let lhs_eval = self.matrix.evaluate_row(lhs_row, x);
-                let rhs_eval = self.matrix.evaluate_row(rhs_row, x);
-                let result_eval = self.matrix.evaluate_row(result_row, x);
-                let quotient_eval = self.matrix.evaluate_row(quotient_row, x);
+                // Get all GT mul polynomial evaluations at once
+                let evals = self.get_poly_evaluations(
+                    idx,
+                    x,
+                    &[PolyType::MulLhs, PolyType::MulRhs, PolyType::MulResult, PolyType::MulQuotient],
+                );
 
                 // GT mul constraint: lhs * rhs - result - quotient * g
-                lhs_eval * rhs_eval - result_eval - quotient_eval * g_eval
+                evals[0] * evals[1] - evals[2] - evals[3] * g_eval
             }
             ConstraintType::G1ScalarMul { base_point } => {
-                // G1 scalar multiplication constraint evaluation
-                // We evaluate all 4 constraints (C1-C4) at the given point x
+                // Keep existing G1 logic mostly unchanged but use helper for poly evaluations
+                let poly_types = [
+                    PolyType::G1ScalarMulXA,
+                    PolyType::G1ScalarMulYA,
+                    PolyType::G1ScalarMulXT,
+                    PolyType::G1ScalarMulYT,
+                    PolyType::G1ScalarMulXANext,
+                    PolyType::G1ScalarMulYANext,
+                ];
+                let evals = self.get_poly_evaluations(idx, x, &poly_types);
 
-                // Get the row indices for our MLEs
-                let x_a_row = self.matrix.row_index(PolyType::G1ScalarMulXA, idx);
-                let y_a_row = self.matrix.row_index(PolyType::G1ScalarMulYA, idx);
-                let x_t_row = self.matrix.row_index(PolyType::G1ScalarMulXT, idx);
-                let y_t_row = self.matrix.row_index(PolyType::G1ScalarMulYT, idx);
-                let x_a_next_row = self.matrix.row_index(PolyType::G1ScalarMulXANext, idx);
-                let y_a_next_row = self.matrix.row_index(PolyType::G1ScalarMulYANext, idx);
-
-                // Evaluate MLEs at point x
-                let x_a = self.matrix.evaluate_row(x_a_row, x);
-                let y_a = self.matrix.evaluate_row(y_a_row, x);
-                let x_t = self.matrix.evaluate_row(x_t_row, x);
-                let y_t = self.matrix.evaluate_row(y_t_row, x);
-                let x_a_next = self.matrix.evaluate_row(x_a_next_row, x);
-                let y_a_next = self.matrix.evaluate_row(y_a_next_row, x);
+                let (x_a, y_a, x_t, y_t, x_a_next, y_a_next) =
+                    (evals[0], evals[1], evals[2], evals[3], evals[4], evals[5]);
 
                 // Extract base point coordinates
                 let (x_p, y_p) = base_point;
