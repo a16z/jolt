@@ -116,12 +116,12 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         // NOTE: This must match the R1CS builder's variable allocation order
         if let Some(ref fo_config) = config.final_output {
             if let Some(ref constraint) = fo_config.constraint {
-                // General constraint: opening_vars (unique) + challenge_vars + aux_vars
+                // General constraint: opening_vars (witness) + aux_vars (witness)
+                // Challenge vars are public inputs, not witness vars
                 let num_openings = constraint.required_openings.len();
-                let num_challenges = constraint.num_challenges;
                 let num_aux = estimate_aux_var_count(constraint);
 
-                for _ in 0..(num_openings + num_challenges + num_aux) {
+                for _ in 0..(num_openings + num_aux) {
                     W.push(F::random(rng));
                 }
             } else {

@@ -85,16 +85,23 @@ struct StageVerifyResult<F: JoltField> {
     challenges: Vec<F::Challenge>,
     /// Batched output constraint (if any instances have constraints)
     batched_constraint: Option<OutputClaimConstraint>,
+    /// Challenge values for the batched constraint (instance-specific challenges)
+    /// Layout: [instance0_challenges..., instance1_challenges..., ...]
+    /// Note: batching coefficients are NOT included here - they're derived from transcript
+    /// during BatchedSumcheck::verify and implicitly verified via R1CS constraint satisfaction.
+    constraint_challenge_values: Vec<F>,
 }
 
 impl<F: JoltField> StageVerifyResult<F> {
-    fn with_constraint(
+    fn with_constraint_and_values(
         challenges: Vec<F::Challenge>,
         constraint: Option<OutputClaimConstraint>,
+        constraint_challenge_values: Vec<F>,
     ) -> Self {
         Self {
             challenges,
             batched_constraint: constraint,
+            constraint_challenge_values,
         }
     }
 }
@@ -285,7 +292,23 @@ impl<
             None, // Stage 6 (stage 7 in 1-indexed prover)
         ];
 
-        self.verify_blindfold(&sumcheck_challenges, uniskip_challenges, &stage_constraints)?;
+        // Collect constraint challenge values per stage for explicit BlindFold verification
+        let constraint_challenge_values: [Vec<F>; 7] = [
+            Vec::new(),                                        // Stage 0
+            Vec::new(),                                        // Stage 1
+            Vec::new(),                                        // Stage 2
+            stage4_result.constraint_challenge_values.clone(), // Stage 3
+            Vec::new(),                                        // Stage 4
+            Vec::new(),                                        // Stage 5
+            Vec::new(),                                        // Stage 6
+        ];
+
+        self.verify_blindfold(
+            &sumcheck_challenges,
+            uniskip_challenges,
+            &stage_constraints,
+            &constraint_challenge_values,
+        )?;
         self.verify_stage8()?;
 
         Ok(())
@@ -437,29 +460,47 @@ impl<
             &self.opening_accumulator,
         );
 
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
+            &registers_read_write_checking,
+            &ram_val_evaluation,
+            &ram_val_final,
+        ];
+
+        // Compute batching coefficients before verify (for explicit BlindFold verification).
+        // Clone transcript, append input claims (same as verify does), derive coefficients.
+        let batching_coefficients: Vec<F> = {
+            let mut transcript_clone = self.transcript.clone();
+            for instance in &instances {
+                let input_claim = instance.input_claim(&self.opening_accumulator);
+                transcript_clone.append_scalar(&input_claim);
+            }
+            transcript_clone.challenge_vector(instances.len())
+        };
+
         let r_stage4 = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
-            vec![
-                &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_val_evaluation,
-                &ram_val_final,
-            ],
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 4")?;
 
         // Collect and batch output constraints from verifier instances
-        let instances: &[&dyn SumcheckInstanceVerifier<F, ProofTranscript>] = &[
-            &registers_read_write_checking,
-            &ram_val_evaluation,
-            &ram_val_final,
-        ];
-        let batched_constraint = batch_constraints(instances);
+        let batched_constraint = batch_constraints(&instances);
 
-        Ok(StageVerifyResult::with_constraint(
+        // Build expected constraint challenge values for explicit verification in verify_blindfold.
+        // Layout: [batching_coefficients..., instance0_challenges..., instance1_challenges..., ...]
+        // This matches the prover's FinalOutputWitness.challenge_values and OutputClaimConstraint::batch layout.
+        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        for instance in &instances {
+            let instance_challenges = instance.output_constraint_challenge_values(&r_stage4);
+            constraint_challenge_values.extend(instance_challenges);
+        }
+
+        Ok(StageVerifyResult::with_constraint_and_values(
             r_stage4,
             batched_constraint,
+            constraint_challenge_values,
         ))
     }
 
@@ -597,6 +638,7 @@ impl<
         sumcheck_challenges: &[Vec<F::Challenge>; 7],
         uniskip_challenges: [F::Challenge; 2],
         stage_constraints: &[Option<OutputClaimConstraint>; 7],
+        constraint_challenge_values: &[Vec<F>; 7],
     ) -> Result<(), anyhow::Error> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
@@ -743,6 +785,33 @@ impl<
                 return Err(anyhow::anyhow!(
                     "BlindFold initial claim mismatch at stage {i}: expected {expected:?}, got {actual:?}"
                 ));
+            }
+        }
+
+        // SECURITY: Verify constraint challenge values (gammas, eq_evals, etc.) match transcript.
+        // These are public inputs in the BlindFold R1CS that bind the sumcheck output constraints
+        // to the correct verifier-derived challenge values.
+        // Layout in real_instance.x: [challenges..., initial_claims..., batching_coeffs..., constraint_challenges...]
+        let total_batching_coeffs: usize = stage_configs
+            .iter()
+            .filter_map(|s| s.final_output.as_ref())
+            .filter(|fo| fo.constraint.is_none())
+            .map(|fo| fo.num_evaluations)
+            .sum();
+
+        let constraint_challenges_start = total_rounds + num_chains + total_batching_coeffs;
+        let mut constraint_challenge_idx = constraint_challenges_start;
+
+        for (stage_idx, expected_values) in constraint_challenge_values.iter().enumerate() {
+            for (value_idx, expected) in expected_values.iter().enumerate() {
+                let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
+                if *expected != actual {
+                    return Err(anyhow::anyhow!(
+                        "BlindFold constraint challenge mismatch at stage {stage_idx} index {value_idx}: \
+                         expected {expected:?}, got {actual:?}"
+                    ));
+                }
+                constraint_challenge_idx += 1;
             }
         }
 

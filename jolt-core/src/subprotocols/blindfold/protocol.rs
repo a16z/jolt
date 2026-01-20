@@ -149,11 +149,12 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             .enumerate()
             .filter_map(|(idx, config)| {
                 config.final_output.as_ref().map(|fo| {
+                    // num_variables counts WITNESS vars only (not public inputs)
+                    // For general constraints: opening_vars + aux_vars (challenge_vars are public)
                     let num_variables = if let Some(ref constraint) = fo.constraint {
                         let num_openings = constraint.required_openings.len();
-                        let num_challenges = constraint.num_challenges;
                         let num_aux = estimate_aux_var_count(constraint);
-                        num_openings + num_challenges + num_aux
+                        num_openings + num_aux
                     } else {
                         let n = fo.num_evaluations;
                         if n > 1 {

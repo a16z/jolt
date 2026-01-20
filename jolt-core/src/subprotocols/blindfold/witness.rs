@@ -240,14 +240,25 @@ impl<F: JoltField> BlindFoldWitness<F> {
             .map(|fo| fo.num_evaluations)
             .sum();
 
+        // Count total constraint challenge values (for general constraints)
+        let total_constraint_challenges: usize = r1cs
+            .stage_configs
+            .iter()
+            .filter_map(|s| s.final_output.as_ref())
+            .filter_map(|fo| fo.constraint.as_ref())
+            .map(|c| c.num_challenges)
+            .sum();
+
         // Public input layout:
-        // - Indices 1..=total_rounds are challenges
+        // - Indices 1..=total_rounds are sumcheck challenges
         // - Indices total_rounds+1..=total_rounds+num_chains are initial_claims
-        // - Indices after that are batching_coefficients
+        // - Indices after that are batching_coefficients (simple constraints)
+        // - Indices after that are constraint_challenge_values (general constraints)
         let challenge_start = 1;
         let initial_claims_start = total_rounds + 1;
         let batching_coeffs_start = initial_claims_start + num_chains;
-        let witness_start = batching_coeffs_start + total_batching_coeffs;
+        let constraint_challenges_start = batching_coeffs_start + total_batching_coeffs;
+        let witness_start = constraint_challenges_start + total_constraint_challenges;
 
         // Assign initial claims
         for (i, claim) in self.initial_claims.iter().enumerate() {
@@ -256,6 +267,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
         let mut challenge_idx = challenge_start;
         let mut batching_coeff_idx = batching_coeffs_start;
+        let mut constraint_challenge_idx = constraint_challenges_start;
         let mut witness_idx = witness_start;
 
         for (stage_idx, stage_witness) in self.stages.iter().enumerate() {
@@ -308,7 +320,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
                 if let Some(constraint) = &fo_config.constraint {
                     // General constraint path
-                    // R1CS allocates: opening_vars (unique) + challenge_vars + aux_vars
+                    // R1CS allocates: opening_vars (witness) + aux_vars (witness)
+                    // Challenge vars are public inputs (assigned separately)
                     let num_openings = constraint.required_openings.len();
                     let num_challenges = constraint.num_challenges;
                     let num_aux_vars = Self::estimate_aux_var_count(constraint);
@@ -325,15 +338,15 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             witness_idx += 1;
                         }
 
-                        // Assign challenge values (witness variables)
+                        // Assign challenge values (public inputs)
                         debug_assert_eq!(
                             fw.challenge_values.len(),
                             num_challenges,
                             "Challenge values count mismatch"
                         );
                         for val in &fw.challenge_values {
-                            z[witness_idx] = *val;
-                            witness_idx += 1;
+                            z[constraint_challenge_idx] = *val;
+                            constraint_challenge_idx += 1;
                         }
 
                         // Compute and assign aux vars for intermediate products
@@ -355,7 +368,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         }
                     } else {
                         // No witness provided - skip past allocated variables
-                        witness_idx += num_openings + num_challenges + num_aux_vars;
+                        witness_idx += num_openings + num_aux_vars;
+                        constraint_challenge_idx += num_challenges;
                     }
                 } else {
                     // Simple linear constraint path
