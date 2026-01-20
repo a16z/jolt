@@ -3667,6 +3667,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2-chain-advice"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "hex",
+ "jolt-core",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2-chain-advice-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sha2-chain-advice-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "sha2-chain-guest"
 version = "0.1.0"
 dependencies = [

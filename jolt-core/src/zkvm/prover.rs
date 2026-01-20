@@ -1571,6 +1571,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Serializable
 mod tests {
     use ark_bn254::Fr;
     use serial_test::serial;
+    use serde::{Deserialize, Serialize};
+    use std::sync::Once;
 
     use crate::host;
     use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
@@ -1618,6 +1620,20 @@ mod tests {
             DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
         };
         (commitment, hint)
+    }
+
+    // Local copies of the jolt-sdk wrapper types, used only to serialize advice inputs for
+    // guests whose function signatures include `jolt::TrustedAdvice<T>` / `jolt::UntrustedAdvice<T>`.
+    #[derive(Debug, Serialize, Deserialize)]
+    #[repr(transparent)]
+    struct TrustedAdvice<T> {
+        value: T,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[repr(transparent)]
+    struct UntrustedAdvice<T> {
+        value: T,
     }
 
     #[test]
@@ -2452,5 +2468,101 @@ mod tests {
             0xbb, 0x16, 0xd7,
         ];
         assert_eq!(io_device.outputs, expected_output);
+    }
+
+    #[test]
+    #[serial]
+    fn sha2_chain_advice_e2e_dory_address_major_with_advice() {
+        DoryGlobals::reset();
+        DoryGlobals::set_layout(DoryLayout::AddressMajor);
+
+        // Ensure SHA2 inline library is linked and auto-registered.
+        #[cfg(feature = "host")]
+        use jolt_inlines_sha2 as _;
+
+        let mut program = host::Program::new("sha2-chain-advice-guest");
+        // Match the sha2-chain-advice example's `#[jolt::provable(...)]` advice limits.
+        // IMPORTANT: `Program::trace` enforces these limits via `MemoryConfig`, and they also
+        // become part of the returned `JoltDevice.memory_layout`.
+        program.set_max_trusted_advice_size(32768);
+        program.set_max_untrusted_advice_size(16384);
+        let (bytecode, init_memory_state, _) = program.decode();
+
+        let input = [5u8; 32];
+        // Keep iterations small so this stays fast in CI while still exercising the sha2-chain-advice path.
+        let iters: u32 = 10;
+
+        // Encode public inputs the same way the `#[jolt::provable]` host wrapper does:
+        // append postcard-serialized args in order.
+        let mut inputs = Vec::new();
+        inputs.append(&mut postcard::to_stdvec(&input).unwrap());
+        inputs.append(&mut postcard::to_stdvec(&iters).unwrap());
+
+        // Provide deterministic advice (guest uses first 32 bytes of each).
+        let trusted_raw = vec![7u8; 16384];
+        let untrusted_raw = vec![9u8; 8192];
+
+        let trusted_advice = postcard::to_stdvec(&TrustedAdvice::<&[u8]> {
+            value: trusted_raw.as_slice(),
+        })
+        .unwrap();
+        let untrusted_advice = postcard::to_stdvec(&UntrustedAdvice::<&[u8]> {
+            value: untrusted_raw.as_slice(),
+        })
+        .unwrap();
+
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
+
+        let (trusted_commitment, trusted_hint) =
+            commit_trusted_advice_preprocessing_only(&prover_preprocessing, &trusted_advice);
+
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            &elf_contents,
+            &inputs,
+            &untrusted_advice,
+            &trusted_advice,
+            Some(trusted_commitment),
+            Some(trusted_hint),
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            Some(trusted_commitment),
+            debug_info,
+        )
+        .expect("Failed to create verifier")
+        .verify()
+        .expect("Verification failed");
+
+        // Compute expected output:
+        // sha256^iters(input) XOR trusted_raw[0..32] XOR untrusted_raw[0..32]
+        let mut expected = input;
+        for _ in 0..iters {
+            expected = jolt_inlines_sha2::Sha256::digest(&expected);
+        }
+        for i in 0..32 {
+            expected[i] ^= trusted_raw[i];
+            expected[i] ^= untrusted_raw[i];
+        }
+
+        assert_eq!(
+            io_device.outputs.as_slice(),
+            expected.as_slice(),
+            "Outputs mismatch"
+        );
     }
 }

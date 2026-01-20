@@ -50,6 +50,8 @@ members = [
     "examples/sha3-ex/guest",
     "examples/sha2-chain",
     "examples/sha2-chain/guest",
+    "examples/sha2-chain-advice",
+    "examples/sha2-chain-advice/guest",
     "examples/sha3-chain",
     "examples/sha3-chain/guest",
     "examples/multi-function",

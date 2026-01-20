@@ -1,0 +1,29 @@
+[package]
+name = "sha2-chain-advice"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sha2-chain-advice"
+path = "src/main.rs"
+
+[[bin]]
+name = "sha2-chain-advice-extract-files"
+path = "src/extract_files.rs"
+
+[[bin]]
+name = "sha2-chain-advice-prove-standalone"
+path = "src/prove_standalone.rs"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+jolt-core = { workspace = true }
+common = { path = "../../common" }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+guest = { package = "sha2-chain-advice-guest", path = "./guest" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex.workspace = true
+rand.workspace = true
