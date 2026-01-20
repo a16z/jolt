@@ -19,7 +19,7 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::{
-        config::{BytecodeCommitmentMode, OneHotConfig, ReadWriteConfig},
+        config::{BytecodeMode, OneHotConfig, ReadWriteConfig},
         instruction::{CircuitFlags, InstructionFlags},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -44,7 +44,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
-    pub bytecode_mode: BytecodeCommitmentMode,
+    pub bytecode_mode: BytecodeMode,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,

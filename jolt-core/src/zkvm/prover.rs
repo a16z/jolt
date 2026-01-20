@@ -16,7 +16,7 @@ use std::{
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::zkvm::config::{BytecodeCommitmentMode, ReadWriteConfig};
+use crate::zkvm::config::{BytecodeMode, ReadWriteConfig};
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -171,8 +171,8 @@ pub struct JoltCpuProver<
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
     pub rw_config: ReadWriteConfig,
-    /// First-class selection of legacy vs bytecode-commitment/claim-reduction mode.
-    pub bytecode_mode: BytecodeCommitmentMode,
+    /// First-class selection of full vs committed bytecode mode.
+    pub bytecode_mode: BytecodeMode,
 }
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
@@ -194,7 +194,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trusted_advice,
             trusted_advice_commitment,
             trusted_advice_hint,
-            BytecodeCommitmentMode::Legacy,
+            BytecodeMode::Full,
         )
     }
 
@@ -207,7 +207,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
-        bytecode_mode: BytecodeCommitmentMode,
+        bytecode_mode: BytecodeMode,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -359,7 +359,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trusted_advice_commitment,
             trusted_advice_hint,
             final_memory_state,
-            BytecodeCommitmentMode::Legacy,
+            BytecodeMode::Full,
         )
     }
 
@@ -372,7 +372,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
-        bytecode_mode: BytecodeCommitmentMode,
+        bytecode_mode: BytecodeMode,
     ) -> Self {
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -394,7 +394,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // If we intend to use the bytecode-commitment/claim-reduction path, we must ensure
         // `log_T >= log_K_bytecode`, i.e. `T >= K_bytecode`. Enforce by padding up-front.
         let mut padded_trace_len = padded_trace_len;
-        if bytecode_mode == BytecodeCommitmentMode::Commitment {
+        if bytecode_mode == BytecodeMode::Committed {
             let bytecode_k = preprocessing.shared.bytecode.code_size;
             if bytecode_k > preprocessing.shared.max_padded_trace_length {
                 panic!(
@@ -1169,7 +1169,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
         bytecode_read_raf_params.use_staged_val_claims =
-            self.bytecode_mode == BytecodeCommitmentMode::Commitment;
+            self.bytecode_mode == BytecodeMode::Committed;
 
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
@@ -1246,7 +1246,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Bytecode claim reduction (Phase 1 in Stage 6b): consumes Val_s(r_bc) from Stage 6a and
         // caches an intermediate claim for Stage 7.
-        if self.bytecode_mode == BytecodeCommitmentMode::Commitment {
+        if self.bytecode_mode == BytecodeMode::Committed {
             debug_assert!(
                 bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K,
                 "commitment mode requires log_T >= log_K_bytecode"

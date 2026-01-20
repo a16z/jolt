@@ -27,7 +27,7 @@ use crate::{
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        config::{BytecodeCommitmentMode, OneHotParams},
+        config::{BytecodeMode, OneHotParams},
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
@@ -1264,12 +1264,12 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-        bytecode_mode: BytecodeCommitmentMode,
+        bytecode_mode: BytecodeMode,
     ) -> Self {
         let mut params = match bytecode_mode {
             // Commitment mode: verifier MUST avoid O(K_bytecode) work here, and later stages will
             // relate staged Val claims to committed bytecode.
-            BytecodeCommitmentMode::Commitment => BytecodeReadRafSumcheckParams::gen_verifier(
+            BytecodeMode::Committed => BytecodeReadRafSumcheckParams::gen_verifier(
                 bytecode_preprocessing,
                 n_cycle_vars,
                 one_hot_params,
@@ -1277,7 +1277,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
                 transcript,
             ),
             // Legacy mode: verifier materializes/evaluates bytecode-dependent polynomials (O(K_bytecode)).
-            BytecodeCommitmentMode::Legacy => BytecodeReadRafSumcheckParams::gen(
+            BytecodeMode::Full => BytecodeReadRafSumcheckParams::gen(
                 bytecode_preprocessing,
                 n_cycle_vars,
                 one_hot_params,
@@ -1285,7 +1285,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
                 transcript,
             ),
         };
-        params.use_staged_val_claims = bytecode_mode == BytecodeCommitmentMode::Commitment;
+        params.use_staged_val_claims = bytecode_mode == BytecodeMode::Committed;
         Self { params }
     }
 

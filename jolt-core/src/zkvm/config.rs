@@ -23,24 +23,24 @@ pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
     }
 }
 
-/// Controls whether the prover/verifier use the **legacy** bytecode path (verifier may do O(K))
-/// or the new **bytecode-commitment/claim-reduction** path (requires padding so `T >= K_bytecode`).
+/// Controls whether the prover/verifier use the **full** bytecode path (verifier may do O(K))
+/// or the **committed** bytecode path (requires padding so `T >= K_bytecode`).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative)]
-pub enum BytecodeCommitmentMode {
-    /// Legacy mode: verifier may materialize bytecode-dependent polynomials (O(K_bytecode)).
-    Legacy = 0,
-    /// Commitment mode: use staged Val claims + BytecodeClaimReduction; requires `log_T >= log_K`.
-    Commitment = 1,
+pub enum BytecodeMode {
+    /// Full mode: verifier may materialize bytecode-dependent polynomials (O(K_bytecode)).
+    Full = 0,
+    /// Committed mode: use staged Val claims + BytecodeClaimReduction; requires `log_T >= log_K`.
+    Committed = 1,
 }
 
-impl Default for BytecodeCommitmentMode {
+impl Default for BytecodeMode {
     fn default() -> Self {
-        Self::Legacy
+        Self::Full
     }
 }
 
-impl CanonicalSerialize for BytecodeCommitmentMode {
+impl CanonicalSerialize for BytecodeMode {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -54,13 +54,13 @@ impl CanonicalSerialize for BytecodeCommitmentMode {
     }
 }
 
-impl Valid for BytecodeCommitmentMode {
+impl Valid for BytecodeMode {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl CanonicalDeserialize for BytecodeCommitmentMode {
+impl CanonicalDeserialize for BytecodeMode {
     fn deserialize_with_mode<R: Read>(
         reader: R,
         compress: Compress,
@@ -68,8 +68,8 @@ impl CanonicalDeserialize for BytecodeCommitmentMode {
     ) -> Result<Self, SerializationError> {
         let value = u8::deserialize_with_mode(reader, compress, validate)?;
         match value {
-            0 => Ok(Self::Legacy),
-            1 => Ok(Self::Commitment),
+            0 => Ok(Self::Full),
+            1 => Ok(Self::Committed),
             _ => Err(SerializationError::InvalidData),
         }
     }

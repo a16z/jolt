@@ -10,7 +10,7 @@ use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
-use crate::zkvm::config::BytecodeCommitmentMode;
+use crate::zkvm::config::BytecodeMode;
 use crate::zkvm::config::OneHotParams;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
@@ -171,9 +171,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // If the proof claims it used bytecode commitment mode, it must have enough cycle vars
         // to embed bytecode address variables (log_T >= log_K_bytecode), i.e. T >= K_bytecode.
-        if proof.bytecode_mode == BytecodeCommitmentMode::Commitment
-            && proof.trace_length < proof.bytecode_K
-        {
+        if proof.bytecode_mode == BytecodeMode::Committed && proof.trace_length < proof.bytecode_K {
             return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
                 "bytecode commitment mode requires trace_length >= bytecode_K (got trace_length={}, bytecode_K={})",
                 proof.trace_length, proof.bytecode_K
@@ -500,7 +498,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         //
         // IMPORTANT: This must be sampled *after* other Stage 6b params (e.g. lookup/inc gammas),
         // to match the prover's transcript order.
-        if self.proof.bytecode_mode == BytecodeCommitmentMode::Commitment {
+        if self.proof.bytecode_mode == BytecodeMode::Committed {
             debug_assert!(
                 bytecode_read_raf_params.log_T >= bytecode_read_raf_params.log_K,
                 "commitment mode requires log_T >= log_K_bytecode"
