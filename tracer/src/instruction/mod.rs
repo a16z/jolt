@@ -4,6 +4,10 @@ use add::ADD;
 use addi::ADDI;
 use addiw::ADDIW;
 use addw::ADDW;
+use advice_sb::AdviceSB;
+use advice_sd::AdviceSD;
+use advice_sh::AdviceSH;
+use advice_sw::AdviceSW;
 use amoaddd::AMOADDD;
 use amoaddw::AMOADDW;
 use amoandd::AMOANDD;
@@ -94,6 +98,7 @@ use xor::XOR;
 use xori::XORI;
 
 use virtual_advice::VirtualAdvice;
+use virtual_assert::VirtualAssert;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use virtual_assert_lte::VirtualAssertLTE;
@@ -142,6 +147,10 @@ pub mod add;
 pub mod addi;
 pub mod addiw;
 pub mod addw;
+pub mod advice_sb;
+pub mod advice_sd;
+pub mod advice_sh;
+pub mod advice_sw;
 pub mod amoaddd;
 pub mod amoaddw;
 pub mod amoandd;
@@ -225,6 +234,7 @@ pub mod sub;
 pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
+pub mod virtual_assert;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -635,7 +645,8 @@ define_rv32im_enums! {
         // RV64A (Atomic Memory Operations)
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
-        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
+        AdviceSB, AdviceSD, AdviceSH, AdviceSW,
+        VirtualAdvice, VirtualAssert, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,

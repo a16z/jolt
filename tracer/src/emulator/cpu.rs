@@ -14,6 +14,94 @@ use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
 
+use core::cell::RefCell;
+
+/// A FIFO queue for storing and retrieving advice data between emulation passes.
+/// During the first emulation pass (with `compute_advice` feature), advice functions
+/// write serialized data to this tape. During the second pass (without the feature),
+/// advice functions read from this tape in the same order.
+#[derive(Clone, Debug)]
+pub struct AdviceTape {
+    data: Vec<u8>,
+    read_position: usize,
+}
+
+impl AdviceTape {
+    pub fn new() -> Self {
+        Self {
+            data: Vec::new(),
+            read_position: 0,
+        }
+    }
+
+    /// Append bytes to the advice tape (called during first emulation pass)
+    pub fn write(&mut self, bytes: &[u8]) {
+        self.data.extend_from_slice(bytes);
+    }
+
+    /// Read a specific number of bytes from the advice tape (called during second emulation pass)
+    pub fn read(&mut self, num_bytes: usize) -> Option<u64> {
+        if self.read_position + num_bytes > self.data.len() {
+            return None;
+        }
+
+        let mut result = 0u64;
+        for i in 0..num_bytes {
+            result |= (self.data[self.read_position + i] as u64) << (i * 8);
+        }
+        self.read_position += num_bytes;
+        Some(result)
+    }
+
+    /// Reset the read position (useful for multiple passes)
+    pub fn reset_read_position(&mut self) {
+        self.read_position = 0;
+    }
+
+    /// Get the current size of the advice tape
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Check if the advice tape is empty
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+thread_local! {
+    /// Global advice tape that persists between first and second emulation passes
+    static ADVICE_TAPE: RefCell<AdviceTape> = RefCell::new(AdviceTape::new());
+}
+
+/// Write data to the global advice tape
+pub fn advice_tape_write(bytes: &[u8]) {
+    ADVICE_TAPE.with(|tape| {
+        tape.borrow_mut().write(bytes);
+    });
+}
+
+/// Read data from the global advice tape
+pub fn advice_tape_read(num_bytes: usize) -> Option<u64> {
+    ADVICE_TAPE.with(|tape| {
+        tape.borrow_mut().read(num_bytes)
+    })
+}
+
+/// Reset the advice tape read position
+pub fn advice_tape_reset() {
+    ADVICE_TAPE.with(|tape| {
+        tape.borrow_mut().reset_read_position();
+    });
+}
+
+/// Clear the entire advice tape
+pub fn advice_tape_clear() {
+    ADVICE_TAPE.with(|tape| {
+        *tape.borrow_mut() = AdviceTape::new();
+    });
+}
+
 use crate::instruction::format::NormalizedOperands;
 use crate::utils::panic::CallFrame;
 #[cfg(not(feature = "std"))]
@@ -21,8 +109,8 @@ use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
-    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
-    JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
+    JOLT_ADVICE_WRITE_ECALL_NUM, JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START,
+    JOLT_CYCLE_TRACK_ECALL_NUM, JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
@@ -558,6 +646,16 @@ impl Cpu {
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
 
                 return false;
+            } else if call_id == JOLT_ADVICE_WRITE_ECALL_NUM {
+                let src_ptr = self.x[11] as u64; // a1
+                let len = self.x[12] as u64; // a2
+
+                // Any fault raised while touching guest memory (e.g. a bad
+                // pointer) is swallowed here and will manifest as the
+                // usual access-fault on the *next* instruction fetch.
+                let _ = self.handle_advice_write(src_ptr, len);
+
+                return false;
             }
         }
 
@@ -1039,6 +1137,17 @@ impl Cpu {
         } else {
             panic!("Unexpected event type: {event_type}");
         }
+        Ok(())
+    }
+
+    fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
+        // Read bytes from guest memory and write to advice tape
+        let mut bytes = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let (b, _) = self.mmu.load(ptr + i)?;
+            bytes.push(b);
+        }
+        advice_tape_write(&bytes);
         Ok(())
     }
 
