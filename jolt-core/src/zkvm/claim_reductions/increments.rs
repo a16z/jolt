@@ -66,7 +66,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc6S;
-use crate::utils::math::{s64_from_diff_u64s, Math};
+use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::witness::CommittedPolynomial;
 
@@ -361,13 +361,13 @@ impl<F: JoltField> IncClaimReductionPhase1State<F> {
 
                         // RamInc = post_value - pre_value for RAM writes
                         let ram_inc: S64 = match cycle.ram_access() {
-                            RAMAccess::Write(w) => s64_from_diff_u64s(w.post_value, w.pre_value),
+                            RAMAccess::Write(w) => S64::from_diff_u64s(w.post_value, w.pre_value),
                             _ => S64::from(0i64),
                         };
 
                         // RdInc = post_value - pre_value for rd writes
                         let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
-                        let rd_inc: S64 = s64_from_diff_u64s(post_rd, pre_rd);
+                        let rd_inc: S64 = S64::from_diff_u64s(post_rd, pre_rd);
 
                         acc_ram_0.fmadd(&eq_r2_hi[x_hi], &ram_inc);
                         acc_ram_1.fmadd(&eq_r4_hi[x_hi], &ram_inc);
@@ -562,11 +562,11 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
                         let cycle = &trace[x];
 
                         let ram_inc_val: S64 = match cycle.ram_access() {
-                            RAMAccess::Write(w) => s64_from_diff_u64s(w.post_value, w.pre_value),
+                            RAMAccess::Write(w) => S64::from_diff_u64s(w.post_value, w.pre_value),
                             _ => S64::from(0i64),
                         };
                         let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
-                        let rd_inc_val: S64 = s64_from_diff_u64s(post_rd, pre_rd);
+                        let rd_inc_val: S64 = S64::from_diff_u64s(post_rd, pre_rd);
 
                         acc_ram.fmadd(eq_val, &ram_inc_val);
                         acc_rd.fmadd(eq_val, &rd_inc_val);

@@ -1,8 +1,10 @@
+use ark_ff::biginteger::S64;
+
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::Acc6S;
-use crate::utils::math::{s64_from_diff_u64s, Math};
+use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
@@ -791,11 +793,11 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
     ) {
         // Dense polynomials: accumulate scaled_coeff * (post - pre)
         let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
-        let diff = s64_from_diff_u64s(post_value, pre_value);
+        let diff = S64::from_diff_u64s(post_value, pre_value);
         dense_acc.fmadd(&scaled_rd_inc, &diff);
 
         if let tracer::instruction::RAMAccess::Write(write) = cycle.ram_access() {
-            let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
+            let diff = S64::from_diff_u64s(write.post_value, write.pre_value);
             dense_acc.fmadd(&scaled_ram_inc, &diff);
         }
 
