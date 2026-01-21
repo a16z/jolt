@@ -276,7 +276,8 @@ define_rv32im_trait_impls! {
         ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
         AdviceSB, AdviceSD, AdviceSH, AdviceSW,
-        VirtualAdvice, VirtualAssert, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
+        VirtualAdvice, VirtualAdviceLoad, VirtualAdviceSB, VirtualAdviceSD, VirtualAdviceSH, VirtualAdviceSW,
+        VirtualAssert, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
@@ -322,6 +323,11 @@ pub mod sltiu;
 pub mod sltu;
 pub mod sub;
 pub mod virtual_advice;
+pub mod virtual_advice_load;
+pub mod virtual_advice_sb;
+pub mod virtual_advice_sd;
+pub mod virtual_advice_sh;
+pub mod virtual_advice_sw;
 pub mod virtual_assert;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
