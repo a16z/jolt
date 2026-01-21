@@ -787,7 +787,7 @@ impl MacroBuilder {
 
             #[cfg(feature = "guest")]
             #[no_mangle]
-            pub extern "C" fn main() {
+            pub extern "C" fn main() -> ! {
                 let mut offset = 0;
                 #get_input_slice
                 #get_untrusted_advice_slice
@@ -800,6 +800,11 @@ impl MacroBuilder {
                 #handle_return
                 unsafe {
                     core::ptr::write_volatile(#termination_bit as *mut u8, 1);
+                }
+                // Never return - loop forever for clean termination
+                // The emulator detects termination via PC stall (prev_pc == pc)
+                loop {
+                    unsafe { core::arch::asm!("j .", options(noreturn)); }
                 }
             }
 

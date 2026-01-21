@@ -26,6 +26,7 @@ use jolt_platform::{
 };
 
 const JOLT_CSR_ECALL_NUM: u32 = 0x435352; // "CSR" in hex (ASCII)
+#[allow(dead_code)]
 const JOLT_RET_ECALL_NUM: u32 = 0x524554; // "RET" in hex (ASCII) - return from trap
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
@@ -384,6 +385,8 @@ impl Cpu {
 
         let original_word = self.fetch()?;
         let instruction_address = normalize_u64(self.pc, &self.xlen);
+        // Track current guest PC in the MMU for improved invalid-access diagnostics.
+        self.mmu.set_current_pc(instruction_address);
         let is_compressed = (original_word & 0x3) != 0x3;
         let word = match is_compressed {
             false => {
@@ -543,6 +546,10 @@ impl Cpu {
             )
         {
             let call_id = self.x[10] as u32; // a0
+            let syscall_nr = self.x[17] as u32; // a7 - syscall number
+            eprintln!("[TRAP] ECALL at pc=0x{:x}, a0(call_id)=0x{:x}, a7(syscall)={}, mtvec=0x{:x}, mscratch=0x{:x}",
+                instruction_address, call_id, syscall_nr, self.read_csr_raw(CSR_MTVEC_ADDRESS),
+                self.read_csr_raw(0x340));
             if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
                 let marker_ptr = self.x[11] as u32; // a1
                 let marker_len = self.x[12] as u32; // a2
@@ -591,6 +598,33 @@ impl Cpu {
                 return false; // we don't take the trap
             }
 
+            // // If the guest installed its own trap handler (mtvec != 0), then it likely expects
+            // // to receive ECALL as a real trap and dispatch syscalls/traps in-guest (e.g. ZeroOS).
+            // // In that case, fall through to the normal trap delivery logic below.
+            // //
+            // // If mtvec is unset (0), we emulate Linux syscalls directly in the emulator so
+            // // musl/Rust stdlib programs can run without a guest kernel.
+            // let guest_mtvec = self.read_csr_raw(CSR_MTVEC_ADDRESS);
+            // if guest_mtvec != 0 {
+            //     // Take the trap.
+            // } else {
+            //     // Treat all other ECALLs as Linux syscalls and handle them in the emulator.
+            //     // This matches the typical userspace ABI: syscall number in a7, args in a0-a5,
+            //     // return value in a0.
+            //     let nr = self.x[17]; // a7
+            //     let a0 = self.x[10] as usize;
+            //     let a1 = self.x[11] as usize;
+            //     let a2 = self.x[12] as usize;
+            //     let a3 = self.x[13] as usize;
+            //     let a4 = self.x[14] as usize;
+            //     let a5 = self.x[15] as usize;
+
+            //     let ret = self.handle_syscall(nr, a0, a1, a2, a3, a4, a5);
+            //     self.x[10] = ret;
+            //     self.pending_csr_result = Some(ret);
+            //     return false; // syscall handled; return to next instruction
+            // }
+
             // RET ECALL is no longer needed - trap handler returns via JALR t1
             // The return address is passed in t1 by the ECALL inline sequence.
             // } else if call_id == JOLT_RET_ECALL_NUM {
@@ -599,9 +633,6 @@ impl Cpu {
             //     self.pc = mepc;
             //     return false; // we don't take the trap
             // }
-
-            // All other ECALLs (Linux syscalls) fall through to take the trap.
-            // With ZeroOS, the guest's trap handler handles them.
         }
 
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
@@ -778,6 +809,9 @@ impl Cpu {
         self.write_csr_raw(csr_cause_address, cause);
         self.write_csr_raw(csr_tval_address, trap.value);
         self.pc = self.read_csr_raw(csr_tvec_address);
+
+        eprintln!("[TRAP] Taking trap: cause=0x{:x}, mepc=0x{:x}, jumping to mtvec=0x{:x}",
+            cause, instruction_address, self.pc);
 
         // Add 4 * cause if tvec has vector type address
         if (self.pc & 0x3) != 0 {

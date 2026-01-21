@@ -80,12 +80,36 @@ impl RISCVTrace for CSRRW {
         // Get the value being written (from rs1)
         let write_val = cpu.x[self.operands.rs1 as usize] as u64;
 
+        // Generate inline sequence for proof verification.
+        //
+        // Important: when rd == rs1 (and rd != 0), CSRRW clobbers rs1 (because rd is written
+        // with old_csr_val). To be able to later verify that the prover's "new CSR value" advice
+        // equals the *original* rs1, we must execute the rs1-preservation ADDI *before*
+        // executing the real CSRRW.
+        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+
+        // If the inline sequence begins with the rs1-preservation ADDI (rd == rs1 case),
+        // run it before executing the actual CSRRW.
+        let mut trace = trace;
+        if self.operands.rd != 0 && self.operands.rd == self.operands.rs1 {
+            // The first instruction is always the preservation ADDI in this case.
+            let preserve = inline_sequence
+                .get(0)
+                .expect("CSRRW inline_sequence unexpectedly empty");
+            debug_assert!(matches!(preserve, Instruction::ADDI(_)));
+            let preserve = inline_sequence.remove(0);
+            preserve.trace(cpu, trace.as_deref_mut());
+        }
+
         // Execute the CSR operation (updates emulation state)
         let mut ram_access = ();
         self.execute(cpu, &mut ram_access);
 
-        // Generate inline sequence for proof verification
-        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        // Debug: track mscratch changes
+        if csr_addr == 0x340 {
+            eprintln!("[CSRRW] mscratch: old=0x{:x}, write=0x{:x}, now=0x{:x}, rd={}, rs1={}",
+                old_csr_val, write_val, cpu.read_csr_raw(0x340), self.operands.rd, self.operands.rs1);
+        }
 
         if self.operands.rd == 0 {
             // csrw pseudo-instruction: just one advice (new CSR value)
@@ -96,13 +120,14 @@ impl RISCVTrace for CSRRW {
             }
         } else {
             // Full csrrw: need two advice values
-            // When rd == rs1, there's an extra ADDI at index 0 to preserve rs1,
-            // so the advice indices shift by 1.
-            let (old_advice_idx, new_advice_idx) = if self.operands.rd == self.operands.rs1 {
-                (1, 3)  // Extra ADDI at index 0
-            } else {
-                (0, 2)
-            };
+            // After the optional rd==rs1 preservation step is executed and removed above,
+            // the inline sequence always has the same structure:
+            //   0: VirtualAdvice(old)
+            //   1: ADDI(rd, old)
+            //   2: VirtualAdvice(new)
+            //   3: ADDI(vr, new)
+            //   4: VirtualAssertEQ(new, rs1|rs1_copy)
+            let (old_advice_idx, new_advice_idx) = (0, 2);
 
             // Set old CSR value advice
             if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[old_advice_idx] {
@@ -119,8 +144,7 @@ impl RISCVTrace for CSRRW {
             }
         }
 
-        // Execute inline sequence to record in trace
-        let mut trace = trace;
+        // Execute remaining inline sequence to record in trace
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
@@ -218,8 +242,10 @@ impl RISCVTrace for CSRRW {
 
 #[cfg(test)]
 mod tests {
-    use super::CSRRW;
+    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
     use crate::instruction::Instruction;
+    use crate::instruction::Cycle;
+    use crate::instruction::RISCVTrace;
 
     /// Test decoding of `csrw mtvec, t0` (csrrw x0, mtvec, t0)
     /// Encoding: csr=0x305, rs1=t0(5), funct3=001, rd=x0(0), opcode=1110011
@@ -260,5 +286,36 @@ mod tests {
             }
             _ => panic!("Expected CSRRW instruction, got {:?}", decoded),
         }
+    }
+
+    #[test]
+    fn test_csrrw_trace_rd_eq_rs1_preserves_rs1_for_assert() {
+        // csrrw t0, mtvec, t0 (rd == rs1 == x5)
+        let instr: u32 = (0x305 << 20) | (5 << 15) | (1 << 12) | (5 << 7) | 0x73;
+        let address: u64 = 0x1000;
+
+        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRW");
+        let Instruction::CSRRW(csrrw) = decoded else {
+            panic!("Expected CSRRW instruction");
+        };
+
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+
+        // Choose distinct values so that if the inline assert accidentally compares against
+        // the post-exec (clobbered) rs1, the test will fail.
+        let old_csr_val: u64 = 0x2222_3333;
+        let write_val: u64 = 0x1111_0000;
+
+        cpu.write_csr_raw(0x305, old_csr_val);
+        cpu.x[5] = write_val as i64;
+
+        let mut trace: Vec<Cycle> = Vec::new();
+        csrrw.trace(&mut cpu, Some(&mut trace));
+
+        // Architectural rd (t0) gets old CSR value.
+        assert_eq!(cpu.x[5] as u64, old_csr_val);
+
+        // Virtual CSR register mapping for mtvec is vr33.
+        assert_eq!(cpu.x[33] as u64, write_val);
     }
 }

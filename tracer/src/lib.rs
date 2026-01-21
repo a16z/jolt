@@ -6,6 +6,8 @@ extern crate core;
 
 use itertools::Itertools;
 use std::vec;
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
 use tracing::{error, info};
 
 #[cfg(not(feature = "std"))]
@@ -87,6 +89,7 @@ pub fn trace(
     ));
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
+    info!("trace length: {} cycles", trace.len());
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
     (
         lazy_trace_iter_,
@@ -360,6 +363,40 @@ impl Iterator for LazyTraceIterator {
         }
 
         self.count += 1;
+
+        // Opt-in watchdog to prevent runaway traces from exhausting host memory.
+        // This is especially useful when a guest fails to terminate and `trace()`
+        // attempts to collect an unbounded number of cycles.
+        #[cfg(feature = "std")]
+        {
+            static MAX_TICKS: OnceLock<Option<usize>> = OnceLock::new();
+            let max_ticks = *MAX_TICKS.get_or_init(|| {
+                std::env::var("JOLT_MAX_TICKS")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+            });
+
+            if let Some(max) = max_ticks {
+                if self.count > max {
+                    let emulator = get_mut_emulator(&mut self.emulator_state);
+                    let cpu = emulator.get_cpu();
+                    let pc = cpu.read_pc();
+                    let ra = cpu.read_register(1) as u64;
+                    let a0 = cpu.read_register(10) as u64;
+                    let a1 = cpu.read_register(11) as u64;
+                    let disas = emulator.get_mut_cpu().disassemble_next_instruction();
+
+                    // Best-effort symbolized backtrace using the CPU's call stack buffer.
+                    // (Requires `elf_path` to be set on the emulator state.)
+                    utils::panic::display_panic_backtrace(&self.emulator_state);
+
+                    panic!(
+                        "Guest trace exceeded JOLT_MAX_TICKS={max} without terminating (pc=0x{pc:x}, ra=0x{ra:x}, a0=0x{a0:x}, a1=0x{a1:x}): {disas}"
+                    );
+                }
+            }
+        }
+
         assert!(self.current_traces.is_empty());
         step_emulator(
             get_mut_emulator(&mut self.emulator_state),

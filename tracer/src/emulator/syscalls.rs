@@ -4,6 +4,9 @@
 use super::cpu::Cpu;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
+
 // RISC-V Linux syscall numbers
 const SYS_WRITE: i64 = 64;
 const SYS_EXIT: i64 = 93;
@@ -33,6 +36,40 @@ const ENOSYS: i64 = 38;
 
 // Heap allocator state (shared across all Cpu instances)
 static HEAP_POS: AtomicUsize = AtomicUsize::new(0);
+static BRK_POS: AtomicUsize = AtomicUsize::new(0);
+
+static SYSCALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "std")]
+fn trace_syscalls_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JOLT_TRACE_SYSCALLS").is_some())
+}
+
+/// Compute the usable heap range for Linux-style syscalls.
+///
+/// When running with a `JoltDevice`, the guest linker script reserves:
+///   heap_start = RAM_START_ADDRESS + program_size + stack_size
+///   heap_end   = heap_start + memory_size
+///
+/// This matches the emulator's `MemoryLayout` model. Use it for SYS_BRK/SYS_MMAP
+/// so musl/Rust allocations stay within the configured RAM.
+fn heap_range(cpu: &Cpu) -> Option<(usize, usize)> {
+    let dev = cpu.mmu.jolt_device.as_ref()?;
+    let layout = &dev.memory_layout;
+
+    // In MemoryLayout::new():
+    //   stack_end   = RAM_START_ADDRESS + program_size
+    //   stack_start = stack_end + stack_size
+    //   memory_end  = stack_start + memory_size
+    let heap_start = layout
+        .stack_end
+        .checked_add(layout.stack_size)?
+        .try_into()
+        .ok()?;
+    let heap_end: usize = layout.memory_end.try_into().ok()?;
+    Some((heap_start, heap_end))
+}
 
 impl Cpu {
     pub fn handle_syscall(
@@ -45,6 +82,13 @@ impl Cpu {
         _a4: usize,
         _a5: usize,
     ) -> i64 {
+        let count = SYSCALL_COUNT.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+
+        #[cfg(feature = "std")]
+        if trace_syscalls_enabled() && count <= 200 {
+            tracing::info!("syscall[{count}] nr={nr} a0=0x{a0:x} a1=0x{a1:x} a2=0x{a2:x}");
+        }
+
         match nr {
             SYS_WRITE => {
                 // sys_write(fd, buf, count)
@@ -62,38 +106,77 @@ impl Cpu {
             }
             SYS_EXIT | SYS_EXIT_GROUP => {
                 // sys_exit / sys_exit_group
-                // tracing::info!("SYSCALL EXIT: exit_code={}", a0);
+                #[cfg(feature = "std")]
+                if trace_syscalls_enabled() {
+                    tracing::info!("SYSCALL EXIT: code={}", a0);
+                }
                 self.exit_code = Some(a0 as u32);
                 0
             }
             SYS_BRK => {
-                // sys_brk - force musl to use mmap
-                -ENOMEM
+                // sys_brk(addr)
+                // If addr == 0: return current brk.
+                // Else: attempt to set brk to addr; on failure, return current brk.
+                let Some((heap_start, heap_end)) = heap_range(self) else {
+                    return -ENOMEM;
+                };
+
+                // Initialize brk to heap_start on first use.
+                let mut cur = BRK_POS.load(Ordering::Relaxed);
+                if cur == 0 {
+                    cur = heap_start;
+                    BRK_POS.store(cur, Ordering::Relaxed);
+                }
+
+                let requested = a0;
+                if requested == 0 {
+                    return cur as i64;
+                }
+
+                // Linux brk semantics: fail by returning old break.
+                if requested < heap_start || requested > heap_end {
+                    return cur as i64;
+                }
+
+                // Move brk. We don't reclaim space on shrink.
+                BRK_POS.store(requested, Ordering::Relaxed);
+
+                // Ensure mmap bump pointer never hands out overlapping space.
+                let used = requested.saturating_sub(heap_start);
+                let prev = HEAP_POS.load(Ordering::Relaxed);
+                if used > prev {
+                    HEAP_POS.store(used, Ordering::Relaxed);
+                }
+
+                requested as i64
             }
             SYS_MMAP => {
                 // sys_mmap(addr, length, prot, flags, fd, offset)
-                // Simple bump allocator
+                // Simple bump allocator within the configured heap range.
+                let Some((heap_start, heap_end)) = heap_range(self) else {
+                    return -ENOMEM;
+                };
+
                 let length = a1;
-                let page_size = 4096;
-                let pages = (length + page_size - 1) / page_size;
-                let size = pages * page_size;
+                let page_size = 4096usize;
+                let size = length
+                    .checked_add(page_size - 1)
+                    .map(|n| n / page_size)
+                    .and_then(|pages| pages.checked_mul(page_size))
+                    .unwrap_or(0);
+                if size == 0 {
+                    return -EINVAL;
+                }
 
                 let offset = HEAP_POS.fetch_add(size, Ordering::Relaxed);
-
-                // Use a heap region within the valid RAM range (0x80000000 to 0x87a12000)
-                // Start after stack which ends around 0x85c8b000, use 0x86000000 for safety
-                const HEAP_START: usize = 0x86000000;
-                const HEAP_SIZE: usize = 26 * 1024 * 1024; // ~26MB (up to 0x87a12000)
-
-                if offset + size > HEAP_SIZE {
+                let ptr = heap_start.saturating_add(offset);
+                let end = ptr.saturating_add(size);
+                if ptr < heap_start || end > heap_end {
+                    // Roll back is non-trivial with Atomics; just signal OOM.
                     return -ENOMEM;
                 }
 
-                let ptr = HEAP_START + offset;
-                // Zero the memory
-                for i in 0..size {
-                    let _ = self.mmu.store((ptr + i) as u64, 0);
-                }
+                // Memory is initially zeroed by MMU initialization, so no need to clear.
                 ptr as i64
             }
             SYS_MUNMAP | SYS_MPROTECT => {

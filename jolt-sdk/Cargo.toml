@@ -101,14 +101,21 @@ jolt-core = { workspace = true, default-features = false, optional = true }
 tracer = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 
-# Guest dependencies (from ZeroOS) - RISC-V target only
-[target.'cfg(target_arch = "riscv64")'.dependencies]
-# ZeroOS unified crate: minimal features for no-std builds.
-# No arch-riscv here - jolt-sdk provides its own _start for no-std builds.
-# For std builds, zeroos-jolt-platform/std enables the full boot infrastructure.
+# Guest dependencies (from ZeroOS) - RISC-V linux target (std mode)
+[target.'cfg(all(target_os = "linux", target_arch = "riscv64"))'.dependencies]
+# ZeroOS unified crate for std builds.
+# No arch-riscv here - for std builds, zeroos-jolt-platform/std enables the full boot infrastructure.
 zeroos = { path = "../../ZeroOS/crates/zeroos", default-features = false, features = [
     "alloc-linked-list",
 ] }
+# ZeroOS jolt-platform: provides __platform_bootstrap, #[global_allocator], #[panic_handler]
+zeroos-jolt-platform = { package = "jolt-platform", path = "../../ZeroOS/platforms/jolt-platform", default-features = false, features = ["memory", "std"] }
+
+# Guest dependencies (from ZeroOS) - RISC-V bare metal target (no-std mode)
+[target.'cfg(all(target_os = "none", target_arch = "riscv64"))'.dependencies]
+# ZeroOS unified crate for no-std builds.
+# arch-riscv provides _start from ZeroOS
+zeroos = { path = "../../ZeroOS/crates/zeroos", default-features = false, features = ["arch-riscv", "memory"]}
 # ZeroOS jolt-platform: provides __platform_bootstrap, #[global_allocator], #[panic_handler]
 zeroos-jolt-platform = { package = "jolt-platform", path = "../../ZeroOS/platforms/jolt-platform", default-features = false, features = ["memory"] }
 
