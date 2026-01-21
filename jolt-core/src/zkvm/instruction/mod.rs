@@ -14,6 +14,10 @@ pub trait InstructionLookup<const XLEN: usize> {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>>;
 }
 
+pub trait SupportedInstruction {
+    fn is_supported_instruction(&self) -> bool;
+}
+
 pub trait LookupQuery<const XLEN: usize> {
     /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
     /// one of the tuple values will be 0.
@@ -210,6 +214,17 @@ macro_rules! define_rv32im_trait_impls {
                     )*
                     Instruction::UNIMPL => [false; NUM_INSTRUCTION_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
+                }
+            }
+        }
+
+        impl SupportedInstruction for Instruction {
+            fn is_supported_instruction(&self) -> bool {
+                match self {
+                    $(
+                        Instruction::$instr(_) => true,
+                    )*
+                    _ => false,
                 }
             }
         }
