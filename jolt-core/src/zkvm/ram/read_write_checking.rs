@@ -21,10 +21,11 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
+    subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
     transcripts::Transcript,
     utils::math::Math,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
@@ -144,6 +145,19 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
             .collect();
 
         [r_address, r_cycle].concat().into()
+    }
+}
+
+impl<F: JoltField> RamReadWriteCheckingParams<F> {
+    pub fn constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.normalize_opening_point(sumcheck_challenges);
+        let (_, r_cycle) = r.split_at(self.K.log_2());
+        let eq_eval_cycle = EqPolynomial::mle_endian(&self.r_cycle, &r_cycle);
+
+        let gamma = self.gamma;
+        let one_plus_gamma = F::one() + gamma;
+
+        vec![eq_eval_cycle * one_plus_gamma, eq_eval_cycle * gamma]
     }
 }
 
@@ -618,6 +632,48 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
         );
     }
 
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq_eval * ra * (val + γ*(val + inc))
+        //                       = eq_eval * ra * val * (1+γ) + eq_eval * ra * inc * γ
+        //
+        // Challenge layout:
+        //   Challenge(0) = eq_eval * (1 + γ)
+        //   Challenge(1) = eq_eval * γ
+        let ra_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
+        let val_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let inc_opening = OpeningId::Committed(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+
+        let terms = vec![
+            // eq*(1+γ) * ra * val
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![
+                    ValueSource::Opening(ra_opening),
+                    ValueSource::Opening(val_opening),
+                ],
+            ),
+            // eq*γ * ra * inc
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![
+                    ValueSource::Opening(ra_opening),
+                    ValueSource::Opening(inc_opening),
+                ],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.params.constraint_challenge_values(sumcheck_challenges)
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -707,5 +763,47 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq_eval * ra * (val + γ*(val + inc))
+        //                       = eq_eval * ra * val * (1+γ) + eq_eval * ra * inc * γ
+        //
+        // Challenge layout:
+        //   Challenge(0) = eq_eval * (1 + γ)
+        //   Challenge(1) = eq_eval * γ
+        let ra_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
+        let val_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let inc_opening = OpeningId::Committed(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+
+        let terms = vec![
+            // eq*(1+γ) * ra * val
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![
+                    ValueSource::Opening(ra_opening),
+                    ValueSource::Opening(val_opening),
+                ],
+            ),
+            // eq*γ * ra * inc
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![
+                    ValueSource::Opening(ra_opening),
+                    ValueSource::Opening(inc_opening),
+                ],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.params.constraint_challenge_values(sumcheck_challenges)
     }
 }

@@ -217,10 +217,13 @@ impl BatchedSumcheck {
             .unwrap();
 
         // Append input claims to transcript BEFORE deriving batching coefficients
-        sumcheck_instances.iter().for_each(|sumcheck| {
-            let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.append_scalar(&input_claim);
-        });
+        let input_claims: Vec<F> = sumcheck_instances
+            .iter()
+            .map(|sumcheck| sumcheck.input_claim(opening_accumulator))
+            .collect();
+        for claim in &input_claims {
+            transcript.append_scalar(claim);
+        }
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 

@@ -43,10 +43,11 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -408,6 +409,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let advice_opening = match self.params.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionPhase1),
+            AdviceKind::Untrusted => {
+                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionPhase1)
+            }
+        };
+
+        Some(OutputClaimConstraint::direct(advice_opening))
+    }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![]
+    }
 }
 
 pub struct AdviceClaimReductionPhase1Verifier<F: JoltField> {
@@ -523,6 +539,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let booleanity_rounds = self.params.log_k_chunk + self.params.log_t;
         let booleanity_offset = max_num_rounds - booleanity_rounds;
         booleanity_offset + self.params.log_k_chunk
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output = advice_claim (direct opening, no computation)
+        let advice_opening = match self.params.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionPhase1),
+            AdviceKind::Untrusted => {
+                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionPhase1)
+            }
+        };
+
+        Some(OutputClaimConstraint::direct(advice_opening))
+    }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        // No challenge values needed for direct opening
+        vec![]
     }
 }
 
@@ -827,6 +860,46 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let advice_opening = match self.params.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionPhase2),
+            AdviceKind::Untrusted => {
+                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionPhase2)
+            }
+        };
+
+        let terms = vec![ProductTerm::scaled(
+            ValueSource::Challenge(0),
+            vec![ValueSource::Opening(advice_opening)],
+        )];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);
+        advice_le.extend_from_slice(&self.params.cycle_bind_le[0..self.params.sigma_a]);
+        advice_le.extend_from_slice(&self.params.cycle_bind_le[self.params.sigma_a..]);
+        advice_le.extend_from_slice(sumcheck_challenges);
+        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
+            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
+
+        let eq_eval: F = EqPolynomial::mle(&opening_point.r, &self.params.r_val_eval.r);
+        let eq_combined = if self.params.single_opening {
+            eq_eval
+        } else {
+            let r_final = self
+                .params
+                .r_val_final
+                .as_ref()
+                .expect("r_val_final must exist when !single_opening");
+            let eq_final: F = EqPolynomial::mle(&opening_point.r, &r_final.r);
+            eq_eval + self.params.gamma * eq_final
+        };
+
+        vec![eq_combined * self.params.scale]
+    }
 }
 
 pub struct AdviceClaimReductionPhase2Verifier<F: JoltField> {
@@ -927,5 +1000,52 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn round_offset(&self, _max_num_rounds: usize) -> usize {
         0
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output = advice_claim * eq_combined * scale
+        //                 = advice_claim * Challenge(0)
+        //
+        // Challenge(0) = eq_combined * scale
+        let advice_opening = match self.params.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionPhase2),
+            AdviceKind::Untrusted => {
+                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionPhase2)
+            }
+        };
+
+        let terms = vec![ProductTerm::scaled(
+            ValueSource::Challenge(0),
+            vec![ValueSource::Opening(advice_opening)],
+        )];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        // Reconstruct the opening point
+        let mut advice_le: Vec<F::Challenge> = Vec::with_capacity(self.params.advice_vars);
+        advice_le.extend_from_slice(&self.params.cycle_bind_le[0..self.params.sigma_a]);
+        advice_le.extend_from_slice(&self.params.cycle_bind_le[self.params.sigma_a..]);
+        advice_le.extend_from_slice(sumcheck_challenges);
+        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
+            OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_le).match_endianness();
+
+        // Compute eq_combined
+        let eq_eval: F = EqPolynomial::mle(&opening_point.r, &self.params.r_val_eval.r);
+        let eq_combined = if self.params.single_opening {
+            eq_eval
+        } else {
+            let r_final = self
+                .params
+                .r_val_final
+                .as_ref()
+                .expect("r_val_final must exist when !single_opening");
+            let eq_final: F = EqPolynomial::mle(&opening_point.r, &r_final.r);
+            eq_eval + self.params.gamma * eq_final
+        };
+
+        // Challenge(0) = eq_combined * scale
+        vec![eq_combined * self.params.scale]
     }
 }

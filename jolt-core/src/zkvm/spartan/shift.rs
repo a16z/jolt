@@ -13,10 +13,11 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -247,6 +248,84 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         );
     }
 
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim =
+        //   (γ⁰*unexpanded_pc + γ¹*pc + γ²*is_virtual + γ³*is_first_in_sequence) * EqPlusOne_outer
+        //   + γ⁴ * (1 - is_noop) * EqPlusOne_product
+        //
+        // Challenges:
+        // - Challenge(0) = EqPlusOne_outer
+        // - Challenge(1) = γ¹ * EqPlusOne_outer
+        // - Challenge(2) = γ² * EqPlusOne_outer
+        // - Challenge(3) = γ³ * EqPlusOne_outer
+        // - Challenge(4) = γ⁴ * EqPlusOne_product (constant term)
+        // - Challenge(5) = -γ⁴ * EqPlusOne_product (coefficient for is_noop)
+
+        let unexpanded_pc =
+            OpeningId::Virtual(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
+        let pc = OpeningId::Virtual(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let is_virtual = OpeningId::Virtual(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let is_first_in_sequence = OpeningId::Virtual(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
+        let is_noop = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            SumcheckId::SpartanShift,
+        );
+
+        let terms = vec![
+            // γ⁰ * EqPlusOne_outer * unexpanded_pc
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(unexpanded_pc)],
+            ),
+            // γ¹ * EqPlusOne_outer * pc
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(pc)]),
+            // γ² * EqPlusOne_outer * is_virtual
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(is_virtual)],
+            ),
+            // γ³ * EqPlusOne_outer * is_first_in_sequence
+            ProductTerm::scaled(
+                ValueSource::Challenge(3),
+                vec![ValueSource::Opening(is_first_in_sequence)],
+            ),
+            // γ⁴ * EqPlusOne_product (constant term)
+            ProductTerm::single(ValueSource::Challenge(4)),
+            // -γ⁴ * EqPlusOne_product * is_noop
+            ProductTerm::scaled(
+                ValueSource::Challenge(5),
+                vec![ValueSource::Opening(is_noop)],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = normalize_opening_point::<F>(sumcheck_challenges);
+        let eq_plus_one_outer =
+            EqPlusOnePolynomial::<F>::new(self.params.r_outer.r.to_vec()).evaluate(&r.r);
+        let eq_plus_one_product =
+            EqPlusOnePolynomial::<F>::new(self.params.r_product.r.to_vec()).evaluate(&r.r);
+
+        let gamma_powers = &self.params.gamma_powers;
+
+        vec![
+            gamma_powers[0] * eq_plus_one_outer,
+            gamma_powers[1] * eq_plus_one_outer,
+            gamma_powers[2] * eq_plus_one_outer,
+            gamma_powers[3] * eq_plus_one_outer,
+            gamma_powers[4] * eq_plus_one_product,
+            -gamma_powers[4] * eq_plus_one_product,
+        ]
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -357,6 +436,99 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
             SumcheckId::SpartanShift,
             opening_point,
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim =
+        //   (γ⁰*unexpanded_pc + γ¹*pc + γ²*is_virtual + γ³*is_first_in_sequence) * EqPlusOne_outer
+        //   + γ⁴ * (1 - is_noop) * EqPlusOne_product
+        //
+        // Expanding:
+        // γ⁰ * EqPlusOne_outer * unexpanded_pc
+        // γ¹ * EqPlusOne_outer * pc
+        // γ² * EqPlusOne_outer * is_virtual
+        // γ³ * EqPlusOne_outer * is_first_in_sequence
+        // γ⁴ * EqPlusOne_product  (constant term, no opening)
+        // -γ⁴ * EqPlusOne_product * is_noop
+        //
+        // Challenges:
+        // - Challenge(0) = EqPlusOne_outer
+        // - Challenge(1) = γ¹ * EqPlusOne_outer
+        // - Challenge(2) = γ² * EqPlusOne_outer
+        // - Challenge(3) = γ³ * EqPlusOne_outer
+        // - Challenge(4) = γ⁴ * EqPlusOne_product (constant term)
+        // - Challenge(5) = -γ⁴ * EqPlusOne_product (coefficient for is_noop)
+
+        let unexpanded_pc =
+            OpeningId::Virtual(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
+        let pc = OpeningId::Virtual(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let is_virtual = OpeningId::Virtual(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let is_first_in_sequence = OpeningId::Virtual(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
+        let is_noop = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            SumcheckId::SpartanShift,
+        );
+
+        let terms = vec![
+            // γ⁰ * EqPlusOne_outer * unexpanded_pc
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(unexpanded_pc)],
+            ),
+            // γ¹ * EqPlusOne_outer * pc
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(pc)]),
+            // γ² * EqPlusOne_outer * is_virtual
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(is_virtual)],
+            ),
+            // γ³ * EqPlusOne_outer * is_first_in_sequence
+            ProductTerm::scaled(
+                ValueSource::Challenge(3),
+                vec![ValueSource::Opening(is_first_in_sequence)],
+            ),
+            // γ⁴ * EqPlusOne_product (constant term)
+            ProductTerm::single(ValueSource::Challenge(4)),
+            // -γ⁴ * EqPlusOne_product * is_noop
+            ProductTerm::scaled(
+                ValueSource::Challenge(5),
+                vec![ValueSource::Opening(is_noop)],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        // Challenge(0) = EqPlusOne_outer
+        // Challenge(1) = γ¹ * EqPlusOne_outer
+        // Challenge(2) = γ² * EqPlusOne_outer
+        // Challenge(3) = γ³ * EqPlusOne_outer
+        // Challenge(4) = γ⁴ * EqPlusOne_product
+        // Challenge(5) = -γ⁴ * EqPlusOne_product
+
+        let r = normalize_opening_point::<F>(sumcheck_challenges);
+        let eq_plus_one_outer =
+            EqPlusOnePolynomial::<F>::new(self.params.r_outer.r.to_vec()).evaluate(&r.r);
+        let eq_plus_one_product =
+            EqPlusOnePolynomial::<F>::new(self.params.r_product.r.to_vec()).evaluate(&r.r);
+
+        let gamma_powers = &self.params.gamma_powers;
+
+        vec![
+            gamma_powers[0] * eq_plus_one_outer,    // γ⁰ * EqPlusOne_outer
+            gamma_powers[1] * eq_plus_one_outer,    // γ¹ * EqPlusOne_outer
+            gamma_powers[2] * eq_plus_one_outer,    // γ² * EqPlusOne_outer
+            gamma_powers[3] * eq_plus_one_outer,    // γ³ * EqPlusOne_outer
+            gamma_powers[4] * eq_plus_one_product,  // γ⁴ * EqPlusOne_product
+            -gamma_powers[4] * eq_plus_one_product, // -γ⁴ * EqPlusOne_product
+        ]
     }
 }
 

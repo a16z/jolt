@@ -86,13 +86,14 @@ use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
-        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+        OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
         VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
     },
     shared_ra_polys::compute_all_G,
     unipoly::UniPoly,
 };
 use crate::subprotocols::{
+    blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
     sumcheck_prover::SumcheckInstanceProver,
     sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
 };
@@ -447,6 +448,44 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let N = self.params.polynomial_types.len();
+
+        let terms: Vec<ProductTerm> = (0..N)
+            .map(|i| {
+                let opening = OpeningId::Committed(
+                    self.params.polynomial_types[i],
+                    SumcheckId::HammingWeightClaimReduction,
+                );
+                ProductTerm::scaled(
+                    ValueSource::Challenge(i),
+                    vec![ValueSource::Opening(opening)],
+                )
+            })
+            .collect();
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let N = self.params.polynomial_types.len();
+
+        let rho_rev: Vec<F::Challenge> = sumcheck_challenges.iter().cloned().rev().collect();
+        let eq_bool_eval: F = EqPolynomial::mle(&rho_rev, &self.params.r_addr_bool);
+
+        (0..N)
+            .map(|i| {
+                let eq_virt_eval: F = EqPolynomial::mle(&rho_rev, &self.params.r_addr_virt[i]);
+
+                let gamma_hw = self.params.gamma_powers[3 * i];
+                let gamma_bool = self.params.gamma_powers[3 * i + 1];
+                let gamma_virt = self.params.gamma_powers[3 * i + 2];
+
+                gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval
+            })
+            .collect()
+    }
 }
 
 pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
@@ -535,6 +574,50 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 full_point.clone(),
             );
         }
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output = Σ_i G_i(ρ) * (γ^{3i} + γ^{3i+1}*eq_bool + γ^{3i+2}*eq_virt_i)
+        //                 = Σ_i G_i(ρ) * Challenge(i)
+        //
+        // Challenge layout: Challenge(i) = combined coefficient for polynomial i
+        let N = self.params.polynomial_types.len();
+
+        let terms: Vec<ProductTerm> = (0..N)
+            .map(|i| {
+                let opening = OpeningId::Committed(
+                    self.params.polynomial_types[i],
+                    SumcheckId::HammingWeightClaimReduction,
+                );
+                ProductTerm::scaled(
+                    ValueSource::Challenge(i),
+                    vec![ValueSource::Opening(opening)],
+                )
+            })
+            .collect();
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let N = self.params.polynomial_types.len();
+
+        // Compute eq_bool and eq_virt_i evaluations
+        let rho_rev: Vec<F::Challenge> = sumcheck_challenges.iter().cloned().rev().collect();
+        let eq_bool_eval: F = EqPolynomial::mle(&rho_rev, &self.params.r_addr_bool);
+
+        (0..N)
+            .map(|i| {
+                let eq_virt_eval: F = EqPolynomial::mle(&rho_rev, &self.params.r_addr_virt[i]);
+
+                let gamma_hw = self.params.gamma_powers[3 * i];
+                let gamma_bool = self.params.gamma_powers[3 * i + 1];
+                let gamma_virt = self.params.gamma_powers[3 * i + 2];
+
+                // Challenge(i) = γ^{3i} + γ^{3i+1}*eq_bool + γ^{3i+2}*eq_virt_i
+                gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval
+            })
+            .collect()
     }
 }
 

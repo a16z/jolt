@@ -2,11 +2,12 @@ use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -141,6 +142,47 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let h_opening = OpeningId::Virtual(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        );
+
+        let terms = vec![
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![
+                    ValueSource::Opening(h_opening),
+                    ValueSource::Opening(h_opening),
+                ],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(h_opening)],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
+
+        let eq_eval: F = EqPolynomial::<F>::mle(
+            &r_cycle_final.r.iter().cloned().rev().collect::<Vec<_>>(),
+            &self
+                .params
+                .r_cycle
+                .r
+                .iter()
+                .cloned()
+                .rev()
+                .collect::<Vec<F::Challenge>>(),
+        );
+
+        vec![eq_eval, -eq_eval]
+    }
 }
 
 pub struct HammingBooleanitySumcheckVerifier<F: JoltField> {
@@ -204,5 +246,56 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamHammingBooleanity,
             self.params.normalize_opening_point(sumcheck_challenges),
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output = (H² - H) * eq_eval
+        //                 = Challenge(0) * H * H + Challenge(1) * H
+        //
+        // Challenge layout:
+        //   Challenge(0) = eq_eval
+        //   Challenge(1) = -eq_eval
+        let h_opening = OpeningId::Virtual(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        );
+
+        let terms = vec![
+            // H² * eq_eval
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![
+                    ValueSource::Opening(h_opening),
+                    ValueSource::Opening(h_opening),
+                ],
+            ),
+            // -H * eq_eval
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(h_opening)],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
+
+        // eq(r_cycle_outer, r_cycle_final) - same computation as expected_output_claim
+        let eq_eval: F = EqPolynomial::<F>::mle(
+            &r_cycle_final.r.iter().cloned().rev().collect::<Vec<_>>(),
+            &self
+                .params
+                .r_cycle
+                .r
+                .iter()
+                .cloned()
+                .rev()
+                .collect::<Vec<F::Challenge>>(),
+        );
+
+        // Challenge(0) = eq_eval, Challenge(1) = -eq_eval
+        vec![eq_eval, -eq_eval]
     }
 }

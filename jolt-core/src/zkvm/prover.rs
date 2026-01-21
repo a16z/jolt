@@ -1412,7 +1412,6 @@ impl<
                     );
 
                     if let Some(batched_constraint) = batched {
-                        // Build challenge values: batching_coeffs + individual challenge values
                         let mut challenge_values: Vec<F> = zk_data.batching_coefficients.clone();
                         for cv in &zk_data.constraint_challenge_values {
                             challenge_values.extend(cv.iter().cloned());

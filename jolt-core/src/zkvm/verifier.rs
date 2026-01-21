@@ -263,20 +263,20 @@ impl<
         }
 
         let (r_stage1, uniskip_challenge1) = self.verify_stage1()?;
-        let (r_stage2, uniskip_challenge2) = self.verify_stage2()?;
-        let r_stage3 = self.verify_stage3()?;
+        let (stage2_result, uniskip_challenge2) = self.verify_stage2()?;
+        let stage3_result = self.verify_stage3()?;
         let stage4_result = self.verify_stage4()?;
-        let r_stage5 = self.verify_stage5()?;
-        let r_stage6 = self.verify_stage6()?;
-        let r_stage7 = self.verify_stage7()?;
+        let stage5_result = self.verify_stage5()?;
+        let stage6_result = self.verify_stage6()?;
+        let stage7_result = self.verify_stage7()?;
         let sumcheck_challenges = [
             r_stage1,
-            r_stage2,
-            r_stage3,
+            stage2_result.challenges,
+            stage3_result.challenges,
             stage4_result.challenges,
-            r_stage5,
-            r_stage6,
-            r_stage7,
+            stage5_result.challenges,
+            stage6_result.challenges.clone(),
+            stage7_result.challenges.clone(),
         ];
         let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
 
@@ -284,23 +284,23 @@ impl<
         // Stages without constraints return None
         let stage_constraints = [
             None,                             // Stage 0 (outer remaining)
-            None,                             // Stage 1 (product virtual + ram)
-            None, // Stage 2 (shift + instruction input + registers claim reduction)
+            stage2_result.batched_constraint, // Stage 1 (product virtual + ram)
+            stage3_result.batched_constraint, // Stage 2 (shift + instruction input + registers claim reduction)
             stage4_result.batched_constraint, // Stage 3 (registers rw + ram val eval + ram val final)
-            None, // Stage 4 (registers val eval + ram ra reduction + lookups read raf)
-            None, // Stage 5 (bytecode + booleanity + etc)
-            None, // Stage 6 (stage 7 in 1-indexed prover)
+            stage5_result.batched_constraint, // Stage 4 (registers val eval + ram ra reduction + lookups read raf)
+            stage6_result.batched_constraint, // Stage 5 (bytecode + booleanity + etc)
+            stage7_result.batched_constraint, // Stage 6 (hamming weight + advice phase 2)
         ];
 
         // Collect constraint challenge values per stage for explicit BlindFold verification
         let constraint_challenge_values: [Vec<F>; 7] = [
             Vec::new(),                                        // Stage 0
-            Vec::new(),                                        // Stage 1
-            Vec::new(),                                        // Stage 2
+            stage2_result.constraint_challenge_values.clone(), // Stage 1
+            stage3_result.constraint_challenge_values.clone(), // Stage 2
             stage4_result.constraint_challenge_values.clone(), // Stage 3
-            Vec::new(),                                        // Stage 4
-            Vec::new(),                                        // Stage 5
-            Vec::new(),                                        // Stage 6
+            stage5_result.constraint_challenge_values.clone(), // Stage 4
+            stage6_result.constraint_challenge_values.clone(), // Stage 5
+            stage7_result.constraint_challenge_values.clone(), // Stage 6
         ];
 
         self.verify_blindfold(
@@ -342,8 +342,8 @@ impl<
         Ok((r_stage1, uni_skip_challenge))
     }
 
-    /// Returns (sumcheck_challenges, uni_skip_challenge)
-    fn verify_stage2(&mut self) -> Result<(Vec<F::Challenge>, F::Challenge), anyhow::Error> {
+    /// Returns (StageVerifyResult, uni_skip_challenge)
+    fn verify_stage2(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), anyhow::Error> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &mut self.opening_accumulator,
@@ -376,24 +376,58 @@ impl<
             &mut self.transcript,
         );
 
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
+            &spartan_product_virtual_remainder,
+            &ram_raf_evaluation,
+            &ram_read_write_checking,
+            &ram_output_check,
+            &instruction_claim_reduction,
+        ];
+
+        // Compute batching coefficients before verify (for explicit BlindFold verification)
+        let batching_coefficients: Vec<F> = {
+            let mut transcript_clone = self.transcript.clone();
+            let input_claims: Vec<F> = instances
+                .iter()
+                .map(|instance| instance.input_claim(&self.opening_accumulator))
+                .collect();
+            for claim in &input_claims {
+                transcript_clone.append_scalar(claim);
+            }
+            transcript_clone.challenge_vector(instances.len())
+        };
+
         let r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
-            vec![
-                &spartan_product_virtual_remainder,
-                &ram_raf_evaluation,
-                &ram_read_write_checking,
-                &ram_output_check,
-                &instruction_claim_reduction,
-            ],
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 2")?;
 
-        Ok((r_stage2, uni_skip_challenge))
+        // Collect and batch output constraints from verifier instances
+        let batched_constraint = batch_constraints(&instances);
+
+        // Build expected constraint challenge values for explicit verification
+        // Pass instance-local challenges (same slice as expected_output_claim receives)
+        let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+        let mut constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        for instance in &instances {
+            let r_slice = &r_stage2[max_num_rounds - instance.num_rounds()..];
+            constraint_challenge_values
+                .extend(instance.output_constraint_challenge_values(r_slice));
+        }
+
+        let stage_result = StageVerifyResult::with_constraint_and_values(
+            r_stage2,
+            batched_constraint,
+            constraint_challenge_values,
+        );
+
+        Ok((stage_result, uni_skip_challenge))
     }
 
-    fn verify_stage3(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
+    fn verify_stage3(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
@@ -407,19 +441,48 @@ impl<
             &mut self.transcript,
         );
 
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
+            &spartan_shift,
+            &spartan_instruction_input,
+            &spartan_registers_claim_reduction,
+        ];
+
+        // Compute batching coefficients before verify (for explicit BlindFold verification).
+        let batching_coefficients: Vec<F> = {
+            let mut transcript_clone = self.transcript.clone();
+            for instance in &instances {
+                let input_claim = instance.input_claim(&self.opening_accumulator);
+                transcript_clone.append_scalar(&input_claim);
+            }
+            transcript_clone.challenge_vector(instances.len())
+        };
+
         let r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
-            vec![
-                &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &spartan_instruction_input,
-                &spartan_registers_claim_reduction,
-            ],
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 3")?;
 
-        Ok(r_stage3)
+        // Collect and batch output constraints from verifier instances
+        let batched_constraint = batch_constraints(&instances);
+
+        // Build expected constraint challenge values for explicit verification in verify_blindfold.
+        // Pass instance-local challenges (same slice as expected_output_claim receives)
+        let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        for instance in &instances {
+            let r_slice = &r_stage3[max_num_rounds - instance.num_rounds()..];
+            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            constraint_challenge_values.extend(instance_challenges);
+        }
+
+        Ok(StageVerifyResult::with_constraint_and_values(
+            r_stage3,
+            batched_constraint,
+            constraint_challenge_values,
+        ))
     }
 
     fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
@@ -491,9 +554,12 @@ impl<
         // Build expected constraint challenge values for explicit verification in verify_blindfold.
         // Layout: [batching_coefficients..., instance0_challenges..., instance1_challenges..., ...]
         // This matches the prover's FinalOutputWitness.challenge_values and OutputClaimConstraint::batch layout.
+        // Pass instance-local challenges (same slice as expected_output_claim receives)
+        let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
         let mut constraint_challenge_values: Vec<F> = batching_coefficients;
         for instance in &instances {
-            let instance_challenges = instance.output_constraint_challenge_values(&r_stage4);
+            let r_slice = &r_stage4[max_num_rounds - instance.num_rounds()..];
+            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
             constraint_challenge_values.extend(instance_challenges);
         }
 
@@ -504,7 +570,7 @@ impl<
         ))
     }
 
-    fn verify_stage5(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
+    fn verify_stage5(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
@@ -521,22 +587,51 @@ impl<
             &mut self.transcript,
         );
 
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
+            &registers_val_evaluation,
+            &ram_ra_reduction,
+            &lookups_read_raf,
+        ];
+
+        // Compute batching coefficients before verify (for explicit BlindFold verification)
+        let batching_coefficients: Vec<F> = {
+            let mut transcript_clone = self.transcript.clone();
+            for instance in &instances {
+                let input_claim = instance.input_claim(&self.opening_accumulator);
+                transcript_clone.append_scalar(&input_claim);
+            }
+            transcript_clone.challenge_vector(instances.len())
+        };
+
         let r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
-            vec![
-                &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_ra_reduction,
-                &lookups_read_raf,
-            ],
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 5")?;
 
-        Ok(r_stage5)
+        // Collect and batch output constraints from verifier instances
+        let batched_constraint = batch_constraints(&instances);
+
+        // Build expected constraint challenge values for explicit verification
+        // Pass instance-local challenges (same slice as expected_output_claim receives)
+        let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        for instance in &instances {
+            let r_slice = &r_stage5[max_num_rounds - instance.num_rounds()..];
+            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            constraint_challenge_values.extend(instance_challenges);
+        }
+
+        Ok(StageVerifyResult::with_constraint_and_values(
+            r_stage5,
+            batched_constraint,
+            constraint_challenge_values,
+        ))
     }
 
-    fn verify_stage6(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
+    fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
             &self.preprocessing.shared.bytecode,
@@ -616,15 +711,42 @@ impl<
             instances.push(advice);
         }
 
+        // Compute batching coefficients before verify (for explicit BlindFold verification)
+        let batching_coefficients: Vec<F> = {
+            let mut transcript_clone = self.transcript.clone();
+            for instance in &instances {
+                let input_claim = instance.input_claim(&self.opening_accumulator);
+                transcript_clone.append_scalar(&input_claim);
+            }
+            transcript_clone.challenge_vector(instances.len())
+        };
+
         let r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
-            instances,
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 6")?;
 
-        Ok(r_stage6)
+        // Collect and batch output constraints from verifier instances
+        let batched_constraint = batch_constraints(&instances);
+
+        // Build expected constraint challenge values for explicit verification
+        // Pass instance-local challenges (same slice as expected_output_claim receives)
+        let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        for instance in &instances {
+            let r_slice = &r_stage6[max_num_rounds - instance.num_rounds()..];
+            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            constraint_challenge_values.extend(instance_challenges);
+        }
+
+        Ok(StageVerifyResult::with_constraint_and_values(
+            r_stage6,
+            batched_constraint,
+            constraint_challenge_values,
+        ))
     }
 
     /// Verify BlindFold proof binding to sumcheck challenges.
@@ -802,13 +924,21 @@ impl<
         let constraint_challenges_start = total_rounds + num_chains + total_batching_coeffs;
         let mut constraint_challenge_idx = constraint_challenges_start;
 
+        tracing::debug!(
+            "BlindFold constraint challenges: start={constraint_challenges_start}, \
+             total_rounds={total_rounds}, num_chains={num_chains}, total_batching_coeffs={total_batching_coeffs}"
+        );
+
         for (stage_idx, expected_values) in constraint_challenge_values.iter().enumerate() {
             for (value_idx, expected) in expected_values.iter().enumerate() {
                 let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
                 if *expected != actual {
                     return Err(anyhow::anyhow!(
                         "BlindFold constraint challenge mismatch at stage {stage_idx} index {value_idx}: \
-                         expected {expected:?}, got {actual:?}"
+                         expected {expected:?}, got {actual:?}. \
+                         Stage has {} values total. constraint_challenge_idx={}",
+                        expected_values.len(),
+                        constraint_challenge_idx
                     ));
                 }
                 constraint_challenge_idx += 1;
@@ -862,7 +992,7 @@ impl<
     }
 
     /// Stage 7: HammingWeight claim reduction verification.
-    fn verify_stage7(&mut self) -> Result<Vec<F::Challenge>, anyhow::Error> {
+    fn verify_stage7(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
@@ -871,7 +1001,6 @@ impl<
             &mut self.transcript,
         );
 
-        // 3. Verify Stage 7 batched sumcheck (address rounds only).
         // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
         let trusted_advice_phase2 = self.advice_reduction_gamma_trusted.and_then(|gamma| {
             AdviceClaimReductionPhase2Verifier::new(
@@ -906,15 +1035,43 @@ impl<
         if let Some(ref v) = untrusted_advice_phase2 {
             instances.push(v);
         }
-        let r_address_stage7 = BatchedSumcheck::verify(
+
+        // Compute batching coefficients before verify (for explicit BlindFold verification)
+        let batching_coefficients: Vec<F> = {
+            let mut transcript_clone = self.transcript.clone();
+            for instance in &instances {
+                let input_claim = instance.input_claim(&self.opening_accumulator);
+                transcript_clone.append_scalar(&input_claim);
+            }
+            transcript_clone.challenge_vector(instances.len())
+        };
+
+        let r_stage7 = BatchedSumcheck::verify(
             &self.proof.stage7_sumcheck_proof,
-            instances,
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 7")?;
 
-        Ok(r_address_stage7)
+        // Collect and batch output constraints from verifier instances
+        let batched_constraint = batch_constraints(&instances);
+
+        // Build expected constraint challenge values for explicit verification
+        // Pass instance-local challenges (same slice as expected_output_claim receives)
+        let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        for instance in &instances {
+            let r_slice = &r_stage7[max_num_rounds - instance.num_rounds()..];
+            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            constraint_challenge_values.extend(instance_challenges);
+        }
+
+        Ok(StageVerifyResult::with_constraint_and_values(
+            r_stage7,
+            batched_constraint,
+            constraint_challenge_values,
+        ))
     }
 
     /// Stage 8: Dory batch opening verification.

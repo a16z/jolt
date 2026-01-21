@@ -10,13 +10,14 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
     subprotocols::{
+        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -450,6 +451,124 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         );
     }
 
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim =
+        //   (E1 + γ²*E2) * (right_input + γ*left_input)
+        // where:
+        //   left_input = left_is_rs1 * rs1_value + left_is_pc * unexpanded_pc
+        //   right_input = right_is_rs2 * rs2_value + right_is_imm * imm
+        //
+        // Challenges:
+        // - Challenge(0) = E1 (eq_eval_at_r_cycle_stage_1)
+        // - Challenge(1) = γ
+        // - Challenge(2) = γ² * E2
+        // - Challenge(3) = γ³ * E2
+
+        let left_is_rs1 = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let rs1_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let left_is_pc = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let unexpanded_pc = OpeningId::Virtual(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let right_is_rs2 = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let rs2_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let right_is_imm = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let imm = OpeningId::Virtual(
+            VirtualPolynomial::Imm,
+            SumcheckId::InstructionInputVirtualization,
+        );
+
+        let e1 = ValueSource::Challenge(0);
+        let gamma = ValueSource::Challenge(1);
+        let gamma_sq_e2 = ValueSource::Challenge(2);
+        let gamma_cubed_e2 = ValueSource::Challenge(3);
+
+        let terms = vec![
+            // E1 * right_is_rs2 * rs2_value
+            ProductTerm::product(vec![
+                e1.clone(),
+                ValueSource::Opening(right_is_rs2),
+                ValueSource::Opening(rs2_value),
+            ]),
+            // E1 * right_is_imm * imm
+            ProductTerm::product(vec![
+                e1.clone(),
+                ValueSource::Opening(right_is_imm),
+                ValueSource::Opening(imm),
+            ]),
+            // γ * E1 * left_is_rs1 * rs1_value
+            ProductTerm::product(vec![
+                gamma.clone(),
+                e1.clone(),
+                ValueSource::Opening(left_is_rs1),
+                ValueSource::Opening(rs1_value),
+            ]),
+            // γ * E1 * left_is_pc * unexpanded_pc
+            ProductTerm::product(vec![
+                gamma,
+                e1,
+                ValueSource::Opening(left_is_pc),
+                ValueSource::Opening(unexpanded_pc),
+            ]),
+            // γ² * E2 * right_is_rs2 * rs2_value
+            ProductTerm::product(vec![
+                gamma_sq_e2.clone(),
+                ValueSource::Opening(right_is_rs2),
+                ValueSource::Opening(rs2_value),
+            ]),
+            // γ² * E2 * right_is_imm * imm
+            ProductTerm::product(vec![
+                gamma_sq_e2,
+                ValueSource::Opening(right_is_imm),
+                ValueSource::Opening(imm),
+            ]),
+            // γ³ * E2 * left_is_rs1 * rs1_value
+            ProductTerm::product(vec![
+                gamma_cubed_e2.clone(),
+                ValueSource::Opening(left_is_rs1),
+                ValueSource::Opening(rs1_value),
+            ]),
+            // γ³ * E2 * left_is_pc * unexpanded_pc
+            ProductTerm::product(vec![
+                gamma_cubed_e2,
+                ValueSource::Opening(left_is_pc),
+                ValueSource::Opening(unexpanded_pc),
+            ]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
+        let e1 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_1);
+        let e2 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_2);
+        let gamma = self.params.gamma;
+        let gamma_sq = gamma.square();
+        let gamma_cubed = gamma_sq * gamma;
+
+        vec![e1, gamma, gamma_sq * e2, gamma_cubed * e2]
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -599,5 +718,138 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::InstructionInputVirtualization,
             r,
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim =
+        //   (E1 + γ²*E2) * (right_input + γ*left_input)
+        // where:
+        //   left_input = left_is_rs1 * rs1_value + left_is_pc * unexpanded_pc
+        //   right_input = right_is_rs2 * rs2_value + right_is_imm * imm
+        //
+        // Expanding: 8 terms
+        // E1 * right_is_rs2 * rs2_value
+        // E1 * right_is_imm * imm
+        // γ * E1 * left_is_rs1 * rs1_value
+        // γ * E1 * left_is_pc * unexpanded_pc
+        // γ² * E2 * right_is_rs2 * rs2_value
+        // γ² * E2 * right_is_imm * imm
+        // γ³ * E2 * left_is_rs1 * rs1_value
+        // γ³ * E2 * left_is_pc * unexpanded_pc
+        //
+        // Challenges:
+        // - Challenge(0) = E1 (eq_eval_at_r_cycle_stage_1)
+        // - Challenge(1) = γ
+        // - Challenge(2) = γ² * E2
+        // - Challenge(3) = γ³ * E2
+
+        let left_is_rs1 = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let rs1_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let left_is_pc = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let unexpanded_pc = OpeningId::Virtual(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let right_is_rs2 = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let rs2_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let right_is_imm = OpeningId::Virtual(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let imm = OpeningId::Virtual(
+            VirtualPolynomial::Imm,
+            SumcheckId::InstructionInputVirtualization,
+        );
+
+        let e1 = ValueSource::Challenge(0);
+        let gamma = ValueSource::Challenge(1);
+        let gamma_sq_e2 = ValueSource::Challenge(2);
+        let gamma_cubed_e2 = ValueSource::Challenge(3);
+
+        let terms = vec![
+            // E1 * right_is_rs2 * rs2_value
+            ProductTerm::product(vec![
+                e1.clone(),
+                ValueSource::Opening(right_is_rs2),
+                ValueSource::Opening(rs2_value),
+            ]),
+            // E1 * right_is_imm * imm
+            ProductTerm::product(vec![
+                e1.clone(),
+                ValueSource::Opening(right_is_imm),
+                ValueSource::Opening(imm),
+            ]),
+            // γ * E1 * left_is_rs1 * rs1_value
+            ProductTerm::product(vec![
+                gamma.clone(),
+                e1.clone(),
+                ValueSource::Opening(left_is_rs1),
+                ValueSource::Opening(rs1_value),
+            ]),
+            // γ * E1 * left_is_pc * unexpanded_pc
+            ProductTerm::product(vec![
+                gamma,
+                e1,
+                ValueSource::Opening(left_is_pc),
+                ValueSource::Opening(unexpanded_pc),
+            ]),
+            // γ² * E2 * right_is_rs2 * rs2_value
+            ProductTerm::product(vec![
+                gamma_sq_e2.clone(),
+                ValueSource::Opening(right_is_rs2),
+                ValueSource::Opening(rs2_value),
+            ]),
+            // γ² * E2 * right_is_imm * imm
+            ProductTerm::product(vec![
+                gamma_sq_e2,
+                ValueSource::Opening(right_is_imm),
+                ValueSource::Opening(imm),
+            ]),
+            // γ³ * E2 * left_is_rs1 * rs1_value
+            ProductTerm::product(vec![
+                gamma_cubed_e2.clone(),
+                ValueSource::Opening(left_is_rs1),
+                ValueSource::Opening(rs1_value),
+            ]),
+            // γ³ * E2 * left_is_pc * unexpanded_pc
+            ProductTerm::product(vec![
+                gamma_cubed_e2,
+                ValueSource::Opening(left_is_pc),
+                ValueSource::Opening(unexpanded_pc),
+            ]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        // Challenge(0) = E1 (eq_eval_at_r_cycle_stage_1)
+        // Challenge(1) = γ
+        // Challenge(2) = γ² * E2
+        // Challenge(3) = γ³ * E2
+
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
+        let e1 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_1);
+        let e2 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_2);
+        let gamma = self.params.gamma;
+        let gamma_sq = gamma.square();
+        let gamma_cubed = gamma_sq * gamma;
+
+        vec![e1, gamma, gamma_sq * e2, gamma_cubed * e2]
     }
 }

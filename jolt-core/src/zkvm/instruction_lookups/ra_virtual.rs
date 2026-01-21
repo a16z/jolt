@@ -6,7 +6,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
@@ -14,6 +14,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
+        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::{
             compute_mles_product_sum_evals_sum_of_products_d16,
             compute_mles_product_sum_evals_sum_of_products_d4,
@@ -270,6 +271,40 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let m = self.params.n_committed_per_virtual;
+        let n = self.params.n_virtual_ra_polys;
+
+        let terms: Vec<ProductTerm> = (0..n)
+            .map(|i| {
+                let factors: Vec<ValueSource> = (0..m)
+                    .map(|j| {
+                        let opening = OpeningId::Committed(
+                            CommittedPolynomial::InstructionRa(i * m + j),
+                            SumcheckId::InstructionRaVirtualization,
+                        );
+                        ValueSource::Opening(opening)
+                    })
+                    .collect();
+
+                ProductTerm::scaled(ValueSource::Challenge(i), factors)
+            })
+            .collect();
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
+        let eq_eval: F = EqPolynomial::mle_endian(&self.params.r_cycle, &r);
+
+        self.params
+            .gamma_powers
+            .iter()
+            .map(|gamma_i| eq_eval * *gamma_i)
+            .collect()
+    }
 }
 
 /// Instruction read-access (RA) virtualization sumcheck.
@@ -364,5 +399,45 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
                 opening_point,
             );
         }
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output = eq_eval * Σ_i (γ^i * ∏_j ra_{i*M+j})
+        //                 = Σ_i Challenge(i) * ∏_j Opening(InstructionRa(i*M+j))
+        //
+        // Challenge(i) = eq_eval * γ^i
+        let m = self.params.n_committed_per_virtual;
+        let n = self.params.n_virtual_ra_polys;
+
+        let terms: Vec<ProductTerm> = (0..n)
+            .map(|i| {
+                // Factors: product of m committed ra polynomials for virtual polynomial i
+                let factors: Vec<ValueSource> = (0..m)
+                    .map(|j| {
+                        let opening = OpeningId::Committed(
+                            CommittedPolynomial::InstructionRa(i * m + j),
+                            SumcheckId::InstructionRaVirtualization,
+                        );
+                        ValueSource::Opening(opening)
+                    })
+                    .collect();
+
+                ProductTerm::scaled(ValueSource::Challenge(i), factors)
+            })
+            .collect();
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
+        let eq_eval: F = EqPolynomial::mle_endian(&self.params.r_cycle, &r);
+
+        // Challenge(i) = eq_eval * γ^i
+        self.params
+            .gamma_powers
+            .iter()
+            .map(|gamma_i| eq_eval * *gamma_i)
+            .collect()
     }
 }

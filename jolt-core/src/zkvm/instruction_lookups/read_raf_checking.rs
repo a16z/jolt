@@ -22,7 +22,7 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
@@ -30,6 +30,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
+        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::{eval_linear_prod_accumulate, finish_mles_product_sum_from_evals},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -899,6 +900,91 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let n_virtual_ra_polys = LOG_K / self.params.ra_virtual_log_k_chunk;
+        let num_tables = LookupTables::<XLEN>::COUNT;
+
+        let ra_openings: Vec<ValueSource> = (0..n_virtual_ra_polys)
+            .map(|i| {
+                ValueSource::Opening(OpeningId::Virtual(
+                    VirtualPolynomial::InstructionRa(i),
+                    SumcheckId::InstructionReadRaf,
+                ))
+            })
+            .collect();
+
+        let mut terms = Vec::with_capacity(num_tables + 2);
+
+        for j in 0..num_tables {
+            let flag_opening = ValueSource::Opening(OpeningId::Virtual(
+                VirtualPolynomial::LookupTableFlag(j),
+                SumcheckId::InstructionReadRaf,
+            ));
+
+            let mut factors = ra_openings.clone();
+            factors.push(flag_opening);
+
+            terms.push(ProductTerm::scaled(ValueSource::Challenge(j), factors));
+        }
+
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(num_tables),
+            ra_openings.clone(),
+        ));
+
+        let raf_flag_opening = ValueSource::Opening(OpeningId::Virtual(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+        ));
+        let mut raf_factors = ra_openings;
+        raf_factors.push(raf_flag_opening);
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(num_tables + 1),
+            raf_factors,
+        ));
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        let (r_address_prime, r_cycle_prime) = opening_point.split_at(LOG_K);
+
+        let left_operand_eval =
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Left).evaluate(&r_address_prime.r);
+        let right_operand_eval =
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Right).evaluate(&r_address_prime.r);
+        let identity_poly_eval = IdentityPolynomial::<F>::new(LOG_K).evaluate(&r_address_prime.r);
+        let val_evals: Vec<_> = LookupTables::<XLEN>::iter()
+            .map(|table| table.evaluate_mle::<F, F::Challenge>(&r_address_prime.r))
+            .collect();
+
+        let eq_eval_r_reduction =
+            EqPolynomial::<F>::mle(&self.params.r_reduction.r, &r_cycle_prime.r);
+
+        let gamma = self.params.gamma;
+        let gamma_sqr = self.params.gamma_sqr;
+
+        let num_tables = LookupTables::<XLEN>::COUNT;
+        let mut challenges = Vec::with_capacity(num_tables + 2);
+
+        for val_eval in val_evals {
+            challenges.push(eq_eval_r_reduction * val_eval);
+        }
+
+        let const_term =
+            eq_eval_r_reduction * (gamma * left_operand_eval + gamma_sqr * right_operand_eval);
+        challenges.push(const_term);
+
+        let raf_coeff = eq_eval_r_reduction
+            * (gamma_sqr * identity_poly_eval
+                - gamma * left_operand_eval
+                - gamma_sqr * right_operand_eval);
+        challenges.push(raf_coeff);
+
+        challenges
+    }
 }
 
 impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
@@ -1306,6 +1392,116 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq * (Π ra_i) * (val_claim + γ * raf_claim)
+        //
+        // Expanded:
+        //   = Σ_j (eq*val_j) * (Π ra_i) * flag_j
+        //   + (eq*(γ*left + γ²*right)) * (Π ra_i)
+        //   + (eq*(γ²*identity - γ*left - γ²*right)) * (Π ra_i) * raf_flag
+        //
+        // Challenge layout:
+        //   Challenge(0..N): eq * val_j for each table j
+        //   Challenge(N): eq * (γ*left + γ²*right)
+        //   Challenge(N+1): eq * (γ²*identity - γ*left - γ²*right)
+
+        let n_virtual_ra_polys = LOG_K / self.params.ra_virtual_log_k_chunk;
+        let num_tables = LookupTables::<XLEN>::COUNT;
+
+        // Build ra openings list
+        let ra_openings: Vec<ValueSource> = (0..n_virtual_ra_polys)
+            .map(|i| {
+                ValueSource::Opening(OpeningId::Virtual(
+                    VirtualPolynomial::InstructionRa(i),
+                    SumcheckId::InstructionReadRaf,
+                ))
+            })
+            .collect();
+
+        let mut terms = Vec::with_capacity(num_tables + 2);
+
+        // Terms for each table: Challenge(j) * (Π ra_i) * flag_j
+        for j in 0..num_tables {
+            let flag_opening = ValueSource::Opening(OpeningId::Virtual(
+                VirtualPolynomial::LookupTableFlag(j),
+                SumcheckId::InstructionReadRaf,
+            ));
+
+            let mut factors = ra_openings.clone();
+            factors.push(flag_opening);
+
+            terms.push(ProductTerm::scaled(ValueSource::Challenge(j), factors));
+        }
+
+        // Constant term: Challenge(N) * (Π ra_i)
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(num_tables),
+            ra_openings.clone(),
+        ));
+
+        // RAF term: Challenge(N+1) * (Π ra_i) * raf_flag
+        let raf_flag_opening = ValueSource::Opening(OpeningId::Virtual(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+        ));
+        let mut raf_factors = ra_openings;
+        raf_factors.push(raf_flag_opening);
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(num_tables + 1),
+            raf_factors,
+        ));
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        let (r_address_prime, r_cycle_prime) = opening_point.split_at(LOG_K);
+
+        // Compute MLE evaluations
+        let left_operand_eval =
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Left).evaluate(&r_address_prime.r);
+        let right_operand_eval =
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Right).evaluate(&r_address_prime.r);
+        let identity_poly_eval = IdentityPolynomial::<F>::new(LOG_K).evaluate(&r_address_prime.r);
+        let val_evals: Vec<_> = LookupTables::<XLEN>::iter()
+            .map(|table| table.evaluate_mle::<F, F::Challenge>(&r_address_prime.r))
+            .collect();
+
+        // Compute eq evaluation
+        let eq_eval_r_reduction =
+            EqPolynomial::<F>::mle(&self.params.r_reduction.r, &r_cycle_prime.r);
+
+        let gamma = self.params.gamma;
+        let gamma_sqr = self.params.gamma_sqr;
+
+        // Challenge values:
+        // 0..N: eq * val_j for each table
+        // N: eq * (γ*left + γ²*right)
+        // N+1: eq * (γ²*identity - γ*left - γ²*right)
+        let num_tables = LookupTables::<XLEN>::COUNT;
+        let mut challenges = Vec::with_capacity(num_tables + 2);
+
+        // eq * val_j for each table
+        for val_eval in val_evals {
+            challenges.push(eq_eval_r_reduction * val_eval);
+        }
+
+        // eq * (γ*left + γ²*right)
+        let const_term =
+            eq_eval_r_reduction * (gamma * left_operand_eval + gamma_sqr * right_operand_eval);
+        challenges.push(const_term);
+
+        // eq * (γ²*identity - γ*left - γ²*right)
+        let raf_coeff = eq_eval_r_reduction
+            * (gamma_sqr * identity_poly_eval
+                - gamma * left_operand_eval
+                - gamma_sqr * right_operand_eval);
+        challenges.push(raf_coeff);
+
+        challenges
     }
 }
 

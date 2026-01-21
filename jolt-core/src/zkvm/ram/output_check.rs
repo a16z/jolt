@@ -4,7 +4,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         program_io_polynomial::ProgramIOPolynomial,
@@ -13,6 +13,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
+        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -84,6 +85,33 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
+impl<F: JoltField> OutputSumcheckParams<F> {
+    pub fn constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_address = &self.r_address;
+        let r_address_prime = self.normalize_opening_point(sumcheck_challenges).r;
+        let program_io = &self.program_io;
+
+        let io_mask = RangeMaskPolynomial::<F>::new(
+            remap_address(
+                program_io.memory_layout.input_start,
+                &program_io.memory_layout,
+            )
+            .unwrap() as u128,
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as u128,
+        );
+        let val_io = ProgramIOPolynomial::new(program_io);
+
+        let eq_eval: F = EqPolynomial::<F>::mle(r_address, &r_address_prime);
+        let io_mask_eval = io_mask.evaluate_mle(&r_address_prime);
+        let val_io_eval: F = val_io.evaluate(&r_address_prime);
+
+        let eq_io_mask = eq_eval * io_mask_eval;
+        let neg_eq_io_mask_val_io = -eq_io_mask * val_io_eval;
+
+        vec![eq_io_mask, neg_eq_io_mask_val_io]
     }
 }
 
@@ -237,6 +265,33 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         );
     }
 
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq_eval * io_mask_eval * (val_final - val_io_eval)
+        //                       = eq_eval * io_mask_eval * val_final - eq_eval * io_mask_eval * val_io_eval
+        //
+        // Challenge layout:
+        //   Challenge(0) = eq_eval * io_mask_eval
+        //   Challenge(1) = -eq_eval * io_mask_eval * val_io_eval (constant term)
+        let val_final_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
+
+        let terms = vec![
+            // eq*io_mask * val_final
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(val_final_opening)],
+            ),
+            // -eq*io_mask*val_io (constant term, no opening factors)
+            ProductTerm::single(ValueSource::Challenge(1)),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.params.constraint_challenge_values(sumcheck_challenges)
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -314,5 +369,32 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
             SumcheckId::RamOutputCheck,
             opening_point,
         );
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq_eval * io_mask_eval * (val_final - val_io_eval)
+        //                       = eq_eval * io_mask_eval * val_final - eq_eval * io_mask_eval * val_io_eval
+        //
+        // Challenge layout:
+        //   Challenge(0) = eq_eval * io_mask_eval
+        //   Challenge(1) = -eq_eval * io_mask_eval * val_io_eval (constant term)
+        let val_final_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
+
+        let terms = vec![
+            // eq*io_mask * val_final
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(val_final_opening)],
+            ),
+            // -eq*io_mask*val_io (constant term, no opening factors)
+            ProductTerm::single(ValueSource::Challenge(1)),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.params.constraint_challenge_values(sumcheck_challenges)
     }
 }
