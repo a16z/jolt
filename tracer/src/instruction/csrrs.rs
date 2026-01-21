@@ -4,7 +4,18 @@
 //!
 //! The `csrr rd, csr` pseudo-instruction is `csrrs rd, csr, x0` (read only, no bits set).
 //!
-//! For ZeroOS M-mode: Used primarily for reading CSRs (csrr pseudo-instruction).
+//! ## Limitation: Only `csrr` pseudo-instruction supported
+//!
+//! The full CSRRS instruction atomically reads and sets bits: `rd = CSR; CSR |= rs1`.
+//! We only support the read-only `csrr` pseudo-instruction (rs1 = x0).
+//!
+//! **Why?** Implementing the bit-set operation would require an OR instruction in the
+//! inline sequence, which we don't have. We'd need to either:
+//! - Add a virtual OR instruction, or
+//! - Synthesize OR from AND/XOR (more complex)
+//!
+//! **Impact:** If ZeroOS or guest code uses `csrrs rd, csr, rs1` with rs1 != 0,
+//! tracing will panic. This is acceptable for ZeroOS M-mode which only uses `csrr`.
 
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +29,6 @@ use crate::{
 use super::{
     addi::ADDI,
     format::format_i::FormatI,
-    virtual_advice::VirtualAdvice,
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
@@ -48,7 +58,7 @@ impl CSRRS {
         let csr_addr = self.csr_address();
         let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
 
-        // Read old CSR value
+        // Read old CSR value from CSR state
         let old_val = cpu.read_csr_raw(csr_addr);
 
         // If rs1 != 0, set bits (OR with rs1)
@@ -73,30 +83,14 @@ impl RISCVTrace for CSRRS {
             );
         }
 
-        let csr_addr = self.csr_address();
-
-        // Get the CSR value from the CPU's emulation state (not the virtual register)
-        // This is the source of truth for the CSR value.
-        let csr_val = cpu.read_csr_raw(csr_addr);
-
         // Execute the CSR operation (updates emulation state)
         let mut ram_access = ();
         self.execute(cpu, &mut ram_access);
 
-        // Generate inline sequence and fill in advice
-        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        // Generate and execute inline sequence
+        // The inline sequence reads from the virtual register (source of truth for proofs)
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // VirtualAdvice at index 0 provides the CSR value
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = csr_val;
-        } else {
-            panic!(
-                "CSRRS: Expected VirtualAdvice at index 0, got {:?}",
-                inline_sequence[0]
-            );
-        }
-
-        // Execute inline sequence to record in trace
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
@@ -105,24 +99,32 @@ impl RISCVTrace for CSRRS {
 
     /// Generate inline sequence for CSRRS (csrr pseudo-instruction only).
     ///
-    /// IMPORTANT: We use write-then-read pattern to match ECALL's approach.
-    /// Virtual registers must be "initialized" within the inline sequence before
-    /// being read, otherwise R1CS constraints fail.
+    /// Reads CSR value from the virtual register and copies to rd.
+    /// Virtual registers are updated by:
+    /// - CSRRW for mtvec, mscratch
+    /// - ECALL inline sequence for mepc, mcause, mtval, mstatus (when trap is taken)
     ///
     /// For rs1 = 0 (csrr, read only) with rd != 0:
-    ///   0: VirtualAdvice(temp)       - Get advice (CSR value from emulation state)
-    ///   1: ADDI(vr, temp, 0)         - Write advice to vr (makes it "defined")
-    ///   2: ADDI(rd, vr, 0)           - Read vr to rd
+    ///   0: ADDI(rd, vr, 0) - Copy from virtual register to rd
     ///
-    /// For rs1 = 0, rd == 0: No-op, just refresh vr:
-    ///   0: VirtualAdvice(temp)       - Get advice (CSR value)
-    ///   1: ADDI(vr, temp, 0)         - Write advice back to vr
+    /// For rs1 = 0, rd = 0: No-op (empty sequence)
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
+        // If rd == 0, this is a no-op
+        if self.operands.rd == 0 {
+            return Vec::new();
+        }
+
         let csr_addr = self.csr_address();
+
+        // Validate CSR address is supported
+        match csr_addr {
+            CSR_MSTATUS | CSR_MTVEC | CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL => {}
+            _ => panic!("CSRRS: Unsupported CSR 0x{:03x}", csr_addr),
+        };
 
         // Map CSR address to virtual register
         let virtual_reg = match csr_addr {
@@ -132,25 +134,13 @@ impl RISCVTrace for CSRRS {
             CSR_MEPC => allocator.mepc_register(),
             CSR_MCAUSE => allocator.mcause_register(),
             CSR_MTVAL => allocator.mtval_register(),
-            _ => panic!(
-                "CSRRS: Unsupported CSR 0x{:03x}",
-                csr_addr
-            ),
+            _ => unreachable!(), // Already validated above
         };
 
-        let value_reg = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Index 0: VirtualAdvice provides the CSR value
-        asm.emit_j::<VirtualAdvice>(*value_reg, 0);
-
-        // Index 1: Write advice to vr (makes it "defined" in this sequence)
-        asm.emit_i::<ADDI>(virtual_reg, *value_reg, 0);
-
-        // Index 2: Read vr to rd (if rd != 0)
-        if self.operands.rd != 0 {
-            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
-        }
+        // Read from virtual register to rd
+        asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
 
         asm.finalize()
     }
@@ -158,7 +148,6 @@ impl RISCVTrace for CSRRS {
 
 #[cfg(test)]
 mod tests {
-    use super::CSRRS;
     use crate::instruction::Instruction;
 
     /// Test decoding of `csrr t0, mtvec` (csrrs t0, mtvec, x0)

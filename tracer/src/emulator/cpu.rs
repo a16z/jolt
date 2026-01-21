@@ -25,9 +25,6 @@ use jolt_platform::{
     JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
 
-const JOLT_CSR_ECALL_NUM: u32 = 0x435352; // "CSR" in hex (ASCII)
-#[allow(dead_code)]
-const JOLT_RET_ECALL_NUM: u32 = 0x524554; // "RET" in hex (ASCII) - return from trap
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
 
@@ -64,7 +61,7 @@ const CSR_MIDELEG_ADDRESS: u16 = 0x303;
 const CSR_MIE_ADDRESS: u16 = 0x304;
 
 const CSR_MTVEC_ADDRESS: u16 = 0x305;
-const _CSR_MSCRATCH_ADDRESS: u16 = 0x340;
+const CSR_MSCRATCH_ADDRESS: u16 = 0x340;
 const CSR_MEPC_ADDRESS: u16 = 0x341;
 const CSR_MCAUSE_ADDRESS: u16 = 0x342;
 const CSR_MTVAL_ADDRESS: u16 = 0x343;
@@ -119,8 +116,6 @@ pub struct Cpu {
     call_stack: VecDeque<CallFrame>,
     /// Exit code set by EXIT ECALL, None means program hasn't exited yet
     pub exit_code: Option<u32>,
-    /// Pending csr result to be written to a0 via VirtualAdvice in ECALL trace
-    pub pending_csr_result: Option<i64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -286,7 +281,6 @@ impl Cpu {
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
             exit_code: None,
-            pending_csr_result: None,
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -546,10 +540,6 @@ impl Cpu {
             )
         {
             let call_id = self.x[10] as u32; // a0
-            let syscall_nr = self.x[17] as u32; // a7 - syscall number
-            eprintln!("[TRAP] ECALL at pc=0x{:x}, a0(call_id)=0x{:x}, a7(syscall)={}, mtvec=0x{:x}, mscratch=0x{:x}",
-                instruction_address, call_id, syscall_nr, self.read_csr_raw(CSR_MTVEC_ADDRESS),
-                self.read_csr_raw(0x340));
             if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
                 let marker_ptr = self.x[11] as u32; // a1
                 let marker_len = self.x[12] as u32; // a2
@@ -561,12 +551,6 @@ impl Cpu {
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
-
-                // Preserve a0 (the ECALL magic number) so the inline sequence
-                // writes back the same value. This is necessary because the compiler
-                // may reuse a0 across multiple cycle tracking calls.
-                self.pending_csr_result = Some(call_id as i64);
-
                 return false; // we don't take the trap
             } else if call_id == JOLT_PRINT_ECALL_NUM {
                 let string_ptr = self.x[11] as u32; // a1
@@ -577,62 +561,11 @@ impl Cpu {
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
-
-                // Preserve a0 (the ECALL magic number) so the inline sequence
-                // writes back the same value.
-                self.pending_csr_result = Some(call_id as i64);
-
                 return false;
-            } else if call_id == JOLT_CSR_ECALL_NUM {
-                // CSR ECALL for setting trap handler address.
-                // We write to mtvec CSR for emulation purposes (so handle_trap knows where to jump).
-                // We also set a flag so the ECALL inline sequence stores the address (from a3)
-                // into the trap handler virtual register (register 33) for proof verification.
-                // The proof verifies against virtual register 33, not the CSR value.
-                let trap_handler_addr = self.x[13] as u64; // a3 contains the trap handler address
-                self.write_csr_raw(CSR_MTVEC_ADDRESS, trap_handler_addr);
-
-                self.vr_allocator.set_is_csr_ecall(true);
-                self.pending_csr_result = Some(0);
-
-                return false; // we don't take the trap
             }
 
-            // // If the guest installed its own trap handler (mtvec != 0), then it likely expects
-            // // to receive ECALL as a real trap and dispatch syscalls/traps in-guest (e.g. ZeroOS).
-            // // In that case, fall through to the normal trap delivery logic below.
-            // //
-            // // If mtvec is unset (0), we emulate Linux syscalls directly in the emulator so
-            // // musl/Rust stdlib programs can run without a guest kernel.
-            // let guest_mtvec = self.read_csr_raw(CSR_MTVEC_ADDRESS);
-            // if guest_mtvec != 0 {
-            //     // Take the trap.
-            // } else {
-            //     // Treat all other ECALLs as Linux syscalls and handle them in the emulator.
-            //     // This matches the typical userspace ABI: syscall number in a7, args in a0-a5,
-            //     // return value in a0.
-            //     let nr = self.x[17]; // a7
-            //     let a0 = self.x[10] as usize;
-            //     let a1 = self.x[11] as usize;
-            //     let a2 = self.x[12] as usize;
-            //     let a3 = self.x[13] as usize;
-            //     let a4 = self.x[14] as usize;
-            //     let a5 = self.x[15] as usize;
-
-            //     let ret = self.handle_syscall(nr, a0, a1, a2, a3, a4, a5);
-            //     self.x[10] = ret;
-            //     self.pending_csr_result = Some(ret);
-            //     return false; // syscall handled; return to next instruction
-            // }
-
-            // RET ECALL is no longer needed - trap handler returns via JALR t1
-            // The return address is passed in t1 by the ECALL inline sequence.
-            // } else if call_id == JOLT_RET_ECALL_NUM {
-            //     // Return from trap - read mepc and jump to it
-            //     let mepc = self.read_csr_raw(CSR_MEPC_ADDRESS);
-            //     self.pc = mepc;
-            //     return false; // we don't take the trap
-            // }
+            // For non-Jolt ECALLs, fall through to normal trap delivery.
+            // ZeroOS handles syscalls in-guest via its trap handler.
         }
 
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
@@ -808,10 +741,8 @@ impl Cpu {
         self.write_csr_raw(csr_epc_address, instruction_address);
         self.write_csr_raw(csr_cause_address, cause);
         self.write_csr_raw(csr_tval_address, trap.value);
-        self.pc = self.read_csr_raw(csr_tvec_address);
-
-        eprintln!("[TRAP] Taking trap: cause=0x{:x}, mepc=0x{:x}, jumping to mtvec=0x{:x}",
-            cause, instruction_address, self.pc);
+        let tvec_value = self.read_csr_raw(csr_tvec_address);
+        self.pc = tvec_value;
 
         // Add 4 * cause if tvec has vector type address
         if (self.pc & 0x3) != 0 {
@@ -897,12 +828,23 @@ impl Cpu {
     }
 
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
+    //
+    // Virtual register mapping (for inline sequences, not used by emulator):
+    //   mstatus (0x300) → cpu.x[38]
+    //   mtvec (0x305) → cpu.x[33]
+    //   mscratch (0x340) → cpu.x[34]
+    //   mepc (0x341) → cpu.x[35]
+    //   mcause (0x342) → cpu.x[36]
+    //   mtval (0x343) → cpu.x[37]
     pub fn read_csr_raw(&self, address: u16) -> u64 {
+        // Emulator uses CSR array for emulation state.
+        // Inline sequences independently write to virtual registers (cpu.x[33-38])
+        // for proof verification. Both should maintain consistent values.
         match address {
             // @TODO: Mask should consider of 32-bit mode
             CSR_FFLAGS_ADDRESS => self.csr[CSR_FCSR_ADDRESS as usize] & 0x1f,
             CSR_FRM_ADDRESS => (self.csr[CSR_FCSR_ADDRESS as usize] >> 5) & 0x7,
-            CSR_SSTATUS_ADDRESS => self.csr[CSR_MSTATUS_ADDRESS as usize] & 0x80000003000de162,
+            CSR_SSTATUS_ADDRESS => self.read_csr_raw(CSR_MSTATUS_ADDRESS) & 0x80000003000de162,
             CSR_SIE_ADDRESS => self.csr[CSR_MIE_ADDRESS as usize] & 0x222,
             CSR_SIP_ADDRESS => self.csr[CSR_MIP_ADDRESS as usize] & 0x222,
             CSR_TIME_ADDRESS => panic!("CLINT is unsupported."),
@@ -911,6 +853,10 @@ impl Cpu {
     }
 
     pub fn write_csr_raw(&mut self, address: u16, value: u64) {
+        // Emulator writes to CSR array. For the 6 CSRs that have virtual register
+        // counterparts (mstatus, mtvec, mscratch, mepc, mcause, mtval), the inline
+        // sequences independently write to virtual registers (cpu.x[33-38]) for
+        // proof verification. Both maintain consistent values.
         match address {
             CSR_FFLAGS_ADDRESS => {
                 self.csr[CSR_FCSR_ADDRESS as usize] &= !0x1f;
@@ -920,11 +866,16 @@ impl Cpu {
                 self.csr[CSR_FCSR_ADDRESS as usize] &= !0xe0;
                 self.csr[CSR_FCSR_ADDRESS as usize] |= (value << 5) & 0xe0;
             }
+            CSR_MSTATUS_ADDRESS => {
+                self.csr[address as usize] = value;
+                self.mmu.update_mstatus(value);
+            }
             CSR_SSTATUS_ADDRESS => {
-                self.csr[CSR_MSTATUS_ADDRESS as usize] &= !0x80000003000de162;
-                self.csr[CSR_MSTATUS_ADDRESS as usize] |= value & 0x80000003000de162;
-                self.mmu
-                    .update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
+                // SSTATUS is a view of MSTATUS - read/modify/write
+                let old_mstatus = self.read_csr_raw(CSR_MSTATUS_ADDRESS);
+                let new_mstatus =
+                    (old_mstatus & !0x80000003000de162) | (value & 0x80000003000de162);
+                self.write_csr_raw(CSR_MSTATUS_ADDRESS, new_mstatus);
             }
             CSR_SIE_ADDRESS => {
                 self.csr[CSR_MIE_ADDRESS as usize] &= !0x222;
@@ -936,11 +887,6 @@ impl Cpu {
             }
             CSR_MIDELEG_ADDRESS => {
                 self.csr[address as usize] = value & 0x666; // from qemu
-            }
-            CSR_MSTATUS_ADDRESS => {
-                self.csr[address as usize] = value;
-                self.mmu
-                    .update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
             }
             CSR_TIME_ADDRESS => {
                 panic!("CLINT is unsupported.")

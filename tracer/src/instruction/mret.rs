@@ -18,15 +18,10 @@ use crate::{
 };
 
 use super::{
-    addi::ADDI,
     format::format_i::FormatI,
     jalr::JALR,
-    virtual_advice::VirtualAdvice,
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
-
-/// CSR address for mepc (Machine Exception Program Counter)
-const CSR_MEPC_ADDRESS: u16 = 0x341;
 
 declare_riscv_instr!(
     name   = MRET,
@@ -36,9 +31,12 @@ declare_riscv_instr!(
     ram    = ()
 );
 
+/// CSR address for mepc (Machine Exception Program Counter)
+const CSR_MEPC_ADDRESS: u16 = 0x341;
+
 impl MRET {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MRET as RISCVInstruction>::RAMAccess) {
-        // Read mepc and jump to it
+        // Read mepc from CSR state and jump to it
         let mepc = cpu.read_csr_raw(CSR_MEPC_ADDRESS);
         cpu.pc = mepc;
 
@@ -55,24 +53,14 @@ impl MRET {
 
 impl RISCVTrace for MRET {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Get mepc value before executing
-        let mepc_val = cpu.read_csr_raw(CSR_MEPC_ADDRESS);
-
         // Execute the MRET (updates CPU pc)
         let mut ram_access = ();
         self.execute(cpu, &mut ram_access);
 
-        // Generate inline sequence for proof verification
-        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        // Generate and execute inline sequence
+        // The inline sequence reads mepc from virtual register (source of truth for proofs)
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // Fill in the advice value (mepc)
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = mepc_val;
-        } else {
-            panic!("MRET: Expected VirtualAdvice at index 0, got {:?}", inline_sequence[0]);
-        }
-
-        // Execute inline sequence to record in trace
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
@@ -81,37 +69,22 @@ impl RISCVTrace for MRET {
 
     /// Generate inline sequence for MRET.
     ///
-    /// MRET reads mepc and jumps to it:
-    ///   0: VirtualAdvice(temp)     - Get mepc value as advice
-    ///   1: ADDI(vr_mepc, temp, 0)  - Write advice to vr35 (makes mepc "defined")
-    ///   2: ADDI(temp2, vr_mepc, 0) - Read mepc from vr35 to temp2
-    ///   3: JALR(x0, temp2, 0)      - Jump to mepc (rd=0, no return address saved)
+    /// MRET jumps to mepc. The mepc virtual register (vr35) must have been written
+    /// by a prior CSRRW instruction (typically in the trap handler before MRET).
     ///
-    /// The write-then-read pattern ensures the virtual register is "defined"
-    /// in the inline sequence before being used for the jump target.
+    /// Layout:
+    ///   0: JALR(x0, vr35, 0) - Jump to mepc (read directly from virtual register)
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let vr_mepc = allocator.mepc_register();
-
-        let temp = allocator.allocate();
-        let jump_target = allocator.allocate();
+        let mepc_vr = allocator.mepc_register();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Index 0: Get mepc value as advice
-        asm.emit_j::<VirtualAdvice>(*temp, 0);
-
-        // Index 1: Write advice to vr_mepc (makes it "defined")
-        asm.emit_i::<ADDI>(vr_mepc, *temp, 0);
-
-        // Index 2: Read mepc from vr to temp for jump
-        asm.emit_i::<ADDI>(*jump_target, vr_mepc, 0);
-
-        // Index 3: Jump to mepc (JALR rd=0 means no return address saved)
-        asm.emit_i::<JALR>(0, *jump_target, 0);
+        // Index 0: Jump to mepc (read directly from virtual register)
+        asm.emit_i::<JALR>(0, mepc_vr, 0);
 
         asm.finalize()
     }
@@ -119,7 +92,6 @@ impl RISCVTrace for MRET {
 
 #[cfg(test)]
 mod tests {
-    use super::MRET;
     use crate::instruction::Instruction;
 
     /// Test decoding of `mret`

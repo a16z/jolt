@@ -25,7 +25,6 @@ pub mod default_terminal;
 pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
-pub mod syscalls;
 pub mod terminal;
 
 use self::cpu::{Cpu, Xlen};
