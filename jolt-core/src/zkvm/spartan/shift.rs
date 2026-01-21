@@ -415,13 +415,11 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
             opening: OpeningRef::Virtual(VirtualPolynomial::NextPC),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
-            reverse: false,
         });
         let product_sumcheck_r = BatchingPolynomial::EqPlusOne(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::NextIsNoop),
             sumcheck: SumcheckId::SpartanProductVirtualization,
             part: ChallengePart::Cycle,
-            reverse: false,
         });
 
         InputOutputClaims {

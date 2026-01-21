@@ -668,13 +668,11 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
             opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
-            reverse: false,
         });
         let eq_r_stage2 = BatchingPolynomial::Eq(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
             sumcheck: SumcheckId::SpartanProductVirtualization,
             part: ChallengePart::Cycle,
-            reverse: false,
         });
 
         InputOutputClaims {

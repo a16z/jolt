@@ -182,7 +182,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r = OpeningPoint::new(sumcheck_challenges.to_vec());
+        let r = self.params.normalize_opening_point(sumcheck_challenges);
         let result =
             Self::input_output_claims().expected_output_claim(&r, &[F::one()], accumulator);
 
@@ -243,7 +243,6 @@ impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> 
             opening: OpeningRef::Virtual(VirtualPolynomial::LookupOutput),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
-            reverse: true,
         });
 
         InputOutputClaims {

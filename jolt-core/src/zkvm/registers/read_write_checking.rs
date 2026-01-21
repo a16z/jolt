@@ -956,7 +956,6 @@ impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F>
             opening: OpeningRef::Virtual(VirtualPolynomial::RdWriteValue),
             sumcheck: SumcheckId::RegistersClaimReduction,
             part: ChallengePart::Cycle,
-            reverse: false,
         });
 
         InputOutputClaims {

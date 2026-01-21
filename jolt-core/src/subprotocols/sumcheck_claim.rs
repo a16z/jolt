@@ -59,7 +59,6 @@ pub struct CachedPointRef {
     pub opening: OpeningRef,
     pub sumcheck: SumcheckId,
     pub part: ChallengePart,
-    pub reverse: bool,
 }
 
 impl CachedPointRef {
@@ -69,21 +68,12 @@ impl CachedPointRef {
         acc: &impl OpeningAccumulator<F>,
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         let point = self.opening.get_point(self.sumcheck, acc);
-        let point_part = match self.part {
+        match self.part {
             // Take address part to be initial elements of challenge point
             ChallengePart::Address if point.len() > n_vars => point.split_at(n_vars).0,
             // Take cycle part to be final elements of challenge point
-            ChallengePart::Cycle if point.len() > n_vars => {
-                point.split_at(point.len() - n_vars).1
-            }
+            ChallengePart::Cycle if point.len() > n_vars => point.split_at(point.len() - n_vars).1,
             _ => point,
-        };
-        if self.reverse {
-            OpeningPoint::<BIG_ENDIAN, F> {
-                r: point_part.r.into_iter().rev().collect(),
-            }
-        } else {
-            point_part
         }
     }
 }

@@ -763,7 +763,6 @@ impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
             opening: OpeningRef::Virtual(VirtualPolynomial::RamReadValue),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
-            reverse: false,
         });
 
         InputOutputClaims {
