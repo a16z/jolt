@@ -15,8 +15,8 @@ use super::sd::SD;
 use super::sll::SLL;
 use super::slli::SLLI;
 use super::virtual_advice_load::VirtualAdviceLoad;
-use super::virtual_advice_sw::VirtualAdviceSW;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
+use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 use super::Instruction;
 use super::RAMWrite;
@@ -73,8 +73,12 @@ impl RISCVTrace for AdviceSW {
 
 impl AdviceSW {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        let v_word = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
-        asm.emit_advice_s::<VirtualAdviceSW>(self.operands.rs1, self.operands.imm);
+        // Read 4 bytes from advice tape into v_word register
+        asm.emit_i::<VirtualAdviceLoad>(*v_word, 0, 4);
+        // Store v_word to memory at rs1 + imm
+        asm.emit_s::<VirtualSW>(self.operands.rs1, *v_word, self.operands.imm);
         asm.finalize()
     }
 
