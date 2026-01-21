@@ -452,9 +452,9 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
                 },
                 Claim {
                     input_sumcheck_id: SumcheckId::SpartanProductVirtualization,
-                    input_claim_expr: ClaimExpr::Val(F::one()) - next_is_noop,
+                    input_claim_expr: ClaimExpr::Constant(F::one()) - next_is_noop,
                     batching_poly: product_sumcheck_r,
-                    expected_output_claim_expr: ClaimExpr::Val(F::one()) - is_noop,
+                    expected_output_claim_expr: ClaimExpr::Constant(F::one()) - is_noop,
                 },
             ],
             output_sumcheck_id: SumcheckId::SpartanShift,

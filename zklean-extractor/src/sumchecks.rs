@@ -351,7 +351,7 @@ fn pretty_print_claim_expr<F: JoltField>(
     group: bool,
 ) -> std::io::Result<()> {
     match expr {
-        ClaimExpr::Val(val) => {
+        ClaimExpr::Constant(val) => {
             write!(f, "{val}")?;
         }
         ClaimExpr::Add(e1, e2) => {

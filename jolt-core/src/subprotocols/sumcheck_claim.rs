@@ -155,7 +155,7 @@ impl BatchingPolynomial {
 
 #[derive(Debug, Clone)]
 pub enum ClaimExpr<F> {
-    Val(F),
+    Constant(F),
     Var(OpeningRef),
     Add(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
     Mul(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
@@ -173,7 +173,7 @@ impl<F: JoltField> ClaimExpr<F> {
 
     fn evaluate(&self, sumcheck_id: SumcheckId, acc: &impl OpeningAccumulator<F>) -> F {
         match self {
-            ClaimExpr::Val(f) => *f,
+            ClaimExpr::Constant(f) => *f,
             ClaimExpr::Var(opening_ref) => opening_ref.get_cached_opening(sumcheck_id, acc),
             ClaimExpr::Add(e1, e2) => {
                 F::add(e1.evaluate(sumcheck_id, acc), e2.evaluate(sumcheck_id, acc))
@@ -190,7 +190,7 @@ impl<F: JoltField> ClaimExpr<F> {
 
 impl<F: JoltField> From<F> for ClaimExpr<F> {
     fn from(value: F) -> Self {
-        Self::Val(value)
+        Self::Constant(value)
     }
 }
 
