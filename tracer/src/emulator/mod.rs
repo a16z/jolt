@@ -116,20 +116,18 @@ impl Emulator {
     /// * Disassembles every instruction and dumps to terminal
     /// * The emulator stops when the test finishes
     /// * Displays the result message (pass/fail) to terminal
-    pub fn run_test(&mut self, trace: bool) {
+    pub fn run_test(&mut self, trace: bool, disassemble: bool) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         let mut cycle_count = 0;
         let mut prev_pc: u64 = 0;
         loop {
-            // Log every 1000 cycles to see progress, and log more detail near cycle 13000
-            if cycle_count % 1000 == 0 || cycle_count < 10 || (cycle_count >= 13005 && cycle_count < 13020) {
-                // let disas = self.cpu.disassemble_next_instruction();
-                // tracing::info!("Cycle {}: PC={:#x} a0={:#x} a1={:#x} | {}", cycle_count, self.cpu.pc, self.cpu.x[10], self.cpu.x[11], disas);
+            // Disassemble and print each instruction if requested (like spike -d)
+            if disassemble {
+                let disas = self.cpu.disassemble_next_instruction();
+                println!("core   0: {}", disas);
             }
-            // let disas = self.cpu.disassemble_next_instruction();
-            // tracing::debug!("{disas}");
 
             // Check for infinite loop termination (PC stall detection)
             // This is used by Jolt guests that terminate via `j .` instruction.

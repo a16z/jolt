@@ -25,6 +25,10 @@ struct Args {
     /// Execute the program in trace mode
     #[arg(short, long, value_name = "true|false")]
     trace: Option<bool>,
+
+    /// Disassemble and print each instruction as it executes (like spike -d)
+    #[arg(short, long)]
+    disassemble: bool,
 }
 
 fn main() {
@@ -53,7 +57,7 @@ fn main() {
     memory_config.program_size = Some(elf_content.len() as u64);
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
 
-    emulator.run_test(args.trace.unwrap_or(false));
+    emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 
     // If signature file is specified, write the signature with specified granularity
     if let Some(sig_path) = args.signature {
