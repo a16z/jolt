@@ -406,6 +406,63 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         };
         evals
     }
+
+    /// Like `sumcheck_evals_array`, but for an **arbitrary** variable position `var_index_from_low`
+    /// (0 = least-significant / "low" variable) rather than only LSB/MSB.
+    ///
+    /// `pair_index` ranges over `0..(len/2)` and selects which (x with bit=0, x with bit=1) pair
+    /// to return evals for.
+    #[inline]
+    pub fn sumcheck_evals_array_at_var<const DEGREE: usize>(
+        &self,
+        pair_index: usize,
+        var_index_from_low: usize,
+    ) -> [F; DEGREE] {
+        debug_assert!(DEGREE > 0);
+        debug_assert!(pair_index < self.len() / 2);
+
+        let stride = 1usize << var_index_from_low;
+        debug_assert!(stride <= self.len() / 2);
+
+        let inner = pair_index % stride;
+        let outer = pair_index / stride;
+        let idx0 = outer * (2 * stride) + inner;
+        let idx1 = idx0 + stride;
+
+        let mut evals = [F::zero(); DEGREE];
+        evals[0] = self.get_bound_coeff(idx0);
+        if DEGREE == 1 {
+            return evals;
+        }
+        let mut eval = self.get_bound_coeff(idx1);
+        let m = eval - evals[0];
+        for i in 1..DEGREE {
+            eval += m;
+            evals[i] = eval;
+        }
+        evals
+    }
+}
+
+impl<F: JoltField> MultilinearPolynomial<F> {
+    /// Bind the variable at `var_index_from_low` (0 = least-significant / "low" variable),
+    /// producing the partially-evaluated polynomial with that variable eliminated.
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_var_at_parallel")]
+    pub fn bind_var_at_parallel(&mut self, r: F::Challenge, var_index_from_low: usize) {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.bind_var_at_parallel(&r, var_index_from_low),
+            MultilinearPolynomial::BoolScalars(poly) => poly.bind(r, BindingOrder::LowToHigh),
+            MultilinearPolynomial::U8Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            MultilinearPolynomial::U16Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            MultilinearPolynomial::U32Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            MultilinearPolynomial::U64Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            MultilinearPolynomial::I64Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            MultilinearPolynomial::I128Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            MultilinearPolynomial::U128Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            MultilinearPolynomial::S128Scalars(poly) => poly.bind_var_at_parallel(r, var_index_from_low),
+            _ => unimplemented!("bind_var_at_parallel not supported for this polynomial type"),
+        }
+    }
 }
 
 impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {

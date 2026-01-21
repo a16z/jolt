@@ -1470,6 +1470,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             opening_proof_hints,
             advice_polys,
         );
+        tracing::info!("Dory batch opening proof point: {:?}", opening_point.r);
 
         PCS::prove(
             &self.preprocessing.generators,

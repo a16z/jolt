@@ -119,7 +119,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let nu = num_rows.log_2();
 
         let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
-
+        tracing::info!("reordered_point: {:?}", reordered_point);
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
             .iter()

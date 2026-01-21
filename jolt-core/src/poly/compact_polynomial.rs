@@ -343,6 +343,64 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
     }
 }
 
+impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
+    /// Bind the variable at `var_index_from_low` (0 = least-significant / "low" variable),
+    /// producing the partially-evaluated polynomial with that variable eliminated.
+    ///
+    /// This is the generalization of `bind_parallel(..., LowToHigh/HighToLow)` to an arbitrary
+    /// variable position, preserving the relative order of the remaining variables.
+    #[tracing::instrument(skip_all)]
+    pub fn bind_var_at_parallel(&mut self, r: F::Challenge, var_index_from_low: usize) {
+        debug_assert!(self.len().is_power_of_two());
+        debug_assert!(var_index_from_low < self.num_vars);
+
+        let stride = 1usize << var_index_from_low;
+        let n = self.len() / 2;
+
+        if self.is_bound() {
+            let mut new_coeffs = vec![F::zero(); n];
+            new_coeffs
+                .par_iter_mut()
+                .enumerate()
+                .with_min_len(4096)
+                .for_each(|(new_index, out)| {
+                    let inner = new_index % stride;
+                    let outer = new_index / stride;
+                    let idx0 = outer * (2 * stride) + inner;
+                    let idx1 = idx0 + stride;
+
+                    let a = self.bound_coeffs[idx0];
+                    let b = self.bound_coeffs[idx1];
+                    *out = if a == b { a } else { a + r * (b - a) };
+                });
+            self.bound_coeffs = new_coeffs;
+        } else {
+            // We want to compute `a * (1 - r) + b * r` where `a` and `b` are small scalars.
+            self.bound_coeffs = (0..n)
+                .into_par_iter()
+                .map(|new_index| {
+                    let inner = new_index % stride;
+                    let outer = new_index / stride;
+                    let idx0 = outer * (2 * stride) + inner;
+                    let idx1 = idx0 + stride;
+                    let a = self.coeffs[idx0];
+                    let b = self.coeffs[idx1];
+                    match a.cmp(&b) {
+                        Ordering::Equal => a.to_field(),
+                        // a < b: Compute a + r * (b - a)
+                        Ordering::Less => a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into()),
+                        // a > b: Compute a - r * (a - b)
+                        Ordering::Greater => a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into()),
+                    }
+                })
+                .collect();
+        }
+
+        self.num_vars -= 1;
+        self.len = n;
+    }
+}
+
 impl<T: SmallScalar, F: JoltField> Clone for CompactPolynomial<T, F> {
     fn clone(&self) -> Self {
         Self::from_coeffs(self.coeffs.to_vec())

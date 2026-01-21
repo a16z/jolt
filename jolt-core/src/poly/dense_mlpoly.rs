@@ -82,6 +82,40 @@ impl<F: JoltField> DensePolynomial<F> {
         }
     }
 
+    /// Bind the variable at `var_index_from_low` (0 = least-significant / "low" variable),
+    /// producing the partially-evaluated polynomial with that variable eliminated.
+    ///
+    /// This is the generalization of `bind_parallel(..., LowToHigh/HighToLow)` to an arbitrary
+    /// variable position, preserving the relative order of the remaining variables.
+    #[tracing::instrument(skip_all)]
+    pub fn bind_var_at_parallel(&mut self, r: &F::Challenge, var_index_from_low: usize) {
+        debug_assert!(self.len.is_power_of_two());
+        debug_assert!(var_index_from_low < self.num_vars);
+
+        let stride = 1usize << var_index_from_low;
+        let n = self.len / 2;
+
+        let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
+        new_evals
+            .par_iter_mut()
+            .enumerate()
+            .with_min_len(4096)
+            .for_each(|(new_index, out)| {
+                let inner = new_index % stride;
+                let outer = new_index / stride;
+                let idx0 = outer * (2 * stride) + inner;
+                let idx1 = idx0 + stride;
+
+                let a = self.Z[idx0];
+                let b = self.Z[idx1];
+                *out = if a == b { a } else { a + *r * (b - a) };
+            });
+
+        self.Z = new_evals;
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
     pub fn bound_poly_var_top(&mut self, r: &F::Challenge) {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);

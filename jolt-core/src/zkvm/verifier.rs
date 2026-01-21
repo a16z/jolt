@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
@@ -180,6 +181,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
         let _pprof_verify = pprof_scope!("verify");
 
+        tracing::info!(
+            trace_length = %self.proof.trace_length,
+            ram_K = %self.proof.ram_K,
+            bytecode_K = %self.proof.bytecode_K,
+            has_untrusted_advice = self.proof.untrusted_advice_commitment.is_some(),
+            has_trusted_advice = self.trusted_advice_commitment.is_some(),
+            "verifier start"
+        );
+
         fiat_shamir_preamble(
             &self.program_io,
             self.proof.ram_K,
@@ -202,19 +212,46 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .append_serializable(trusted_advice_commitment);
         }
 
-        self.verify_stage1()?;
-        self.verify_stage2()?;
-        self.verify_stage3()?;
-        self.verify_stage4()?;
-        self.verify_stage5()?;
-        self.verify_stage6()?;
-        self.verify_stage7()?;
-        self.verify_stage8()?;
+        // Log explicit stage boundaries so failures are unambiguous even if the error is
+        // handled upstream without printing the full context chain.
+        let run_stage = |stage_name: &'static str,
+                         f: &mut dyn FnMut() -> Result<(), anyhow::Error>|
+         -> Result<(), anyhow::Error> {
+            tracing::info!(stage = stage_name, "stage start");
+            let t0 = Instant::now();
+            let res = f();
+            match res {
+                Ok(()) => {
+                    tracing::info!(stage = stage_name, elapsed_ms = %t0.elapsed().as_millis(), "stage ok");
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::error!(
+                        stage = stage_name,
+                        elapsed_ms = %t0.elapsed().as_millis(),
+                        error = ?e,
+                        "stage failed"
+                    );
+                    Err(e)
+                }
+            }
+        };
 
+        run_stage("1", &mut || self.verify_stage1())?;
+        run_stage("2", &mut || self.verify_stage2())?;
+        run_stage("3", &mut || self.verify_stage3())?;
+        run_stage("4", &mut || self.verify_stage4())?;
+        run_stage("5", &mut || self.verify_stage5())?;
+        run_stage("6", &mut || self.verify_stage6())?;
+        run_stage("7", &mut || self.verify_stage7())?;
+        run_stage("8", &mut || self.verify_stage8())?;
+
+        tracing::info!("verifier done");
         Ok(())
     }
 
     fn verify_stage1(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 1: start");
         let uni_skip_params = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
@@ -238,10 +275,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 1")?;
 
+        tracing::info!("stage 1: done");
         Ok(())
     }
 
     fn verify_stage2(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 2: start");
         let uni_skip_params = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &mut self.opening_accumulator,
@@ -288,10 +327,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 2")?;
 
+        tracing::info!("stage 2: done");
         Ok(())
     }
 
     fn verify_stage3(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 3: start");
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
@@ -317,10 +358,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 3")?;
 
+        tracing::info!("stage 3: done");
         Ok(())
     }
 
     fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 4: start");
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,
             &self.program_io,
@@ -371,10 +414,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 4")?;
 
+        tracing::info!("stage 4: done");
         Ok(())
     }
 
     fn verify_stage5(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 5: start");
         let n_cycle_vars = self.proof.trace_length.log_2();
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
@@ -403,10 +448,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 5")?;
 
+        tracing::info!("stage 5: done");
         Ok(())
     }
 
     fn verify_stage6(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 6: start");
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
             &self.preprocessing.shared.bytecode,
@@ -492,11 +539,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 6")?;
 
+        tracing::info!("stage 6: done");
         Ok(())
     }
 
     /// Stage 7: HammingWeight claim reduction verification.
     fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 7: start");
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
@@ -536,11 +585,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 7")?;
 
+        tracing::info!("stage 7: done");
         Ok(())
     }
 
     /// Stage 8: Dory batch opening verification.
     fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
+        tracing::info!("stage 8: start");
         // Initialize DoryGlobals with the layout from the proof
         // This ensures the verifier uses the same layout as the prover
         let _guard = DoryGlobals::initialize_context(
@@ -689,7 +740,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &joint_claim,
             &joint_commitment,
         )
-        .context("Stage 8")
+        .context("Stage 8")?;
+
+        tracing::info!("stage 8: done");
+        Ok(())
     }
 
     /// Compute joint commitment for the batch opening.

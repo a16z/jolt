@@ -45,7 +45,6 @@ pub enum DoryLayout {
     /// row3 │ a3,t0  │ a3,t1  │ a3,t2  │ a3,t3  │  ← All of address 3
     ///      └────────┴────────┴────────┴────────┘
     /// ```
-    #[default]
     CycleMajor,
 
     /// Address-major layout
@@ -71,6 +70,7 @@ pub enum DoryLayout {
     /// row3 │ a0,t3  │ a1,t3  │ a2,t3  │ a3,t3  │  ← All of cycle 3
     ///      └────────┴────────┴────────┴────────┘
     /// ```
+    #[default]
     AddressMajor,
 }
 
@@ -155,7 +155,7 @@ static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
 // Layout tracking: 0=CycleMajor, 1=AddressMajor
-static CURRENT_LAYOUT: AtomicU8 = AtomicU8::new(0);
+static CURRENT_LAYOUT: AtomicU8 = AtomicU8::new(1);
 
 /// Dory commitment context - determines which set of global parameters to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -417,7 +417,7 @@ impl DoryGlobals {
     /// * `context` - The Dory context to initialize (Main, TrustedAdvice, or UntrustedAdvice)
     /// * `layout` - Optional layout for the Dory matrix. Only applies to Main context.
     ///   If `Some(layout)`, sets the layout. If `None`, leaves the existing layout
-    ///   unchanged (defaults to `CycleMajor` after `reset()`). Ignored for advice contexts.
+    ///   unchanged (defaults to `AddressMajor` after `reset()`). Ignored for advice contexts.
     ///
     /// The matrix dimensions are calculated to minimize padding:
     /// - If log2(K*T) is even: creates a square matrix
@@ -454,8 +454,8 @@ impl DoryGlobals {
             let _ = MAX_NUM_ROWS.take();
             let _ = NUM_COLUMNS.take();
 
-            // Reset layout to default (CycleMajor)
-            CURRENT_LAYOUT.store(0, Ordering::SeqCst);
+            // Reset layout to default (AddressMajor)
+            CURRENT_LAYOUT.store(1, Ordering::SeqCst);
 
             // Reset trusted advice globals
             let _ = TRUSTED_ADVICE_T.take();

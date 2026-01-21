@@ -36,7 +36,7 @@ use std::ops::Range;
 use crate::field::JoltField;
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
@@ -108,12 +108,29 @@ fn cycle_phase_round_schedule(
             (col_binding_rounds, row_binding_rounds)
         }
         DoryLayout::AddressMajor => {
-            // Low-order cycle variables correspond to the high-order bits of the
-            // column index
-            let col_binding_rounds = 0..advice_col_vars.saturating_sub(log_k_chunk);
-            // High-order cycle variables correspond to the bits of the row index
-            let row_binding_rounds =
-                col_binding_rounds.end..min(log_T, col_binding_rounds.end + advice_row_vars);
+            // In AddressMajor layout, the unified opening point is (r_address || r_cycle) where:
+            // - `r_address` binds the **low** `log_k_chunk` bits of the (row,col) global index (i.e. low column bits)
+            // - `r_cycle` binds the remaining `log_T` bits, in **low-to-high** (LSB-first) order during sumcheck
+            //
+            // The main Dory matrix has `main_col_vars` column bits total; after the `log_k_chunk` address bits,
+            // the next `(main_col_vars - log_k_chunk)` cycle bits are still **column** bits. Any additional cycle
+            // bits land in **row** bits.
+            //
+            // For an advice matrix with `advice_col_vars` column bits, its cycle-column bits are exactly
+            // `advice_col_vars - log_k_chunk` (the cycle bits immediately above the address bits).
+            //
+            // If `advice_col_vars < main_col_vars`, then there is an internal "gap" of cycle-column bits present
+            // in the main matrix but not in the advice matrix. We must treat those as dummy internal rounds.
+            let col_cycle_bits = advice_col_vars.saturating_sub(log_k_chunk);
+            let main_col_cycle_bits = main_col_vars.saturating_sub(log_k_chunk);
+
+            // Column-cycle rounds are the lowest cycle bits that still belong to the (advice) column index.
+            let col_binding_rounds = 0..min(log_T, col_cycle_bits);
+
+            // Row-cycle rounds begin once we move past all cycle bits that belong to the *main* column index.
+            // This correctly introduces dummy internal rounds when `main_col_cycle_bits > col_cycle_bits`.
+            let row_start = min(log_T, main_col_cycle_bits);
+            let row_binding_rounds = row_start..min(log_T, row_start + advice_row_vars);
             (col_binding_rounds, row_binding_rounds)
         }
     }
@@ -160,6 +177,14 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
             advice_row_vars,
             advice_col_vars,
         );
+        tracing::info!("col_binding_rounds: {:?}", col_binding_rounds);
+        tracing::info!("row_binding_rounds: {:?}", row_binding_rounds);
+        tracing::info!("advice_col_vars: {}", advice_col_vars);
+        tracing::info!("advice_row_vars: {}", advice_row_vars);
+        tracing::info!("main_col_vars: {}", main_col_vars);
+        tracing::info!("main_row_vars: {}", main_row_vars);
+        tracing::info!("log_t: {}", log_t);
+        tracing::info!("log_k_chunk: {}", log_k_chunk);
 
         Self {
             kind,
@@ -244,9 +269,33 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
         &self,
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
+        // For debugging: print the exact "permutation" (source ordering) used to construct the
+        // normalized opening point. This describes where each output position pulls from:
+        // - `challenges[i]` refers to the input slice passed to this function
+        // - `cycle_var[i]` refers to `self.cycle_var_challenges[i]`
+        //
+        // Note: We intentionally print symbolic indices (not field elements) to avoid huge logs.
+        let mut permutation: Vec<String> = Vec::new();
+
         if self.phase == ReductionPhase::CycleVariables {
             let advice_vars = self.advice_col_vars + self.advice_row_vars;
             let mut advice_var_challenges: Vec<F::Challenge> = Vec::with_capacity(advice_vars);
+            // Output = challenges[cycle_phase_col_rounds] || challenges[cycle_phase_row_rounds]
+            for i in self.cycle_phase_col_rounds.clone() {
+                permutation.push(format!("challenges[{i}]"));
+            }
+            for i in self.cycle_phase_row_rounds.clone() {
+                permutation.push(format!("challenges[{i}]"));
+            }
+
+            tracing::info!(
+                target: "jolt_core::zkvm::claim_reductions::advice",
+                phase = ?self.phase,
+                layout = ?DoryGlobals::get_layout(),
+                out_len = permutation.len(),
+                "normalize_opening_point permutation: [{}]",
+                permutation.join(", ")
+            );
             advice_var_challenges
                 .extend_from_slice(&challenges[self.cycle_phase_col_rounds.clone()]);
             advice_var_challenges
@@ -255,25 +304,59 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
         }
 
         match DoryGlobals::get_layout() {
-            DoryLayout::CycleMajor => OpeningPoint::<LITTLE_ENDIAN, F>::new(
-                [self.cycle_var_challenges.as_slice(), challenges].concat(),
-            )
-            .match_endianness(),
-            DoryLayout::AddressMajor => {
-                let (col_binding_rounds, row_binding_rounds) = cycle_phase_round_schedule(
-                    self.log_t,
-                    self.log_k_chunk,
-                    self.main_col_vars,
-                    self.advice_row_vars,
-                    self.advice_col_vars,
+            DoryLayout::CycleMajor => {
+                // Output = cycle_var[0..] || challenges[0..]
+                for i in 0..self.cycle_var_challenges.len() {
+                    permutation.push(format!("cycle_var[{i}]"));
+                }
+                for i in 0..challenges.len() {
+                    permutation.push(format!("challenges[{i}]"));
+                }
+
+                tracing::info!(
+                    target: "jolt_core::zkvm::claim_reductions::advice",
+                    phase = ?self.phase,
+                    layout = ?DoryGlobals::get_layout(),
+                    out_len = permutation.len(),
+                    "normalize_opening_point permutation: [{}]",
+                    permutation.join(", ")
                 );
+
                 OpeningPoint::<LITTLE_ENDIAN, F>::new(
-                    [
-                        challenges,
-                        &self.cycle_var_challenges[col_binding_rounds],
-                        &self.cycle_var_challenges[row_binding_rounds],
-                    ]
-                    .concat(),
+                    [self.cycle_var_challenges.as_slice(), challenges].concat(),
+                )
+                .match_endianness()
+            }
+            DoryLayout::AddressMajor => {
+                // IMPORTANT:
+                // `self.cycle_var_challenges` is stored as a *compacted* vector of only the cycle-phase
+                // advice variables that were actually bound (col-cycle vars followed by row-cycle vars),
+                // NOT as a length-`log_t` array indexed by the global cycle round number.
+                //
+                // Therefore we must NOT slice it using `cycle_phase_round_schedule`'s round ranges
+                // (which are in the `0..log_t` round-index space and may include gaps).
+                //
+                // Output = address-phase challenges || (cycle-phase bound challenges, in the same order
+                // they were normalized/cached in phase 1).
+                for i in 0..challenges.len() {
+                    permutation.push(format!("challenges[{i}]"));
+                }
+                for i in 0..self.cycle_var_challenges.len() {
+                    permutation.push(format!("cycle_var_compact[{i}]"));
+                }
+
+                tracing::info!(
+                    target: "jolt_core::zkvm::claim_reductions::advice",
+                    phase = ?self.phase,
+                    layout = ?DoryGlobals::get_layout(),
+                    out_len = permutation.len(),
+                    cycle_var_len = self.cycle_var_challenges.len(),
+                    "normalize_opening_point permutation: [{}]",
+                    permutation.join(", ")
+                );
+
+                OpeningPoint::<LITTLE_ENDIAN, F>::new(
+                    [challenges, self.cycle_var_challenges.as_slice()].concat(),
                 )
                 .match_endianness()
             }
@@ -288,6 +371,13 @@ pub struct AdviceClaimReductionProver<F: JoltField> {
     eq_poly: MultilinearPolynomial<F>,
     /// Maintains the running internal scaling factor 2^{-dummy_done}.
     scale: F,
+    /// Maps the *current* polynomial variable positions (0 = low/LSB) to the corresponding
+    /// "logical" advice variable index in the original (unpermuted) advice polynomial indexing:
+    /// [advice_cols (LSB-first) || advice_rows (LSB-first)].
+    ///
+    /// As we bind variables (possibly out of the naive sequential order), we remove the bound
+    /// position so we can continue to resolve logical variables to current positions.
+    var_pos_to_logical_var: Vec<usize>,
 }
 
 impl<F: JoltField> AdviceClaimReductionProver<F> {
@@ -363,6 +453,57 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
             }
         });
 
+        // Derive how the coefficient permutation reorders the *variables* (bit positions).
+        //
+        // After sorting, we have a permutation P such that:
+        //   old_index = P[new_index]
+        // If P is a pure bit-permutation of the Boolean hypercube indexing, then flipping a single
+        // bit of `new_index` flips exactly one bit of `old_index`. We use this to map the current
+        // variable positions (low/LSB-first) to the corresponding logical variable indices in the
+        // original advice polynomial indexing ([cols || rows], both LSB-first).
+        let num_vars = params.advice_col_vars + params.advice_row_vars;
+        let permuted_indices: Vec<usize> = permuted_coeffs.iter().map(|(idx, _)| *idx).collect();
+        let base = permuted_indices[0];
+        let mut var_pos_to_logical_var: Vec<usize> = Vec::with_capacity(num_vars);
+        for new_bit in 0..num_vars {
+            let diff = base ^ permuted_indices[1usize << new_bit];
+            debug_assert!(
+                diff.is_power_of_two(),
+                "advice permutation is not a pure bit-permutation (new_bit={new_bit}, diff={diff})"
+            );
+            var_pos_to_logical_var.push(diff.trailing_zeros() as usize);
+        }
+
+                // Dump the permuted advice coefficient *indices* (original positions) in their post-sort
+        // order as fixed-width binary strings, inserting a newline after each advice-row
+        // (i.e., every `advice_cols` entries).
+        //
+        // Output is always written (hardcoded path) to make debugging deterministic.
+        {
+            use std::io::Write;
+
+            // Hardcoded dump location (relative to current working directory).
+            let dump_path = "advice_permutation_dump.txt";
+            // Default width: total number of advice variables.
+            let width = params.advice_col_vars + params.advice_row_vars;
+
+            let file = std::fs::File::create(dump_path)
+                .unwrap_or_else(|e| panic!("failed to create {dump_path}: {e}"));
+            let mut w = std::io::BufWriter::new(file);
+
+            for (pos, (idx, _)) in permuted_coeffs.iter().enumerate() {
+                write!(w, "{:0width$b}", *idx, width = width)
+                    .expect("failed to write permutation entry");
+
+                if (pos + 1) % advice_cols == 0 {
+                    writeln!(w).expect("failed to write newline");
+                } else {
+                    write!(w, ", ").expect("failed to write separator");
+                }
+            }
+        }
+
+
         let (advice_coeffs, eq_coeffs): (Vec<_>, Vec<_>) = permuted_coeffs
             .into_par_iter()
             .map(|(_, coeffs)| coeffs)
@@ -375,20 +516,25 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
             advice_poly,
             eq_poly,
             scale: F::one(),
+            var_pos_to_logical_var,
         }
     }
 
-    fn compute_message_unscaled(&mut self, previous_claim_unscaled: F) -> UniPoly<F> {
+    fn compute_message_unscaled(
+        &mut self,
+        previous_claim_unscaled: F,
+        var_pos_from_low: usize,
+    ) -> UniPoly<F> {
         let half = self.advice_poly.len() / 2;
         let evals: [F; DEGREE_BOUND] = (0..half)
             .into_par_iter()
             .map(|j| {
                 let a_evals = self
                     .advice_poly
-                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array_at_var::<DEGREE_BOUND>(j, var_pos_from_low);
                 let eq_evals = self
                     .eq_poly
-                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array_at_var::<DEGREE_BOUND>(j, var_pos_from_low);
 
                 let mut out = [F::zero(); DEGREE_BOUND];
                 for i in 0..DEGREE_BOUND {
@@ -407,6 +553,48 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
             );
         UniPoly::from_evals_and_hint(previous_claim_unscaled, &evals)
     }
+
+    fn current_var_pos_for_logical_var(&self, logical_var: usize) -> usize {
+        self.var_pos_to_logical_var
+            .iter()
+            .position(|&v| v == logical_var)
+            .unwrap_or_else(|| panic!("logical var {logical_var} not present in remaining vars"))
+    }
+
+    fn logical_var_for_round(&self, round: usize) -> Option<usize> {
+        match self.params.phase {
+            ReductionPhase::CycleVariables => {
+                if !self.params.cycle_phase_col_rounds.contains(&round)
+                    && !self.params.cycle_phase_row_rounds.contains(&round)
+                {
+                    return None;
+                }
+                match DoryGlobals::get_layout() {
+                    DoryLayout::CycleMajor => {
+                        if self.params.cycle_phase_col_rounds.contains(&round) {
+                            Some(round)
+                        } else {
+                            Some(
+                                self.params.advice_col_vars
+                                    + (round - self.params.cycle_phase_row_rounds.start),
+                            )
+                        }
+                    }
+                    DoryLayout::AddressMajor => {
+                        if self.params.cycle_phase_col_rounds.contains(&round) {
+                            Some(self.params.log_k_chunk + round)
+                        } else {
+                            Some(
+                                self.params.advice_col_vars
+                                    + (round - self.params.cycle_phase_row_rounds.start),
+                            )
+                        }
+                    }
+                }
+            }
+            ReductionPhase::AddressVariables => self.var_pos_to_logical_var.iter().copied().min(),
+        }
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimReductionProver<F> {
@@ -423,6 +611,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
             // can simply send a constant polynomial equal to the previous claim divided by 2
             UniPoly::from_coeff(vec![previous_claim * F::from_u64(2).inverse().unwrap()])
         } else {
+            let logical_var = self
+                .logical_var_for_round(round)
+                .expect("expected logical var for non-dummy round");
+            let var_pos_from_low = self.current_var_pos_for_logical_var(logical_var);
             // Account for (1) internal dummy rounds already traversed and
             // (2) trailing dummy rounds after this instance's active window in the batched sumcheck.
             let num_trailing_variables = match self.params.phase {
@@ -436,12 +628,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
             };
             let scaling_factor = self.scale * F::one().mul_pow_2(num_trailing_variables);
             let prev_unscaled = previous_claim * scaling_factor.inverse().unwrap();
-            let poly_unscaled = self.compute_message_unscaled(prev_unscaled);
+            let poly_unscaled = self.compute_message_unscaled(prev_unscaled, var_pos_from_low);
             poly_unscaled * scaling_factor
         }
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
+        tracing::info!("ingesting challenge: round = {round}, r_j = {r_j}");
+
         match self.params.phase {
             ReductionPhase::CycleVariables => {
                 if !self.params.cycle_phase_col_rounds.contains(&round)
@@ -451,14 +645,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
                     // scaling factor by 1/2.
                     self.scale *= F::from_u64(2).inverse().unwrap();
                 } else {
-                    self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-                    self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+                    tracing::info!("binding cycle variables: round = {round}, r_j = {r_j}");
+                    let logical_var = self.logical_var_for_round(round).expect("logical var missing");
+                    let var_pos_from_low = self.current_var_pos_for_logical_var(logical_var);
+                    self.advice_poly.bind_var_at_parallel(r_j, var_pos_from_low);
+                    self.eq_poly.bind_var_at_parallel(r_j, var_pos_from_low);
+                    self.var_pos_to_logical_var.remove(var_pos_from_low);
                     self.params.cycle_var_challenges.push(r_j);
                 }
             }
             ReductionPhase::AddressVariables => {
-                self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-                self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+                tracing::info!("binding address variables: round = {round}, r_j = {r_j}");
+                let logical_var = self.logical_var_for_round(round).expect("logical var missing");
+                let var_pos_from_low = self.current_var_pos_for_logical_var(logical_var);
+                self.advice_poly.bind_var_at_parallel(r_j, var_pos_from_low);
+                self.eq_poly.bind_var_at_parallel(r_j, var_pos_from_low);
+                self.var_pos_to_logical_var.remove(var_pos_from_low);
             }
         }
     }

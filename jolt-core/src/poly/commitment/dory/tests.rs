@@ -701,8 +701,8 @@ mod tests {
     fn test_dory_layout_global_state() {
         DoryGlobals::reset();
 
-        // Default should be CycleMajor
-        assert_eq!(DoryGlobals::get_layout(), DoryLayout::CycleMajor);
+        // Default should be AddressMajor
+        assert_eq!(DoryGlobals::get_layout(), DoryLayout::AddressMajor);
 
         // Set to AddressMajor
         DoryGlobals::set_layout(DoryLayout::AddressMajor);
