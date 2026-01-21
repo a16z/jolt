@@ -254,6 +254,11 @@ impl OutputClaimConstraint {
     }
 }
 
+/// Input claim constraints use the same structure as output constraints.
+/// This alias clarifies intent when the constraint describes how an input claim
+/// relates to polynomial openings from a previous sumcheck.
+pub type InputClaimConstraint = OutputClaimConstraint;
+
 #[cfg(test)]
 mod tests {
     use super::*;

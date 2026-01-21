@@ -1,5 +1,5 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN};
-use crate::subprotocols::blindfold::OutputClaimConstraint;
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::transcripts::Transcript;
 
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
@@ -63,6 +63,21 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         Vec::new()
     }
+
+    /// Returns the input claim constraint for this sumcheck instance.
+    /// Describes how the input claim relates to polynomial openings from previous sumchecks.
+    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+        self.get_params().input_claim_constraint()
+    }
+
+    /// Returns the challenge values needed to evaluate the input constraint.
+    fn input_constraint_challenge_values(
+        &self,
+        accumulator: &VerifierOpeningAccumulator<F>,
+    ) -> Vec<F> {
+        self.get_params()
+            .input_constraint_challenge_values(accumulator)
+    }
 }
 
 pub trait SumcheckInstanceParams<F: JoltField> {
@@ -76,4 +91,20 @@ pub trait SumcheckInstanceParams<F: JoltField> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F;
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
+
+    /// Returns the input claim constraint for this sumcheck instance.
+    /// Describes how the input claim relates to polynomial openings from previous sumchecks.
+    /// Returns None if input is zero or doesn't depend on openings (e.g., first sumcheck in chain).
+    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+        None
+    }
+
+    /// Returns the challenge values needed to evaluate the input constraint.
+    /// These are the values for Challenge(0), Challenge(1), etc. in the constraint.
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        Vec::new()
+    }
 }

@@ -207,9 +207,14 @@ pub struct ZkStageData<F: JoltField> {
     /// Output claim constraints from each sumcheck instance.
     /// Used by BlindFold to generate R1CS constraints binding final claims to openings.
     pub output_constraints: Vec<Option<crate::subprotocols::blindfold::OutputClaimConstraint>>,
-    /// Challenge values for each instance's constraint.
+    /// Challenge values for each instance's output constraint.
     /// For instance j, contains the values for Challenge(0), Challenge(1), etc. in its constraint.
     pub constraint_challenge_values: Vec<Vec<F>>,
+    /// Input claim constraints from each sumcheck instance.
+    /// Describes how each instance's input claim relates to polynomial openings.
+    pub input_constraints: Vec<Option<crate::subprotocols::blindfold::InputClaimConstraint>>,
+    /// Challenge values for each instance's input constraint.
+    pub input_constraint_challenge_values: Vec<Vec<F>>,
 }
 
 /// ZK data for uni-skip first round (Stages 1-2).

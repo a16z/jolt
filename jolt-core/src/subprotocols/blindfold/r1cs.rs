@@ -151,17 +151,24 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     initial_claim_vars: Vec<Variable>,
     /// Batching coefficient variables (public inputs) for final output constraints
     batching_coeff_vars: Vec<Variable>,
-    /// Constraint challenge variables (public inputs) - for general constraints
+    /// Constraint challenge variables (public inputs) - for general output constraints
     /// Laid out as: [stage0_challenges..., stage1_challenges..., ...]
     constraint_challenge_vars: Vec<Variable>,
-    /// Number of constraint challenge vars per stage (for indexing into constraint_challenge_vars)
+    /// Number of output constraint challenge vars per stage
     constraint_challenge_counts: Vec<usize>,
+    /// Input constraint challenge variables (public inputs) - for input constraints
+    /// Laid out as: [stage0_input_challenges..., stage1_input_challenges..., ...]
+    input_constraint_challenge_vars: Vec<Variable>,
+    /// Number of input constraint challenge vars per stage
+    input_constraint_challenge_counts: Vec<usize>,
     /// Stage configurations
     stage_configs: Vec<StageConfig>,
     /// Mapping from (stage, round) to the round's variables
     round_vars: Vec<Vec<RoundVariables>>,
     /// Final output variables for each stage with final_output config
     final_output_vars: Vec<Option<FinalOutputVariables>>,
+    /// Initial input variables for each stage with initial_input config
+    initial_input_vars: Vec<Option<FinalOutputVariables>>,
 }
 
 /// Variables allocated for a single sumcheck round
@@ -200,7 +207,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             .map(|fo| fo.num_evaluations)
             .sum();
 
-        // Count constraint challenge vars per stage (for general constraints)
+        // Count output constraint challenge vars per stage (for general constraints)
         let constraint_challenge_counts: Vec<usize> = stage_configs
             .iter()
             .map(|s| {
@@ -213,12 +220,27 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             .collect();
         let total_constraint_challenges: usize = constraint_challenge_counts.iter().sum();
 
-        // Allocate public inputs: challenges + initial claims + batching coefficients + constraint challenges
+        // Count input constraint challenge vars per stage
+        let input_constraint_challenge_counts: Vec<usize> = stage_configs
+            .iter()
+            .map(|s| {
+                s.initial_input
+                    .as_ref()
+                    .and_then(|ii| ii.constraint.as_ref())
+                    .map(|c| c.num_challenges)
+                    .unwrap_or(0)
+            })
+            .collect();
+        let total_input_constraint_challenges: usize =
+            input_constraint_challenge_counts.iter().sum();
+
+        // Allocate public inputs: challenges + initial claims + batching coefficients + output constraint challenges + input constraint challenges
         // Index 0 is the constant 1 (u scalar)
         // Indices 1..=total_rounds are sumcheck challenges
         // Indices total_rounds+1..=total_rounds+num_chains are initial claims
         // Indices ...+1..=... are batching coefficients (simple constraints)
-        // Indices ...+1..=... are constraint challenge values (general constraints)
+        // Indices ...+1..=... are output constraint challenge values
+        // Indices ...+1..=... are input constraint challenge values
         let challenge_vars: Vec<Variable> = (1..=total_rounds).map(Variable::new).collect();
         let initial_claim_vars: Vec<Variable> = (0..num_chains)
             .map(|i| Variable::new(total_rounds + 1 + i))
@@ -229,8 +251,24 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let constraint_challenge_vars: Vec<Variable> = (0..total_constraint_challenges)
             .map(|i| Variable::new(total_rounds + 1 + num_chains + total_batching_coeffs + i))
             .collect();
-        let next_var =
-            total_rounds + 1 + num_chains + total_batching_coeffs + total_constraint_challenges;
+        let input_constraint_challenge_vars: Vec<Variable> = (0..total_input_constraint_challenges)
+            .map(|i| {
+                Variable::new(
+                    total_rounds
+                        + 1
+                        + num_chains
+                        + total_batching_coeffs
+                        + total_constraint_challenges
+                        + i,
+                )
+            })
+            .collect();
+        let next_var = total_rounds
+            + 1
+            + num_chains
+            + total_batching_coeffs
+            + total_constraint_challenges
+            + total_input_constraint_challenges;
 
         Self {
             constraints: Vec::new(),
@@ -240,9 +278,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             batching_coeff_vars,
             constraint_challenge_vars,
             constraint_challenge_counts,
+            input_constraint_challenge_vars,
+            input_constraint_challenge_counts,
             stage_configs: stage_configs.to_vec(),
             round_vars: Vec::new(),
             final_output_vars: Vec::new(),
+            initial_input_vars: Vec::new(),
         }
     }
 
@@ -382,6 +423,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let mut batching_coeff_idx = 0;
         let mut current_claim = self.initial_claim_vars[chain_idx];
 
+        // Global map of OpeningId -> Variable for wiring across stages.
+        // When the same opening appears in multiple constraints (input or output),
+        // they reference the SAME witness variable. This enables verification of
+        // the sumcheck chain.
+        let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
+
         // Clone data to avoid borrow conflict
         let stage_configs = self.stage_configs.clone();
         let batching_coeff_vars = self.batching_coeff_vars.clone();
@@ -393,6 +440,53 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                 chain_idx += 1;
                 current_claim = self.initial_claim_vars[chain_idx];
             }
+
+            // Handle initial input constraint (constrains initial_claim to openings)
+            let initial_input_vars = if let Some(ref ii_config) = config.initial_input {
+                if let Some(ref constraint) = ii_config.constraint {
+                    // Allocate/reuse witness variables for required openings
+                    for opening_id in &constraint.required_openings {
+                        if !global_opening_vars.contains_key(opening_id) {
+                            let var = Variable::new(self.next_var);
+                            self.next_var += 1;
+                            global_opening_vars.insert(*opening_id, var);
+                        }
+                    }
+
+                    // Get input constraint challenge variables
+                    let input_challenge_offset: usize = self.input_constraint_challenge_counts
+                        [..stage_idx]
+                        .iter()
+                        .sum();
+                    let num_input_challenges = self.input_constraint_challenge_counts[stage_idx];
+                    let stage_input_challenge_vars: Vec<Variable> = self
+                        .input_constraint_challenge_vars
+                        [input_challenge_offset..input_challenge_offset + num_input_challenges]
+                        .to_vec();
+
+                    // The initial_claim is the "result" of the input constraint
+                    // Constraint: initial_claim = f(openings, challenges)
+                    let aux_vars = self.add_sum_of_products_constraint(
+                        current_claim,
+                        constraint,
+                        &global_opening_vars,
+                        &stage_input_challenge_vars,
+                    );
+
+                    Some(FinalOutputVariables {
+                        batching_coeff_vars: Vec::new(),
+                        evaluation_vars: Vec::new(),
+                        opening_vars: global_opening_vars.clone(),
+                        constraint_challenge_vars: stage_input_challenge_vars,
+                        aux_vars,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            self.initial_input_vars.push(initial_input_vars);
 
             let mut stage_rounds = Vec::with_capacity(config.num_rounds);
 
@@ -462,13 +556,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                 } else if let Some(ref constraint) = fo_config.constraint {
                     // General sum-of-products constraint
 
-                    // Allocate witness variables for required openings
-                    let mut opening_vars_map: HashMap<OpeningId, Variable> = HashMap::new();
+                    // Allocate/reuse witness variables for required openings using global map
                     for opening_id in &constraint.required_openings {
-                        if !opening_vars_map.contains_key(opening_id) {
+                        if !global_opening_vars.contains_key(opening_id) {
                             let var = Variable::new(self.next_var);
                             self.next_var += 1;
-                            opening_vars_map.insert(*opening_id, var);
+                            global_opening_vars.insert(*opening_id, var);
                         }
                     }
 
@@ -485,14 +578,14 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     let aux_vars = self.add_sum_of_products_constraint(
                         last_round.next_claim,
                         constraint,
-                        &opening_vars_map,
+                        &global_opening_vars,
                         &stage_constraint_challenge_vars,
                     );
 
                     Some(FinalOutputVariables {
                         batching_coeff_vars: Vec::new(),
                         evaluation_vars: Vec::new(),
-                        opening_vars: opening_vars_map,
+                        opening_vars: global_opening_vars.clone(),
                         constraint_challenge_vars: stage_constraint_challenge_vars,
                         aux_vars,
                     })
@@ -540,11 +633,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
 
         let num_constraints = self.constraints.len();
         let num_vars = self.next_var;
-        // Public inputs: challenges + initial_claims + batching_coeffs + constraint_challenges
+        // Public inputs: challenges + initial_claims + batching_coeffs + output_constraint_challenges + input_constraint_challenges
         let num_public_inputs = self.challenge_vars.len()
             + self.initial_claim_vars.len()
             + self.batching_coeff_vars.len()
-            + self.constraint_challenge_vars.len();
+            + self.constraint_challenge_vars.len()
+            + self.input_constraint_challenge_vars.len();
 
         // Build sparse matrices
         let mut a = SparseR1CSMatrix::new(num_constraints, num_vars);
@@ -820,6 +914,16 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
     /// Get the final output variables for each stage
     pub fn final_output_vars(&self) -> &[Option<FinalOutputVariables>] {
         &self.final_output_vars
+    }
+
+    /// Get the initial input variables for each stage
+    pub fn initial_input_vars(&self) -> &[Option<FinalOutputVariables>] {
+        &self.initial_input_vars
+    }
+
+    /// Get the input constraint challenge variable indices (public inputs)
+    pub fn input_constraint_challenge_vars(&self) -> &[Variable] {
+        &self.input_constraint_challenge_vars
     }
 }
 

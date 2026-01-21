@@ -1,5 +1,5 @@
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::OutputClaimConstraint;
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::transcripts::Transcript;
 
@@ -82,6 +82,22 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     /// Called after cache_openings() when sumcheck challenges are available.
     /// The indices correspond to Challenge(idx) in the constraint.
     fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
+
+    /// Returns the input claim constraint for this sumcheck instance.
+    /// Describes how the input claim relates to polynomial openings from previous sumchecks.
+    /// Returns `None` by default - override to provide a constraint.
+    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+        None
+    }
+
+    /// Returns the challenge values needed for the input claim constraint.
+    /// Returns empty Vec by default - override when input_claim_constraint returns Some.
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &ProverOpeningAccumulator<F>,
+    ) -> Vec<F> {
         Vec::new()
     }
 

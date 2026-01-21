@@ -356,6 +356,17 @@ impl BatchedSumcheck {
             })
             .collect();
 
+        // Collect input constraints and challenge values from each sumcheck instance
+        let input_constraints: Vec<_> = sumcheck_instances
+            .iter()
+            .map(|sumcheck| sumcheck.input_claim_constraint())
+            .collect();
+
+        let input_constraint_challenge_values: Vec<Vec<F>> = sumcheck_instances
+            .iter()
+            .map(|sumcheck| sumcheck.input_constraint_challenge_values(opening_accumulator))
+            .collect();
+
         // Store ZK data in accumulator for BlindFold to retrieve later
         let batching_coefficients_f: Vec<F> = batching_coeffs.to_vec();
         opening_accumulator.push_zk_stage_data(ZkStageData {
@@ -368,6 +379,8 @@ impl BatchedSumcheck {
             expected_evaluations: Vec::new(),
             output_constraints,
             constraint_challenge_values,
+            input_constraints,
+            input_constraint_challenge_values,
         });
 
         (

@@ -13,7 +13,9 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -81,6 +83,36 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheck
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+        // input = RdWriteValue + γ*Rs1Value + γ²*Rs2Value
+        // where openings are from SpartanOuter sumcheck
+        let rd_write_value =
+            OpeningId::Virtual(VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter);
+        let rs1_value = OpeningId::Virtual(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let rs2_value = OpeningId::Virtual(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(rd_write_value)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(rs1_value)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(rs2_value)],
+            ),
+        ];
+
+        Some(InputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma_sqr]
     }
 }
 
@@ -234,6 +266,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let eq_eval = EqPolynomial::mle(&opening_point.r, &self.params.r_spartan.r);
         vec![eq_eval, self.params.gamma, self.params.gamma_sqr]
+    }
+
+    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+        self.params.input_claim_constraint()
+    }
+
+    fn input_constraint_challenge_values(
+        &self,
+        accumulator: &ProverOpeningAccumulator<F>,
+    ) -> Vec<F> {
+        self.params.input_constraint_challenge_values(accumulator)
     }
 }
 

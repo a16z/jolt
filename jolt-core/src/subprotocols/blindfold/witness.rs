@@ -97,6 +97,8 @@ pub struct StageWitness<F> {
     pub rounds: Vec<RoundWitness<F>>,
     /// Final output witness (if this stage has final_output constraint)
     pub final_output: Option<FinalOutputWitness<F>>,
+    /// Initial input witness (if this stage has initial_input constraint)
+    pub initial_input: Option<FinalOutputWitness<F>>,
 }
 
 impl<F: JoltField> StageWitness<F> {
@@ -104,6 +106,7 @@ impl<F: JoltField> StageWitness<F> {
         Self {
             rounds,
             final_output: None,
+            initial_input: None,
         }
     }
 
@@ -114,6 +117,30 @@ impl<F: JoltField> StageWitness<F> {
         Self {
             rounds,
             final_output: Some(final_output),
+            initial_input: None,
+        }
+    }
+
+    pub fn with_initial_input(
+        rounds: Vec<RoundWitness<F>>,
+        initial_input: FinalOutputWitness<F>,
+    ) -> Self {
+        Self {
+            rounds,
+            final_output: None,
+            initial_input: Some(initial_input),
+        }
+    }
+
+    pub fn with_both(
+        rounds: Vec<RoundWitness<F>>,
+        initial_input: FinalOutputWitness<F>,
+        final_output: FinalOutputWitness<F>,
+    ) -> Self {
+        Self {
+            rounds,
+            final_output: Some(final_output),
+            initial_input: Some(initial_input),
         }
     }
 }
@@ -240,7 +267,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
             .map(|fo| fo.num_evaluations)
             .sum();
 
-        // Count total constraint challenge values (for general constraints)
+        // Count total output constraint challenge values (for general constraints)
         let total_constraint_challenges: usize = r1cs
             .stage_configs
             .iter()
@@ -249,16 +276,28 @@ impl<F: JoltField> BlindFoldWitness<F> {
             .map(|c| c.num_challenges)
             .sum();
 
+        // Count total input constraint challenge values
+        let total_input_constraint_challenges: usize = r1cs
+            .stage_configs
+            .iter()
+            .filter_map(|s| s.initial_input.as_ref())
+            .filter_map(|ii| ii.constraint.as_ref())
+            .map(|c| c.num_challenges)
+            .sum();
+
         // Public input layout:
         // - Indices 1..=total_rounds are sumcheck challenges
         // - Indices total_rounds+1..=total_rounds+num_chains are initial_claims
         // - Indices after that are batching_coefficients (simple constraints)
-        // - Indices after that are constraint_challenge_values (general constraints)
+        // - Indices after that are output constraint_challenge_values
+        // - Indices after that are input constraint_challenge_values
         let challenge_start = 1;
         let initial_claims_start = total_rounds + 1;
         let batching_coeffs_start = initial_claims_start + num_chains;
         let constraint_challenges_start = batching_coeffs_start + total_batching_coeffs;
-        let witness_start = constraint_challenges_start + total_constraint_challenges;
+        let input_constraint_challenges_start =
+            constraint_challenges_start + total_constraint_challenges;
+        let witness_start = input_constraint_challenges_start + total_input_constraint_challenges;
 
         // Assign initial claims
         for (i, claim) in self.initial_claims.iter().enumerate() {
@@ -268,6 +307,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         let mut challenge_idx = challenge_start;
         let mut batching_coeff_idx = batching_coeffs_start;
         let mut constraint_challenge_idx = constraint_challenges_start;
+        let mut input_constraint_challenge_idx = input_constraint_challenges_start;
         let mut witness_idx = witness_start;
 
         for (stage_idx, stage_witness) in self.stages.iter().enumerate() {
@@ -277,6 +317,61 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 config.num_rounds,
                 "Stage {stage_idx} has wrong number of rounds"
             );
+
+            // Assign initial input witness if present (before processing rounds)
+            if let Some(ref ii_config) = config.initial_input {
+                if let Some(constraint) = &ii_config.constraint {
+                    let ii_witness = stage_witness.initial_input.as_ref();
+
+                    let num_openings = constraint.required_openings.len();
+                    let num_challenges = constraint.num_challenges;
+                    let num_aux_vars = Self::estimate_aux_var_count(constraint);
+
+                    if let Some(iw) = ii_witness {
+                        // Assign opening values (witness variables)
+                        debug_assert_eq!(
+                            iw.opening_values.len(),
+                            num_openings,
+                            "Input opening values count mismatch"
+                        );
+                        for val in &iw.opening_values {
+                            z[witness_idx] = *val;
+                            witness_idx += 1;
+                        }
+
+                        // Assign challenge values (public inputs)
+                        debug_assert_eq!(
+                            iw.challenge_values.len(),
+                            num_challenges,
+                            "Input challenge values count mismatch"
+                        );
+                        for val in &iw.challenge_values {
+                            z[input_constraint_challenge_idx] = *val;
+                            input_constraint_challenge_idx += 1;
+                        }
+
+                        // Compute and assign aux vars for intermediate products
+                        let aux_values = Self::compute_aux_vars(
+                            constraint,
+                            &iw.opening_values,
+                            &iw.challenge_values,
+                        );
+                        debug_assert_eq!(
+                            aux_values.len(),
+                            num_aux_vars,
+                            "Input aux var count mismatch"
+                        );
+                        for val in aux_values {
+                            z[witness_idx] = val;
+                            witness_idx += 1;
+                        }
+                    } else {
+                        // No witness provided - skip past allocated variables
+                        witness_idx += num_openings + num_aux_vars;
+                        input_constraint_challenge_idx += num_challenges;
+                    }
+                }
+            }
 
             for round_witness in &stage_witness.rounds {
                 let num_coeffs = config.poly_degree + 1;

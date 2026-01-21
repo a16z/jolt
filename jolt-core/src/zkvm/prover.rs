@@ -36,8 +36,8 @@ use crate::{
     subprotocols::{
         blindfold::{
             BlindFoldProof, BlindFoldProver, BlindFoldWitness, FinalOutputWitness,
-            OutputClaimConstraint, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness,
-            VerifierR1CSBuilder,
+            InputClaimConstraint, OutputClaimConstraint, RelaxedR1CSInstance, RoundWitness,
+            StageConfig, StageWitness, VerifierR1CSBuilder,
         },
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
@@ -1398,6 +1398,7 @@ impl<
                 // For stages 2-6, this starts their independent chain
                 let starts_new_chain = round_idx == 0;
                 let is_last_round = round_idx == num_rounds - 1;
+                let is_first_round = round_idx == 0;
 
                 let config = if starts_new_chain {
                     StageConfig::new_chain(1, poly_degree)
@@ -1405,6 +1406,38 @@ impl<
                     StageConfig::new(1, poly_degree)
                 };
 
+                // Handle input constraints for first round
+                let (config, initial_input_witness) = if is_first_round {
+                    let batched_input = InputClaimConstraint::batch(
+                        &zk_data.input_constraints,
+                        zk_data.batching_coefficients.len(),
+                    );
+
+                    if let Some(batched_constraint) = batched_input {
+                        let mut challenge_values: Vec<F> = zk_data.batching_coefficients.clone();
+                        for cv in &zk_data.input_constraint_challenge_values {
+                            challenge_values.extend(cv.iter().cloned());
+                        }
+
+                        // Collect opening values from the accumulator
+                        let opening_values: Vec<F> = batched_constraint
+                            .required_openings
+                            .iter()
+                            .map(|id| self.opening_accumulator.get_opening(*id))
+                            .collect();
+
+                        let initial_input =
+                            FinalOutputWitness::new_general(challenge_values, opening_values);
+                        let config_with_input = config.with_input_constraint(batched_constraint);
+                        (config_with_input, Some(initial_input))
+                    } else {
+                        (config, None)
+                    }
+                } else {
+                    (config, None)
+                };
+
+                // Handle output constraints for last round
                 let (config, final_output_witness) = if is_last_round {
                     let batched = OutputClaimConstraint::batch(
                         &zk_data.output_constraints,
@@ -1438,10 +1471,13 @@ impl<
                 stage_configs.push(config);
                 let round_witness =
                     RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
-                let stage_witness = if let Some(fw) = final_output_witness {
-                    StageWitness::with_final_output(vec![round_witness], fw)
-                } else {
-                    StageWitness::new(vec![round_witness])
+
+                // Create stage witness with optional input/output constraints
+                let stage_witness = match (initial_input_witness, final_output_witness) {
+                    (Some(ii), Some(fo)) => StageWitness::with_both(vec![round_witness], ii, fo),
+                    (Some(ii), None) => StageWitness::with_initial_input(vec![round_witness], ii),
+                    (None, Some(fo)) => StageWitness::with_final_output(vec![round_witness], fo),
+                    (None, None) => StageWitness::new(vec![round_witness]),
                 };
                 stage_witnesses.push(stage_witness);
 

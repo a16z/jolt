@@ -20,7 +20,9 @@ mod relaxed_r1cs;
 mod witness;
 
 pub use folding::{compute_cross_term, sample_random_satisfying_pair};
-pub use output_constraint::{OutputClaimConstraint, ProductTerm, ValueSource};
+pub use output_constraint::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 pub use protocol::{
     BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifyError, FinalOutputInfo,
 };
@@ -100,6 +102,10 @@ pub struct StageConfig {
     /// Final output binding configuration.
     /// If set, adds constraint at end of this stage's chain: final_claim = Σⱼ αⱼ · yⱼ
     pub final_output: Option<FinalOutputConfig>,
+    /// Initial input binding configuration.
+    /// If set, adds constraint at start of this stage: initial_claim = f(openings, challenges)
+    /// Verifies that the input claim is correctly derived from previous sumcheck openings.
+    pub initial_input: Option<FinalOutputConfig>,
 }
 
 impl StageConfig {
@@ -110,6 +116,7 @@ impl StageConfig {
             starts_new_chain: false,
             uniskip_power_sums: None,
             final_output: None,
+            initial_input: None,
         }
     }
 
@@ -121,6 +128,7 @@ impl StageConfig {
             starts_new_chain: true,
             uniskip_power_sums: None,
             final_output: None,
+            initial_input: None,
         }
     }
 
@@ -133,6 +141,7 @@ impl StageConfig {
             starts_new_chain: false,
             uniskip_power_sums: Some(power_sums),
             final_output: None,
+            initial_input: None,
         }
     }
 
@@ -144,6 +153,7 @@ impl StageConfig {
             starts_new_chain: true,
             uniskip_power_sums: Some(power_sums),
             final_output: None,
+            initial_input: None,
         }
     }
 
@@ -158,6 +168,14 @@ impl StageConfig {
     /// The constraint describes: output = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ
     pub fn with_constraint(mut self, constraint: OutputClaimConstraint) -> Self {
         self.final_output = Some(FinalOutputConfig::with_constraint(constraint));
+        self
+    }
+
+    /// Set initial input binding with a general sum-of-products constraint.
+    /// The constraint describes: input_claim = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ
+    /// Verifies input claim is correctly derived from previous sumcheck openings.
+    pub fn with_input_constraint(mut self, constraint: InputClaimConstraint) -> Self {
+        self.initial_input = Some(FinalOutputConfig::with_constraint(constraint));
         self
     }
 
