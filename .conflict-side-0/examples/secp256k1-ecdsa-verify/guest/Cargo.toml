@@ -1,0 +1,11 @@
+[package]
+name = "secp256k1-ecdsa-verify-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+jolt-inlines-secp256k1.workspace = true

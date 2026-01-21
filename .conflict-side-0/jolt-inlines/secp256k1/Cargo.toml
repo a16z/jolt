@@ -1,0 +1,28 @@
+[package]
+name = "jolt-inlines-secp256k1"
+version = "0.1.0"
+edition = "2021"
+description = "Secp256k1 implementations for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+
+[features]
+default = []
+host = ["dep:ctor", "dep:tracer", "dep:tracing"]
+
+[dependencies]
+ctor = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true, features = ["std"] }
+tracing = { workspace = true, optional = true }
+serde.workspace = true
+ark-secp256k1.workspace = true
+ark-serialize.workspace = true
+ark-ff.workspace = true
+ark-ec.workspace = true
+num-bigint.workspace = true
+num-integer.workspace = true
+
+[dev-dependencies]
+hex-literal.workspace = true
+tracer = { workspace = true, features = ["std", "test-utils"] }

@@ -1,0 +1,168 @@
+[package]
+name = "jolt-core"
+version = "0.1.0"
+authors = [
+    # author of original Spartan paper and code base
+    "Srinath Setty <srinath@microsoft.com>",
+    # authors who contributed to the Arkworks Spartan fork
+    "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
+    # authors who contributed to Lasso/Jolt
+    "Michael Zhu <mzhu@a16z.com>",
+    "Sam Ragsdale <sragsdale@a16z.com>",
+    "Noah Citron <ncitron@a16z.com>",
+    "Arasu Arun <arasu.arun5@gmail.com>",
+    "Quang Dao <dvquang85@gmail.com>",
+    "Andrew Tretyakov <atretyakov@a16z.com>",
+    "Markos Georghiades <mgeorghiades@a16z.com>",
+]
+edition = "2021"
+description = "The lookup singularity. Based on Spartan; built on Arkworks."
+documentation = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+license-file = "LICENSE"
+keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
+
+[features]
+default = ["host"]
+host = [
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:indicatif",
+    "dep:dirs",
+    "dep:target-lexicon",
+    "prover",
+    "dep:jolt-inlines-sha2",
+    "dep:jolt-inlines-keccak256",
+]
+prover = [
+    "minimal",
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "dory/backends",
+    "dory/cache", # This includes `parallel` feature
+    "dory/disk-persistence"
+]
+# This is for building jolt-core without prover capabilities, e.g. for recursion
+# jolt-core needs std and rayon to compile, so these are the minimal set of features.
+minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
+allocative = ["dep:inferno"]
+monitor = ["dep:sysinfo"]
+pprof = ["dep:pprof", "dep:prost"]
+test_incremental = []
+challenge-254-bit = []
+
+[dependencies]
+ark-bn254.workspace = true
+ark-grumpkin.workspace = true
+jolt-optimizations.workspace = true
+ark-ec.workspace = true
+ark-ff.workspace = true
+ark-serialize.workspace = true
+ark-serialize-derive.workspace = true
+ark-std.workspace = true
+clap.workspace = true
+fixedbitset.workspace = true
+itertools.workspace = true
+num-integer.workspace = true
+num-derive.workspace = true
+num.workspace = true
+num-traits.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+rand.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, default-features = false }
+sha3.workspace = true
+blake2.workspace = true
+chrono.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-chrome.workspace = true
+tracing-subscriber.workspace = true
+target-lexicon = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
+eyre.workspace = true
+indicatif = { workspace = true, optional = true }
+common.workspace = true
+tracer = { workspace = true, default-features = false, features = ["std"] }
+bincode.workspace = true
+tokio = { workspace = true, optional = true }
+rand_distr.workspace = true
+anyhow.workspace = true
+derive_more.workspace = true
+paste.workspace = true
+dory.workspace = true
+allocative.workspace = true
+inferno = { workspace = true, optional = true }
+jolt-platform = { workspace = true, features = ["std"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
+jolt-inlines-keccak256 = { workspace = true, features = [
+    "host",
+], optional = true }
+sysinfo = { version = "0.37", optional = true }
+pprof = { version = "0.15", features = [
+    "prost-codec",
+    "flamegraph",
+    "frame-pointer",
+], optional = true }
+prost = { version = "0.14", optional = true }
+bytemuck = "1.23.2"
+bytemuck_derive = "1.10.1"
+
+[dev-dependencies]
+criterion.workspace = true
+iai-callgrind.workspace = true
+serial_test.workspace = true
+tracer = { workspace = true, default-features = false, features = [
+    "std",
+    "test-utils",
+] }
+
+[build-dependencies]
+common.workspace = true
+
+[[bench]]
+name = "iai"
+harness = false
+
+[[bench]]
+name = "commit"
+harness = false
+
+[[bench]]
+name = "binding"
+harness = false
+
+[[bench]]
+name = "mles_product_sum"
+harness = false
+
+[[bench]]
+name = "poly_bench"
+harness = false
+
+[[bench]]
+name = "polynomial_evaluation"
+harness = false
+
+[[bench]]
+name = "challenge_mult_performance"
+harness = false
+
+[lib]
+name = "jolt_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jolt-core"
+path = "src/bin/jolt_core.rs"
+required-features = ["host"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+memory-stats.workspace = true
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }

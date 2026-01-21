@@ -1,0 +1,10 @@
+[package]
+name = "overflow"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+guest = { package = "overflow-guest", path = "./guest" }
