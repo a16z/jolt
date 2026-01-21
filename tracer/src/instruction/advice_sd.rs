@@ -1,10 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::{Cpu, Xlen, advice_tape_read}, utils::inline_helpers::InstrAssembler};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{advice_tape_read, Cpu, Xlen},
+    utils::inline_helpers::InstrAssembler,
+};
 
-use super::virtual_advice_load::VirtualAdviceLoad;
 use super::sd::SD;
-use super::{format::format_advice_s::FormatAdviceS, Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace};
+use super::virtual_advice_load::VirtualAdviceLoad;
+use super::{
+    format::format_advice_s::FormatAdviceS, Cycle, Instruction, RAMWrite, RISCVInstruction,
+    RISCVTrace,
+};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 declare_riscv_instr!(

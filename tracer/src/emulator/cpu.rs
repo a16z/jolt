@@ -20,7 +20,7 @@ use core::cell::RefCell;
 /// During the first emulation pass (with `compute_advice` feature), advice functions
 /// write serialized data to this tape. During the second pass (without the feature),
 /// advice functions read from this tape in the same order.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AdviceTape {
     data: Vec<u8>,
     read_position: usize,
@@ -28,10 +28,7 @@ pub struct AdviceTape {
 
 impl AdviceTape {
     pub fn new() -> Self {
-        Self {
-            data: Vec::new(),
-            read_position: 0,
-        }
+        Self::default()
     }
 
     /// Append bytes to the advice tape (called during first emulation pass)
@@ -83,9 +80,7 @@ pub fn advice_tape_write(bytes: &[u8]) {
 
 /// Read data from the global advice tape
 pub fn advice_tape_read(num_bytes: usize) -> Option<u64> {
-    ADVICE_TAPE.with(|tape| {
-        tape.borrow_mut().read(num_bytes)
-    })
+    ADVICE_TAPE.with(|tape| tape.borrow_mut().read(num_bytes))
 }
 
 /// Reset the advice tape read position

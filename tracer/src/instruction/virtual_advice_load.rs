@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
-use crate::{declare_riscv_instr, emulator::cpu::{Cpu, advice_tape_read}};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{advice_tape_read, Cpu},
+};
 
 declare_riscv_instr!(
     name = VirtualAdviceLoad,
