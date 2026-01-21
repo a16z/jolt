@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::{Cpu, Xlen, advice_tape_read}, utils::inline_helpers::InstrAssembler};
 
-use super::virtual_advice_sd::VirtualAdviceSD;
+use super::virtual_advice_load::VirtualAdviceLoad;
+use super::sd::SD;
 use super::{format::format_advice_s::FormatAdviceS, Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
@@ -55,9 +56,12 @@ impl RISCVTrace for AdviceSD {
 
 impl AdviceSD {
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        let v_dword = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
-        // In 64-bit mode, doubleword stores are direct
-        asm.emit_advice_s::<VirtualAdviceSD>(self.operands.rs1, self.operands.imm);
+        // Read 8 bytes from advice tape into v_dword register
+        asm.emit_i::<VirtualAdviceLoad>(*v_dword, 0, 8);
+        // Store v_dword to memory at rs1 + imm
+        asm.emit_s::<SD>(self.operands.rs1, *v_dword, self.operands.imm);
         asm.finalize()
     }
 }
