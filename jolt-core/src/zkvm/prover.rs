@@ -402,6 +402,7 @@ where
         // Stage 12: Run recursion sumchecks (stages 1-3 + 3b) - verify the committed polynomial
         let (
             stage1_proof,
+            stage1b_proof,
             stage2_m_eval,
             _r_stage1,
             _r_stage2,
@@ -419,6 +420,7 @@ where
         // Assemble recursion proof
         let recursion_proof = RecursionProof {
             stage1_proof,
+            stage1b_proof,
             stage2_m_eval,
             stage3_proof,
             stage3b_proof,
@@ -1534,6 +1536,7 @@ where
         recursion_prover: &RecursionProver<Fq>,
     ) -> (
         crate::subprotocols::sumcheck::SumcheckInstanceProof<Fq, ProofTranscript>,
+        crate::subprotocols::sumcheck::SumcheckInstanceProof<Fq, ProofTranscript>, // stage1b_proof
         Fq, // stage2_m_eval
         Vec<<Fq as JoltField>::Challenge>,
         Vec<<Fq as JoltField>::Challenge>,
@@ -1552,7 +1555,7 @@ where
         });
 
         // Stage 1: Constraint sumchecks
-        let (stage1_proof, r_stage1) = tracing::info_span!("recursion_stage11_1_constraints")
+        let (stage1_proof, stage1b_proof, r_stage1) = tracing::info_span!("recursion_stage11_1_constraints")
             .in_scope(|| {
                 tracing::info!(
                     "Running Stage 11.1: Constraint sumchecks (GT exp, GT mul, G1 scalar mul)"
@@ -1582,6 +1585,7 @@ where
 
         (
             stage1_proof,
+            stage1b_proof,
             stage2_m_eval,
             r_stage1,
             r_stage2,

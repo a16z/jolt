@@ -25,6 +25,7 @@ use super::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier},
         gt_mul::{GtMulParams, GtMulVerifier},
         packed_gt_exp::{PackedGtExpParams, PackedGtExpPublicInputs, PackedGtExpVerifier},
+        shift_rho::{ShiftRhoParams, ShiftRhoVerifier, ShiftClaim},
     },
     stage2::virtualization::{
         extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationVerifier,
@@ -102,7 +103,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         }
 
         // ============ STAGE 1: Verify Constraint Sumchecks ============
-        let r_stage1 = tracing::info_span!("verify_recursion_stage1").in_scope(|| {
+        let (r_stage1, num_gt_exp) = tracing::info_span!("verify_recursion_stage1").in_scope(|| {
             tracing::info!("Verifying Stage 1: Constraint sumchecks");
             self.verify_stage1(
                 &proof.stage1_proof,
@@ -110,6 +111,19 @@ impl<F: JoltField> RecursionVerifier<F> {
                 &mut accumulator,
                 proof.gamma,
                 proof.delta,
+            )
+        })?;
+
+        // ============ STAGE 1b: Verify Shift Sumcheck ============
+        tracing::info_span!("verify_recursion_stage1b").in_scope(|| {
+            tracing::info!("Verifying Stage 1b: Shift sumcheck");
+            // Use the number of packed witnesses (public inputs) not constraint types
+            let num_packed_witnesses = self.input.packed_gt_exp_public_inputs.len();
+            self.verify_stage1b(
+                &proof.stage1b_proof,
+                transcript,
+                &mut accumulator,
+                num_packed_witnesses,
             )
         })?;
 
@@ -156,7 +170,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         accumulator: &mut VerifierOpeningAccumulator<F>,
         _gamma: F,
         _delta: F,
-    ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<<F as crate::field::JoltField>::Challenge>, usize), Box<dyn std::error::Error>> {
         use std::any::TypeId;
 
         // Runtime check that F = Fq for recursion SNARK
@@ -235,7 +249,44 @@ impl<F: JoltField> RecursionVerifier<F> {
 
         let r_stage1 = BatchedSumcheck::verify(proof, verifier_refs, accumulator, transcript)?;
 
-        Ok(r_stage1)
+        Ok((r_stage1, num_gt_exp))
+    }
+
+    /// Verify Stage 1b: Shift sumcheck
+    #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage1b")]
+    fn verify_stage1b<T: Transcript>(
+        &self,
+        proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+        transcript: &mut T,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        num_packed_witnesses: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        tracing::info!("[Stage 1b] Verifying shift sumcheck for {} GT exp witnesses", num_packed_witnesses);
+
+        // Create shift claims
+        let shift_claims: Vec<ShiftClaim> = (0..num_packed_witnesses)
+            .map(|w| ShiftClaim { constraint_idx: w })
+            .collect();
+
+        #[cfg(debug_assertions)]
+        eprintln!("Verifier creating {} shift claims for {} packed witnesses", shift_claims.len(), num_packed_witnesses);
+
+        // Create shift verifier
+        let shift_verifier = ShiftRhoVerifier::new(
+            ShiftRhoParams::new(shift_claims.len()),
+            shift_claims,
+            transcript,
+        );
+
+        // Run shift sumcheck verification
+        BatchedSumcheck::verify(
+            proof,
+            vec![&shift_verifier],
+            accumulator,
+            transcript,
+        )?;
+
+        Ok(())
     }
 
     /// Verify Stage 2: Direct evaluation protocol

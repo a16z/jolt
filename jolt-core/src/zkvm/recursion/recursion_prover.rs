@@ -37,6 +37,7 @@ use super::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
         gt_mul::{GtMulParams, GtMulProver},
         packed_gt_exp::{PackedGtExpParams, PackedGtExpProver, PackedGtExpPublicInputs},
+        shift_rho::{ShiftRhoParams, ShiftRhoProver, ShiftClaim},
     },
     stage2::virtualization::{
         DirectEvaluationParams, DirectEvaluationProver,
@@ -54,6 +55,8 @@ use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckIn
 pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Field = F>> {
     /// Stage 1 constraint sumcheck proof
     pub stage1_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+    /// Stage 1b shift sumcheck proof for rho_next verification
+    pub stage1b_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
     /// Stage 2 direct evaluation result M(r_s, r_x)
     pub stage2_m_eval: F,
     /// Stage 3 jagged transform sumcheck proof
@@ -494,7 +497,7 @@ impl<F: JoltField> RecursionProver<F> {
         tracing::info_span!("recursion_stage1_sumchecks").in_scope(|| {
             tracing::info!("Starting Stage 1: Constraint sumchecks");
         });
-        let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
+        let (stage1_proof, stage1b_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
 
         // ============ STAGE 2: Virtualization Sumcheck ============
         tracing::info_span!("recursion_stage2_virtualization").in_scope(|| {
@@ -540,6 +543,7 @@ impl<F: JoltField> RecursionProver<F> {
         // Create final proof
         let proof = RecursionProof {
             stage1_proof,
+            stage1b_proof,
             stage2_m_eval,
             stage3_proof,
             stage3b_proof,
@@ -562,6 +566,7 @@ impl<F: JoltField> RecursionProver<F> {
     ) -> Result<
         (
             crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+            crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
             Vec<<F as JoltField>::Challenge>,
         ),
         Box<dyn std::error::Error>,
@@ -583,6 +588,10 @@ impl<F: JoltField> RecursionProver<F> {
         // Create provers for each constraint type
         let mut provers: Vec<Box<dyn SumcheckInstanceProver<F, T>>> = Vec::new();
 
+        // Store data needed for shift sumcheck later
+        let mut rho_polynomials_for_shift = None;
+        let mut num_packed_witnesses = 0;
+
         // Add packed GT exp prover (single prover handles all witnesses with gamma batching)
         let packed_witnesses = &self.constraint_system.packed_gt_exp_witnesses;
         if !packed_witnesses.is_empty() {
@@ -603,6 +612,11 @@ impl<F: JoltField> RecursionProver<F> {
             );
             let prover =
                 PackedGtExpProver::new(params, packed_witnesses, g_poly_replicated_f, transcript);
+
+            // Extract rho polynomials before moving the prover
+            rho_polynomials_for_shift = Some(prover.get_rho_polynomials());
+            num_packed_witnesses = prover.num_witnesses;
+
             provers.push(Box::new(prover));
         }
 
@@ -688,13 +702,40 @@ impl<F: JoltField> RecursionProver<F> {
         }
 
         // Run batched sumcheck for all provers
-        let (proof, r_stage1) = BatchedSumcheck::prove(
+        let (stage1_proof, r_stage1) = BatchedSumcheck::prove(
             provers.iter_mut().map(|p| &mut **p as _).collect(),
             accumulator,
             transcript,
         );
 
-        Ok((proof, r_stage1))
+        // Stage 1b: Run shift sumcheck for packed GT exp constraints
+        tracing::info!("[Stage 1b] Running shift sumcheck for {} GT exp constraints", num_packed_witnesses);
+
+        let rho_polys = rho_polynomials_for_shift
+            .expect("GT exp constraints should always exist in recursion SNARK");
+
+        // Create shift claims
+        let shift_claims: Vec<ShiftClaim> = (0..num_packed_witnesses)
+            .map(|w| ShiftClaim { constraint_idx: w })
+            .collect();
+
+        // Create shift prover
+        let mut shift_prover = ShiftRhoProver::new(
+            ShiftRhoParams::new(shift_claims.len()),
+            rho_polys,
+            shift_claims,
+            accumulator,
+            transcript,
+        );
+
+        // Run shift sumcheck
+        let (stage1b_proof, _) = BatchedSumcheck::prove(
+            vec![&mut shift_prover],
+            accumulator,
+            transcript,
+        );
+
+        Ok((stage1_proof, stage1b_proof, r_stage1))
     }
 
     /// Run Stage 2: Direct evaluation protocol
