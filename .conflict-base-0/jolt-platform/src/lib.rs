@@ -13,6 +13,9 @@ pub use print::*;
 pub mod cycle_tracking;
 pub use cycle_tracking::*;
 
+pub mod advice;
+pub use advice::*;
+
 #[cfg(all(
     feature = "malloc-shim",
     any(target_arch = "riscv32", target_arch = "riscv64")
