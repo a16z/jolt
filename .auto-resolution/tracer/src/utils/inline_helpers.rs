@@ -278,34 +278,6 @@ impl InstrAssembler {
         }));
     }
 
-    /// Emit an advice read that stores result to a register instead of memory.
-    /// This is a special case used for sub-word stores in 64-bit mode.
-    #[track_caller]
-    #[inline]
-    pub fn emit_advice_s_to_reg<Op: RISCVInstruction<Format = FormatAdviceS> + RISCVTrace>(
-        &mut self,
-        rd: u8,
-        rs1: u8,
-        imm: i64,
-    ) where
-        RISCVCycle<Op>: Into<Cycle>,
-    {
-        // For advice-to-reg, we abuse the format slightly:
-        // We use rd in place of rs1 for the target register
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
-    }
-
     /// Emit any Load-type instruction (rd, rs1, imm) - like FormatI but with signed imm.
     #[track_caller]
     #[inline]
