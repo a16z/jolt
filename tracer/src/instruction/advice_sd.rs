@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::{Cpu, advice_tape_read}};
+use crate::{declare_riscv_instr, emulator::cpu::{Cpu, Xlen, advice_tape_read}, utils::inline_helpers::InstrAssembler};
 
-use super::{format::format_s::FormatS, RAMWrite, RISCVInstruction, RISCVTrace};
+use super::virtual_advice_sd::VirtualAdviceSD;
+use super::{format::format_advice_s::FormatAdviceS, Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 declare_riscv_instr!(
     name   = AdviceSD,
     mask   = 0,
     match  = 0,
-    format = FormatS,
+    format = FormatAdviceS,
     ram    = RAMWrite
 );
 
@@ -29,4 +31,33 @@ impl AdviceSD {
     }
 }
 
-impl RISCVTrace for AdviceSD {}
+impl RISCVTrace for AdviceSD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    /// Store doubleword (64-bit) from advice tape to memory.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        match xlen {
+            Xlen::Bit32 => panic!("SD is not supported in 32-bit mode"),
+            Xlen::Bit64 => self.inline_sequence_64(allocator),
+        }
+    }
+}
+
+impl AdviceSD {
+    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
+        // In 64-bit mode, doubleword stores are direct
+        asm.emit_advice_s::<VirtualAdviceSD>(self.operands.rs1, self.operands.imm);
+        asm.finalize()
+    }
+}
