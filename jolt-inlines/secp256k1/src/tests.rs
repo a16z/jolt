@@ -572,7 +572,7 @@ mod sequence_tests {
             "secp256k1_fq::square: result mismatch"
         );
     }
-    /*#[test]
+    #[test]
     fn test_mul() {
         let a = [
             5152362328894379821u64,
@@ -607,7 +607,7 @@ mod sequence_tests {
         let a = [1u64, 1u64, 1u64, 1u64];
         let b = [1u64, 1u64, 1u64, 1u64];
         test_mul_helper(&a, &b);
-    }*/
+    }
     #[test]
     fn test_square() {
         let a = [

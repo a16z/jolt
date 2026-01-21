@@ -290,6 +290,7 @@ impl Secp256k1Fq {
     }
     /// returns self * other
     /// uses custom inline for performance
+    /// allows for a potentially non-canonical result
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -384,16 +385,12 @@ impl Secp256k1Fq {
         let carry: u64;
         (s[7], carry) = split_u128(s[7] as u128 + mul_high(a[3], b[3]) as u128);
         // no additional carry allowed
-        if carry != 0 {
+        // and 4 limbs must match w
+        if carry != 0 || s[4] != w[0] || s[5] != w[1] || s[6] != w[2] || s[7] != w[3] {
             hcf();
         }
-        // check that top 4 limbs match w
-        if s[4] != w[0] || s[5] != w[1] || s[6] != w[2] || s[7] != w[3] {
-            hcf();
-        }
-        // get c from bottom 4 limbs
+        // return bottom 4 limbs as result after checking that c is canonical
         let c = Secp256k1Fq::from_u64_arr(&s[0..4].try_into().unwrap());
-        // ensure that c < q
         if c.is_err() {
             hcf();
         }
@@ -893,7 +890,7 @@ impl Secp256k1Point {
     #[inline(always)]
     pub fn is_on_curve(&self) -> bool {
         self.is_infinity()
-            || self.y.square() == (self.x.square().mul(&self.x).add(&Secp256k1Fq::seven()))
+            || self.y.mul(&self.y) == (self.x.mul(&self.x).mul(&self.x).add(&Secp256k1Fq::seven()))
     }
     /// negates a point on the secp256k1 curve
     #[inline(always)]
@@ -936,7 +933,7 @@ impl Secp256k1Point {
         // if the x coordinates are not equal and not infinity, perform standard point addition
         } else {
             let s = (self.y.sub(&other.y)).div_assume_nonzero(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x).sub(&other.x);
+            let x2 = s.square().sub(&self.x.add(&other.x));
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             Secp256k1Point { x: x2, y: y2 }
         }
@@ -964,9 +961,11 @@ impl Secp256k1Point {
         // so no special cases needed
         } else {
             let s = (self.y.sub(&other.y)).div_assume_nonzero(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x).sub(&other.x);
-            let t = self.y.dbl().div(&self.x.sub(&x2)).sub(&s);
-            let x3 = t.square().sub(&self.x).sub(&x2);
+            //let nx2 = &self.x.add(&other.x).sub(&s.square());
+            let nx2 = self.x.add(&other.x).sub(&s.mul(&s));
+            let t = self.y.dbl().div_assume_nonzero(&self.x.add(&nx2)).sub(&s);
+            //let x3 = t.square().sub(&self.x).add(&nx2);
+            let x3 = t.mul(&t).sub(&self.x).add(&nx2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             Secp256k1Point { x: x3, y: y3 }
         }
