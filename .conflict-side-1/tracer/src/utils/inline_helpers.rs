@@ -32,6 +32,7 @@ use crate::instruction::andi::ANDI;
 use crate::instruction::srli::SRLI;
 use crate::instruction::srliw::SRLIW;
 
+use crate::instruction::format::format_advice_s::FormatAdviceS;
 use crate::instruction::format::format_assert_align::AssertAlignFormat;
 use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
@@ -246,6 +247,58 @@ impl InstrAssembler {
                 rd: None,
                 rs1: Some(rs1),
                 rs2: Some(rs2),
+                imm: imm as i128,
+            },
+            is_compressed: false,
+            is_first_in_sequence: false,
+            virtual_sequence_remaining: Some(0),
+        }));
+    }
+
+    /// Emit any advice store instruction (rs1, imm) - stores advice tape data to memory.
+    #[track_caller]
+    #[inline]
+    pub fn emit_advice_s<Op: RISCVInstruction<Format = FormatAdviceS> + RISCVTrace>(
+        &mut self,
+        rs1: u8,
+        imm: i64,
+    ) where
+        RISCVCycle<Op>: Into<Cycle>,
+    {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
+                rd: None,
+                rs1: Some(rs1),
+                rs2: None,
+                imm: imm as i128,
+            },
+            is_compressed: false,
+            is_first_in_sequence: false,
+            virtual_sequence_remaining: Some(0),
+        }));
+    }
+
+    /// Emit an advice read that stores result to a register instead of memory.
+    /// This is a special case used for sub-word stores in 64-bit mode.
+    #[track_caller]
+    #[inline]
+    pub fn emit_advice_s_to_reg<Op: RISCVInstruction<Format = FormatAdviceS> + RISCVTrace>(
+        &mut self,
+        rd: u8,
+        rs1: u8,
+        imm: i64,
+    ) where
+        RISCVCycle<Op>: Into<Cycle>,
+    {
+        // For advice-to-reg, we abuse the format slightly:
+        // We use rd in place of rs1 for the target register
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: None,
                 imm: imm as i128,
             },
             is_compressed: false,

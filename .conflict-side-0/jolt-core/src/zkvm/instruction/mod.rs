@@ -291,6 +291,10 @@ define_rv32im_trait_impls! {
 
 pub mod add;
 pub mod addi;
+pub mod advice_sb;
+pub mod advice_sd;
+pub mod advice_sh;
+pub mod advice_sw;
 pub mod and;
 pub mod andi;
 pub mod andn;

@@ -9,6 +9,7 @@
 pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E; // "C Y C L E"
 pub const JOLT_CYCLE_MARKER_START: u32 = 1;
 pub const JOLT_CYCLE_MARKER_END: u32 = 2;
+pub const JOLT_ADVICE_WRITE_ECALL_NUM: u32 = 0xADBABE; // "A D V I C E"
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod riscv_specific {
