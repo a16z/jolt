@@ -7,8 +7,8 @@ use syn::{
 /// Top-level attribute: `#[sumcheck_claims(input_claim = ..., output_claim = ...)]`
 #[derive(Debug)]
 pub struct SumcheckClaimsAttr {
-    pub input_claim: ClaimSpec,
-    pub output_claim: ClaimSpec,
+    pub input_claim: ClaimSpecContent,
+    pub output_claim: ClaimSpecContent,
 }
 
 impl Parse for SumcheckClaimsAttr {
@@ -49,26 +49,11 @@ impl Parse for SumcheckClaimsAttr {
     }
 }
 
-/// Parse either `None` or `{ ... }` block for claim spec
-fn parse_claim_spec(input: ParseStream) -> syn::Result<ClaimSpec> {
-    if input.peek(Ident) {
-        let ident: Ident = input.fork().parse()?;
-        if ident == "None" {
-            input.parse::<Ident>()?;
-            return Ok(ClaimSpec::None);
-        }
-    }
-
+/// Parse a `{ ... }` block for claim spec
+fn parse_claim_spec(input: ParseStream) -> syn::Result<ClaimSpecContent> {
     let content;
     braced!(content in input);
-    let spec = ClaimSpecContent::parse(&content)?;
-    Ok(ClaimSpec::Some(Box::new(spec)))
-}
-
-#[derive(Debug)]
-pub enum ClaimSpec {
-    None,
-    Some(Box<ClaimSpecContent>),
+    ClaimSpecContent::parse(&content)
 }
 
 /// Content of a claim spec block
@@ -78,6 +63,16 @@ pub struct ClaimSpecContent {
     pub openings: Vec<(Ident, PolynomialRef)>,
     pub expr: Expr,
     pub derived: Vec<(Ident, Expr)>,
+    /// Outer loop: `for_each: i in len_expr`
+    pub for_each: Option<ForEachSpec>,
+    /// Inner product loop: `product_of: j in len_expr`
+    pub product_of: Option<ForEachSpec>,
+}
+
+#[derive(Debug)]
+pub struct ForEachSpec {
+    pub var: Ident,
+    pub len_expr: Expr,
 }
 
 impl Parse for ClaimSpecContent {
@@ -86,6 +81,8 @@ impl Parse for ClaimSpecContent {
         let mut openings = Vec::new();
         let mut expr = None;
         let mut derived = Vec::new();
+        let mut for_each = None;
+        let mut product_of = None;
 
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
@@ -102,8 +99,19 @@ impl Parse for ClaimSpecContent {
                     expr = Some(input.parse::<Expr>()?);
                 }
                 "derived" => {
-                    // Parse: name = expr (, name = expr)*
                     derived = parse_derived(input)?;
+                }
+                "for_each" => {
+                    let var: Ident = input.parse()?;
+                    input.parse::<Token![in]>()?;
+                    let len_expr: Expr = input.parse()?;
+                    for_each = Some(ForEachSpec { var, len_expr });
+                }
+                "product_of" => {
+                    let var: Ident = input.parse()?;
+                    input.parse::<Token![in]>()?;
+                    let len_expr: Expr = input.parse()?;
+                    product_of = Some(ForEachSpec { var, len_expr });
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -123,6 +131,8 @@ impl Parse for ClaimSpecContent {
             openings,
             expr: expr.ok_or_else(|| syn::Error::new(input.span(), "missing expr"))?,
             derived,
+            for_each,
+            product_of,
         })
     }
 }

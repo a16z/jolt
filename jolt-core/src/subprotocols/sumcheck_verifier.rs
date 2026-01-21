@@ -4,20 +4,6 @@ use crate::transcripts::Transcript;
 
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
 
-/// Trait for sumcheck claim computation and constraint generation.
-/// Implemented by params structs to provide output claim methods that verifiers delegate to.
-pub trait SumcheckClaims<F: JoltField> {
-    fn expected_output_claim(
-        &self,
-        accumulator: &dyn OpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F;
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint>;
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F>;
-}
-
 pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         unimplemented!(
@@ -95,30 +81,38 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
 }
 
 pub trait SumcheckInstanceParams<F: JoltField> {
-    /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
-    /// Returns the number of rounds/variables in this sumcheck instance.
     fn num_rounds(&self) -> usize;
 
-    /// Returns the initial claim of this sumcheck instance.
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F;
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
 
-    /// Returns the input claim constraint for this sumcheck instance.
-    /// Describes how the input claim relates to polynomial openings from previous sumchecks.
-    /// Returns None if input is zero or doesn't depend on openings (e.g., first sumcheck in chain).
     fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
         None
     }
 
-    /// Returns the challenge values needed to evaluate the input constraint.
-    /// These are the values for Challenge(0), Challenge(1), etc. in the constraint.
     fn input_constraint_challenge_values(
         &self,
         _accumulator: &dyn OpeningAccumulator<F>,
     ) -> Vec<F> {
+        Vec::new()
+    }
+
+    fn expected_output_claim(
+        &self,
+        _accumulator: &dyn OpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        F::zero()
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         Vec::new()
     }
 }

@@ -18,9 +18,7 @@ use crate::subprotocols::blindfold::{
 };
 use crate::subprotocols::sumcheck_claims;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-use crate::subprotocols::sumcheck_verifier::{
-    SumcheckClaims, SumcheckInstanceParams, SumcheckInstanceVerifier,
-};
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
