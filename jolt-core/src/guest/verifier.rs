@@ -52,6 +52,7 @@ where
         stack_size: preprocessing.memory_layout.stack_size,
         memory_size: preprocessing.memory_layout.memory_size,
         program_size: Some(preprocessing.memory_layout.program_size),
+        ..Default::default()
     };
     let mut io_device = JoltDevice::new(&memory_config);
 

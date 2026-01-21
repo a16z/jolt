@@ -1,4 +1,4 @@
 [alias]
 # Run cargo-jolt from ZeroOS (builds if needed, then executes)
-# Usage: cargo jolt build -p guest --std --release
+# Usage: cargo jolt build -p guest --mode std -- --release
 jolt = ["run", "--manifest-path", "../ZeroOS/Cargo.toml", "--release", "-p", "jolt-build", "--quiet", "--", "jolt"]

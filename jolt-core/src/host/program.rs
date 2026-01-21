@@ -92,19 +92,30 @@ impl Program {
                 .unwrap_or_else(|_| "cargo".to_string());
 
             // Build base arguments for cargo-jolt
-            // cargo-jolt is invoked as: cargo-jolt jolt build -p <package> --release [--std] -- --target-dir <dir> --features guest
+            // cargo-jolt is invoked as: cargo jolt build -p <package> [--mode std] -- --release --target-dir <dir> --features guest
             let mut args = vec![
                 "jolt".to_string(),
                 "build".to_string(),
                 "-p".to_string(),
                 self.guest.clone(),
-                "--release".to_string(),
             ];
 
-            // Add --std flag if std mode is enabled
+            // Add --mode std flag if std mode is enabled
             if self.std {
-                args.push("--std".to_string());
+                args.push("--mode".to_string());
+                args.push("std".to_string());
             }
+
+            // Pass memory layout parameters to cargo-jolt
+            // Note: In Jolt's MemoryConfig, `memory_size` represents heap size, not total RAM.
+            // cargo-jolt uses different naming:
+            //   --memory-size = total RAM (as specified by the platform linker script)
+            //   --heap-size = heap allocation within RAM (= Jolt's memory_size)
+            //   --stack-size = stack allocation (= Jolt's stack_size)
+            args.push("--stack-size".to_string());
+            args.push(self.stack_size.to_string());
+            args.push("--heap-size".to_string());
+            args.push(self.memory_size.to_string());
 
             // Create per-guest target directory (isolates builds)
             let guest_target_dir = format!(
@@ -116,6 +127,9 @@ impl Program {
 
             // Add separator for cargo passthrough args
             args.push("--".to_string());
+
+            // --release goes after -- as a cargo argument
+            args.push("--release".to_string());
 
             // Pass --target-dir to cargo (not cargo-jolt)
             args.push("--target-dir".to_string());

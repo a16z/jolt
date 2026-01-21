@@ -274,6 +274,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             stack_size: preprocessing.memory_layout.stack_size,
             memory_size: preprocessing.memory_layout.memory_size,
             program_size: Some(preprocessing.memory_layout.program_size),
+            ..Default::default()
         };
 
         let (lazy_trace, mut trace, final_memory_state, mut program_io) = {

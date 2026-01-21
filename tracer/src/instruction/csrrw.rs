@@ -96,18 +96,26 @@ impl RISCVTrace for CSRRW {
             }
         } else {
             // Full csrrw: need two advice values
-            // Index 0: old CSR value (for rd)
-            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+            // When rd == rs1, there's an extra ADDI at index 0 to preserve rs1,
+            // so the advice indices shift by 1.
+            let (old_advice_idx, new_advice_idx) = if self.operands.rd == self.operands.rs1 {
+                (1, 3)  // Extra ADDI at index 0
+            } else {
+                (0, 2)
+            };
+
+            // Set old CSR value advice
+            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[old_advice_idx] {
                 instr.advice = old_csr_val;
             } else {
-                panic!("Expected VirtualAdvice at index 0, got {:?}", inline_sequence[0]);
+                panic!("Expected VirtualAdvice at index {}, got {:?}", old_advice_idx, inline_sequence[old_advice_idx]);
             }
 
-            // Index 2: new CSR value (from rs1)
-            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[2] {
+            // Set new CSR value advice (from rs1)
+            if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[new_advice_idx] {
                 instr.advice = write_val;
             } else {
-                panic!("Expected VirtualAdvice at index 2, got {:?}", inline_sequence[2]);
+                panic!("Expected VirtualAdvice at index {}, got {:?}", new_advice_idx, inline_sequence[new_advice_idx]);
             }
         }
 
@@ -124,12 +132,20 @@ impl RISCVTrace for CSRRW {
     ///   0: VirtualAdvice(temp)     - Get write value as advice
     ///   1: ADDI(vr, temp, 0)       - Write to virtual register
     ///
-    /// For rd != 0 (full csrrw, atomic swap):
+    /// For rd != 0, rd != rs1 (full csrrw, atomic swap):
     ///   0: VirtualAdvice(temp_old) - Get OLD CSR value as advice
     ///   1: ADDI(rd, temp_old, 0)   - Write old value to rd
     ///   2: VirtualAdvice(temp_new) - Get NEW value (from rs1) as advice
     ///   3: ADDI(vr, temp_new, 0)   - Write new value to virtual register
     ///   4: VirtualAssertEQ(temp_new, rs1) - Assert advice matches rs1
+    ///
+    /// For rd != 0, rd == rs1 (swap where dest equals source):
+    ///   0: ADDI(rs1_copy, rs1, 0)  - Preserve rs1 before it gets clobbered
+    ///   1: VirtualAdvice(temp_old) - Get OLD CSR value as advice
+    ///   2: ADDI(rd, temp_old, 0)   - Write old value to rd (clobbers rs1!)
+    ///   3: VirtualAdvice(temp_new) - Get NEW value as advice
+    ///   4: ADDI(vr, temp_new, 0)   - Write new value to virtual register
+    ///   5: VirtualAssertEQ(temp_new, rs1_copy) - Assert advice matches preserved rs1
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -167,21 +183,33 @@ impl RISCVTrace for CSRRW {
             let temp_old = allocator.allocate();
             let temp_new = allocator.allocate();
 
-            // Index 0: Get old CSR value as advice
+            // When rd == rs1, we need to preserve rs1's value before clobbering it
+            // because the ADDI that writes to rd will destroy the original rs1 value.
+            let rs1_copy = if self.operands.rd == self.operands.rs1 {
+                let copy_reg = allocator.allocate();
+                // Index 0 (when rd == rs1): Copy rs1 to temp before clobbering
+                asm.emit_i::<ADDI>(*copy_reg, self.operands.rs1, 0);
+                Some(copy_reg)
+            } else {
+                None
+            };
+
+            // Get old CSR value as advice
             asm.emit_j::<VirtualAdvice>(*temp_old, 0);
 
-            // Index 1: Write old value to rd
+            // Write old value to rd (this clobbers rs1 if rd == rs1)
             asm.emit_i::<ADDI>(self.operands.rd, *temp_old, 0);
 
-            // Index 2: Get new value (rs1) as advice
+            // Get new value (rs1) as advice
             asm.emit_j::<VirtualAdvice>(*temp_new, 0);
 
-            // Index 3: Write new value to virtual register
+            // Write new value to virtual register
             asm.emit_i::<ADDI>(virtual_reg, *temp_new, 0);
 
-            // Index 4: Assert that advice equals rs1 (verifies prover honesty)
+            // Assert that advice equals original rs1 value (verifies prover honesty)
             // This prevents the prover from lying about what value is being written.
-            asm.emit_b::<VirtualAssertEQ>(*temp_new, self.operands.rs1, 0);
+            let verify_reg = rs1_copy.map(|r| *r).unwrap_or(self.operands.rs1);
+            asm.emit_b::<VirtualAssertEQ>(*temp_new, verify_reg, 0);
         }
 
         asm.finalize()

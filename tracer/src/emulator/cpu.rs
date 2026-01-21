@@ -555,6 +555,11 @@ impl Cpu {
                 // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
 
+                // Preserve a0 (the ECALL magic number) so the inline sequence
+                // writes back the same value. This is necessary because the compiler
+                // may reuse a0 across multiple cycle tracking calls.
+                self.pending_csr_result = Some(call_id as i64);
+
                 return false; // we don't take the trap
             } else if call_id == JOLT_PRINT_ECALL_NUM {
                 let string_ptr = self.x[11] as u32; // a1
@@ -565,6 +570,10 @@ impl Cpu {
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
+
+                // Preserve a0 (the ECALL magic number) so the inline sequence
+                // writes back the same value.
+                self.pending_csr_result = Some(call_id as i64);
 
                 return false;
             } else if call_id == JOLT_CSR_ECALL_NUM {

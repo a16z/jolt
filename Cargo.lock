@@ -779,6 +779,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -994,6 +1000,12 @@ name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
+name = "embedded-hal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
 name = "embedded-io"
@@ -2077,9 +2089,11 @@ version = "0.2.0"
 dependencies = [
  "cfg-if",
  "libc",
+ "riscv",
  "zeroos",
  "zeroos-debug",
  "zeroos-foundation",
+ "zeroos-scheduler-cooperative",
 ]
 
 [[package]]
@@ -2094,12 +2108,11 @@ dependencies = [
  "jolt-platform 0.1.0",
  "jolt-platform 0.2.0",
  "jolt-sdk-macros",
- "linked_list_allocator",
  "postcard",
  "rand 0.8.5",
  "serde",
  "tracer",
- "zeroos-runtime-musl",
+ "zeroos",
 ]
 
 [[package]]
@@ -2271,6 +2284,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843a98750cd611cc2965a8213b53b43e715f13c37a9e096c6408e69990961db7"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
 ]
 
 [[package]]
@@ -2832,7 +2854,7 @@ dependencies = [
  "prost-derive 0.12.6",
  "sha2",
  "smallvec",
- "spin",
+ "spin 0.10.0",
  "symbolic-demangle",
  "tempfile",
  "thiserror 2.0.17",
@@ -3297,6 +3319,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "riscv"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5c1b8bf41ea746266cdee443d1d1e9125c86ce1447e1a2615abd34330d33a9"
+dependencies = [
+ "critical-section",
+ "embedded-hal",
+]
+
+[[package]]
 name = "rmp"
 version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3742,6 +3774,12 @@ dependencies = [
 
 [[package]]
 name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "spin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
@@ -3790,6 +3828,7 @@ name = "stdlib-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-sdk",
+ "rayon",
 ]
 
 [[package]]
@@ -5095,11 +5134,17 @@ name = "zeroos"
 version = "0.1.0"
 dependencies = [
  "zeroos-allocator-linked-list",
+ "zeroos-arch-riscv",
  "zeroos-debug",
+ "zeroos-device-console",
  "zeroos-foundation",
  "zeroos-macros",
  "zeroos-os-linux",
+ "zeroos-rng",
+ "zeroos-runtime-musl",
  "zeroos-runtime-nostd",
+ "zeroos-scheduler-cooperative",
+ "zeroos-vfs-core",
 ]
 
 [[package]]
@@ -5111,6 +5156,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroos-arch-riscv"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "memoffset",
+ "paste",
+ "riscv",
+ "zeroos-debug",
+ "zeroos-foundation",
+ "zeroos-macros",
+]
+
+[[package]]
 name = "zeroos-debug"
 version = "0.1.0"
 dependencies = [
@@ -5118,8 +5176,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroos-device-console"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "zeroos-vfs-core",
+]
+
+[[package]]
 name = "zeroos-foundation"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "cfg-if",
  "libc",
@@ -5140,6 +5206,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroos-rng"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+ "zeroos-foundation",
+]
+
+[[package]]
 name = "zeroos-runtime-musl"
 version = "0.1.0"
 dependencies = [
@@ -5152,6 +5226,24 @@ name = "zeroos-runtime-nostd"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
+ "zeroos-foundation",
+]
+
+[[package]]
+name = "zeroos-scheduler-cooperative"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "zeroos-foundation",
+ "zeroos-macros",
+]
+
+[[package]]
+name = "zeroos-vfs-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
  "zeroos-foundation",
 ]
 

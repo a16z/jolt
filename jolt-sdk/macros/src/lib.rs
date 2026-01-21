@@ -124,7 +124,6 @@ impl MacroBuilder {
 
         let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
-
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #memory_config_fn_name() -> jolt::MemoryConfig {
@@ -222,7 +221,6 @@ impl MacroBuilder {
                 io_device.inputs.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
-
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_signature = if has_trusted_advice {

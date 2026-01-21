@@ -8,8 +8,8 @@ use std::vec::Vec;
 
 use crate::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
-    STACK_CANARY_SIZE,
+    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+    RAM_START_ADDRESS,
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]
@@ -358,7 +358,8 @@ impl MemoryLayout {
             .checked_add(stack_size)
             .expect("stack_start overflow");
 
-        // heap grows *up* (increasing addresses) from the stack of the stack
+        // Heap grows *up* (increasing addresses) from the start of the stack.
+        // Total accessible RAM ends at stack_start + heap_size.
         let memory_end = stack_start
             .checked_add(memory_size)
             .expect("memory_end overflow");
@@ -394,6 +395,6 @@ impl MemoryLayout {
 
     /// Returns the total emulator memory
     pub fn get_total_memory_size(&self) -> u64 {
-        self.memory_size + self.stack_size + STACK_CANARY_SIZE
+        self.memory_end - RAM_START_ADDRESS
     }
 }
