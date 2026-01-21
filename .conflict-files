@@ -1,3 +1,0 @@
-ancestorEntries = ["jolt-core/src/zkvm/instruction/mod.rs", "tracer/src/instruction/advice_sd.rs", "tracer/src/instruction/advice_sw.rs"]
-ourEntries = ["jolt-core/src/zkvm/instruction/mod.rs", "tracer/src/instruction/advice_sd.rs", "tracer/src/instruction/advice_sw.rs"]
-theirEntries = ["jolt-core/src/zkvm/instruction/mod.rs", "tracer/src/instruction/advice_sd.rs", "tracer/src/instruction/advice_sw.rs"]
