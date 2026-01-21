@@ -113,6 +113,7 @@ pprof = { version = "0.15", features = [
 prost = { version = "0.14", optional = true }
 bytemuck = "1.23.2"
 bytemuck_derive = "1.10.1"
+jolt-core-macros.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

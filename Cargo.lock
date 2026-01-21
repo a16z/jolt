@@ -1980,6 +1980,7 @@ dependencies = [
  "indicatif",
  "inferno 0.12.4",
  "itertools 0.10.5",
+ "jolt-core-macros",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
@@ -2012,6 +2013,15 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-core-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
 ]
 
 [[package]]

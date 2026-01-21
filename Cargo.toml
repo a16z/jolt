@@ -25,6 +25,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
+    "jolt-core-macros",
     "tracer",
     "common",
     "jolt-platform",
@@ -251,3 +252,4 @@ jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
+jolt-core-macros = { path = "./jolt-core-macros" }

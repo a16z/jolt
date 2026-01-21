@@ -4,6 +4,20 @@ use crate::transcripts::Transcript;
 
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
 
+/// Trait for sumcheck claim computation and constraint generation.
+/// Implemented by params structs to provide output claim methods that verifiers delegate to.
+pub trait SumcheckClaims<F: JoltField> {
+    fn expected_output_claim(
+        &self,
+        accumulator: &dyn OpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F;
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint>;
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F>;
+}
+
 pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         unimplemented!(
