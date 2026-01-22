@@ -38,7 +38,7 @@ use crate::zkvm::{
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
-        self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
+        hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
@@ -381,20 +381,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
             &self.proof.rw_config,
         );
-        let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
-            self.proof.ram_K,
-            &self.preprocessing.shared.ram,
-            &self.program_io,
-        );
         let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
-            &initial_ram_state,
+            &self.preprocessing.shared.ram,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
             &self.opening_accumulator,
         );
         let ram_val_final = ValFinalSumcheckVerifier::new(
-            &initial_ram_state,
+            &self.preprocessing.shared.ram,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
