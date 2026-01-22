@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 
+#[cfg(feature = "allocative")]
 use allocative::Allocative;
 
 use crate::field::{JoltField, MaybeAllocative};
@@ -7,6 +8,7 @@ use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::streaming_schedule::StreamingSchedule;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::transcripts::Transcript;
 
 pub trait StreamingSumcheckWindow<F: JoltField>: Sized + MaybeAllocative + Send + Sync {
@@ -54,19 +56,10 @@ pub trait LinearSumcheckStage<F: JoltField>: Sized + MaybeAllocative + Send + Sy
     );
 }
 
-pub trait SharedStreamingSumcheckState<F: JoltField>:
-    Sized + MaybeAllocative + Send + Sync
-{
-    fn degree(&self) -> usize;
-    fn num_rounds(&self) -> usize;
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F;
-}
-
-#[derive(Allocative)]
 pub struct StreamingSumcheck<
     F: JoltField,
     S: StreamingSchedule,
-    Shared: SharedStreamingSumcheckState<F>,
+    Shared: SumcheckInstanceParams<F> + MaybeAllocative + Send + Sync,
     Streaming: StreamingSumcheckWindow<F, Shared = Shared>,
     Linear: LinearSumcheckStage<F, Streaming = Streaming, Shared = Shared>,
 > {
@@ -77,11 +70,30 @@ pub struct StreamingSumcheck<
     phantom: std::marker::PhantomData<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F, S, Shared, Streaming, Linear> Allocative
+    for StreamingSumcheck<F, S, Shared, Streaming, Linear>
+where
+    F: JoltField + Allocative,
+    S: StreamingSchedule,
+    Shared: SumcheckInstanceParams<F> + Allocative + Send + Sync,
+    Streaming: StreamingSumcheckWindow<F, Shared = Shared> + Allocative,
+    Linear: LinearSumcheckStage<F, Streaming = Streaming, Shared = Shared> + Allocative,
+{
+    fn visit<'a, V: allocative::Visitor<'a>>(&self, visitor: V) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("streaming"), &self.streaming);
+        visitor.visit_field(allocative::Key::new("linear"), &self.linear);
+        visitor.visit_field(allocative::Key::new("shared"), &self.shared);
+        visitor.exit();
+    }
+}
+
 impl<F, S, Shared, Streaming, Linear> StreamingSumcheck<F, S, Shared, Streaming, Linear>
 where
     F: JoltField,
     S: StreamingSchedule,
-    Shared: SharedStreamingSumcheckState<F>,
+    Shared: SumcheckInstanceParams<F> + MaybeAllocative + Send + Sync,
     Streaming: StreamingSumcheckWindow<F, Shared = Shared>,
     Linear: LinearSumcheckStage<F, Streaming = Streaming, Shared = Shared>,
 {
@@ -102,10 +114,14 @@ where
     F: JoltField,
     T: Transcript,
     S: StreamingSchedule,
-    Shared: SharedStreamingSumcheckState<F>,
+    Shared: SumcheckInstanceParams<F> + MaybeAllocative + Send + Sync,
     Streaming: StreamingSumcheckWindow<F, Shared = Shared>,
     Linear: LinearSumcheckStage<F, Streaming = Streaming, Shared = Shared>,
 {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.shared as &dyn SumcheckInstanceParams<F>
+    }
+
     fn degree(&self) -> usize {
         self.shared.degree()
     }

@@ -19,8 +19,9 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::streaming_sumcheck::{
-    LinearSumcheckStage, SharedStreamingSumcheckState, StreamingSumcheck, StreamingSumcheckWindow,
+    LinearSumcheckStage, StreamingSumcheck, StreamingSumcheckWindow,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -322,6 +323,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
     }
 }
 
+#[derive(Allocative, Clone)]
 pub struct OuterRemainingSumcheckParams<F: JoltField> {
     /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
     /// Total number of rounds is `1 + num_cycles_bits`
@@ -335,7 +337,7 @@ pub struct OuterRemainingSumcheckParams<F: JoltField> {
 impl<F: JoltField> OuterRemainingSumcheckParams<F> {
     pub fn new(
         trace_len: usize,
-        uni_skip_params: OuterUniSkipParams<F>,
+        uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -347,7 +349,7 @@ impl<F: JoltField> OuterRemainingSumcheckParams<F> {
 
         Self {
             num_cycles_bits: trace_len.log_2(),
-            tau: uni_skip_params.tau,
+            tau: uni_skip_params.tau.clone(),
             r0,
         }
     }
@@ -388,7 +390,7 @@ impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
     pub fn new(
         key: UniformSpartanKey<F>,
         trace_len: usize,
-        uni_skip_params: OuterUniSkipParams<F>,
+        uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params =
@@ -453,46 +455,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
-#[derive(Allocative, Clone)]
-pub struct OuterStreamingProverParams<F: JoltField> {
-    /// Number of cycle bits for splitting opening points
-    /// Total number of rounds equals num_cycles_bits
-    pub num_cycles_bits: usize,
-    /// The univariate-skip first round challenge
-    pub r0_uniskip: F::Challenge,
-}
-
-impl<F: JoltField> OuterStreamingProverParams<F> {
-    fn new(
-        uni_skip_params: &OuterUniSkipParams<F>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-    ) -> Self {
-        let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnivariateSkip,
-            SumcheckId::SpartanOuter,
-        );
-        debug_assert_eq!(r_uni_skip.len(), 1);
-        // tau.len() = num_rows_bits() = num_cycle_vars + 2
-        // num_cycles_bits = num_cycle_vars = tau.len() - 2
-        Self {
-            num_cycles_bits: uni_skip_params.tau.len() - 2,
-            r0_uniskip: r_uni_skip[0],
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        // Total rounds = 1 + num_cycles_bits (one extra for streaming window)
-        1 + self.num_cycles_bits
-    }
-
-    fn get_inputs_opening_point(
-        sumcheck_challenges: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let r_cycle = sumcheck_challenges[1..].to_vec();
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle).match_endianness()
-    }
-}
-
 pub type OuterRemainingStreamingSumcheck<F, S> =
     StreamingSumcheck<F, S, OuterSharedState<F>, OuterStreamingWindow<F>, OuterLinearStage<F>>;
 
@@ -507,7 +469,7 @@ pub struct OuterSharedState<F: JoltField> {
     r_grid: ExpandingTable<F>,
     #[allocative(skip)]
     lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-    pub params: OuterStreamingProverParams<F>,
+    pub params: OuterRemainingSumcheckParams<F>,
 }
 
 impl<F: JoltField> OuterSharedState<F> {
@@ -519,8 +481,9 @@ impl<F: JoltField> OuterSharedState<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let bytecode_preprocessing = bytecode_preprocessing.clone();
-        let outer_params = OuterStreamingProverParams::new(uni_skip_params, opening_accumulator);
-        let r0 = outer_params.r0_uniskip;
+        let outer_params =
+            OuterRemainingSumcheckParams::new(trace.len(), uni_skip_params, opening_accumulator);
+        let r0 = outer_params.r0;
 
         let lagrange_evals_r =
             LagrangePolynomial::<F>::evals::<F::Challenge, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
@@ -764,21 +727,47 @@ impl<F: JoltField> OuterSharedState<F> {
     }
 }
 
-impl<F: JoltField> SharedStreamingSumcheckState<F> for OuterSharedState<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for OuterSharedState<F> {
     fn degree(&self) -> usize {
-        OUTER_REMAINING_DEGREE_BOUND
+        self.params.degree()
     }
 
     fn num_rounds(&self) -> usize {
         self.params.num_rounds()
     }
 
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnivariateSkip,
-            SumcheckId::SpartanOuter,
-        );
-        uni_skip_claim
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
+    }
+
+    fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+        self.params.normalize_opening_point(challenges)
+    }
+
+    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+        self.params.input_claim_constraint()
+    }
+
+    fn input_constraint_challenge_values(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        self.params.input_constraint_challenge_values(accumulator)
+    }
+
+    fn expected_output_claim(
+        &self,
+        accumulator: &dyn OpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        self.params
+            .expected_output_claim(accumulator, sumcheck_challenges)
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        self.params.output_claim_constraint()
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.params
+            .output_constraint_challenge_values(sumcheck_challenges)
     }
 }
 
@@ -1443,7 +1432,7 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = OuterStreamingProverParams::get_inputs_opening_point(sumcheck_challenges);
+        let r_cycle = shared.params.normalize_opening_point(sumcheck_challenges);
 
         let claimed_witness_evals = R1CSEval::compute_claimed_inputs(
             &shared.bytecode_preprocessing,

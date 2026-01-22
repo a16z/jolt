@@ -5,13 +5,7 @@ use crate::transcripts::Transcript;
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
 
 pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
-    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        unimplemented!(
-            "If get_params is unimplemented, degree, num_rounds, and \
-            input_claim should be implemented directly"
-        )
-    }
-
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F>;
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {
         self.get_params().degree()
@@ -55,13 +49,14 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     /// This describes how the final sumcheck claim relates to polynomial evaluations.
     /// Returns None if this instance has no output constraint (e.g., round verification only).
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        None
+        self.get_params().output_claim_constraint()
     }
 
     /// Returns the challenge values needed to evaluate the output constraint.
     /// These are the values for Challenge(0), Challenge(1), etc. in the constraint.
-    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        Vec::new()
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.get_params()
+            .output_constraint_challenge_values(sumcheck_challenges)
     }
 
     /// Returns the input claim constraint for this sumcheck instance.

@@ -327,7 +327,7 @@ impl<
         let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
             self.spartan_key,
             self.proof.trace_length,
-            uni_skip_params,
+            &uni_skip_params,
             &self.opening_accumulator,
         );
 
