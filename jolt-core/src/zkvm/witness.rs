@@ -44,6 +44,12 @@ pub enum CommittedPolynomial {
     /// Untrusted advice polynomial - committed during proving, commitment in proof.
     /// Length cannot exceed max_trace_length.
     UntrustedAdvice,
+    /// Program image words polynomial (initial RAM image), committed in preprocessing for
+    /// `BytecodeMode::Committed` and opened via `ProgramImageClaimReduction`.
+    ///
+    /// This polynomial is NOT streamed from the execution trace (it is provided as an "extra"
+    /// polynomial to the Stage 8 streaming RLC builder, similar to advice polynomials).
+    ProgramImageInit,
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -134,7 +140,9 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
-            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+            CommittedPolynomial::TrustedAdvice
+            | CommittedPolynomial::UntrustedAdvice
+            | CommittedPolynomial::ProgramImageInit => {
                 panic!("Advice polynomials should not use streaming witness generation")
             }
         }
@@ -222,7 +230,9 @@ impl CommittedPolynomial {
                     one_hot_params.k_chunk,
                 ))
             }
-            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
+            CommittedPolynomial::TrustedAdvice
+            | CommittedPolynomial::UntrustedAdvice
+            | CommittedPolynomial::ProgramImageInit => {
                 panic!("Advice polynomials should not use generate_witness")
             }
         }
@@ -285,4 +295,9 @@ pub enum VirtualPolynomial {
     BytecodeReadRafAddrClaim,
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
+    /// Staged scalar program-image contribution at `r_address_rw` (Stage 4).
+    ProgramImageInitContributionRw,
+    /// Staged scalar program-image contribution at `r_address_raf` (Stage 4), when the two
+    /// address points differ.
+    ProgramImageInitContributionRaf,
 }

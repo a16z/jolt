@@ -3,6 +3,7 @@ pub mod bytecode;
 pub mod hamming_weight;
 pub mod increments;
 pub mod instruction_lookups;
+pub mod program_image;
 pub mod ram_ra;
 pub mod registers;
 
@@ -25,6 +26,9 @@ pub use increments::{
 pub use instruction_lookups::{
     InstructionLookupsClaimReductionSumcheckParams, InstructionLookupsClaimReductionSumcheckProver,
     InstructionLookupsClaimReductionSumcheckVerifier,
+};
+pub use program_image::{
+    ProgramImageClaimReductionParams, ProgramImageClaimReductionProver, ProgramImageClaimReductionVerifier,
 };
 pub use ram_ra::{
     RaReductionParams, RamRaClaimReductionSumcheckProver, RamRaClaimReductionSumcheckVerifier,

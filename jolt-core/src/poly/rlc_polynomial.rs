@@ -291,8 +291,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                         bytecode_polys.push((*idx, *coeff));
                     }
                 }
-                CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
-                    // Advice polynomials are passed in directly (not streamed from trace)
+                CommittedPolynomial::TrustedAdvice
+                | CommittedPolynomial::UntrustedAdvice
+                | CommittedPolynomial::ProgramImageInit => {
+                    // "Extra" polynomials are passed in directly (not streamed from trace).
+                    // Today this includes advice polynomials and (in committed mode) the program-image polynomial.
                     if advice_poly_map.contains_key(poly_id) {
                         advice_polys.push((*coeff, advice_poly_map.remove(poly_id).unwrap()));
                     }

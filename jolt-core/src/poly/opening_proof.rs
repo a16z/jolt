@@ -162,6 +162,9 @@ pub enum SumcheckId {
     BytecodeClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
+    /// Claim reduction binding the staged program-image (initial RAM) scalar contribution(s)
+    /// to the committed `CommittedPolynomial::ProgramImageInit` polynomial.
+    ProgramImageClaimReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

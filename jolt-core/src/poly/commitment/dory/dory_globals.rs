@@ -156,7 +156,12 @@ static mut BYTECODE_T: OnceLock<usize> = OnceLock::new();
 static mut BYTECODE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
 static mut BYTECODE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 
-// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice, 3=Bytecode
+// Program image globals (committed initial RAM image)
+static mut PROGRAM_IMAGE_T: OnceLock<usize> = OnceLock::new();
+static mut PROGRAM_IMAGE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
+static mut PROGRAM_IMAGE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
+
+// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice, 3=Bytecode, 4=ProgramImage
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
 // Layout tracking: 0=CycleMajor, 1=AddressMajor
@@ -169,6 +174,7 @@ pub enum DoryContext {
     TrustedAdvice = 1,
     UntrustedAdvice = 2,
     Bytecode = 3,
+    ProgramImage = 4,
 }
 
 impl From<u8> for DoryContext {
@@ -178,6 +184,7 @@ impl From<u8> for DoryContext {
             1 => DoryContext::TrustedAdvice,
             2 => DoryContext::UntrustedAdvice,
             3 => DoryContext::Bytecode,
+            4 => DoryContext::ProgramImage,
             _ => panic!("Invalid DoryContext value: {value}"),
         }
     }
@@ -236,6 +243,105 @@ impl DoryGlobals {
         Self::set_num_columns_for_context(num_columns, DoryContext::Bytecode);
         Self::set_T_for_context(bytecode_len, DoryContext::Bytecode);
         Self::set_max_num_rows_for_context(num_rows, DoryContext::Bytecode);
+        Some(())
+    }
+
+    /// Initialize ProgramImage context so its `num_columns` matches Main's `sigma_main`.
+    ///
+    /// This is used so that tier-1 row-commitment hints can be combined into the Main-context
+    /// batch opening hint in Stage 8 (mirrors the committed-bytecode strategy).
+    pub fn initialize_program_image_context_for_main_sigma(
+        padded_len_words: usize,
+        max_log_k_chunk: usize,
+        max_log_t_any: usize,
+    ) -> Option<()> {
+        let (sigma_main, _) = Self::main_sigma_nu(max_log_k_chunk, max_log_t_any);
+        let num_columns = 1usize << sigma_main;
+
+        if num_columns <= padded_len_words {
+            assert!(
+                padded_len_words % num_columns == 0,
+                "program-image matrix width {num_columns} must divide padded_len_words {padded_len_words}"
+            );
+            let num_rows = padded_len_words / num_columns;
+
+            // If already initialized, ensure it matches (avoid silently ignoring OnceCell::set failures).
+            #[allow(static_mut_refs)]
+            unsafe {
+                if let (Some(existing_cols), Some(existing_rows), Some(existing_t)) = (
+                    PROGRAM_IMAGE_NUM_COLUMNS.get(),
+                    PROGRAM_IMAGE_MAX_NUM_ROWS.get(),
+                    PROGRAM_IMAGE_T.get(),
+                ) {
+                    assert_eq!(*existing_cols, num_columns);
+                    assert_eq!(*existing_rows, num_rows);
+                    assert_eq!(*existing_t, padded_len_words);
+                    return Some(());
+                }
+            }
+
+            Self::set_num_columns_for_context(num_columns, DoryContext::ProgramImage);
+            Self::set_T_for_context(padded_len_words, DoryContext::ProgramImage);
+            Self::set_max_num_rows_for_context(num_rows, DoryContext::ProgramImage);
+        } else {
+            // Fallback: balanced dimensions for the program image itself.
+            Self::initialize_context(1, padded_len_words, DoryContext::ProgramImage, None);
+        }
+        Some(())
+    }
+
+    /// Initialize the **Main** context using an explicit `num_columns` (i.e. fixed sigma).
+    ///
+    /// This is used in `BytecodeMode::Committed` so that the Main context uses the same column
+    /// dimension as trusted bytecode commitments, which were derived under a sigma computed from a
+    /// "max trace length" bound (to support batching/folding).
+    ///
+    /// # Safety / correctness notes
+    /// - Requires `num_columns` to be a power of two.
+    /// - Requires `(K * T) % num_columns == 0` so `num_rows` is integral.
+    /// - If the Main context was already initialized, this asserts the dimensions match to avoid
+    ///   silently ignoring OnceLock::set failures.
+    pub fn initialize_main_context_with_num_columns(
+        K: usize,
+        T: usize,
+        num_columns: usize,
+        layout: Option<DoryLayout>,
+    ) -> Option<()> {
+        assert!(num_columns.is_power_of_two(), "num_columns must be a power of two");
+        let total_size = K * T;
+        assert!(
+            total_size % num_columns == 0,
+            "main matrix width {num_columns} must divide total_size {total_size}"
+        );
+        let num_rows = total_size / num_columns;
+
+        // If already initialized, ensure it matches (avoid silently ignoring OnceCell::set failures).
+        #[allow(static_mut_refs)]
+        unsafe {
+            if let (Some(existing_cols), Some(existing_rows), Some(existing_t)) = (
+                NUM_COLUMNS.get(),
+                MAX_NUM_ROWS.get(),
+                GLOBAL_T.get(),
+            ) {
+                assert_eq!(*existing_cols, num_columns);
+                assert_eq!(*existing_rows, num_rows);
+                assert_eq!(*existing_t, T);
+                if let Some(l) = layout {
+                    CURRENT_LAYOUT.store(l as u8, Ordering::SeqCst);
+                }
+                CURRENT_CONTEXT.store(DoryContext::Main as u8, Ordering::SeqCst);
+                return Some(());
+            }
+        }
+
+        Self::set_num_columns_for_context(num_columns, DoryContext::Main);
+        Self::set_T_for_context(T, DoryContext::Main);
+        Self::set_max_num_rows_for_context(num_rows, DoryContext::Main);
+
+        if let Some(l) = layout {
+            CURRENT_LAYOUT.store(l as u8, Ordering::SeqCst);
+        }
+        CURRENT_CONTEXT.store(DoryContext::Main as u8, Ordering::SeqCst);
         Some(())
     }
 
@@ -356,6 +462,9 @@ impl DoryGlobals {
                 DoryContext::Bytecode => {
                     let _ = BYTECODE_MAX_NUM_ROWS.set(max_num_rows);
                 }
+                DoryContext::ProgramImage => {
+                    let _ = PROGRAM_IMAGE_MAX_NUM_ROWS.set(max_num_rows);
+                }
             }
         }
     }
@@ -375,6 +484,9 @@ impl DoryGlobals {
                 DoryContext::Bytecode => *BYTECODE_MAX_NUM_ROWS
                     .get()
                     .expect("bytecode max_num_rows not initialized"),
+                DoryContext::ProgramImage => *PROGRAM_IMAGE_MAX_NUM_ROWS
+                    .get()
+                    .expect("program_image max_num_rows not initialized"),
             }
         }
     }
@@ -395,6 +507,9 @@ impl DoryGlobals {
                 DoryContext::Bytecode => {
                     let _ = BYTECODE_NUM_COLUMNS.set(num_columns);
                 }
+                DoryContext::ProgramImage => {
+                    let _ = PROGRAM_IMAGE_NUM_COLUMNS.set(num_columns);
+                }
             }
         }
     }
@@ -414,6 +529,9 @@ impl DoryGlobals {
                 DoryContext::Bytecode => *BYTECODE_NUM_COLUMNS
                     .get()
                     .expect("bytecode num_columns not initialized"),
+                DoryContext::ProgramImage => *PROGRAM_IMAGE_NUM_COLUMNS
+                    .get()
+                    .expect("program_image num_columns not initialized"),
             }
         }
     }
@@ -434,6 +552,9 @@ impl DoryGlobals {
                 DoryContext::Bytecode => {
                     let _ = BYTECODE_T.set(t);
                 }
+                DoryContext::ProgramImage => {
+                    let _ = PROGRAM_IMAGE_T.set(t);
+                }
             }
         }
     }
@@ -451,6 +572,9 @@ impl DoryGlobals {
                     .get()
                     .expect("untrusted_advice t not initialized"),
                 DoryContext::Bytecode => *BYTECODE_T.get().expect("bytecode t not initialized"),
+                DoryContext::ProgramImage => *PROGRAM_IMAGE_T
+                    .get()
+                    .expect("program_image t not initialized"),
             }
         }
     }
@@ -478,7 +602,7 @@ impl DoryGlobals {
     /// # Arguments
     /// * `K` - Maximum address space size (K in OneHot polynomials)
     /// * `T` - Maximum trace length (cycle count)
-    /// * `context` - The Dory context to initialize (Main, TrustedAdvice, UntrustedAdvice, Bytecode)
+    /// * `context` - The Dory context to initialize (Main, TrustedAdvice, UntrustedAdvice, Bytecode, ProgramImage)
     /// * `layout` - Optional layout for the Dory matrix. Only applies to Main context.
     ///   If `Some(layout)`, sets the layout. If `None`, leaves the existing layout
     ///   unchanged (defaults to `CycleMajor` after `reset()`). Ignored for advice contexts.
@@ -535,6 +659,11 @@ impl DoryGlobals {
             let _ = BYTECODE_T.take();
             let _ = BYTECODE_MAX_NUM_ROWS.take();
             let _ = BYTECODE_NUM_COLUMNS.take();
+
+            // Reset program image globals
+            let _ = PROGRAM_IMAGE_T.take();
+            let _ = PROGRAM_IMAGE_MAX_NUM_ROWS.take();
+            let _ = PROGRAM_IMAGE_NUM_COLUMNS.take();
         }
 
         // Reset context to Main

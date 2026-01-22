@@ -351,6 +351,104 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     }
 }
 
+/// Accumulates staged program-image scalar contribution claims into the prover accumulator.
+///
+/// These are scalar inner products:
+/// - `C_rw  = Σ_j ProgramWord[j] * eq(r_address_rw, start_index + j)`
+/// - `C_raf = Σ_j ProgramWord[j] * eq(r_address_raf, start_index + j)` (optional)
+///
+/// They are stored as *virtual* openings (not committed openings) because they are not direct
+/// openings of the committed program-image polynomial.
+pub fn prover_accumulate_program_image<F: JoltField>(
+    ram_K: usize,
+    ram_preprocessing: &RAMPreprocessing,
+    program_io: &JoltDevice,
+    padded_len_words: usize,
+    opening_accumulator: &mut ProverOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+    single_opening: bool,
+) {
+    let total_vars = ram_K.log_2();
+    let bytecode_start = remap_address(ram_preprocessing.min_bytecode_address, &program_io.memory_layout)
+        .unwrap() as usize;
+
+    // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation).
+    let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RamVal,
+        SumcheckId::RamReadWriteChecking,
+    );
+    let (r_address_rw, _) = r_rw.split_at(total_vars);
+
+    // Compute C_rw using the padded program-image word vector.
+    let mut words = ram_preprocessing.bytecode_words.clone();
+    words.resize(padded_len_words, 0u64);
+    let c_rw = eval_public_init_u64_range::<F>(bytecode_start, &words, &r_address_rw.r);
+
+    opening_accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::ProgramImageInitContributionRw,
+        SumcheckId::RamValEvaluation,
+        r_address_rw,
+        c_rw,
+    );
+
+    if !single_opening {
+        let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamValFinal,
+            SumcheckId::RamOutputCheck,
+        );
+        let (r_address_raf, _) = r_raf.split_at(total_vars);
+        let c_raf = eval_public_init_u64_range::<F>(bytecode_start, &words, &r_address_raf.r);
+        opening_accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::ProgramImageInitContributionRaf,
+            SumcheckId::RamValFinalEvaluation,
+            r_address_raf,
+            c_raf,
+        );
+    }
+}
+
+/// Mirrors [`prover_accumulate_program_image`], but only populates opening points and
+/// appends the already-present scalar claims to the transcript.
+pub fn verifier_accumulate_program_image<F: JoltField>(
+    ram_K: usize,
+    program_io: &JoltDevice,
+    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    transcript: &mut impl Transcript,
+    single_opening: bool,
+) {
+    let total_vars = ram_K.log_2();
+    // r_address_rw from RamVal/RamReadWriteChecking.
+    let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
+        VirtualPolynomial::RamVal,
+        SumcheckId::RamReadWriteChecking,
+    );
+    let (r_address_rw, _) = r_rw.split_at(total_vars);
+    opening_accumulator.append_virtual(
+        transcript,
+        VirtualPolynomial::ProgramImageInitContributionRw,
+        SumcheckId::RamValEvaluation,
+        r_address_rw,
+    );
+
+    if !single_opening {
+        let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamValFinal,
+            SumcheckId::RamOutputCheck,
+        );
+        let (r_address_raf, _) = r_raf.split_at(total_vars);
+        opening_accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::ProgramImageInitContributionRaf,
+            SumcheckId::RamValFinalEvaluation,
+            r_address_raf,
+        );
+    }
+    // (program_io is unused for now; retained for symmetry and future checks)
+    let _ = program_io;
+}
+
 /// Calculates how advice inputs contribute to the evaluation of initial_ram_state at a given random point.
 ///
 /// ## Example with Two Commitments:
@@ -486,6 +584,32 @@ fn evaluate_public_initial_ram_evaluation<F: JoltField>(
     }
 
     acc
+}
+
+/// Evaluate only the *public inputs* portion of the initial RAM state at `r_address`.
+///
+/// This excludes the program image region.
+fn evaluate_public_input_initial_ram_evaluation<F: JoltField>(
+    program_io: &JoltDevice,
+    r_address: &[F::Challenge],
+) -> F {
+    if program_io.inputs.is_empty() {
+        return F::zero();
+    }
+    let input_start = remap_address(program_io.memory_layout.input_start, &program_io.memory_layout)
+        .unwrap() as usize;
+    let input_words: Vec<u64> = program_io
+        .inputs
+        .chunks(8)
+        .map(|chunk| {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            u64::from_le_bytes(word)
+        })
+        .collect();
+    eval_public_init_u64_range::<F>(input_start, &input_words, r_address)
 }
 
 /// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.

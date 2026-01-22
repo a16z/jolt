@@ -62,6 +62,7 @@ use crate::{
             IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
             InstructionLookupsClaimReductionSumcheckProver, RaReductionParams,
+            ProgramImageClaimReductionParams, ProgramImageClaimReductionProver,
             RamRaClaimReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
             RegistersClaimReductionSumcheckProver,
         },
@@ -268,13 +269,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     /// Adjusts the padded trace length to ensure the main Dory matrix is large enough
-    /// to embed advice polynomials as the top-left block.
+    /// to embed "extra" (non-trace-streamed) polynomials as the top-left block.
     ///
     /// Returns the adjusted padded_trace_len that satisfies:
     /// - `sigma_main >= max_sigma_a`
     /// - `nu_main >= max_nu_a`
     ///
-    /// Panics if `max_padded_trace_length` is too small for the configured advice sizes.
+    /// Panics if `max_padded_trace_length` is too small for the configured sizes.
     fn adjust_trace_length_for_advice(
         mut padded_trace_len: usize,
         max_padded_trace_length: usize,
@@ -282,6 +283,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         max_untrusted_advice_size: u64,
         has_trusted_advice: bool,
         has_untrusted_advice: bool,
+        has_program_image: bool,
+        program_image_len_words_padded: usize,
     ) -> usize {
         // Canonical advice shape policy (balanced):
         // - advice_vars = log2(advice_len)
@@ -301,6 +304,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 DoryGlobals::advice_sigma_nu_from_max_bytes(max_untrusted_advice_size as usize);
             max_sigma_a = max_sigma_a.max(sigma_a);
             max_nu_a = max_nu_a.max(nu_a);
+        }
+
+        if has_program_image {
+            let prog_vars = program_image_len_words_padded.log_2();
+            let (sigma_p, nu_p) = DoryGlobals::balanced_sigma_nu(prog_vars);
+            max_sigma_a = max_sigma_a.max(sigma_p);
+            max_nu_a = max_nu_a.max(nu_p);
         }
 
         if max_sigma_a == 0 && max_nu_a == 0 {
@@ -401,6 +411,24 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         } else {
             padded_trace_len
         };
+        // In Committed mode, ProgramImageClaimReduction uses `m = log2(padded_len_words)` rounds and is
+        // back-loaded into Stage 6b, so we require log_T >= m. A sufficient condition is T >= padded_len_words.
+        let (has_program_image, program_image_len_words_padded) = if bytecode_mode
+            == BytecodeMode::Committed
+        {
+            let trusted = preprocessing
+                .program_image_commitment
+                .as_ref()
+                .expect("program-image commitment missing in committed preprocessing");
+            (true, trusted.padded_len_words)
+        } else {
+            (false, 0usize)
+        };
+        let padded_trace_len = if has_program_image {
+            padded_trace_len.max(program_image_len_words_padded)
+        } else {
+            padded_trace_len
+        };
         // We may need extra padding so the main Dory matrix has enough (row, col) variables
         // to embed advice commitments committed in their own preprocessing-only contexts.
         let has_trusted_advice = !program_io.trusted_advice.is_empty();
@@ -413,6 +441,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             preprocessing.shared.memory_layout.max_untrusted_advice_size,
             has_trusted_advice,
             has_untrusted_advice,
+            has_program_image,
+            program_image_len_words_padded,
         );
 
         trace.resize(padded_trace_len, Cycle::NoOp);
@@ -434,7 +464,14 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                     &preprocessing.shared.memory_layout,
                 )
                 .unwrap_or(0)
-                    + preprocessing.shared.ram.bytecode_words.len() as u64
+                    + {
+                        let base = preprocessing.shared.ram.bytecode_words.len() as u64;
+                        if has_program_image {
+                            (program_image_len_words_padded as u64).max(base)
+                        } else {
+                            base
+                        }
+                    }
                     + 1,
             )
             .next_power_of_two() as usize;
@@ -523,6 +560,31 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                     self.transcript.append_serializable(commitment);
                 }
             }
+            if let Some(trusted) = &self.preprocessing.program_image_commitment {
+                self.transcript.append_serializable(&trusted.commitment);
+                #[cfg(test)]
+                {
+                    // Sanity: re-commit the program image polynomial and ensure it matches the trusted commitment.
+                    let poly = crate::zkvm::program_image::TrustedProgramImageCommitment::<PCS>::build_polynomial::<F>(
+                        &self.preprocessing.shared.ram,
+                        trusted.padded_len_words,
+                    );
+                    let _guard = crate::poly::commitment::dory::DoryGlobals::initialize_context(
+                        1,
+                        trusted.padded_len_words,
+                        crate::poly::commitment::dory::DoryContext::ProgramImage,
+                        None,
+                    );
+                    let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
+                        crate::poly::commitment::dory::DoryContext::ProgramImage,
+                    );
+                    let (recommit, _hint) = PCS::commit(&poly, &self.preprocessing.generators);
+                    assert_eq!(
+                        recommit, trusted.commitment,
+                        "ProgramImageInit commitment mismatch vs polynomial used in proving"
+                    );
+                }
+            }
         }
 
         // Add advice hints for batched Stage 8 opening
@@ -539,6 +601,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                         .insert(CommittedPolynomial::BytecodeChunk(idx), hint.clone());
                 }
             }
+            if let Some(hint) = self.preprocessing.program_image_commitment_hint.as_ref() {
+                opening_proof_hints.insert(CommittedPolynomial::ProgramImageInit, hint.clone());
+            }
         }
 
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof) = self.prove_stage1();
@@ -552,7 +617,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.prove_stage6b(bytecode_read_raf_params, booleanity_params);
         let stage7_sumcheck_proof = self.prove_stage7();
 
-        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
+        let (joint_opening_proof, program_image_opening_proof) =
+            self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
         assert!(
@@ -588,6 +654,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             stage6b_sumcheck_proof,
             stage7_sumcheck_proof,
             joint_opening_proof,
+            program_image_opening_proof,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
@@ -616,12 +683,26 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         Vec<PCS::Commitment>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) {
-        let _guard = DoryGlobals::initialize_context(
-            1 << self.one_hot_params.log_k_chunk,
-            self.padded_trace_len,
-            DoryContext::Main,
-            Some(DoryGlobals::get_layout()),
-        );
+        let _guard = if self.bytecode_mode == BytecodeMode::Committed {
+            let committed = self
+                .preprocessing
+                .bytecode_commitments
+                .as_ref()
+                .expect("bytecode commitments missing in committed mode");
+            DoryGlobals::initialize_main_context_with_num_columns(
+                1 << self.one_hot_params.log_k_chunk,
+                self.padded_trace_len,
+                committed.num_columns,
+                Some(DoryGlobals::get_layout()),
+            )
+        } else {
+            DoryGlobals::initialize_context(
+                1 << self.one_hot_params.log_k_chunk,
+                self.padded_trace_len,
+                DoryContext::Main,
+                Some(DoryGlobals::get_layout()),
+            )
+        };
 
         let polys = all_committed_polynomials(&self.one_hot_params);
         let T = DoryGlobals::get_T();
@@ -1034,6 +1115,23 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.rw_config
                 .needs_single_advice_opening(self.trace.len().log_2()),
         );
+        if self.bytecode_mode == BytecodeMode::Committed {
+            let trusted = self
+                .preprocessing
+                .program_image_commitment
+                .as_ref()
+                .expect("program-image commitment missing in committed mode");
+            crate::zkvm::ram::prover_accumulate_program_image::<F>(
+                self.one_hot_params.ram_k,
+                &self.preprocessing.shared.ram,
+                &self.program_io,
+                trusted.padded_len_words,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+                self.rw_config
+                    .needs_single_advice_opening(self.trace.len().log_2()),
+            );
+        }
 
         let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
             self.trace.len(),
@@ -1396,6 +1494,40 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         if let Some(advice) = self.advice_reduction_prover_untrusted.as_mut() {
             instances.push(advice);
         }
+        // Program-image claim reduction (Stage 6b): binds staged Stage 4 program-image scalar claims
+        // to the trusted commitment via a degree-2 sumcheck, caching an opening of ProgramImageInit.
+        let mut program_image_reduction: Option<ProgramImageClaimReductionProver<F>> = None;
+        if self.bytecode_mode == BytecodeMode::Committed {
+            let trusted = self
+                .preprocessing
+                .program_image_commitment
+                .as_ref()
+                .expect("program-image commitment missing in committed mode");
+            let padded_len_words = trusted.padded_len_words;
+            let log_t = self.trace.len().log_2();
+            let m = padded_len_words.log_2();
+            assert!(
+                m <= log_t,
+                "program-image claim reduction requires m=log2(padded_len_words) <= log_T (got m={m}, log_T={log_t})"
+            );
+            let params = ProgramImageClaimReductionParams::new(
+                &self.program_io,
+                self.preprocessing.shared.ram.min_bytecode_address,
+                padded_len_words,
+                self.one_hot_params.ram_k,
+                self.trace.len(),
+                &self.rw_config,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+            // Build padded coefficients for ProgramWord polynomial.
+            let mut coeffs = self.preprocessing.shared.ram.bytecode_words.clone();
+            coeffs.resize(padded_len_words, 0u64);
+            program_image_reduction = Some(ProgramImageClaimReductionProver::initialize(params, coeffs));
+        }
+        if let Some(ref mut prog) = program_image_reduction {
+            instances.push(prog);
+        }
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6b_start_flamechart.svg");
@@ -1414,6 +1546,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         drop_in_background_thread(ram_ra_virtual);
         drop_in_background_thread(lookups_ra_virtual);
         drop_in_background_thread(inc_reduction);
+
+        if let Some(prog) = program_image_reduction {
+            drop_in_background_thread(prog);
+        }
 
         sumcheck_proof
     }
@@ -1497,15 +1633,29 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) -> PCS::Proof {
+    ) -> (PCS::Proof, Option<PCS::Proof>) {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
-        let _guard = DoryGlobals::initialize_context(
-            self.one_hot_params.k_chunk,
-            self.padded_trace_len,
-            DoryContext::Main,
-            Some(DoryGlobals::get_layout()),
-        );
+        let _guard = if self.bytecode_mode == BytecodeMode::Committed {
+            let committed = self
+                .preprocessing
+                .bytecode_commitments
+                .as_ref()
+                .expect("bytecode commitments missing in committed mode");
+            DoryGlobals::initialize_main_context_with_num_columns(
+                self.one_hot_params.k_chunk,
+                self.padded_trace_len,
+                committed.num_columns,
+                Some(DoryGlobals::get_layout()),
+            )
+        } else {
+            DoryGlobals::initialize_context(
+                self.one_hot_params.k_chunk,
+                self.padded_trace_len,
+                DoryContext::Main,
+                Some(DoryGlobals::get_layout()),
+            )
+        };
 
         // Get the unified opening point from HammingWeightClaimReduction
         // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
@@ -1663,6 +1813,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             }
         }
 
+
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
@@ -1699,13 +1850,57 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             advice_polys,
         );
 
-        PCS::prove(
+        let joint_opening_proof = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
             &opening_point.r,
             Some(hint),
             &mut self.transcript,
-        )
+        );
+
+        // Optional separate opening proof for the program-image commitment (at its own point).
+        let program_image_opening_proof = if self.bytecode_mode == BytecodeMode::Committed {
+            let trusted = self
+                .preprocessing
+                .program_image_commitment
+                .as_ref()
+                .expect("program-image commitment missing in committed mode");
+            let hint = self
+                .preprocessing
+                .program_image_commitment_hint
+                .as_ref()
+                .expect("program-image hint missing in committed mode");
+
+            let (prog_point, _prog_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::ProgramImageInit,
+                SumcheckId::ProgramImageClaimReduction,
+            );
+            let poly = crate::zkvm::program_image::TrustedProgramImageCommitment::<PCS>::build_polynomial::<F>(
+                &self.preprocessing.shared.ram,
+                trusted.padded_len_words,
+            );
+
+            // Prove in ProgramImage context.
+            let _guard = DoryGlobals::initialize_context(
+                1,
+                trusted.padded_len_words,
+                DoryContext::ProgramImage,
+                None,
+            );
+            let _ctx = DoryGlobals::with_context(DoryContext::ProgramImage);
+
+            Some(PCS::prove(
+                &self.preprocessing.generators,
+                &poly,
+                &prog_point.r,
+                Some(hint.clone()),
+                &mut self.transcript,
+            ))
+        } else {
+            None
+        };
+
+        (joint_opening_proof, program_image_opening_proof)
     }
 }
 
@@ -1758,6 +1953,10 @@ pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F
     ///
     /// One hint per commitment in `bytecode_commitments`.
     pub bytecode_commitment_hints: Option<Vec<PCS::OpeningProofHint>>,
+    /// Trusted program-image commitment (only in Committed mode).
+    pub program_image_commitment: Option<crate::zkvm::program_image::TrustedProgramImageCommitment<PCS>>,
+    /// Opening proof hint for the trusted program-image commitment (only in Committed mode).
+    pub program_image_commitment_hint: Option<PCS::OpeningProofHint>,
 }
 
 impl<F, PCS> JoltProverPreprocessing<F, PCS>
@@ -1782,11 +1981,19 @@ where
     /// Setup generators for Committed mode, ensuring capacity for both:
     /// - Main context up to `max_padded_trace_length`
     /// - Bytecode context up to `bytecode_size`
+    /// - ProgramImage context up to the padded program-image word length
     fn setup_generators_committed(shared: &JoltSharedPreprocessing) -> PCS::ProverSetup {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
+        let prog_len_words_padded = shared
+            .ram
+            .bytecode_words
+            .len()
+            .next_power_of_two()
+            .max(1);
         let max_t_any: usize = shared
             .max_padded_trace_length
             .max(shared.bytecode_size)
+            .max(prog_len_words_padded)
             .next_power_of_two();
         let max_log_t_any = max_t_any.log_2();
         let max_log_k_chunk = if max_log_t_any < ONEHOT_CHUNK_THRESHOLD_LOG_T {
@@ -1812,6 +2019,8 @@ where
             bytecode,
             bytecode_commitments: None,
             bytecode_commitment_hints: None,
+            program_image_commitment: None,
+            program_image_commitment_hint: None,
         }
     }
 
@@ -1837,12 +2046,19 @@ where
         };
         let (trusted_commitments, hints) =
             TrustedBytecodeCommitments::derive(&bytecode, &generators, log_k_chunk, max_t_any);
+        let (program_image_commitment, program_image_hint) =
+            crate::zkvm::program_image::TrustedProgramImageCommitment::<PCS>::derive(
+                &shared.ram,
+                &generators,
+            );
         JoltProverPreprocessing {
             generators,
             shared,
             bytecode,
             bytecode_commitments: Some(trusted_commitments),
             bytecode_commitment_hints: Some(hints),
+            program_image_commitment: Some(program_image_commitment),
+            program_image_commitment_hint: Some(program_image_hint),
         }
     }
 

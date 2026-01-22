@@ -20,6 +20,7 @@ use crate::{
     zkvm::{
         bytecode::BytecodePreprocessing,
         claim_reductions::AdviceKind,
+        config::BytecodeMode,
         config::ReadWriteConfig,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -64,6 +65,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
+        bytecode_mode: BytecodeMode,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         rw_config: &ReadWriteConfig,
     ) -> Self {
@@ -108,13 +110,34 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             n_memory_vars,
         );
 
-        // Compute the public part of val_init evaluation (bytecode + inputs) without
-        // materializing the full length-K initial RAM state.
-        let val_init_public_eval = super::evaluate_public_initial_ram_evaluation::<F>(
-            ram_preprocessing,
-            program_io,
-            &r_address,
-        );
+        // Public part of val_init:
+        // - Full mode: compute program-image+inputs directly from RAM preprocessing (verifier has words).
+        // - Committed mode: use staged scalar program-image claim + locally computed input contribution.
+        let val_init_public_eval = match bytecode_mode {
+            BytecodeMode::Full => super::evaluate_public_initial_ram_evaluation::<F>(
+                ram_preprocessing,
+                program_io,
+                &r_address,
+            ),
+            BytecodeMode::Committed => {
+                let (prog_poly, prog_sumcheck) = if rw_config.needs_single_advice_opening(log_T) {
+                    (
+                        VirtualPolynomial::ProgramImageInitContributionRw,
+                        SumcheckId::RamValEvaluation,
+                    )
+                } else {
+                    (
+                        VirtualPolynomial::ProgramImageInitContributionRaf,
+                        SumcheckId::RamValFinalEvaluation,
+                    )
+                };
+                let (_, prog_img_claim) =
+                    opening_accumulator.get_virtual_polynomial_opening(prog_poly, prog_sumcheck);
+                let input_eval =
+                    super::evaluate_public_input_initial_ram_evaluation::<F>(program_io, &r_address);
+                prog_img_claim + input_eval
+            }
+        };
 
         // Combine all contributions: untrusted + trusted + public
         let val_init_eval =
@@ -311,6 +334,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
+        bytecode_mode: crate::zkvm::config::BytecodeMode,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         rw_config: &ReadWriteConfig,
     ) -> Self {
@@ -319,6 +343,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
             program_io,
             trace_len,
             ram_K,
+            bytecode_mode,
             opening_accumulator,
             rw_config,
         );

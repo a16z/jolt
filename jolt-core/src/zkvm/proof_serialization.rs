@@ -40,6 +40,10 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
+    /// Optional separate opening proof for the committed program-image polynomial.
+    ///
+    /// (This is verified in Stage 8 when `bytecode_mode == Committed`.)
+    pub program_image_opening_proof: Option<PCS::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -264,12 +268,17 @@ impl CanonicalSerialize for CommittedPolynomial {
             }
             Self::TrustedAdvice => 5u8.serialize_with_mode(writer, compress),
             Self::UntrustedAdvice => 6u8.serialize_with_mode(writer, compress),
+            Self::ProgramImageInit => 8u8.serialize_with_mode(writer, compress),
         }
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         match self {
-            Self::RdInc | Self::RamInc | Self::TrustedAdvice | Self::UntrustedAdvice => 1,
+            Self::RdInc
+            | Self::RamInc
+            | Self::TrustedAdvice
+            | Self::UntrustedAdvice
+            | Self::ProgramImageInit => 1,
             Self::InstructionRa(_)
             | Self::BytecodeRa(_)
             | Self::BytecodeChunk(_)
@@ -312,6 +321,7 @@ impl CanonicalDeserialize for CommittedPolynomial {
                     let i = u8::deserialize_with_mode(reader, compress, validate)?;
                     Self::BytecodeChunk(i as usize)
                 }
+                8 => Self::ProgramImageInit,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -387,6 +397,8 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::BytecodeClaimReductionIntermediate => {
                 44u8.serialize_with_mode(&mut writer, compress)
             }
+            Self::ProgramImageInitContributionRw => 45u8.serialize_with_mode(&mut writer, compress),
+            Self::ProgramImageInitContributionRaf => 46u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -431,7 +443,9 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::UnivariateSkip
             | Self::BytecodeReadRafAddrClaim
             | Self::BooleanityAddrClaim
-            | Self::BytecodeClaimReductionIntermediate => 1,
+            | Self::BytecodeClaimReductionIntermediate
+            | Self::ProgramImageInitContributionRw
+            | Self::ProgramImageInitContributionRaf => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
@@ -519,6 +533,8 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 42 => Self::BytecodeReadRafAddrClaim,
                 43 => Self::BooleanityAddrClaim,
                 44 => Self::BytecodeClaimReductionIntermediate,
+                45 => Self::ProgramImageInitContributionRw,
+                46 => Self::ProgramImageInitContributionRaf,
                 _ => return Err(SerializationError::InvalidData),
             },
         )

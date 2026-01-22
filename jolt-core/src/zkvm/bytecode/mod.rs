@@ -36,6 +36,12 @@ pub struct TrustedBytecodeCommitments<PCS: CommitmentScheme> {
     /// The bytecode chunk commitments.
     /// Trust is enforced by the type - create via `derive()` or deserialize from trusted source.
     pub commitments: Vec<PCS::Commitment>,
+    /// Number of columns used when committing bytecode chunks.
+    ///
+    /// This is chosen to match the Main-context sigma used for committed-mode Stage 8 batching.
+    /// The prover/verifier must use the same `num_columns` in the Main context when building the
+    /// joint Dory opening proof, or the batched hint/commitment combination will be inconsistent.
+    pub num_columns: usize,
     /// log2(k_chunk) used for lane chunking.
     pub log_k_chunk: u8,
     /// Bytecode length (power-of-two padded).
@@ -66,6 +72,7 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
             log_t,
         );
         let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
+        let num_columns = DoryGlobals::get_num_columns();
 
         let bytecode_chunks = build_bytecode_chunks::<PCS::Field>(bytecode, log_k_chunk);
         debug_assert_eq!(bytecode_chunks.len(), num_chunks);
@@ -78,6 +85,7 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
         (
             Self {
                 commitments,
+                num_columns,
                 log_k_chunk: log_k_chunk as u8,
                 bytecode_len,
             },
