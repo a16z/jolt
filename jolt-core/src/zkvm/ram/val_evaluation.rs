@@ -94,7 +94,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
     }
 
     pub fn new_from_verifier(
-        initial_ram_state: &[u64],
+        ram_preprocessing: &super::RAMPreprocessing,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
@@ -134,13 +134,16 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             n_memory_vars,
         );
 
-        // Compute the public part of val_init evaluation
-        let val_init_public: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
+        // Compute the public part of val_init evaluation (bytecode + inputs) without
+        // materializing the full length-K initial RAM state.
+        let val_init_public_eval = super::evaluate_public_initial_ram_evaluation::<F>(
+            ram_preprocessing,
+            program_io,
+            &r_address.r,
+        );
 
         // Combine all contributions: untrusted + trusted + public
-        let init_eval =
-            untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
+        let init_eval = untrusted_contribution + trusted_contribution + val_init_public_eval;
 
         ValEvaluationSumcheckParams {
             init_eval,
@@ -323,14 +326,14 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
-        initial_ram_state: &[u64],
+        ram_preprocessing: &super::RAMPreprocessing,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new_from_verifier(
-            initial_ram_state,
+            ram_preprocessing,
             program_io,
             trace_len,
             ram_K,
