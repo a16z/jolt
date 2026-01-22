@@ -1,7 +1,8 @@
-//! Stage 2: Virtualization Sumcheck
+//! Stage 2: Batched constraint sumchecks
 //!
-//! This module contains the virtualization sumcheck protocol that combines
-//! all Stage 1 claims into a unified proof.
+//! This module batches shift, reduction, GT mul, and G1 scalar mul sumchecks.
 
+pub mod g1_scalar_mul;
+pub mod gt_mul;
 pub mod packed_gt_exp_reduction;
-pub mod virtualization;
+pub mod shift_rho;

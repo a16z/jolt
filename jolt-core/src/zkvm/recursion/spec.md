@@ -733,17 +733,19 @@ jolt-core/src/zkvm/recursion/
 ├── recursion_prover.rs       # RecursionProver orchestrating all stages
 ├── recursion_verifier.rs     # RecursionVerifier
 ├── stage1/
-│   ├── packed_gt_exp.rs         # Packed GT exponentiation sumcheck
+│   └── packed_gt_exp.rs         # Packed GT exponentiation sumcheck
+├── stage2/
 │   ├── shift_rho.rs             # Shift sumcheck for rho(s+1,x)
+│   ├── packed_gt_exp_reduction.rs # Reduction from r1 to r2 for rho/quotient
 │   ├── gt_mul.rs                # GT multiplication sumcheck
 │   └── g1_scalar_mul.rs         # G1 scalar mul sumcheck
-├── stage2/
-│   ├── packed_gt_exp_reduction.rs # Reduction from r1 to r2 for rho/quotient
+├── stage3/
 │   └── virtualization.rs        # Direct evaluation protocol
-└── stage3/
-    ├── jagged.rs                # Jagged transform sumcheck
-    ├── jagged_assist.rs         # Jagged assist (batch MLE verification)
-    └── branching_program.rs     # O(n) MLE evaluation for g function
+├── stage4/
+│   ├── jagged.rs                # Jagged transform sumcheck
+│   └── branching_program.rs     # O(n) MLE evaluation for g function
+└── stage5/
+    └── jagged_assist.rs         # Jagged assist (batch MLE verification)
 ```
 
 ### 7.2 The Offloading Pattern
@@ -886,7 +888,7 @@ The resulting `DoryMultilinearMatrix` has shape:
 M : {0,1}^num_s_vars × {0,1}^num_x_vars → Fq
 
 where:
-  num_s_vars = ⌈log₂(15 × num_constraints_padded)⌉
+  num_s_vars = ⌈log₂(13 × num_constraints_padded)⌉
   num_x_vars = 11 (packed constraint vars for GT exp/GT mul/G1)
 ```
 

@@ -24,25 +24,21 @@ use super::{
     bijection::{ConstraintMapping, VarCountJaggedBijection},
     constraints_sys::ConstraintType,
     recursion_prover::RecursionProof,
-    stage1::{
+    stage1::packed_gt_exp::{PackedGtExpParams, PackedGtExpPublicInputs, PackedGtExpVerifier},
+    stage2::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier},
         gt_mul::{GtMulParams, GtMulVerifier},
-        packed_gt_exp::{PackedGtExpParams, PackedGtExpPublicInputs, PackedGtExpVerifier},
-        shift_rho::{ShiftRhoParams, ShiftRhoVerifier},
-    },
-    stage2::{
         packed_gt_exp_reduction::{
             PackedGtExpClaimReductionParams, PackedGtExpClaimReductionVerifier,
         },
-        virtualization::{
-            extract_virtual_claims_from_accumulator, DirectEvaluationParams,
-            DirectEvaluationVerifier,
-        },
+        shift_rho::{ShiftRhoParams, ShiftRhoVerifier},
     },
-    stage3::{
-        jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
-        jagged_assist::JaggedAssistVerifier,
+    stage3::virtualization::{
+        extract_virtual_claims_from_accumulator, DirectEvaluationParams,
+        DirectEvaluationVerifier,
     },
+    stage4::{jagged::JaggedSumcheckParams, jagged::JaggedSumcheckVerifier},
+    stage5::jagged_assist::JaggedAssistVerifier,
 };
 use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_verifier::SumcheckInstanceVerifier};
 
@@ -405,7 +401,7 @@ impl<F: JoltField> RecursionVerifier<F> {
     fn verify_stage4<T: Transcript>(
         &self,
         stage4_proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-        stage5_proof: &super::stage3::jagged_assist::JaggedAssistProof<F, T>,
+        stage5_proof: &super::stage5::jagged_assist::JaggedAssistProof<F, T>,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
         r_stage3_s: &[<F as crate::field::JoltField>::Challenge],
@@ -501,7 +497,7 @@ impl<F: JoltField> RecursionVerifier<F> {
     #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage5")]
     fn verify_stage5<T: Transcript>(
         &self,
-        stage5_proof: &super::stage3::jagged_assist::JaggedAssistProof<F, T>,
+        stage5_proof: &super::stage5::jagged_assist::JaggedAssistProof<F, T>,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
         r_stage4: &[<F as crate::field::JoltField>::Challenge],

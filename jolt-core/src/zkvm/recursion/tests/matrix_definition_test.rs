@@ -7,7 +7,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
-    zkvm::recursion::stage2::virtualization::{matrix_s_index, virtual_claim_index},
+    zkvm::recursion::stage3::virtualization::{matrix_s_index, virtual_claim_index},
 };
 use ark_bn254::Fq;
 use ark_ff::{UniformRand, Zero};

@@ -72,13 +72,12 @@ impl PackedGtExpPublicInputs {
         Self { base, scalar_bits }
     }
 
-    /// Evaluate digit_lo MLE at challenge point r_s* (7-variable MLE, 128 points).
-    pub fn evaluate_digit_lo_mle<F: JoltField>(&self, r_s_star: &[F]) -> F {
-        debug_assert_eq!(r_s_star.len(), NUM_STEP_VARS);
-        let eq_evals = EqPolynomial::<F>::evals(r_s_star);
+    /// Evaluate digit_lo MLE using precomputed eq evaluations
+    pub fn evaluate_digit_lo_with_eq_evals<F: JoltField>(&self, eq_s_evals: &[F]) -> F {
+        debug_assert_eq!(eq_s_evals.len(), 1 << NUM_STEP_VARS);
         let digits = digits_from_bits_msb(&self.scalar_bits);
 
-        eq_evals
+        eq_s_evals
             .iter()
             .enumerate()
             .map(|(s, eq)| {
@@ -91,13 +90,12 @@ impl PackedGtExpPublicInputs {
             .fold(F::zero(), |acc, x| acc + x)
     }
 
-    /// Evaluate digit_hi MLE at challenge point r_s* (7-variable MLE, 128 points).
-    pub fn evaluate_digit_hi_mle<F: JoltField>(&self, r_s_star: &[F]) -> F {
-        debug_assert_eq!(r_s_star.len(), NUM_STEP_VARS);
-        let eq_evals = EqPolynomial::<F>::evals(r_s_star);
+    /// Evaluate digit_hi MLE using precomputed eq evaluations
+    pub fn evaluate_digit_hi_with_eq_evals<F: JoltField>(&self, eq_s_evals: &[F]) -> F {
+        debug_assert_eq!(eq_s_evals.len(), 1 << NUM_STEP_VARS);
         let digits = digits_from_bits_msb(&self.scalar_bits);
 
-        eq_evals
+        eq_s_evals
             .iter()
             .enumerate()
             .map(|(s, eq)| {
@@ -147,6 +145,28 @@ impl PackedGtExpPublicInputs {
             unsafe { std::slice::from_raw_parts(r_x_star.as_ptr() as *const Fq, r_x_star.len()) };
         let result_fq = base_poly.evaluate(r_x_star_fq);
         unsafe { std::mem::transmute_copy(&result_fq) }
+    }
+
+    /// Evaluate Fq12 MLE using precomputed eq evaluations
+    pub fn evaluate_fq12_with_eq_evals<F: JoltField>(fq12: &Fq12, eq_x_evals: &[F]) -> F {
+        use std::any::TypeId;
+
+        debug_assert_eq!(eq_x_evals.len(), 1 << NUM_ELEMENT_VARS);
+
+        // Runtime check that F = Fq for safe transmute
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("evaluate_base_mle requires F = Fq");
+        }
+
+        let base_mle_fq = fq12_to_multilinear_evals(fq12); // 16 Fq values
+
+        // Compute dot product directly
+        let mut result = F::zero();
+        for i in 0..eq_x_evals.len() {
+            let base_val: F = unsafe { std::mem::transmute_copy(&base_mle_fq[i]) };
+            result += base_val * eq_x_evals[i];
+        }
+        result
     }
 }
 
@@ -349,14 +369,6 @@ impl PackedGtExpWitness {
             // Check C_s(x) = 0 for all valid (s, x) pairs
             for s in 0..num_steps {
                 let (digit_hi, digit_lo) = digits[s];
-                let u = if digit_lo { Fq::from(1u64) } else { Fq::zero() };
-                let v = if digit_hi { Fq::from(1u64) } else { Fq::zero() };
-                let one = Fq::from(1u64);
-                let w0 = (one - u) * (one - v);
-                let w1 = u * (one - v);
-                let w2 = (one - u) * v;
-                let w3 = u * v;
-
                 for x in 0..16 {
                     let rho = rho_mles[s][x];
                     let rho_next = rho_mles[s + 1][x];
@@ -366,7 +378,13 @@ impl PackedGtExpWitness {
                     let base3 = base3_mle[x];
                     let g = g_mle[x];
 
-                    let base_power = w0 + w1 * base + w2 * base2 + w3 * base3;
+                    // For boolean digits, direct selection is most efficient
+                    let base_power = match (digit_lo, digit_hi) {
+                        (false, false) => Fq::from(1u64), // base^0
+                        (true, false) => base,            // base^1
+                        (false, true) => base2,           // base^2
+                        (true, true) => base3,            // base^3
+                    };
 
                     let rho2 = rho * rho;
                     let rho4 = rho2 * rho2;
@@ -769,11 +787,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
                     for t in 0..DEGREE {
                         let u = digit_lo[t];
                         let v = digit_hi[t];
-                        let w0 = (F::one() - u) * (F::one() - v);
-                        let w1 = u * (F::one() - v);
-                        let w2 = (F::one() - u) * v;
-                        let w3 = u * v;
-                        let base_power = w0 + w1 * base[t] + w2 * base2[t] + w3 * base3[t];
+
+                        // Optimized bilinear interpolation for base^digit
+                        // Reduces from 8 to 5 field operations
+                        let base_minus_one = base[t] - F::one();
+                        let base3_minus_base2 = base3[t] - base2[t];
+                        let interp_v0 = F::one() + u * base_minus_one; // At v=0: lerp(1, base, u)
+                        let interp_v1 = base2[t] + u * base3_minus_base2; // At v=1: lerp(base^2, base^3, u)
+                        let base_power = interp_v0 + v * (interp_v1 - interp_v0); // lerp along v
+
                         let rho2 = rho[t] * rho[t];
                         let rho4 = rho2 * rho2;
 
@@ -838,11 +860,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for PackedGtExpPr
 
                     let u = digit_lo_val;
                     let v = digit_hi_val;
-                    let w0 = (F::one() - u) * (F::one() - v);
-                    let w1 = u * (F::one() - v);
-                    let w2 = (F::one() - u) * v;
-                    let w3 = u * v;
-                    let base_power = w0 + w1 * base_val + w2 * base2_val + w3 * base3_val;
+
+                    // Optimized bilinear interpolation for base^digit
+                    let base_minus_one = base_val - F::one();
+                    let base3_minus_base2 = base3_val - base2_val;
+                    let interp_v0 = F::one() + u * base_minus_one;
+                    let interp_v1 = base2_val + u * base3_minus_base2;
+                    let base_power = interp_v0 + v * (interp_v1 - interp_v0);
+
                     let rho2 = rho_val * rho_val;
                     let rho4 = rho2 * rho2;
                     let constraint = rho_next_val - rho4 * base_power - quotient_val * g_val;
@@ -1085,6 +1110,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
             unsafe { std::mem::transmute_copy(&g_eval_fq) }
         };
 
+        // Pre-compute eq evaluations once (they're the same for all witnesses)
+        let eq_s_evals = EqPolynomial::<F>::evals(&r_s_star);
+        let eq_x_evals = EqPolynomial::<F>::evals(&r_x_star);
+
         // Compute batched constraint value with gamma
         let mut total_constraint = F::zero();
         let mut gamma_power = self.gamma;
@@ -1101,20 +1130,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for PackedGtExp
             let rho_next_claim = claims[1];
             let quotient_claim = claims[2];
 
-            // Compute digit bits and base evaluations directly from public inputs
-            let digit_lo = self.public_inputs[w].evaluate_digit_lo_mle(&r_s_star);
-            let digit_hi = self.public_inputs[w].evaluate_digit_hi_mle(&r_s_star);
-            let base_claim = self.public_inputs[w].evaluate_base_mle(&r_x_star);
-            let base2_claim = self.public_inputs[w].evaluate_base2_mle(&r_x_star);
-            let base3_claim = self.public_inputs[w].evaluate_base3_mle(&r_x_star);
+            // Compute digit bits using precomputed eq evaluations
+            let digit_lo = self.public_inputs[w].evaluate_digit_lo_with_eq_evals(&eq_s_evals);
+            let digit_hi = self.public_inputs[w].evaluate_digit_hi_with_eq_evals(&eq_s_evals);
 
-            let u = digit_lo;
-            let v = digit_hi;
-            let w0 = (F::one() - u) * (F::one() - v);
-            let w1 = u * (F::one() - v);
-            let w2 = (F::one() - u) * v;
-            let w3 = u * v;
-            let base_power = w0 + w1 * base_claim + w2 * base2_claim + w3 * base3_claim;
+            // Compute base evaluations using precomputed eq evaluations
+            let base = self.public_inputs[w].base;
+            let base2 = base * base;
+            let base3 = base2 * base;
+            let base_claim = PackedGtExpPublicInputs::evaluate_fq12_with_eq_evals(&base, &eq_x_evals);
+            let base2_claim = PackedGtExpPublicInputs::evaluate_fq12_with_eq_evals(&base2, &eq_x_evals);
+            let base3_claim = PackedGtExpPublicInputs::evaluate_fq12_with_eq_evals(&base3, &eq_x_evals);
+
+            // Optimized bilinear interpolation for base^digit
+            // Reduces from 8 to 5 field operations
+            let base_minus_one = base_claim - F::one();
+            let base3_minus_base2 = base3_claim - base2_claim;
+            let interp_v0 = F::one() + digit_lo * base_minus_one; // At digit_hi=0: lerp(1, base, digit_lo)
+            let interp_v1 = base2_claim + digit_lo * base3_minus_base2; // At digit_hi=1: lerp(base^2, base^3, digit_lo)
+            let base_power = interp_v0 + digit_hi * (interp_v1 - interp_v0); // lerp along digit_hi
 
             // Constraint at challenge point:
             // C(r_s*, r_x*) = rho_next - rho^4 × base_power - quotient × g

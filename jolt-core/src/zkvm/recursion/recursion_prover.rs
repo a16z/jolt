@@ -39,24 +39,20 @@ use crate::zkvm::recursion::DoryMatrixBuilder;
 use super::{
     bijection::VarCountJaggedBijection,
     constraints_sys::{ConstraintSystem, ConstraintType},
-    stage1::{
+    stage1::packed_gt_exp::{PackedGtExpParams, PackedGtExpProver, PackedGtExpPublicInputs},
+    stage2::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
         gt_mul::{GtMulParams, GtMulProver},
-        packed_gt_exp::{PackedGtExpParams, PackedGtExpProver, PackedGtExpPublicInputs},
-        shift_rho::{ShiftRhoParams, ShiftRhoProver},
-    },
-    stage2::{
         packed_gt_exp_reduction::{
             PackedGtExpClaimReductionParams, PackedGtExpClaimReductionProver,
         },
-        virtualization::{
-            extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationProver,
-        },
+        shift_rho::{ShiftRhoParams, ShiftRhoProver},
     },
-    stage3::{
-        jagged::JaggedSumcheckProver,
-        jagged_assist::{JaggedAssistProof, JaggedAssistProver},
+    stage3::virtualization::{
+        extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationProver,
     },
+    stage4::jagged::JaggedSumcheckProver,
+    stage5::jagged_assist::{JaggedAssistProof, JaggedAssistProver},
 };
 use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckInstanceProver};
 
@@ -734,7 +730,7 @@ impl<F: JoltField> RecursionProver<F> {
         // Add GT mul prover if we have GT mul constraints
         let gt_mul_constraints_tuples = self.constraint_system.extract_gt_mul_constraints();
         let mut gt_mul_prover = if !gt_mul_constraints_tuples.is_empty() {
-            use super::stage1::gt_mul::GtMulConstraintPolynomials;
+            use super::stage2::gt_mul::GtMulConstraintPolynomials;
 
             let gt_mul_constraints_fq: Vec<GtMulConstraintPolynomials<Fq>> =
                 gt_mul_constraints_tuples
@@ -775,7 +771,7 @@ impl<F: JoltField> RecursionProver<F> {
         let g1_scalar_mul_constraints_tuples =
             self.constraint_system.extract_g1_scalar_mul_constraints();
         let mut g1_scalar_mul_prover = if !g1_scalar_mul_constraints_tuples.is_empty() {
-            use super::stage1::g1_scalar_mul::G1ScalarMulConstraintPolynomials;
+            use super::stage2::g1_scalar_mul::G1ScalarMulConstraintPolynomials;
 
             let g1_scalar_mul_constraints: Vec<G1ScalarMulConstraintPolynomials> =
                 g1_scalar_mul_constraints_tuples

@@ -1,7 +1,7 @@
 //! Shift sumcheck for verifying rho_next claims in packed GT exponentiation
 //! Proves: Σ_i γ^i * v_i = Σ_{s,x} EqPlusOne(r_s*_i, s) × Eq(r_x*_i, x) × rho_i(s,x)
 //!
-//! This sumcheck runs after packed GT constraint sumcheck (Stage 1b) to verify
+//! This sumcheck runs in Stage 2 to verify
 //! that claimed rho_next values equal rho at shifted positions.
 
 use crate::{

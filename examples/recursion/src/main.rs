@@ -127,7 +127,7 @@ impl GuestProgram {
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
                         memory_size: 134217728, // 128MB
-                        stack_size: 134217728, // 128MB (total 256MB)
+                        stack_size: 134217728,  // 128MB (total 256MB)
                         program_size: None,
                     }
                 } else {
@@ -137,7 +137,7 @@ impl GuestProgram {
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
                         memory_size: 134217728, // 128MB
-                        stack_size: 134217728, // 128MB (total 256MB)
+                        stack_size: 134217728,  // 128MB (total 256MB)
                         program_size: None,
                     }
                 }
@@ -150,7 +150,7 @@ impl GuestProgram {
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
                         memory_size: 134217728, // 128MB
-                        stack_size: 134217728, // 128MB (total 256MB)
+                        stack_size: 134217728,  // 128MB (total 256MB)
                         program_size: None,
                     }
                 } else {
@@ -160,7 +160,7 @@ impl GuestProgram {
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
                         memory_size: 134217728, // 128MB
-                        stack_size: 134217728, // 128MB (total 256MB)
+                        stack_size: 134217728,  // 128MB (total 256MB)
                         program_size: None,
                     }
                 }
@@ -387,7 +387,9 @@ fn debug_deserialize_proof_fields(proof_file: &Path) {
 
     // First deserialize the verifier preprocessing and count
     info!("Step 1: Deserializing verifier preprocessing...");
-    match jolt_sdk::JoltVerifierPreprocessing::<jolt_sdk::F, jolt_sdk::PCS>::deserialize_compressed(&mut cursor) {
+    match jolt_sdk::JoltVerifierPreprocessing::<jolt_sdk::F, jolt_sdk::PCS>::deserialize_compressed(
+        &mut cursor,
+    ) {
         Ok(preprocessing) => {
             let bytes = preprocessing.serialize_to_bytes().unwrap();
             info!("✓ Verifier preprocessing OK ({} bytes)", bytes.len());
@@ -410,11 +412,18 @@ fn debug_deserialize_proof_fields(proof_file: &Path) {
 
     // Check cursor position
     let position = cursor.position() as usize;
-    info!("Current cursor position after preprocessing + count: {} bytes", position);
+    info!(
+        "Current cursor position after preprocessing + count: {} bytes",
+        position
+    );
 
     info!("Step 3: Attempting to deserialize {} proof(s)...", n);
     for i in 0..n {
-        info!("Proof {}: Starting JoltProof deserialization at position {}...", i, cursor.position());
+        info!(
+            "Proof {}: Starting JoltProof deserialization at position {}...",
+            i,
+            cursor.position()
+        );
 
         // Try to deserialize the entire JoltProof
         match RV64IMACProof::deserialize_compressed(&mut cursor) {
@@ -425,14 +434,24 @@ fn debug_deserialize_proof_fields(proof_file: &Path) {
                 info!("  Bytecode K: {}", proof.bytecode_K);
             }
             Err(e) => {
-                error!("✗ FAILED to deserialize proof {} at position {}: {:?}", i, cursor.position(), e);
+                error!(
+                    "✗ FAILED to deserialize proof {} at position {}: {:?}",
+                    i,
+                    cursor.position(),
+                    e
+                );
 
                 // Try to read some bytes at current position to debug
                 let current_pos = cursor.position() as usize;
                 let bytes = cursor.get_ref();
                 if current_pos < bytes.len() {
                     let next_bytes = &bytes[current_pos..current_pos.min(current_pos + 32)];
-                    error!("  Next {} bytes at position {}: {:?}", next_bytes.len(), current_pos, next_bytes);
+                    error!(
+                        "  Next {} bytes at position {}: {:?}",
+                        next_bytes.len(),
+                        current_pos,
+                        next_bytes
+                    );
 
                     // Try to interpret as length
                     if next_bytes.len() >= 8 {
@@ -449,15 +468,27 @@ fn debug_deserialize_proof_fields(proof_file: &Path) {
             }
         }
 
-        info!("Proof {}: Attempting JoltDevice deserialization at position {}...", i, cursor.position());
+        info!(
+            "Proof {}: Attempting JoltDevice deserialization at position {}...",
+            i,
+            cursor.position()
+        );
         match JoltDevice::deserialize_compressed(&mut cursor) {
             Ok(device) => {
                 info!("✓ Device {} deserialized successfully", i);
-                info!("  Memory layout size: {:?}", device.memory_layout.memory_size);
+                info!(
+                    "  Memory layout size: {:?}",
+                    device.memory_layout.memory_size
+                );
                 info!("  Panic state: {:?}", device.panic);
             }
             Err(e) => {
-                error!("✗ FAILED to deserialize device {} at position {}: {:?}", i, cursor.position(), e);
+                error!(
+                    "✗ FAILED to deserialize device {} at position {}: {:?}",
+                    i,
+                    cursor.position(),
+                    e
+                );
                 panic!("Cannot continue after device deserialization failure");
             }
         }
@@ -465,11 +496,17 @@ fn debug_deserialize_proof_fields(proof_file: &Path) {
 
     let final_position = cursor.position() as usize;
     let total_bytes = cursor.get_ref().len();
-    info!("Final cursor position: {} / {} bytes", final_position, total_bytes);
+    info!(
+        "Final cursor position: {} / {} bytes",
+        final_position, total_bytes
+    );
     info!("Remaining bytes: {}", total_bytes - final_position);
 
     if final_position < total_bytes {
-        error!("WARNING: {} bytes remain unread!", total_bytes - final_position);
+        error!(
+            "WARNING: {} bytes remain unread!",
+            total_bytes - final_position
+        );
     }
 
     info!("Debug deserialization complete!");

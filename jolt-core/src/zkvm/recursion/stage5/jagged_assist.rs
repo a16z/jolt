@@ -1,4 +1,4 @@
-//! Stage 3b: Jagged Assist - Batch MLE Verification
+//! Stage 5: Jagged Assist - Batch MLE Verification
 //!
 //! This module implements the Jagged Assist optimization from Theorem 1.5 of the
 //! "Jagged Polynomial Commitments" paper (Hemo et al., May 2025).
@@ -33,7 +33,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::marker::PhantomData;
 
-use super::branching_program::{
+use crate::zkvm::recursion::stage4::branching_program::{
     bit_to_field, get_coordinate_info, CoordType, JaggedBranchingProgram, Point,
 };
 use crate::zkvm::recursion::bijection::VarCountJaggedBijection;

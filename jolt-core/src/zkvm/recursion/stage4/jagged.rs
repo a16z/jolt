@@ -1,13 +1,13 @@
-//! Stage 3: Jagged Transform Sumcheck
+//! Stage 4: Jagged Transform Sumcheck
 //!
 //! This stage performs a sumcheck to verify the jagged-to-dense polynomial transform
 //! following the technique from "Jagged Polynomial Commitments" paper.
 //!
 //! The jagged transform maps a sparse representation (with padding) to a dense
 //! representation that excludes redundant values. In our case:
-//! - GT operations use 4-variable MLEs (16 evaluations)
+//! - GT operations use 11-variable MLEs (2048 evaluations)
 //! - G1 operations use 8-variable MLEs (256 evaluations)
-//! - In the sparse matrix, 4-var MLEs are padded to 8 vars by repeating each value 16x
+//! - In the sparse matrix, 8-var MLEs are padded to 11 vars with zeros
 //! - The dense representation removes this redundancy
 //!
 //! Protocol:

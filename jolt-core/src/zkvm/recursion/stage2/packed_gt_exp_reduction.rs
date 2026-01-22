@@ -23,7 +23,7 @@ use crate::transcripts::Transcript;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{virtual_claims, zkvm::recursion::utils::virtual_polynomial_utils::*};
 
-use super::super::stage1::shift_rho::{eq_lsb_evals, eq_lsb_mle};
+use super::super::stage2::shift_rho::{eq_lsb_evals, eq_lsb_mle};
 
 #[derive(Allocative, Clone)]
 pub struct PackedGtExpClaimReductionParams {

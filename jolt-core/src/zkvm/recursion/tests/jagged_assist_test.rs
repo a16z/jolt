@@ -12,10 +12,8 @@ use crate::{
     transcripts::{Blake2bTranscript, Transcript},
     zkvm::recursion::{
         bijection::{JaggedPolynomial, JaggedTransform, VarCountJaggedBijection},
-        stage3::{
-            branching_program::{JaggedBranchingProgram, Point},
-            jagged_assist::{JaggedAssistProver, JaggedAssistVerifier},
-        },
+        stage4::branching_program::{JaggedBranchingProgram, Point},
+        stage5::jagged_assist::{JaggedAssistProver, JaggedAssistVerifier},
     },
 };
 use ark_bn254::Fq;
@@ -446,7 +444,7 @@ fn test_compute_f_jagged_with_mapping() {
 /// Test interleaved variable ordering consistency
 #[test]
 fn test_interleaved_ordering() {
-    use crate::zkvm::recursion::stage3::branching_program::{get_coordinate_info, CoordType};
+    use crate::zkvm::recursion::stage4::branching_program::{get_coordinate_info, CoordType};
 
     let num_bits = 4;
 

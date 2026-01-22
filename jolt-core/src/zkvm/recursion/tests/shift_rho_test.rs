@@ -19,10 +19,8 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
     transcripts::{Blake2bTranscript, Transcript},
-    zkvm::recursion::stage1::{
-        packed_gt_exp::{NUM_ELEMENT_VARS, NUM_STEP_VARS},
-        shift_rho::{eq_lsb_evals, eq_plus_one_lsb_evals},
-    },
+    zkvm::recursion::stage1::packed_gt_exp::{NUM_ELEMENT_VARS, NUM_STEP_VARS},
+    zkvm::recursion::stage2::shift_rho::{eq_lsb_evals, eq_plus_one_lsb_evals},
     zkvm::recursion::RecursionProver,
 };
 
