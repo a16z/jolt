@@ -12,6 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use jolt_platform::{JOLT_CYCLE_TRACK_ECALL_NUM, JOLT_PRINT_ECALL_NUM};
+
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, PrivilegeMode, Trap, TrapType, Xlen},
@@ -21,9 +23,11 @@ use crate::{
 
 use super::{
     addi::ADDI,
+    auipc::AUIPC,
     format::format_i::FormatI,
     jalr::JALR,
     mul::MUL,
+    slli::SLLI,
     sub::SUB,
     virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
@@ -63,15 +67,18 @@ impl ECALL {
 impl ECALL {
     /// Generate inline sequence for ECALL.
     ///
-    /// Always includes trap CSR writes to maintain consistent sequence length.
-    /// When trap is not taken, the CSR writes preserve current values (no-op).
-    /// TODO(sagar) we should just move cycle_tracking to a custom instruction
+    /// All trap CSR writes use constrained instructions (no VirtualAdvice):
+    /// - mepc = ecall_addr (computed via AUIPC, circuit-constrained)
+    /// - mcause = 11 (constant, ECALL from M-mode)
+    /// - mtval = 0 (constant)
+    /// - mstatus = 0x1800 (M-mode, MPP=3, MIE=0)
     ///
-    /// Key insight: We compute trap values directly without reading from cpu.rs CSR state:
-    /// - mepc = self.address (ECALL instruction address)
-    /// - mcause = 11 (constant for ECALL from M-mode)
-    /// - mtval = 0 (always)
-    /// - mstatus = computed from current mstatus
+    /// The only advice value is target_pc, which is constrained to be either:
+    /// - return_addr (ecall_addr + 4) for Jolt-specific ECALLs, or
+    /// - trap_handler (from virtual register) for real traps
+    ///
+    /// This makes ECALL fully sound: a malicious prover cannot corrupt CSR values
+    /// or jump to arbitrary addresses.
     fn generate_inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -85,54 +92,52 @@ impl ECALL {
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Always write trap CSRs (sequence length must be consistent)
-        // When trap is not taken, advice values preserve current vr values
-        // Note: We explicitly drop temp registers after use to stay within the 7-register limit
+        // === Constrained CSR writes ===
+        // All values computed without advice - circuit-enforced correctness
 
-        // Write mepc (need VirtualAdvice for address or preserved value)
-        let temp_mepc = allocator.allocate();
-        asm.emit_j::<VirtualAdvice>(*temp_mepc, 0);
-        asm.emit_i::<ADDI>(vr_mepc, *temp_mepc, 0);
-        drop(temp_mepc); // Free register for reuse
+        // Compute ecall_addr via AUIPC (circuit constrains rd = PC + imm)
+        // Since all inline instructions use self.address as PC, AUIPC(t, 0) = ecall_addr
+        let ecall_addr = allocator.allocate();
+        asm.emit_u::<AUIPC>(*ecall_addr, 0);
 
-        // Write mcause (need VirtualAdvice - 11 when trap taken, preserve when not)
-        let temp_mcause = allocator.allocate();
-        asm.emit_j::<VirtualAdvice>(*temp_mcause, 0);
-        asm.emit_i::<ADDI>(vr_mcause, *temp_mcause, 0);
-        drop(temp_mcause); // Free register for reuse
+        // mepc = ecall_addr (ADDI copies the value)
+        asm.emit_i::<ADDI>(vr_mepc, *ecall_addr, 0);
 
-        // Write mtval (need VirtualAdvice - 0 when trap taken, preserve when not)
-        let temp_mtval = allocator.allocate();
-        asm.emit_j::<VirtualAdvice>(*temp_mtval, 0);
-        asm.emit_i::<ADDI>(vr_mtval, *temp_mtval, 0);
-        drop(temp_mtval); // Free register for reuse
-
-        // Write mstatus (need VirtualAdvice for computed value or preserved)
-        let temp_status = allocator.allocate();
-        asm.emit_j::<VirtualAdvice>(*temp_status, 0);
-        asm.emit_i::<ADDI>(vr_mstatus, *temp_status, 0);
-        drop(temp_status); // Free register for reuse
-
-        // Set up return address and jump
+        // return_addr = ecall_addr + 4 (next instruction after ECALL)
         let return_addr = allocator.allocate();
-        let next_pc = allocator.allocate();
-        let diff1 = allocator.allocate();
-        let diff2 = allocator.allocate();
+        asm.emit_i::<ADDI>(*return_addr, *ecall_addr, 4);
+        drop(ecall_addr); // Free for reuse
 
-        // Get return address as advice (used for verification)
-        asm.emit_j::<VirtualAdvice>(*return_addr, 0);
+        // mcause = 11 (ECALL from M-mode, constant)
+        asm.emit_i::<ADDI>(vr_mcause, 0, MCAUSE_ECALL_FROM_MMODE);
 
-        // Get target PC as advice
-        asm.emit_j::<VirtualAdvice>(*next_pc, 0);
+        // mtval = 0 (always 0 for ECALL, constant)
+        asm.emit_i::<ADDI>(vr_mtval, 0, 0);
+
+        // mstatus = 0x1800 (MPP=3 at bits 12:11, M-mode only)
+        // Computed as: 3 << 11 = 0x1800
+        let three = allocator.allocate();
+        asm.emit_i::<ADDI>(*three, 0, 3);
+        asm.emit_i::<SLLI>(vr_mstatus, *three, 11);
+        drop(three); // Free for reuse
+
+        // === Target PC with constraint ===
+        // Only VirtualAdvice is target_pc, constrained to {return_addr, trap_handler}
+
+        let target_pc = allocator.allocate();
+        asm.emit_j::<VirtualAdvice>(*target_pc, 0);
 
         // Verify: (target_pc == return_addr) OR (target_pc == trap_handler)
-        asm.emit_r::<SUB>(*diff1, *next_pc, *return_addr);
-        asm.emit_r::<SUB>(*diff2, *next_pc, v_trap_handler_reg);
+        // Using: (target_pc - return_addr) * (target_pc - trap_handler) == 0
+        let diff1 = allocator.allocate();
+        let diff2 = allocator.allocate();
+        asm.emit_r::<SUB>(*diff1, *target_pc, *return_addr);
+        asm.emit_r::<SUB>(*diff2, *target_pc, v_trap_handler_reg);
         asm.emit_r::<MUL>(*diff1, *diff1, *diff2);
         asm.emit_b::<VirtualAssertEQ>(*diff1, 0, 0);
 
         // Jump to target PC
-        asm.emit_i::<JALR>(0, *next_pc, 0);
+        asm.emit_i::<JALR>(0, *target_pc, 0);
 
         asm.finalize()
     }
@@ -140,75 +145,44 @@ impl ECALL {
 
 impl RISCVTrace for ECALL {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Execute the ECALL to trigger trap handling.
-        let mut ram_access = ();
-        self.execute(cpu, &mut ram_access);
+        // Don't call self.execute() - the inline sequence handles all register/PC updates.
+        // CSR values are computed with constrained instructions (no advice needed).
 
-        // After trap handling, CPU's PC is either:
-        // - trap handler address (if trap was taken, e.g., for Linux syscalls with ZeroOS)
-        // - self.address + 4 (if trap was not taken, e.g., for Jolt-specific ECALLs)
-        let target_pc = cpu.read_pc();
         let return_addr = self.address + 4;
-        let trap_taken = target_pc != return_addr;
+        let call_id = cpu.x[10] as u32; // a0
+
+        // Check if this is a Jolt-specific ECALL (these don't take trap)
+        let trap_taken = call_id != JOLT_CYCLE_TRACK_ECALL_NUM
+            && call_id != JOLT_PRINT_ECALL_NUM;
+
+        // Compute target PC:
+        // - Jolt ECALLs: return to next instruction (no trap)
+        // - Other ECALLs: jump to trap handler (from virtual register)
+        let target_pc = if trap_taken {
+            cpu.x[cpu.vr_allocator.trap_handler_register() as usize] as u64
+        } else {
+            return_addr
+        };
 
         let mut inline_sequence = self.generate_inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // Fill in the advice values (sequence always has same structure)
-        // Index 0: mepc VirtualAdvice
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = if trap_taken {
-                self.address // ECALL instruction address
-            } else {
-                // Preserve current value when trap not taken
-                cpu.x[cpu.vr_allocator.mepc_register() as usize] as u64
-            };
-        }
-        // Index 1: ADDI to vr_mepc (skip)
+        // The inline sequence structure (all constrained except target_pc):
+        // 0: AUIPC(ecall_addr, 0)
+        // 1: ADDI(vr_mepc, ecall_addr, 0)
+        // 2: ADDI(return_addr, ecall_addr, 4)
+        // 3: ADDI(vr_mcause, x0, 11)
+        // 4: ADDI(vr_mtval, x0, 0)
+        // 5: ADDI(three, x0, 3)
+        // 6: VirtualMULI(vr_mstatus, three, 2048)  <- SLLI expands to this
+        // 7: VirtualAdvice(target_pc)              <- Only advice, constrained below
+        // 8: SUB(diff1, target_pc, return_addr)
+        // 9: SUB(diff2, target_pc, v_trap_handler)
+        // 10: MUL(diff1, diff1, diff2)
+        // 11: VirtualAssertEQ(diff1, 0, 0)
+        // 12: JALR(x0, target_pc, 0)
 
-        // Index 2: mcause VirtualAdvice
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[2] {
-            instr.advice = if trap_taken {
-                MCAUSE_ECALL_FROM_MMODE // 11 for ECALL from M-mode
-            } else {
-                // Preserve current value when trap not taken
-                cpu.x[cpu.vr_allocator.mcause_register() as usize] as u64
-            };
-        }
-        // Index 3: ADDI to vr_mcause (skip)
-
-        // Index 4: mtval VirtualAdvice
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[4] {
-            instr.advice = if trap_taken {
-                0 // mtval is always 0 for ECALL
-            } else {
-                // Preserve current value when trap not taken
-                cpu.x[cpu.vr_allocator.mtval_register() as usize] as u64
-            };
-        }
-        // Index 5: ADDI to vr_mtval (skip)
-
-        // Index 6: mstatus VirtualAdvice
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[6] {
-            if trap_taken {
-                // Compute new mstatus per RISC-V spec:
-                // new_status = (old_status & !0x1888) | (mie << 7) | (3 << 11)
-                let old_status = cpu.x[cpu.vr_allocator.mstatus_register() as usize] as u64;
-                let mie = (old_status >> 3) & 1;
-                instr.advice = (old_status & !0x1888) | (mie << 7) | (3 << 11);
-            } else {
-                // Preserve current value when trap not taken
-                instr.advice = cpu.x[cpu.vr_allocator.mstatus_register() as usize] as u64;
-            }
-        }
-        // Index 7: ADDI to vr_mstatus (skip)
-
-        // Index 8: return address VirtualAdvice
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[8] {
-            instr.advice = return_addr;
-        }
-
-        // Index 9: target PC VirtualAdvice
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[9] {
+        // Fill in the only advice value: target_pc at index 7
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[7] {
             instr.advice = target_pc;
         }
 

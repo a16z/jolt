@@ -53,9 +53,8 @@ impl MRET {
 
 impl RISCVTrace for MRET {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Execute the MRET (updates CPU pc)
-        let mut ram_access = ();
-        self.execute(cpu, &mut ram_access);
+        // Don't call self.execute() - the inline sequence's JALR handles the PC update.
+        // The JALR reads mepc from virtual register vr35 and jumps to it.
 
         // Generate and execute inline sequence
         // The inline sequence reads mepc from virtual register (source of truth for proofs)

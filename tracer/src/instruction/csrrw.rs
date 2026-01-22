@@ -70,26 +70,15 @@ impl CSRRW {
 
 impl RISCVTrace for CSRRW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Generate inline sequence
-        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        // Don't call self.execute() - the inline sequence handles everything.
+        // Virtual registers are the single source of truth; we don't use cpu.csr[].
 
-        // Emulator (exec) and inline sequences maintain separate but consistent state:
-        // - exec() uses CSR array (read_csr_raw/write_csr_raw)
-        // - inline sequences use virtual registers (cpu.x[33-38])
-        //
-        // When rd == rs1, the first instruction preserves rs1 before exec() clobbers it.
-        // We must run this BEFORE exec() since exec() will overwrite rd (which is rs1).
+        // Generate and execute inline sequence
+        // The inline sequence reads from virtual register and writes to rd,
+        // then writes rs1 to virtual register.
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+
         let mut trace = trace;
-        if self.operands.rd != 0 && self.operands.rd == self.operands.rs1 {
-            let preserve = inline_sequence.remove(0);
-            preserve.trace(cpu, trace.as_deref_mut());
-        }
-
-        // Execute the CSR operation (updates emulation state via CSR array)
-        let mut ram_access = ();
-        self.execute(cpu, &mut ram_access);
-
-        // Execute remaining inline sequence (updates virtual registers)
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
@@ -219,25 +208,20 @@ mod tests {
 
         // Choose distinct values so that if the inline sequence accidentally uses
         // the post-clobber rs1 value, the test will fail.
-        let old_csr_val: u64 = 0x2222_3333;
+        let old_vr_val: u64 = 0x2222_3333;
         let write_val: u64 = 0x1111_0000;
 
-        // Set up the virtual register (source of truth for proofs)
-        cpu.x[33] = old_csr_val as i64;  // vr33 = mtvec
-        // Also set CSR state for exec() emulation
-        cpu.write_csr_raw(0x305, old_csr_val);
-        cpu.x[5] = write_val as i64;
+        // Set up the virtual register (single source of truth)
+        cpu.x[33] = old_vr_val as i64;  // vr33 = mtvec
+        cpu.x[5] = write_val as i64;    // rs1 = t0 = write_val
 
         let mut trace: Vec<Cycle> = Vec::new();
         csrrw.trace(&mut cpu, Some(&mut trace));
 
-        // Architectural rd (t0) gets old CSR value from virtual register.
-        assert_eq!(cpu.x[5] as u64, old_csr_val);
+        // Architectural rd (t0) gets old value from virtual register.
+        assert_eq!(cpu.x[5] as u64, old_vr_val);
 
-        // CSR emulator state should have the new value.
-        assert_eq!(cpu.read_csr_raw(0x305), write_val);
-
-        // Virtual register (vr33 = mtvec) should have the new value.
+        // Virtual register (vr33 = mtvec) should have the new value (from rs1).
         assert_eq!(cpu.x[33] as u64, write_val);
     }
 }

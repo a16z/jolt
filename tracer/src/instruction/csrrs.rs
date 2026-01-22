@@ -83,9 +83,8 @@ impl RISCVTrace for CSRRS {
             );
         }
 
-        // Execute the CSR operation (updates emulation state)
-        let mut ram_access = ();
-        self.execute(cpu, &mut ram_access);
+        // Don't call self.execute() - the inline sequence handles all register writes.
+        // For csrr (rs1=0), there's no CSR state modification needed.
 
         // Generate and execute inline sequence
         // The inline sequence reads from the virtual register (source of truth for proofs)
