@@ -80,8 +80,8 @@ where
     Streaming: StreamingSumcheckWindow<F, Shared = Shared> + Allocative,
     Linear: LinearSumcheckStage<F, Streaming = Streaming, Shared = Shared> + Allocative,
 {
-    fn visit<'a, V: allocative::Visitor<'a>>(&self, visitor: V) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self(self);
         visitor.visit_field(allocative::Key::new("streaming"), &self.streaming);
         visitor.visit_field(allocative::Key::new("linear"), &self.linear);
         visitor.visit_field(allocative::Key::new("shared"), &self.shared);
