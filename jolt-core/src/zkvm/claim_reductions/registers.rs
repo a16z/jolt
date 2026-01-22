@@ -16,7 +16,6 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };
-use crate::subprotocols::sumcheck_claims;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -58,29 +57,19 @@ impl<F: JoltField> RegistersClaimReductionSumcheckParams<F> {
     }
 }
 
-#[sumcheck_claims(
-    input_claim = {
-        openings: {
-            rd_write_value: (VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter),
-            rs1_value: (VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter),
-            rs2_value: (VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter),
-        },
-        expr: rd_write_value + self.gamma * rs1_value + self.gamma_sqr * rs2_value,
-    },
-    output_claim = {
-        points: {
-            r_spartan: (VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter),
-        },
-        openings: {
-            rd_write_value: (VirtualPolynomial::RdWriteValue, SumcheckId::RegistersClaimReduction),
-            rs1_value: (VirtualPolynomial::Rs1Value, SumcheckId::RegistersClaimReduction),
-            rs2_value: (VirtualPolynomial::Rs2Value, SumcheckId::RegistersClaimReduction),
-        },
-        expr: eq_eval * (rd_write_value + self.gamma * rs1_value + self.gamma_sqr * rs2_value),
-        derived: eq_eval = EqPolynomial::mle(&opening_point.r, &r_spartan.r),
-    },
-)]
-impl<F: JoltField> RegistersClaimReductionSumcheckParams<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheckParams<F> {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, rd_write_value_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, rs1_value_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let (_, rs2_value_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+        rd_write_value_claim + self.gamma * rs1_value_claim + self.gamma_sqr * rs2_value_claim
+    }
+
     fn degree(&self) -> usize {
         DEGREE_BOUND
     }
@@ -94,6 +83,36 @@ impl<F: JoltField> RegistersClaimReductionSumcheckParams<F> {
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+        // input = RdWriteValue + γ*Rs1Value + γ²*Rs2Value
+        // where openings are from SpartanOuter sumcheck
+        let rd_write_value =
+            OpeningId::Virtual(VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter);
+        let rs1_value = OpeningId::Virtual(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let rs2_value = OpeningId::Virtual(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(rd_write_value)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(rs1_value)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(rs2_value)],
+            ),
+        ];
+
+        Some(InputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma_sqr]
     }
 }
 
@@ -213,12 +232,40 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        self.params.output_claim_constraint()
+        let rd_write_value = OpeningId::Virtual(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs1_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs2_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+
+        let eq_eval = ValueSource::Challenge(0);
+        let gamma = ValueSource::Challenge(1);
+        let gamma_sqr = ValueSource::Challenge(2);
+
+        let terms = vec![
+            ProductTerm::product(vec![eq_eval.clone(), ValueSource::Opening(rd_write_value)]),
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                gamma,
+                ValueSource::Opening(rs1_value),
+            ]),
+            ProductTerm::product(vec![eq_eval, gamma_sqr, ValueSource::Opening(rs2_value)]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        self.params
-            .output_constraint_challenge_values(sumcheck_challenges)
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        let eq_eval = EqPolynomial::mle(&opening_point.r, &self.params.r_spartan.r);
+        vec![eq_eval, self.params.gamma, self.params.gamma_sqr]
     }
 
     fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
@@ -478,8 +525,31 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        self.params
-            .expected_output_claim(accumulator, sumcheck_challenges)
+        let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
+
+        let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+
+        let (_, rd_write_value_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let (_, rs1_read_value_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let (_, rs2_read_value_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+
+        EqPolynomial::mle(&opening_point.r, &r_spartan.r)
+            * (rd_write_value_claim
+                + self.params.gamma * rs1_read_value_claim
+                + self.params.gamma_sqr * rs2_read_value_claim)
     }
 
     fn cache_openings(
@@ -512,11 +582,59 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        self.params.output_claim_constraint()
+        // expected_output_claim = eq_eval * (rd_write_value + γ * rs1_value + γ² * rs2_value)
+        //
+        // Expanding:
+        // = eq_eval * rd_write_value
+        // + eq_eval * γ * rs1_value
+        // + eq_eval * γ² * rs2_value
+        //
+        // Challenges:
+        // - Challenge(0) = eq_eval
+        // - Challenge(1) = γ
+        // - Challenge(2) = γ²
+
+        let rd_write_value = OpeningId::Virtual(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs1_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs2_value = OpeningId::Virtual(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+
+        let eq_eval = ValueSource::Challenge(0);
+        let gamma = ValueSource::Challenge(1);
+        let gamma_sqr = ValueSource::Challenge(2);
+
+        let terms = vec![
+            // eq_eval * rd_write_value
+            ProductTerm::product(vec![eq_eval.clone(), ValueSource::Opening(rd_write_value)]),
+            // eq_eval * γ * rs1_value
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                gamma,
+                ValueSource::Opening(rs1_value),
+            ]),
+            // eq_eval * γ² * rs2_value
+            ProductTerm::product(vec![eq_eval, gamma_sqr, ValueSource::Opening(rs2_value)]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        self.params
-            .output_constraint_challenge_values(sumcheck_challenges)
+        // Challenge(0) = eq_eval
+        // Challenge(1) = γ
+        // Challenge(2) = γ²
+
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        let eq_eval = EqPolynomial::mle(&opening_point.r, &self.params.r_spartan.r);
+
+        vec![eq_eval, self.params.gamma, self.params.gamma_sqr]
     }
 }

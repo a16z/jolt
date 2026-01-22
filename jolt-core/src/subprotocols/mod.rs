@@ -12,4 +12,3 @@ pub mod univariate_skip;
 pub use booleanity::{
     BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
 };
-pub use jolt_core_macros::sumcheck_claims;
