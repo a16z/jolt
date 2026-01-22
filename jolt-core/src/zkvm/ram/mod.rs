@@ -715,7 +715,7 @@ mod tests {
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        let input_words_len = (program_io.inputs.len() + 7) / 8;
+        let input_words_len = program_io.inputs.len().div_ceil(8);
         let needed = (bytecode_start + ram_pp.bytecode_words.len())
             .max(input_start + input_words_len)
             .max(1);
