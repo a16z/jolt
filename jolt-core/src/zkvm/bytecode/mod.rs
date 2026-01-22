@@ -9,6 +9,7 @@ use tracer::instruction::{Cycle, Instruction};
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
+use crate::utils::math::Math;
 use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::bytecode::chunks::{build_bytecode_chunks, total_lanes};
 use rayon::prelude::*;
@@ -51,13 +52,19 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
         bytecode: &BytecodePreprocessing,
         generators: &PCS::ProverSetup,
         log_k_chunk: usize,
+        max_trace_len: usize,
     ) -> (Self, Vec<PCS::OpeningProofHint>) {
         let k_chunk = 1usize << log_k_chunk;
         let bytecode_len = bytecode.bytecode.len();
         let num_chunks = total_lanes().div_ceil(k_chunk);
 
-        let _guard =
-            DoryGlobals::initialize_context(k_chunk, bytecode_len, DoryContext::Bytecode, None);
+        let log_t = max_trace_len.log_2();
+        let _guard = DoryGlobals::initialize_bytecode_context_for_main_sigma(
+            k_chunk,
+            bytecode_len,
+            log_k_chunk,
+            log_t,
+        );
         let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
 
         let bytecode_chunks = build_bytecode_chunks::<PCS::Field>(bytecode, log_k_chunk);

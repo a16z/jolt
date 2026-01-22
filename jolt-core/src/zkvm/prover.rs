@@ -1836,7 +1836,7 @@ where
             8
         };
         let (trusted_commitments, hints) =
-            TrustedBytecodeCommitments::derive(&bytecode, &generators, log_k_chunk);
+            TrustedBytecodeCommitments::derive(&bytecode, &generators, log_k_chunk, max_t_any);
         JoltProverPreprocessing {
             generators,
             shared,

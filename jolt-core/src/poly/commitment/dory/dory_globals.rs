@@ -197,6 +197,48 @@ impl Drop for DoryContextGuard {
 pub struct DoryGlobals;
 
 impl DoryGlobals {
+    /// Initialize Bytecode context so its `num_columns` matches Main's `sigma_main`.
+    ///
+    /// This is required for committed-bytecode Stage 8 folding when `sigma_main > sigma_bytecode`:
+    /// we commit bytecode chunk polynomials using the Main matrix width (more columns, fewer rows),
+    /// so they embed as a top block of rows in the Main matrix when extra cycle variables are fixed to 0.
+    pub fn initialize_bytecode_context_for_main_sigma(
+        k_chunk: usize,
+        bytecode_len: usize,
+        log_k_chunk: usize,
+        log_t: usize,
+    ) -> Option<()> {
+        let (sigma_main, _) = Self::main_sigma_nu(log_k_chunk, log_t);
+        let num_columns = 1usize << sigma_main;
+        let total_size = k_chunk * bytecode_len;
+
+        assert!(
+            total_size % num_columns == 0,
+            "bytecode matrix width {num_columns} must divide total_size {total_size}"
+        );
+        let num_rows = total_size / num_columns;
+
+        // If already initialized, ensure it matches (avoid silently ignoring OnceCell::set failures).
+        #[allow(static_mut_refs)]
+        unsafe {
+            if let (Some(existing_cols), Some(existing_rows), Some(existing_t)) = (
+                BYTECODE_NUM_COLUMNS.get(),
+                BYTECODE_MAX_NUM_ROWS.get(),
+                BYTECODE_T.get(),
+            ) {
+                assert_eq!(*existing_cols, num_columns);
+                assert_eq!(*existing_rows, num_rows);
+                assert_eq!(*existing_t, bytecode_len);
+                return Some(());
+            }
+        }
+
+        Self::set_num_columns_for_context(num_columns, DoryContext::Bytecode);
+        Self::set_T_for_context(bytecode_len, DoryContext::Bytecode);
+        Self::set_max_num_rows_for_context(num_rows, DoryContext::Bytecode);
+        Some(())
+    }
+
     /// Split `total_vars` into a *balanced* pair `(sigma, nu)` where:
     /// - **sigma** is the number of **column** variables
     /// - **nu** is the number of **row** variables

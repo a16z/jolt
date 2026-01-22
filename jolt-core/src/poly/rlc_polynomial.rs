@@ -53,14 +53,14 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
     let layout = DoryGlobals::get_layout();
     let k_chunk = one_hot_params.k_chunk;
     let bytecode_len = bytecode.bytecode.len();
-    let (sigma_bc, _nu_bc) = DoryGlobals::balanced_sigma_nu((k_chunk * bytecode_len).log_2());
-    let bytecode_cols = 1usize << sigma_bc;
+    let bytecode_cols = num_columns;
     let total = total_lanes();
 
     debug_assert!(
-        bytecode_cols <= num_columns,
-        "Bytecode columns (2^{{sigma_bc}}={bytecode_cols}) must fit in main num_columns={num_columns}; \
-guardrail in gen_from_trace should ensure sigma_main >= sigma_bc."
+        k_chunk * bytecode_len >= bytecode_cols,
+        "bytecode_len*k_chunk must cover at least one full row: (k_chunk*bytecode_len)={} < num_columns={}",
+        k_chunk * bytecode_len,
+        bytecode_cols
     );
 
     for (chunk_idx, coeff) in bytecode_polys.iter() {

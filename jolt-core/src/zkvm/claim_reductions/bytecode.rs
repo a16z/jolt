@@ -15,6 +15,7 @@
 //! Commitment + Stage 8 batching integration is handled separately (see `bytecode-commitment-progress.md`).
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -205,6 +206,9 @@ pub struct BytecodeClaimReductionProver<F: JoltField> {
     bytecode_chunks: Vec<MultilinearPolynomial<F>>,
     /// Weight polynomials W_i(lane, k) = W_eta(lane) * eq(r_bc, k) (multilinear).
     weight_chunks: Vec<MultilinearPolynomial<F>>,
+    /// Batched-sumcheck scaling for trailing dummy rounds (see `round_offset`).
+    #[allocative(skip)]
+    batch_dummy_rounds: AtomicUsize,
 }
 
 impl<F: JoltField> BytecodeClaimReductionProver<F> {
@@ -266,12 +270,13 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
             params,
             bytecode_chunks,
             weight_chunks,
+            batch_dummy_rounds: AtomicUsize::new(0),
         }
     }
 
     fn compute_message_impl(&self, previous_claim: F) -> UniPoly<F> {
         let half = self.bytecode_chunks[0].len() / 2;
-        let evals: [F; DEGREE_BOUND] = (0..half)
+        let mut evals: [F; DEGREE_BOUND] = (0..half)
             .into_par_iter()
             .map(|j| {
                 let mut out = [F::zero(); DEGREE_BOUND];
@@ -293,6 +298,17 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
                     acc
                 },
             );
+
+        // If this instance is back-loaded in a batched sumcheck (i.e., it has trailing dummy
+        // rounds), then `previous_claim` is scaled by 2^{dummy_rounds}. The per-round univariate
+        // evaluations must be scaled by the same factor to satisfy the sumcheck consistency check.
+        let dummy_rounds = self.batch_dummy_rounds.load(Ordering::Relaxed);
+        if dummy_rounds != 0 {
+            let scale = F::one().mul_pow_2(dummy_rounds);
+            for e in evals.iter_mut() {
+                *e *= scale;
+            }
+        }
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 }
@@ -300,6 +316,20 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaimReductionProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
+    }
+
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        // Bytecode claim reduction's cycle-phase rounds must align to the *start* of the
+        // batched cycle challenge vector so that its (log_K) point is the suffix (LSB side)
+        // of the full (log_T) cycle point used by other Stage 6b instances. This is required
+        // for Stage 8's committed-bytecode embedding when log_T > log_K.
+        //
+        // This deviates from the default "front-loaded" batching offset, so we record the number
+        // of trailing dummy rounds and scale univariate evaluations accordingly.
+        let dummy_rounds = max_num_rounds.saturating_sub(self.params.num_rounds());
+        self.batch_dummy_rounds
+            .store(dummy_rounds, Ordering::Relaxed);
+        0
     }
 
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
@@ -394,6 +424,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         unsafe { &*self.params.as_ptr() }
+    }
+
+    fn round_offset(&self, _max_num_rounds: usize) -> usize {
+        // Must mirror the prover: align this instance to the start of the batched challenge vector.
+        0
     }
 
     fn expected_output_claim(
