@@ -118,6 +118,87 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
+    /// Compute `eq(r, k)` evaluations over an aligned power-of-two block of indices.
+    ///
+    /// Returns a vector `w` of length `block_size` such that:
+    /// - `w[j] = eq(r, start_index + j)` for `j ∈ [0, block_size)`.
+    ///
+    /// ## Preconditions
+    /// - `block_size` is a power of two
+    /// - `start_index` is aligned to `block_size` (i.e. `start_index % block_size == 0`)
+    ///
+    /// ## Bit/index order
+    /// Uses the same **big-endian** convention as [`Self::evals`]:
+    /// - `r[0]` corresponds to the MSB of the full index `k`
+    /// - within the block, `j` enumerates the suffix bits in big-endian order
+    pub fn evals_for_aligned_block<C>(r: &[C], start_index: usize, block_size: usize) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
+        assert!(block_size.is_power_of_two());
+        assert_ne!(block_size, 0);
+        assert_eq!(start_index % block_size, 0);
+
+        let total_vars = r.len();
+        let b = block_size.log_2(); // exact because block_size is power-of-two
+        assert!(b <= total_vars);
+
+        // Decompose k = (prefix || suffix), where suffix has b bits and ranges over [0, 2^b).
+        let prefix_len = total_vars - b;
+        let prefix_val = start_index >> b;
+
+        // Compute eq over the fixed prefix bits.
+        let mut prefix_scale = F::one();
+        if prefix_len > 0 {
+            for i in 0..prefix_len {
+                let bit = (prefix_val >> (prefix_len - 1 - i)) & 1;
+                let r_i: F = r[i].into();
+                prefix_scale *= if bit == 1 { r_i } else { F::one() - r_i };
+            }
+        }
+
+        // Compute the suffix table and scale by the prefix selector.
+        Self::evals_with_scaling(&r[prefix_len..], Some(prefix_scale))
+    }
+
+    /// Choose the largest aligned power-of-two block that fits within `remaining_len`,
+    /// and return its length along with its `eq` evaluation table.
+    ///
+    /// This is useful when scanning a contiguous range and wanting to cover it by a small number
+    /// of aligned power-of-two blocks, each of which admits an `eq` table via [`Self::evals`]
+    /// over only the suffix bits.
+    pub fn evals_for_max_aligned_block<C>(
+        r: &[C],
+        start_index: usize,
+        remaining_len: usize,
+    ) -> (usize, Vec<F>)
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
+        assert!(remaining_len > 0);
+
+        // Largest power-of-two <= remaining_len.
+        let max_len_pow = if remaining_len.is_power_of_two() {
+            remaining_len
+        } else {
+            remaining_len.next_power_of_two() >> 1
+        };
+
+        // Largest power-of-two alignment at start_index (or unconstrained if start_index == 0).
+        let align_pow = if start_index == 0 {
+            // start_index==0 is aligned to any power-of-two; cap by the domain size 2^|r|.
+            1usize << r.len()
+        } else {
+            1usize << start_index.trailing_zeros()
+        };
+
+        let block_size = core::cmp::min(max_len_pow, align_pow);
+        let evals = Self::evals_for_aligned_block(r, start_index, block_size);
+        (block_size, evals)
+    }
+
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached")]
     /// Computes eq evaluations like [`Self::evals`], but also caches intermediate tables.
     ///

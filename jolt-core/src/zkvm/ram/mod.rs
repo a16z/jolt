@@ -456,58 +456,20 @@ fn evaluate_public_initial_ram_evaluation<F: JoltField>(
         if values.is_empty() {
             return F::zero();
         }
-        let total_vars = r.len();
         let mut acc = F::zero();
 
         let mut idx = start_index;
         let mut off = 0usize;
         while off < values.len() {
             let remaining = values.len() - off;
-
-            // Largest power-of-two block size that both:
-            // - fits in the remaining range, and
-            // - is aligned at `idx`.
-            let max_len_pow = if remaining.is_power_of_two() {
-                remaining
-            } else {
-                remaining.next_power_of_two() >> 1
-            };
-            let align_pow = if idx == 0 {
-                // idx==0 is aligned to any power-of-two; cap by total domain size.
-                1usize << total_vars
-            } else {
-                1usize << idx.trailing_zeros()
-            };
-            let block_size = core::cmp::min(max_len_pow.max(1), align_pow);
-            debug_assert!(block_size.is_power_of_two());
-            debug_assert_eq!(idx % block_size, 0);
-
-            let b = block_size.log_2();
-            debug_assert!(b <= total_vars);
-            let prefix_len = total_vars - b;
-            let prefix_val = idx >> b;
-
-            // Compute eq over the fixed prefix bits.
-            let mut prefix_scale = F::one();
-            if prefix_len > 0 {
-                for i in 0..prefix_len {
-                    let bit = (prefix_val >> (prefix_len - 1 - i)) & 1;
-                    prefix_scale *= if bit == 1 {
-                        r[i].into()
-                    } else {
-                        F::one() - r[i]
-                    };
-                }
-            }
-
-            // Compute eq table over the suffix bits (size = block_size).
-            let suffix_evals = EqPolynomial::evals(&r[prefix_len..]);
-            debug_assert_eq!(suffix_evals.len(), block_size);
+            let (block_size, block_evals) =
+                EqPolynomial::<F>::evals_for_max_aligned_block(r, idx, remaining);
+            debug_assert_eq!(block_evals.len(), block_size);
 
             for j in 0..block_size {
                 let coeff = values[off + j];
                 if coeff != 0 {
-                    acc += F::from_u64(coeff) * (prefix_scale * suffix_evals[j]);
+                    acc += F::from_u64(coeff) * block_evals[j];
                 }
             }
 
